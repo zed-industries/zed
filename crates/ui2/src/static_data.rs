@@ -326,12 +326,9 @@ pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
 
 pub fn static_new_notification_items<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
     vec![
-        ListEntry::new(Label::new(
-            "maxdeviant invited you to join a stream in #design.",
-        ))
-        .set_left_icon(Icon::FileLock.into()),
-        ListEntry::new(Label::new("nathansobo accepted your contact request."))
-            .set_left_icon(Icon::FileToml.into()),
+        ListDetailsEntry::new("maxdeviant invited you to join a stream in #design.")
+            .meta("4 people in stream."),
+        ListDetailsEntry::new("nathansobo accepted your contact request."),
     ]
     .into_iter()
     .map(From::from)
@@ -340,12 +337,14 @@ pub fn static_new_notification_items<S: 'static + Send + Sync + Clone>() -> Vec<
 
 pub fn static_read_notification_items<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
     vec![
-        ListDetailsEntry::new("mikaylamaki added you as a contact.")
-            .actions(vec![Button::new("Decline"), Button::new("Accept")]),
+        ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
+            Button::new("Decline"),
+            Button::new("Accept").variant(crate::ButtonVariant::Filled),
+        ]),
         ListDetailsEntry::new("maxdeviant invited you to a stream in #design.")
             .seen(true)
             .meta("This stream has ended."),
-        ListDetailsEntry::new("nathansobo accepted your contact request."),
+        ListDetailsEntry::new("as-cii accepted your contact request."),
     ]
     .into_iter()
     .map(From::from)

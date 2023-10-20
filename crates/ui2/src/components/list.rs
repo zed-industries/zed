@@ -509,13 +509,23 @@ impl<S: 'static + Send + Sync> ListDetailsEntry<S> {
             .relative()
             .group("")
             .bg(item_bg)
-            .p_1()
+            .px_1()
+            .py_1_5()
             .w_full()
             .line_height(relative(1.2))
             .child(Label::new(self.label.clone()).color(label_color))
             .when(self.meta.is_some(), |this| {
                 this.child(Label::new(self.meta.clone().unwrap()).color(LabelColor::Muted))
             })
+            .child(
+                h_stack().gap_1().justify_end().children(
+                    self.actions
+                        .take()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|action| action),
+                ),
+            )
     }
 }
 
