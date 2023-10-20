@@ -1,7 +1,7 @@
 use crate::themes::rose_pine;
 use gpui3::{
-    div, view, Action, Context, Focusable, KeyBinding, ParentElement, StatelesslyInteractive,
-    Styled, View, WindowContext,
+    div, view, Action, Context, Focusable, KeyBinding, ParentElement, StatelessInteractive, Styled,
+    View, WindowContext,
 };
 use std::any::Any;
 

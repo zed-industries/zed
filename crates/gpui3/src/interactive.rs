@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-pub trait StatelesslyInteractive: Element {
+pub trait StatelessInteractive: Element {
     fn stateless_interactivity(&mut self) -> &mut StatelessInteraction<Self::ViewState>;
 
     fn on_mouse_down(
@@ -239,7 +239,7 @@ pub trait StatelesslyInteractive: Element {
     }
 }
 
-pub trait StatefullyInteractive: StatelesslyInteractive {
+pub trait StatefulInteractive: StatelessInteractive {
     fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<Self::ViewState>;
 
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self

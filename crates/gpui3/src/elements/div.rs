@@ -2,8 +2,8 @@ use crate::{
     AnyElement, BorrowWindow, Bounds, Element, ElementFocus, ElementId, ElementInteraction,
     FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable, GlobalElementId,
     GroupBounds, InteractiveElementState, IntoAnyElement, LayoutId, Overflow, ParentElement,
-    Pixels, Point, SharedString, StatefulInteractivity, StatefullyInteractive,
-    StatelessInteraction, StatelesslyInteractive, Style, StyleRefinement, Styled, ViewContext,
+    Pixels, Point, SharedString, StatefulInteractive, StatefulInteractivity, StatelessInteraction,
+    StatelessInteractive, Style, StyleRefinement, Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use refineable::Refineable;
@@ -320,7 +320,7 @@ where
     }
 }
 
-impl<V, I, F> StatelesslyInteractive for Div<V, I, F>
+impl<V, I, F> StatelessInteractive for Div<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
@@ -331,7 +331,7 @@ where
     }
 }
 
-impl<V, F> StatefullyInteractive for Div<V, StatefulInteractivity<V>, F>
+impl<V, F> StatefulInteractive for Div<V, StatefulInteractivity<V>, F>
 where
     F: ElementFocus<V>,
     V: 'static + Send + Sync,

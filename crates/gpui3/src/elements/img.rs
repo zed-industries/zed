@@ -1,8 +1,8 @@
 use crate::{
     div, AnyElement, BorrowWindow, Bounds, Div, Element, ElementFocus, ElementId,
     ElementInteraction, FocusDisabled, FocusEnabled, FocusListeners, Focusable,
-    InteractiveElementState, IntoAnyElement, LayoutId, Pixels, SharedString, StatefulInteractivity,
-    StatefullyInteractive, StatelessInteraction, StatelesslyInteractive, StyleRefinement, Styled,
+    InteractiveElementState, IntoAnyElement, LayoutId, Pixels, SharedString, StatefulInteractive,
+    StatefulInteractivity, StatelessInteraction, StatelessInteractive, StyleRefinement, Styled,
     ViewContext,
 };
 use futures::FutureExt;
@@ -151,7 +151,7 @@ where
     }
 }
 
-impl<V, I, F> StatelesslyInteractive for Img<V, I, F>
+impl<V, I, F> StatelessInteractive for Img<V, I, F>
 where
     V: 'static + Send + Sync,
     I: ElementInteraction<V>,
@@ -162,7 +162,7 @@ where
     }
 }
 
-impl<V, F> StatefullyInteractive for Img<V, StatefulInteractivity<V>, F>
+impl<V, F> StatefulInteractive for Img<V, StatefulInteractivity<V>, F>
 where
     V: 'static + Send + Sync,
     F: ElementFocus<V>,

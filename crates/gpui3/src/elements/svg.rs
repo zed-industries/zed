@@ -1,8 +1,8 @@
 use crate::{
     div, AnyElement, Bounds, Div, Element, ElementFocus, ElementId, ElementInteraction,
     FocusDisabled, FocusEnabled, FocusListeners, Focusable, InteractiveElementState,
-    IntoAnyElement, LayoutId, Pixels, SharedString, StatefulInteractivity, StatefullyInteractive,
-    StatelessInteraction, StatelesslyInteractive, StyleRefinement, Styled, ViewContext,
+    IntoAnyElement, LayoutId, Pixels, SharedString, StatefulInteractive, StatefulInteractivity,
+    StatelessInteraction, StatelessInteractive, StyleRefinement, Styled, ViewContext,
 };
 use util::ResultExt;
 
@@ -124,7 +124,7 @@ where
     }
 }
 
-impl<V, I, F> StatelesslyInteractive for Svg<V, I, F>
+impl<V, I, F> StatelessInteractive for Svg<V, I, F>
 where
     V: 'static + Send + Sync,
     I: ElementInteraction<V>,
@@ -135,7 +135,7 @@ where
     }
 }
 
-impl<V, F> StatefullyInteractive for Svg<V, StatefulInteractivity<V>, F>
+impl<V, F> StatefulInteractive for Svg<V, StatefulInteractivity<V>, F>
 where
     V: 'static + Send + Sync,
     F: ElementFocus<V>,
