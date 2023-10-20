@@ -1,35 +1,12 @@
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Element, ElementFocus, ElementId, ElementInteraction,
+    point, AnyElement, BorrowWindow, Bounds, Element, ElementFocus, ElementId, ElementInteraction,
     FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable, GlobalElementId,
     GroupBounds, InteractiveElementState, IntoAnyElement, LayoutId, Overflow, ParentElement,
     Pixels, Point, SharedString, StatefulInteraction, StatefulInteractive, StatelessInteraction,
     StatelessInteractive, Style, StyleRefinement, Styled, ViewContext,
 };
-use parking_lot::Mutex;
 use refineable::Refineable;
 use smallvec::SmallVec;
-use std::sync::Arc;
-
-#[derive(Default, Clone)]
-pub struct ScrollState(Arc<Mutex<Point<Pixels>>>);
-
-impl ScrollState {
-    pub fn x(&self) -> Pixels {
-        self.0.lock().x
-    }
-
-    pub fn set_x(&self, value: Pixels) {
-        self.0.lock().x = value;
-    }
-
-    pub fn y(&self) -> Pixels {
-        self.0.lock().y
-    }
-
-    pub fn set_y(&self, value: Pixels) {
-        self.0.lock().y = value;
-    }
-}
 
 pub struct Div<
     V: 'static + Send + Sync,
@@ -104,28 +81,6 @@ where
         self
     }
 
-    pub fn overflow_scroll(mut self, _scroll_state: ScrollState) -> Self {
-        // todo!("impl scrolling")
-        // self.scroll_state = Some(scroll_state);
-        self.base_style.overflow.x = Some(Overflow::Scroll);
-        self.base_style.overflow.y = Some(Overflow::Scroll);
-        self
-    }
-
-    pub fn overflow_x_scroll(mut self, _scroll_state: ScrollState) -> Self {
-        // todo!("impl scrolling")
-        // self.scroll_state = Some(scroll_state);
-        self.base_style.overflow.x = Some(Overflow::Scroll);
-        self
-    }
-
-    pub fn overflow_y_scroll(mut self, _scroll_state: ScrollState) -> Self {
-        // todo!("impl scrolling")
-        // self.scroll_state = Some(scroll_state);
-        self.base_style.overflow.y = Some(Overflow::Scroll);
-        self
-    }
-
     fn with_element_id<R>(
         &mut self,
         cx: &mut ViewContext<V>,
@@ -179,6 +134,22 @@ where
             base_style: self.base_style,
         }
     }
+
+    pub fn overflow_scroll(mut self) -> Self {
+        self.base_style.overflow.x = Some(Overflow::Scroll);
+        self.base_style.overflow.y = Some(Overflow::Scroll);
+        self
+    }
+
+    pub fn overflow_x_scroll(mut self) -> Self {
+        self.base_style.overflow.x = Some(Overflow::Scroll);
+        self
+    }
+
+    pub fn overflow_y_scroll(mut self) -> Self {
+        self.base_style.overflow.y = Some(Overflow::Scroll);
+        self
+    }
 }
 
 impl<V> Div<V, StatelessInteraction<V>, FocusDisabled>
@@ -225,6 +196,7 @@ where
 pub struct DivState {
     interactive: InteractiveElementState,
     focus_handle: Option<FocusHandle>,
+    child_layout_ids: SmallVec<[LayoutId; 4]>,
 }
 
 impl<V, I, F> Element for Div<V, I, F>
@@ -274,7 +246,8 @@ where
                     .children
                     .iter_mut()
                     .map(|child| child.layout(view_state, cx))
-                    .collect::<Vec<_>>();
+                    .collect::<SmallVec<_>>();
+                element_state.child_layout_ids = layout_ids.clone();
                 cx.request_layout(&style, layout_ids)
             })
         })
@@ -295,21 +268,38 @@ where
             let style = this.compute_style(bounds, element_state, cx);
             let z_index = style.z_index.unwrap_or(0);
 
-            // Paint background and event handlers.
+            let mut child_min = point(Pixels::MAX, Pixels::MAX);
+            let mut child_max = Point::default();
+
+            let content_size = if element_state.child_layout_ids.is_empty() {
+                bounds.size
+            } else {
+                for child_layout_id in &element_state.child_layout_ids {
+                    let child_bounds = cx.layout_bounds(*child_layout_id);
+                    child_min = child_min.min(&child_bounds.origin);
+                    child_max = child_min.max(&child_bounds.lower_right());
+                }
+                (child_max - child_min).into()
+            };
+
             cx.stack(z_index, |cx| {
                 cx.stack(0, |cx| {
                     style.paint(bounds, cx);
-
                     this.focus.paint(bounds, cx);
-                    this.interaction
-                        .paint(bounds, &element_state.interactive, cx);
+                    this.interaction.paint(
+                        bounds,
+                        content_size,
+                        style.overflow,
+                        &mut element_state.interactive,
+                        cx,
+                    );
                 });
-
                 cx.stack(1, |cx| {
                     style.apply_text_style(cx, |cx| {
                         style.apply_overflow(bounds, cx, |cx| {
+                            let scroll_offset = element_state.interactive.scroll_offset();
                             for child in &mut this.children {
-                                child.paint(view_state, None, cx);
+                                child.paint(view_state, scroll_offset, cx);
                             }
                         })
                     })

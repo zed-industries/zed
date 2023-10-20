@@ -205,6 +205,20 @@ where
     }
 }
 
+impl<T> Sub for Size<T>
+where
+    T: Sub<Output = T> + Clone + Default + Debug,
+{
+    type Output = Size<T>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Size {
+            width: self.width - rhs.width,
+            height: self.height - rhs.height,
+        }
+    }
+}
+
 impl<T, Rhs> Mul<Rhs> for Size<T>
 where
     T: Mul<Rhs, Output = Rhs> + Clone + Default + Debug,
@@ -239,6 +253,15 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Size {{ {:?} × {:?} }}", self.width, self.height)
+    }
+}
+
+impl<T: Clone + Default + Debug> From<Point<T>> for Size<T> {
+    fn from(point: Point<T>) -> Self {
+        Self {
+            width: point.x,
+            height: point.y,
+        }
     }
 }
 
@@ -679,6 +702,8 @@ impl MulAssign<f32> for Pixels {
 }
 
 impl Pixels {
+    pub const MAX: Pixels = Pixels(f32::MAX);
+
     pub fn round(&self) -> Self {
         Self(self.0.round())
     }

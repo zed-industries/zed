@@ -1,7 +1,7 @@
 use crate::{
-    point, Action, AppContext, BorrowWindow, Bounds, DispatchContext, DispatchPhase, Element,
-    ElementId, FocusHandle, KeyMatch, Keystroke, Modifiers, Pixels, Point, SharedString, Style,
-    StyleRefinement, ViewContext,
+    point, px, Action, AppContext, BorrowWindow, Bounds, DispatchContext, DispatchPhase, Element,
+    ElementId, FocusHandle, KeyMatch, Keystroke, Modifiers, Overflow, Pixels, Point, SharedString,
+    Size, Style, StyleRefinement, ViewContext,
 };
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -375,7 +375,9 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        element_state: &InteractiveElementState,
+        content_size: Size<Pixels>,
+        overflow: Point<Overflow>,
+        element_state: &mut InteractiveElementState,
         cx: &mut ViewContext<V>,
     ) {
         let stateless = self.as_stateless();
@@ -464,6 +466,34 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
                 cx.on_mouse_event(move |_, _: &MouseUpEvent, phase, cx| {
                     if phase == DispatchPhase::Capture {
                         *active_state.lock() = ActiveState::default();
+                        cx.notify();
+                    }
+                });
+            }
+
+            if overflow.x == Overflow::Scroll || overflow.y == Overflow::Scroll {
+                let scroll_offset = element_state
+                    .scroll_offset
+                    .get_or_insert_with(Arc::default)
+                    .clone();
+                let line_height = cx.line_height();
+                let scroll_max = content_size - bounds.size;
+
+                cx.on_mouse_event(move |_, event: &ScrollWheelEvent, _, cx| {
+                    if bounds.contains_point(&event.position) {
+                        let mut scroll_offset = scroll_offset.lock();
+                        let delta = event.delta.pixel_delta(line_height);
+
+                        if overflow.x == Overflow::Scroll {
+                            scroll_offset.x =
+                                (scroll_offset.x - delta.x).clamp(px(0.), scroll_max.width);
+                        }
+
+                        if overflow.y == Overflow::Scroll {
+                            scroll_offset.y =
+                                (scroll_offset.y - delta.y).clamp(px(0.), scroll_max.height);
+                        }
+
                         cx.notify();
                     }
                 });
@@ -609,6 +639,15 @@ impl ActiveState {
 pub struct InteractiveElementState {
     active_state: Arc<Mutex<ActiveState>>,
     pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
+    scroll_offset: Option<Arc<Mutex<Point<Pixels>>>>,
+}
+
+impl InteractiveElementState {
+    pub fn scroll_offset(&self) -> Option<Point<Pixels>> {
+        self.scroll_offset
+            .as_ref()
+            .map(|offset| offset.lock().clone())
+    }
 }
 
 impl<V> Default for StatelessInteraction<V> {

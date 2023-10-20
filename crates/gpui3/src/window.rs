@@ -457,6 +457,14 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.rem_size
     }
 
+    pub fn line_height(&self) -> Pixels {
+        let rem_size = self.rem_size();
+        let text_style = self.text_style();
+        text_style
+            .line_height
+            .to_pixels(text_style.font_size.into(), rem_size)
+    }
+
     pub fn stop_propagation(&mut self) {
         self.window.propagate = false;
     }
