@@ -81,17 +81,15 @@ impl RichText {
                             }),
                     );
                 }
-                if region.background_kind == Some(BackgroundKind::Code) {
+                if let Some(region_kind) = &region.background_kind {
+                    let background = match region_kind {
+                        BackgroundKind::Code => code_span_background_color,
+                        BackgroundKind::Mention => self_mention_span_background_color,
+                    }
+                    .into();
                     cx.scene().push_quad(gpui::Quad {
                         bounds,
-                        background: Some(code_span_background_color),
-                        border: Default::default(),
-                        corner_radii: (2.0).into(),
-                    });
-                } else if region.background_kind == Some(BackgroundKind::Mention) {
-                    cx.scene().push_quad(gpui::Quad {
-                        bounds,
-                        background: Some(self_mention_span_background_color),
+                        background,
                         border: Default::default(),
                         corner_radii: (2.0).into(),
                     });
