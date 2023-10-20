@@ -236,14 +236,14 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> Self::ElementState {
-        self.interaction.initialize(cx, |cx| {
-            self.focus.initialize(cx, |cx| {
-                for child in &mut self.children {
-                    child.initialize(view_state, cx);
-                }
-            });
-        });
-        element_state.unwrap_or_default()
+        self.focus.initialize(cx, |focus_handle, cx| {
+            self.interaction
+                .initialize(element_state, focus_handle, cx, |cx| {
+                    for child in &mut self.children {
+                        child.initialize(view_state, cx);
+                    }
+                })
+        })
     }
 
     fn layout(

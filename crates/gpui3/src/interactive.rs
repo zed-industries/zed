@@ -305,11 +305,13 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
     fn as_stateful(&self) -> Option<&StatefulInteraction<V>>;
     fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteraction<V>>;
 
-    fn initialize<R>(
+    fn initialize(
         &mut self,
+        element_state: Option<InteractiveElementState>,
+        focus_handle: Option<FocusHandle>,
         cx: &mut ViewContext<V>,
-        f: impl FnOnce(&mut ViewContext<V>) -> R,
-    ) -> R {
+        f: impl FnOnce(&mut ViewContext<V>),
+    ) -> InteractiveElementState {
         if let Some(stateful) = self.as_stateful_mut() {
             cx.with_element_id(stateful.id.clone(), |global_id, cx| {
                 stateful.key_listeners.push((
@@ -327,15 +329,19 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
                         None
                     }),
                 ));
-                let result = stateful.stateless.initialize(cx, f);
+                let mut element_state = stateful.stateless.initialize(element_state, None, cx, f);
+                element_state.focus_handle = focus_handle
+                    .or(element_state.focus_handle.take())
+                    .or_else(|| cx.focused());
                 stateful.key_listeners.pop();
-                result
+                element_state
             })
         } else {
             let stateless = self.as_stateless();
             cx.with_key_dispatch_context(stateless.dispatch_context.clone(), |cx| {
                 cx.with_key_listeners(&stateless.key_listeners, f)
-            })
+            });
+            element_state.unwrap_or_default()
         }
     }
 
@@ -607,6 +613,7 @@ impl ActiveState {
 
 #[derive(Default)]
 pub struct InteractiveElementState {
+    focus_handle: Option<FocusHandle>,
     active_state: Arc<Mutex<ActiveState>>,
     pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
 }

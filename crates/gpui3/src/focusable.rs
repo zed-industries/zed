@@ -146,15 +146,16 @@ pub trait ElementFocus<V: 'static + Send + Sync>: 'static + Send + Sync {
     fn initialize<R>(
         &self,
         cx: &mut ViewContext<V>,
-        f: impl FnOnce(&mut ViewContext<V>) -> R,
+        f: impl FnOnce(Option<FocusHandle>, &mut ViewContext<V>) -> R,
     ) -> R {
         if let Some(focusable) = self.as_focusable() {
             for listener in focusable.focus_listeners.iter().cloned() {
                 cx.on_focus_changed(move |view, event, cx| listener(view, event, cx));
             }
-            cx.with_focus(focusable.focus_handle.clone(), |cx| f(cx))
+            let focus_handle = focusable.focus_handle.clone();
+            cx.with_focus(focus_handle.clone(), |cx| f(Some(focus_handle), cx))
         } else {
-            f(cx)
+            f(None, cx)
         }
     }
 
