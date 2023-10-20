@@ -15,12 +15,45 @@ pub struct DispatchContext {
     map: HashMap<SharedString, SharedString>,
 }
 
+impl<'a> TryFrom<&'a str> for DispatchContext {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &'a str) -> Result<Self> {
+        Self::parse(value)
+    }
+}
+
 impl DispatchContext {
-    pub fn new() -> Self {
-        DispatchContext {
-            set: HashSet::default(),
-            map: HashMap::default(),
+    pub fn parse(source: &str) -> Result<Self> {
+        let mut context = Self::default();
+        let source = skip_whitespace(source);
+        Self::parse_expr(&source, &mut context)?;
+        Ok(context)
+    }
+
+    fn parse_expr(mut source: &str, context: &mut Self) -> Result<()> {
+        if source.is_empty() {
+            return Ok(());
         }
+
+        let key = source
+            .chars()
+            .take_while(|ch| ch.is_alphanumeric())
+            .collect::<String>();
+        source = skip_whitespace(&source[key.len()..]);
+        if let Some(suffix) = source.strip_prefix('=') {
+            source = skip_whitespace(suffix);
+            let value = source
+                .chars()
+                .take_while(|ch| ch.is_alphanumeric())
+                .collect::<String>();
+            source = skip_whitespace(&source[value.len()..]);
+            context.set(key, value);
+        } else {
+            context.insert(key);
+        }
+
+        Self::parse_expr(source, context)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -41,11 +74,11 @@ impl DispatchContext {
         }
     }
 
-    pub fn add_identifier<I: Into<SharedString>>(&mut self, identifier: I) {
+    pub fn insert<I: Into<SharedString>>(&mut self, identifier: I) {
         self.set.insert(identifier.into());
     }
 
-    pub fn add_key<S1: Into<SharedString>, S2: Into<SharedString>>(&mut self, key: S1, value: S2) {
+    pub fn set<S1: Into<SharedString>, S2: Into<SharedString>>(&mut self, key: S1, value: S2) {
         self.map.insert(key.into(), value.into());
     }
 }
@@ -63,7 +96,7 @@ pub enum DispatchContextPredicate {
 
 impl DispatchContextPredicate {
     pub fn parse(source: &str) -> Result<Self> {
-        let source = Self::skip_whitespace(source);
+        let source = skip_whitespace(source);
         let (predicate, rest) = Self::parse_expr(source, 0)?;
         if let Some(next) = rest.chars().next() {
             Err(anyhow!("unexpected character {next:?}"))
@@ -113,7 +146,7 @@ impl DispatchContextPredicate {
                 ("!=", PRECEDENCE_EQ, Self::new_neq as Op),
             ] {
                 if source.starts_with(operator) && precedence >= min_precedence {
-                    source = Self::skip_whitespace(&source[operator.len()..]);
+                    source = skip_whitespace(&source[operator.len()..]);
                     let (right, rest) = Self::parse_expr(source, precedence + 1)?;
                     predicate = constructor(predicate, right)?;
                     source = rest;
@@ -133,17 +166,17 @@ impl DispatchContextPredicate {
             .ok_or_else(|| anyhow!("unexpected eof"))?;
         match next {
             '(' => {
-                source = Self::skip_whitespace(&source[1..]);
+                source = skip_whitespace(&source[1..]);
                 let (predicate, rest) = Self::parse_expr(source, 0)?;
                 if rest.starts_with(')') {
-                    source = Self::skip_whitespace(&rest[1..]);
+                    source = skip_whitespace(&rest[1..]);
                     Ok((predicate, source))
                 } else {
                     Err(anyhow!("expected a ')'"))
                 }
             }
             '!' => {
-                let source = Self::skip_whitespace(&source[1..]);
+                let source = skip_whitespace(&source[1..]);
                 let (predicate, source) = Self::parse_expr(&source, PRECEDENCE_NOT)?;
                 Ok((DispatchContextPredicate::Not(Box::new(predicate)), source))
             }
@@ -152,7 +185,7 @@ impl DispatchContextPredicate {
                     .find(|c: char| !(c.is_alphanumeric() || c == '_'))
                     .unwrap_or(source.len());
                 let (identifier, rest) = source.split_at(len);
-                source = Self::skip_whitespace(rest);
+                source = skip_whitespace(rest);
                 Ok((
                     DispatchContextPredicate::Identifier(identifier.to_string().into()),
                     source,
@@ -160,13 +193,6 @@ impl DispatchContextPredicate {
             }
             _ => Err(anyhow!("unexpected character {next:?}")),
         }
-    }
-
-    fn skip_whitespace(source: &str) -> &str {
-        let len = source
-            .find(|c: char| !c.is_whitespace())
-            .unwrap_or(source.len());
-        &source[len..]
     }
 
     fn new_or(self, other: Self) -> Result<Self> {
@@ -204,9 +230,31 @@ const PRECEDENCE_AND: u32 = 3;
 const PRECEDENCE_EQ: u32 = 4;
 const PRECEDENCE_NOT: u32 = 5;
 
+fn skip_whitespace(source: &str) -> &str {
+    let len = source
+        .find(|c: char| !c.is_whitespace())
+        .unwrap_or(source.len());
+    &source[len..]
+}
+
 #[cfg(test)]
 mod tests {
-    use super::DispatchContextPredicate::{self, *};
+    use super::*;
+    use DispatchContextPredicate::*;
+
+    #[test]
+    fn test_parse_context() {
+        let mut expected = DispatchContext::default();
+        expected.set("foo", "bar");
+        expected.insert("baz");
+        assert_eq!(DispatchContext::parse("baz foo=bar").unwrap(), expected);
+        assert_eq!(DispatchContext::parse("foo = bar baz").unwrap(), expected);
+        assert_eq!(
+            DispatchContext::parse("  baz foo   =   bar baz").unwrap(),
+            expected
+        );
+        assert_eq!(DispatchContext::parse(" foo = bar baz").unwrap(), expected);
+    }
 
     #[test]
     fn test_parse_identifiers() {

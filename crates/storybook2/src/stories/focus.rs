@@ -39,6 +39,23 @@ impl Action for ActionB {
     }
 }
 
+#[derive(Clone)]
+struct ActionC;
+
+impl Action for ActionC {
+    fn eq(&self, action: &dyn Action) -> bool {
+        action.as_any().downcast_ref::<Self>().is_some()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Action> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 pub struct FocusStory {
     text: View<()>,
 }
@@ -46,8 +63,9 @@ pub struct FocusStory {
 impl FocusStory {
     pub fn view(cx: &mut WindowContext) -> View<()> {
         cx.bind_keys([
-            KeyBinding::new("cmd-a", ActionA, None),
-            KeyBinding::new("cmd-b", ActionB, None),
+            KeyBinding::new("cmd-a", ActionA, Some("parent")),
+            KeyBinding::new("cmd-a", ActionB, Some("child-1")),
+            KeyBinding::new("cmd-c", ActionC, None),
         ]);
         let theme = rose_pine();
 
@@ -63,6 +81,7 @@ impl FocusStory {
         let child_2 = cx.focus_handle();
         view(cx.entity(|cx| ()), move |_, cx| {
             div()
+                .context("parent")
                 .on_action(|_, action: &ActionA, phase, cx| {
                     println!("Action A dispatched on parent during {:?}", phase);
                 })
@@ -86,7 +105,8 @@ impl FocusStory {
                 .focus_in(|style| style.bg(color_3))
                 .child(
                     div()
-                        .id("child 1")
+                        .id("child-1")
+                        .context("child-1")
                         .on_action(|_, action: &ActionA, phase, cx| {
                             println!("Action A dispatched on child 1 during {:?}", phase);
                         })
@@ -110,7 +130,8 @@ impl FocusStory {
                 )
                 .child(
                     div()
-                        .id("child 2")
+                        .id("child-2")
+                        .context("child-2")
                         .on_action(|_, action: &ActionB, phase, cx| {
                             println!("Action B dispatched on child 2 during {:?}", phase);
                         })

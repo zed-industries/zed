@@ -595,7 +595,7 @@ pub struct InteractiveElementState {
 impl<V> Default for StatelessInteraction<V> {
     fn default() -> Self {
         Self {
-            dispatch_context: DispatchContext::new(),
+            dispatch_context: DispatchContext::default(),
             mouse_down_listeners: SmallVec::new(),
             mouse_up_listeners: SmallVec::new(),
             mouse_move_listeners: SmallVec::new(),

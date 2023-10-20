@@ -1,16 +1,24 @@
 use std::{
     borrow::Cow,
     fmt::{self, Debug},
+    hash::{Hash, Hasher},
     sync::Arc,
 };
 
-#[derive(PartialEq, Eq)]
 pub enum ArcCow<'a, T: ?Sized> {
     Borrowed(&'a T),
     Owned(Arc<T>),
 }
 
-use std::hash::{Hash, Hasher};
+impl<'a, T: ?Sized + PartialEq> PartialEq for ArcCow<'a, T> {
+    fn eq(&self, other: &Self) -> bool {
+        let a = self.as_ref();
+        let b = other.as_ref();
+        a == b
+    }
+}
+
+impl<'a, T: ?Sized + Eq> Eq for ArcCow<'a, T> {}
 
 impl<'a, T: ?Sized + Hash> Hash for ArcCow<'a, T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
