@@ -7,14 +7,14 @@ use crate::{Icon, IconButton, Input, Label, LabelColor};
 
 #[derive(Element)]
 pub struct ChatPanel<S: 'static + Send + Sync + Clone> {
-    scroll_state: ScrollState,
+    element_id: ElementId,
     messages: Vec<ChatMessage<S>>,
 }
 
 impl<S: 'static + Send + Sync + Clone> ChatPanel<S> {
-    pub fn new(scroll_state: ScrollState) -> Self {
+    pub fn new(element_id: impl Into<ElementId>) -> Self {
         Self {
-            scroll_state,
+            element_id: element_id.into(),
             messages: Vec::new(),
         }
     }
@@ -26,6 +26,7 @@ impl<S: 'static + Send + Sync + Clone> ChatPanel<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         div()
+            .id(self.element_id.clone())
             .flex()
             .flex_col()
             .justify_between()
@@ -55,11 +56,12 @@ impl<S: 'static + Send + Sync + Clone> ChatPanel<S> {
                     // Chat Body
                     .child(
                         div()
+                            .id("chat-body")
                             .w_full()
                             .flex()
                             .flex_col()
                             .gap_3()
-                            .overflow_y_scroll(self.scroll_state.clone())
+                            .overflow_y_scroll()
                             .children(self.messages.clone()),
                     )
                     // Composer
@@ -135,10 +137,13 @@ mod stories {
             Story::container(cx)
                 .child(Story::title_for::<_, ChatPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(Panel::new(cx).child(ChatPanel::new(ScrollState::default())))
-                .child(Story::label(cx, "With Mesages"))
                 .child(
-                    Panel::new(cx).child(ChatPanel::new(ScrollState::default()).messages(vec![
+                    Panel::new("chat-panel-1-outer", cx)
+                        .child(ChatPanel::new("chat-panel-1-inner")),
+                )
+                .child(Story::label(cx, "With Mesages"))
+                .child(Panel::new("chat-panel-2-outer", cx).child(
+                    ChatPanel::new("chat-panel-2-inner").messages(vec![
                         ChatMessage::new(
                             "osiewicz".to_string(),
                             "is this thing on?".to_string(),
@@ -153,8 +158,8 @@ mod stories {
                                 .unwrap()
                                 .naive_local(),
                         ),
-                    ])),
-                )
+                    ]),
+                ))
         }
     }
 }

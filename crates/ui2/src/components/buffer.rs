@@ -111,8 +111,8 @@ impl BufferRow {
 
 #[derive(Element, Clone)]
 pub struct Buffer<S: 'static + Send + Sync + Clone> {
+    id: ElementId,
     state_type: PhantomData<S>,
-    scroll_state: ScrollState,
     rows: Option<BufferRows>,
     readonly: bool,
     language: Option<String>,
@@ -121,20 +121,16 @@ pub struct Buffer<S: 'static + Send + Sync + Clone> {
 }
 
 impl<S: 'static + Send + Sync + Clone> Buffer<S> {
-    pub fn new() -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
+            id: id.into(),
             state_type: PhantomData,
-            scroll_state: ScrollState::default(),
             rows: Some(BufferRows::default()),
             readonly: false,
             language: None,
             title: Some("untitled".to_string()),
             path: None,
         }
-    }
-
-    pub fn bind_scroll_state(&mut self, scroll_state: ScrollState) {
-        self.scroll_state = scroll_state;
     }
 
     pub fn set_title<T: Into<Option<String>>>(mut self, title: T) -> Self {

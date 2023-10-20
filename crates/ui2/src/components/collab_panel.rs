@@ -8,15 +8,15 @@ use std::marker::PhantomData;
 
 #[derive(Element)]
 pub struct CollabPanel<S: 'static + Send + Sync + Clone> {
+    id: ElementId,
     state_type: PhantomData<S>,
-    scroll_state: ScrollState,
 }
 
 impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
-    pub fn new(scroll_state: ScrollState) -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
+            id: id.into(),
             state_type: PhantomData,
-            scroll_state,
         }
     }
 
@@ -25,12 +25,14 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
         let color = ThemeColor::new(cx);
 
         v_stack()
+            .id(self.id.clone())
             .h_full()
             .bg(color.surface)
             .child(
                 v_stack()
+                    .id("crdb")
                     .w_full()
-                    .overflow_y_scroll(self.scroll_state.clone())
+                    .overflow_y_scroll()
                     .child(
                         div().pb_1().border_color(color.border).border_b().child(
                             List::new(static_collab_panel_current_call())
@@ -43,7 +45,7 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
                         ),
                     )
                     .child(
-                        v_stack().py_1().child(
+                        v_stack().id("channels").py_1().child(
                             List::new(static_collab_panel_channels())
                                 .header(
                                     ListHeader::new("CHANNELS").set_toggle(ToggleState::Toggled),
@@ -53,7 +55,7 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
                         ),
                     )
                     .child(
-                        v_stack().py_1().child(
+                        v_stack().id("contacts-online").py_1().child(
                             List::new(static_collab_panel_current_call())
                                 .header(
                                     ListHeader::new("CONTACTS – ONLINE")
@@ -63,7 +65,7 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
                         ),
                     )
                     .child(
-                        v_stack().py_1().child(
+                        v_stack().id("contacts-offline").py_1().child(
                             List::new(static_collab_panel_current_call())
                                 .header(
                                     ListHeader::new("CONTACTS – OFFLINE")
@@ -182,7 +184,7 @@ mod stories {
             Story::container(cx)
                 .child(Story::title_for::<_, CollabPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(CollabPanel::new(ScrollState::default()))
+                .child(CollabPanel::new("collab-panel"))
         }
     }
 }

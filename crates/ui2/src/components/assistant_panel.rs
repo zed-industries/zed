@@ -7,16 +7,16 @@ use crate::{Icon, IconButton, Label, Panel, PanelSide};
 
 #[derive(Element)]
 pub struct AssistantPanel<S: 'static + Send + Sync + Clone> {
+    id: ElementId,
     state_type: PhantomData<S>,
-    scroll_state: ScrollState,
     current_side: PanelSide,
 }
 
 impl<S: 'static + Send + Sync + Clone> AssistantPanel<S> {
-    pub fn new() -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
+            id: id.into(),
             state_type: PhantomData,
-            scroll_state: ScrollState::default(),
             current_side: PanelSide::default(),
         }
     }
@@ -29,7 +29,7 @@ impl<S: 'static + Send + Sync + Clone> AssistantPanel<S> {
     fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
 
-        Panel::new(cx)
+        Panel::new(self.id.clone(), cx)
             .children(vec![div()
                 .flex()
                 .flex_col()
@@ -63,11 +63,12 @@ impl<S: 'static + Send + Sync + Clone> AssistantPanel<S> {
                 // Chat Body
                 .child(
                     div()
+                        .id("chat-body")
                         .w_full()
                         .flex()
                         .flex_col()
                         .gap_3()
-                        .overflow_y_scroll(self.scroll_state.clone())
+                        .overflow_y_scroll()
                         .child(Label::new("Is this thing on?")),
                 )
                 .into_any()])
@@ -105,7 +106,7 @@ mod stories {
             Story::container(cx)
                 .child(Story::title_for::<_, AssistantPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(AssistantPanel::new())
+                .child(AssistantPanel::new("assistant-panel"))
         }
     }
 }

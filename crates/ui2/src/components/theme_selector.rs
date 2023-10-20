@@ -5,21 +5,21 @@ use crate::{OrderMethod, Palette, PaletteItem};
 
 #[derive(Element)]
 pub struct ThemeSelector<S: 'static + Send + Sync + Clone> {
+    id: ElementId,
     state_type: PhantomData<S>,
-    scroll_state: ScrollState,
 }
 
 impl<S: 'static + Send + Sync + Clone> ThemeSelector<S> {
-    pub fn new() -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
+            id: id.into(),
             state_type: PhantomData,
-            scroll_state: ScrollState::default(),
         }
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         div().child(
-            Palette::new(self.scroll_state.clone())
+            Palette::new(self.id.clone())
                 .items(vec![
                     PaletteItem::new("One Dark"),
                     PaletteItem::new("Rosé Pine"),
@@ -61,11 +61,15 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, ThemeSelector<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(ThemeSelector::new())
+                .child(ThemeSelector::new("theme-selector"))
         }
     }
 }

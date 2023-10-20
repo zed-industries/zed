@@ -1,5 +1,5 @@
 pub use gpui3::{
-    div, Element, IntoAnyElement, ParentElement, ScrollState, SharedString, StatefulInteractive,
+    div, Element, ElementId, IntoAnyElement, ParentElement, SharedString, StatefulInteractive,
     StatelessInteractive, Styled, ViewContext, WindowContext,
 };
 

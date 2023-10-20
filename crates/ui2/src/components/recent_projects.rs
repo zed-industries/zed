@@ -5,21 +5,21 @@ use crate::{OrderMethod, Palette, PaletteItem};
 
 #[derive(Element)]
 pub struct RecentProjects<S: 'static + Send + Sync + Clone> {
+    id: ElementId,
     state_type: PhantomData<S>,
-    scroll_state: ScrollState,
 }
 
 impl<S: 'static + Send + Sync + Clone> RecentProjects<S> {
-    pub fn new() -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
+            id: id.into(),
             state_type: PhantomData,
-            scroll_state: ScrollState::default(),
         }
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        div().child(
-            Palette::new(self.scroll_state.clone())
+        div().id(self.id.clone()).child(
+            Palette::new("palette")
                 .items(vec![
                     PaletteItem::new("zed").sublabel(SharedString::from("~/projects/zed")),
                     PaletteItem::new("saga").sublabel(SharedString::from("~/projects/saga")),
@@ -64,7 +64,7 @@ mod stories {
             Story::container(cx)
                 .child(Story::title_for::<_, RecentProjects<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(RecentProjects::new())
+                .child(RecentProjects::new("recent-projects"))
         }
     }
 }

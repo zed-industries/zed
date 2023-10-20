@@ -638,7 +638,7 @@ pub fn empty_editor_example(cx: &mut WindowContext) -> EditorPane {
 }
 
 pub fn empty_buffer_example<S: 'static + Send + Sync + Clone>() -> Buffer<S> {
-    Buffer::new().set_rows(Some(BufferRows::default()))
+    Buffer::new("empty-buffer").set_rows(Some(BufferRows::default()))
 }
 
 pub fn hello_world_rust_editor_example(cx: &mut WindowContext) -> EditorPane {
@@ -665,7 +665,7 @@ pub fn hello_world_rust_editor_example(cx: &mut WindowContext) -> EditorPane {
 pub fn hello_world_rust_buffer_example<S: 'static + Send + Sync + Clone>(
     color: &ThemeColor,
 ) -> Buffer<S> {
-    Buffer::new()
+    Buffer::new("hello-world-rust-buffer")
         .set_title("hello_world.rs".to_string())
         .set_path("src/hello_world.rs".to_string())
         .set_language("rust".to_string())
@@ -806,7 +806,7 @@ pub fn hello_world_rust_editor_with_status_example(cx: &mut WindowContext) -> Ed
 pub fn hello_world_rust_buffer_with_status_example<S: 'static + Send + Sync + Clone>(
     color: &ThemeColor,
 ) -> Buffer<S> {
-    Buffer::new()
+    Buffer::new("hello-world-rust-buffer-with-status")
         .set_title("hello_world.rs".to_string())
         .set_path("src/hello_world.rs".to_string())
         .set_language("rust".to_string())
@@ -952,7 +952,7 @@ pub fn hello_world_rust_with_status_buffer_rows(color: &ThemeColor) -> Vec<Buffe
 }
 
 pub fn terminal_buffer<S: 'static + Send + Sync + Clone>(color: &ThemeColor) -> Buffer<S> {
-    Buffer::new()
+    Buffer::new("terminal")
         .set_title("zed — fish".to_string())
         .set_rows(Some(BufferRows {
             show_line_numbers: false,

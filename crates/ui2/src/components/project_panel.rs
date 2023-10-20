@@ -7,15 +7,15 @@ use crate::{
 
 #[derive(Element)]
 pub struct ProjectPanel<S: 'static + Send + Sync + Clone> {
+    id: ElementId,
     state_type: PhantomData<S>,
-    scroll_state: ScrollState,
 }
 
 impl<S: 'static + Send + Sync + Clone> ProjectPanel<S> {
-    pub fn new(scroll_state: ScrollState) -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
+            id: id.into(),
             state_type: PhantomData,
-            scroll_state,
         }
     }
 
@@ -24,6 +24,7 @@ impl<S: 'static + Send + Sync + Clone> ProjectPanel<S> {
         let color = ThemeColor::new(cx);
 
         div()
+            .id(self.id.clone())
             .flex()
             .flex_col()
             .w_full()
@@ -31,10 +32,11 @@ impl<S: 'static + Send + Sync + Clone> ProjectPanel<S> {
             .bg(color.surface)
             .child(
                 div()
+                    .id("project-panel-contents")
                     .w_full()
                     .flex()
                     .flex_col()
-                    .overflow_y_scroll(ScrollState::default())
+                    .overflow_y_scroll()
                     .child(
                         List::new(static_project_panel_single_items())
                             .header(ListHeader::new("FILES").set_toggle(ToggleState::Toggled))
@@ -56,6 +58,7 @@ impl<S: 'static + Send + Sync + Clone> ProjectPanel<S> {
     }
 }
 
+use gpui3::ElementId;
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -86,8 +89,8 @@ mod stories {
                 .child(Story::title_for::<_, ProjectPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
-                    Panel::new(cx)
-                        .child(ProjectPanel::new(ScrollState::default())),
+                    Panel::new("project-panel-outer", cx)
+                        .child(ProjectPanel::new("project-panel-inner")),
                 )
         }
     }

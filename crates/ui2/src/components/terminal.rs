@@ -73,7 +73,7 @@ impl<S: 'static + Send + Sync + Clone> Terminal<S> {
             // Terminal Pane.
             .child(
                 Pane::new(
-                    ScrollState::default(),
+                    "terminal",
                     Size {
                         width: relative(1.).into(),
                         height: rems(36.).into(),

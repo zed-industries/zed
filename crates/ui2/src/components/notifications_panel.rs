@@ -5,12 +5,14 @@ use crate::{List, ListHeader};
 
 #[derive(Element)]
 pub struct NotificationsPanel<S: 'static + Send + Sync + Clone> {
+    id: ElementId,
     state_type: PhantomData<S>,
 }
 
 impl<S: 'static + Send + Sync + Clone> NotificationsPanel<S> {
-    pub fn new() -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
+            id: id.into(),
             state_type: PhantomData,
         }
     }
@@ -19,6 +21,7 @@ impl<S: 'static + Send + Sync + Clone> NotificationsPanel<S> {
         let color = ThemeColor::new(cx);
 
         div()
+            .id(self.id.clone())
             .flex()
             .flex_col()
             .w_full()
@@ -26,10 +29,11 @@ impl<S: 'static + Send + Sync + Clone> NotificationsPanel<S> {
             .bg(color.surface)
             .child(
                 div()
+                    .id("header")
                     .w_full()
                     .flex()
                     .flex_col()
-                    .overflow_y_scroll(ScrollState::default())
+                    .overflow_y_scroll()
                     .child(
                         List::new(static_new_notification_items())
                             .header(ListHeader::new("NEW").set_toggle(ToggleState::Toggled))
@@ -74,7 +78,9 @@ mod stories {
             Story::container(cx)
                 .child(Story::title_for::<_, NotificationsPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(Panel::new(cx).child(NotificationsPanel::new()))
+                .child(
+                    Panel::new("panel", cx).child(NotificationsPanel::new("notifications_panel")),
+                )
         }
     }
 }

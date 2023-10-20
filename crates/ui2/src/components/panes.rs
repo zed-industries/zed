@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{hsla, AnyElement, Hsla, Length, Size};
+use gpui3::{hsla, AnyElement, ElementId, Hsla, Length, Size};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -14,21 +14,21 @@ pub enum SplitDirection {
 
 #[derive(Element)]
 pub struct Pane<S: 'static + Send + Sync> {
+    id: ElementId,
     state_type: PhantomData<S>,
-    scroll_state: ScrollState,
     size: Size<Length>,
     fill: Hsla,
     children: SmallVec<[AnyElement<S>; 2]>,
 }
 
 impl<S: 'static + Send + Sync> Pane<S> {
-    pub fn new(scroll_state: ScrollState, size: Size<Length>) -> Self {
+    pub fn new(id: impl Into<ElementId>, size: Size<Length>) -> Self {
         // Fill is only here for debugging purposes, remove before release
         let system_color = SystemColor::new();
 
         Self {
+            id: id.into(),
             state_type: PhantomData,
-            scroll_state,
             size,
             fill: hsla(0.3, 0.3, 0.3, 1.),
             // fill: system_color.transparent,
@@ -45,12 +45,13 @@ impl<S: 'static + Send + Sync> Pane<S> {
         let color = ThemeColor::new(cx);
 
         div()
+            .id(self.id.clone())
             .flex()
             .flex_initial()
             .bg(self.fill)
             .w(self.size.width)
             .h(self.size.height)
-            .overflow_y_scroll(self.scroll_state.clone())
+            .overflow_y_scroll()
             .children(self.children.drain(..))
     }
 }

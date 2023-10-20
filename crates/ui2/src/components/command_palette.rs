@@ -5,21 +5,21 @@ use crate::{example_editor_actions, OrderMethod, Palette};
 
 #[derive(Element)]
 pub struct CommandPalette<S: 'static + Send + Sync + Clone> {
+    id: ElementId,
     state_type: PhantomData<S>,
-    scroll_state: ScrollState,
 }
 
 impl<S: 'static + Send + Sync + Clone> CommandPalette<S> {
-    pub fn new(scroll_state: ScrollState) -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
+            id: id.into(),
             state_type: PhantomData,
-            scroll_state,
         }
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        div().child(
-            Palette::new(self.scroll_state.clone())
+        div().id(self.id.clone()).child(
+            Palette::new("palette")
                 .items(example_editor_actions())
                 .placeholder("Execute a command...")
                 .empty_string("No items found.")
@@ -49,11 +49,15 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, CommandPalette<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(CommandPalette::new(ScrollState::default()))
+                .child(CommandPalette::new("command-palette"))
         }
     }
 }

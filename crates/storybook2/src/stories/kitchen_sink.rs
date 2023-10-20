@@ -25,7 +25,8 @@ impl KitchenSinkStory {
             .collect::<Vec<_>>();
 
         Story::container(cx)
-            .overflow_y_scroll(ScrollState::default())
+            .id("kitchen-sink")
+            .overflow_y_scroll()
             .child(Story::title(cx, "Kitchen Sink"))
             .child(Story::label(cx, "Elements"))
             .child(div().flex().flex_col().children(element_stories))

@@ -5,25 +5,21 @@ use crate::{Icon, IconButton, Tab};
 
 #[derive(Element)]
 pub struct TabBar<S: 'static + Send + Sync + Clone> {
+    id: ElementId,
     state_type: PhantomData<S>,
-    scroll_state: ScrollState,
     /// Backwards, Forwards
     can_navigate: (bool, bool),
     tabs: Vec<Tab<S>>,
 }
 
 impl<S: 'static + Send + Sync + Clone> TabBar<S> {
-    pub fn new(tabs: Vec<Tab<S>>) -> Self {
+    pub fn new(id: impl Into<ElementId>, tabs: Vec<Tab<S>>) -> Self {
         Self {
+            id: id.into(),
             state_type: PhantomData,
-            scroll_state: ScrollState::default(),
             can_navigate: (false, false),
             tabs,
         }
-    }
-
-    pub fn bind_scroll_state(&mut self, scroll_state: ScrollState) {
-        self.scroll_state = scroll_state;
     }
 
     pub fn can_navigate(mut self, can_navigate: (bool, bool)) -> Self {
@@ -37,6 +33,7 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
         let (can_navigate_back, can_navigate_forward) = self.can_navigate;
 
         div()
+            .id(self.id.clone())
             .w_full()
             .flex()
             .bg(color.tab_bar)
@@ -67,8 +64,9 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
             .child(
                 div().w_0().flex_1().h_full().child(
                     div()
+                        .id("tabs")
                         .flex()
-                        .overflow_x_scroll(self.scroll_state.clone())
+                        .overflow_x_scroll()
                         .children(self.tabs.clone()),
                 ),
             )
@@ -92,6 +90,7 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
     }
 }
 
+use gpui3::ElementId;
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -121,37 +120,40 @@ mod stories {
             Story::container(cx)
                 .child(Story::title_for::<_, TabBar<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(TabBar::new(vec![
-                    Tab::new(1)
-                        .title("Cargo.toml".to_string())
-                        .current(false)
-                        .git_status(GitStatus::Modified),
-                    Tab::new(2)
-                        .title("Channels Panel".to_string())
-                        .current(false),
-                    Tab::new(3)
-                        .title("channels_panel.rs".to_string())
-                        .current(true)
-                        .git_status(GitStatus::Modified),
-                    Tab::new(4)
-                        .title("workspace.rs".to_string())
-                        .current(false)
-                        .git_status(GitStatus::Modified),
-                    Tab::new(5)
-                        .title("icon_button.rs".to_string())
-                        .current(false),
-                    Tab::new(6)
-                        .title("storybook.rs".to_string())
-                        .current(false)
-                        .git_status(GitStatus::Created),
-                    Tab::new(7).title("theme.rs".to_string()).current(false),
-                    Tab::new(8)
-                        .title("theme_registry.rs".to_string())
-                        .current(false),
-                    Tab::new(9)
-                        .title("styleable_helpers.rs".to_string())
-                        .current(false),
-                ]))
+                .child(TabBar::new(
+                    "tab-bar",
+                    vec![
+                        Tab::new(1)
+                            .title("Cargo.toml".to_string())
+                            .current(false)
+                            .git_status(GitStatus::Modified),
+                        Tab::new(2)
+                            .title("Channels Panel".to_string())
+                            .current(false),
+                        Tab::new(3)
+                            .title("channels_panel.rs".to_string())
+                            .current(true)
+                            .git_status(GitStatus::Modified),
+                        Tab::new(4)
+                            .title("workspace.rs".to_string())
+                            .current(false)
+                            .git_status(GitStatus::Modified),
+                        Tab::new(5)
+                            .title("icon_button.rs".to_string())
+                            .current(false),
+                        Tab::new(6)
+                            .title("storybook.rs".to_string())
+                            .current(false)
+                            .git_status(GitStatus::Created),
+                        Tab::new(7).title("theme.rs".to_string()).current(false),
+                        Tab::new(8)
+                            .title("theme_registry.rs".to_string())
+                            .current(false),
+                        Tab::new(9)
+                            .title("styleable_helpers.rs".to_string())
+                            .current(false),
+                    ],
+                ))
         }
     }
 }

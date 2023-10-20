@@ -3,7 +3,7 @@ use std::sync::Arc;
 use chrono::DateTime;
 use gpui3::{px, relative, rems, view, Context, Size, View};
 
-use crate::{prelude::*, NotificationToast, NotificationsPanel};
+use crate::{prelude::*, NotificationsPanel};
 use crate::{
     static_livestream, theme, user_settings_mut, v_stack, AssistantPanel, Button, ChatMessage,
     ChatPanel, CollabPanel, EditorPane, FakeSettings, Label, LanguageSelector, Pane, PaneGroup,
@@ -40,10 +40,6 @@ pub struct Workspace {
     show_terminal: bool,
     show_debug: bool,
     show_language_selector: bool,
-    left_panel_scroll_state: ScrollState,
-    right_panel_scroll_state: ScrollState,
-    tab_bar_scroll_state: ScrollState,
-    bottom_panel_scroll_state: ScrollState,
     debug: Gpui2UiDebug,
 }
 
@@ -60,10 +56,6 @@ impl Workspace {
             show_language_selector: false,
             show_debug: false,
             show_notifications_panel: true,
-            left_panel_scroll_state: ScrollState::default(),
-            right_panel_scroll_state: ScrollState::default(),
-            tab_bar_scroll_state: ScrollState::default(),
-            bottom_panel_scroll_state: ScrollState::default(),
             debug: Gpui2UiDebug::default(),
         }
     }
@@ -201,7 +193,7 @@ impl Workspace {
 
         let root_group = PaneGroup::new_panes(
             vec![Pane::new(
-                ScrollState::default(),
+                "pane-0",
                 Size {
                     width: relative(1.).into(),
                     height: relative(1.).into(),
@@ -235,16 +227,16 @@ impl Workspace {
                     .border_color(theme.lowest.base.default.border)
                     .children(
                         Some(
-                            Panel::new(cx)
+                            Panel::new("project-panel-outer", cx)
                                 .side(PanelSide::Left)
-                                .child(ProjectPanel::new(ScrollState::default())),
+                                .child(ProjectPanel::new("project-panel-inner")),
                         )
                         .filter(|_| self.is_project_panel_open()),
                     )
                     .children(
                         Some(
-                            Panel::new(cx)
-                                .child(CollabPanel::new(ScrollState::default()))
+                            Panel::new("collab-panel-outer", cx)
+                                .child(CollabPanel::new("collab-panel-inner"))
                                 .side(PanelSide::Left),
                         )
                         .filter(|_| self.is_collab_panel_open()),
@@ -259,7 +251,7 @@ impl Workspace {
                             .child(div().flex().flex_1().child(root_group))
                             .children(
                                 Some(
-                                    Panel::new(cx)
+                                    Panel::new("terminal-panel", cx)
                                         .child(Terminal::new())
                                         .allowed_sides(PanelAllowedSides::BottomOnly)
                                         .side(PanelSide::Bottom),
@@ -268,8 +260,10 @@ impl Workspace {
                             ),
                     )
                     .children(
-                        Some(Panel::new(cx).side(PanelSide::Right).child(
-                            ChatPanel::new(ScrollState::default()).messages(vec![
+                        Some(
+                            Panel::new("chat-panel-outer", cx)
+                                .side(PanelSide::Right)
+                                .child(ChatPanel::new("chat-panel-inner").messages(vec![
                                     ChatMessage::new(
                                         "osiewicz".to_string(),
                                         "is this thing on?".to_string(),
@@ -284,21 +278,24 @@ impl Workspace {
                                             .unwrap()
                                             .naive_local(),
                                     ),
-                                ]),
-                        ))
+                                ])),
+                        )
                         .filter(|_| self.is_chat_panel_open()),
                     )
                     .children(
                         Some(
-                            Panel::new(cx)
+                            Panel::new("notifications-panel-outer", cx)
                                 .side(PanelSide::Right)
-                                .child(NotificationsPanel::new()),
+                                .child(NotificationsPanel::new("notifications-panel-inner")),
                         )
                         .filter(|_| self.is_notifications_panel_open()),
                     )
                     .children(
-                        Some(Panel::new(cx).child(AssistantPanel::new()))
-                            .filter(|_| self.is_assistant_panel_open()),
+                        Some(
+                            Panel::new("assistant-panel-outer", cx)
+                                .child(AssistantPanel::new("assistant-panel-inner")),
+                        )
+                        .filter(|_| self.is_assistant_panel_open()),
                     ),
             )
             .child(StatusBar::new())
@@ -312,7 +309,7 @@ impl Workspace {
                         .top(px(50.))
                         .left(px(640.))
                         .z_index(8)
-                        .child(LanguageSelector::new()),
+                        .child(LanguageSelector::new("language-selector")),
                 )
                 .filter(|_| self.is_language_selector_open()),
             )

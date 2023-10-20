@@ -42,8 +42,8 @@ use std::collections::HashSet;
 
 #[derive(Element)]
 pub struct Panel<S: 'static + Send + Sync> {
+    id: ElementId,
     state_type: PhantomData<S>,
-    scroll_state: ScrollState,
     current_side: PanelSide,
     /// Defaults to PanelAllowedSides::LeftAndRight
     allowed_sides: PanelAllowedSides,
@@ -53,12 +53,12 @@ pub struct Panel<S: 'static + Send + Sync> {
 }
 
 impl<S: 'static + Send + Sync> Panel<S> {
-    pub fn new(cx: &mut WindowContext) -> Self {
+    pub fn new(id: impl Into<ElementId>, cx: &mut WindowContext) -> Self {
         let settings = user_settings(cx);
 
         Self {
+            id: id.into(),
             state_type: PhantomData,
-            scroll_state: ScrollState::default(),
             current_side: PanelSide::default(),
             allowed_sides: PanelAllowedSides::default(),
             initial_width: *settings.default_panel_size,
@@ -102,6 +102,7 @@ impl<S: 'static + Send + Sync> Panel<S> {
         let current_size = self.width.unwrap_or(self.initial_width);
 
         v_stack()
+            .id(self.id.clone())
             .flex_initial()
             .when(
                 self.current_side == PanelSide::Left || self.current_side == PanelSide::Right,
@@ -156,9 +157,10 @@ mod stories {
                 .child(Story::title_for::<_, Panel<S>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
-                    Panel::new(cx).child(
+                    Panel::new("panel", cx).child(
                         div()
-                            .overflow_y_scroll(ScrollState::default())
+                            .id("panel-contents")
+                            .overflow_y_scroll()
                             .children((0..100).map(|ix| Label::new(format!("Item {}", ix + 1)))),
                     ),
                 )

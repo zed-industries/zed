@@ -5,21 +5,21 @@ use crate::{OrderMethod, Palette, PaletteItem};
 
 #[derive(Element)]
 pub struct LanguageSelector<S: 'static + Send + Sync + Clone> {
+    id: ElementId,
     state_type: PhantomData<S>,
-    scroll_state: ScrollState,
 }
 
 impl<S: 'static + Send + Sync + Clone> LanguageSelector<S> {
-    pub fn new() -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
+            id: id.into(),
             state_type: PhantomData,
-            scroll_state: ScrollState::default(),
         }
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        div().child(
-            Palette::new(self.scroll_state.clone())
+        div().id(self.id.clone()).child(
+            Palette::new("palette")
                 .items(vec![
                     PaletteItem::new("C"),
                     PaletteItem::new("C++"),
@@ -60,11 +60,15 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, LanguageSelector<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(LanguageSelector::new())
+                .child(LanguageSelector::new("language-selector"))
         }
     }
 }

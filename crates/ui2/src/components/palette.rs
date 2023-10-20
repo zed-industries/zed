@@ -5,8 +5,8 @@ use crate::{h_stack, v_stack, Keybinding, Label, LabelColor};
 
 #[derive(Element)]
 pub struct Palette<S: 'static + Send + Sync + Clone> {
+    id: ElementId,
     state_type: PhantomData<S>,
-    scroll_state: ScrollState,
     input_placeholder: SharedString,
     empty_string: SharedString,
     items: Vec<PaletteItem<S>>,
@@ -14,10 +14,10 @@ pub struct Palette<S: 'static + Send + Sync + Clone> {
 }
 
 impl<S: 'static + Send + Sync + Clone> Palette<S> {
-    pub fn new(scroll_state: ScrollState) -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
+            id: id.into(),
             state_type: PhantomData,
-            scroll_state,
             input_placeholder: "Find something...".into(),
             empty_string: "No items found.".into(),
             items: vec![],
@@ -50,6 +50,7 @@ impl<S: 'static + Send + Sync + Clone> Palette<S> {
         let color = ThemeColor::new(cx);
 
         v_stack()
+            .id(self.id.clone())
             .w_96()
             .rounded_lg()
             .bg(color.elevated_surface)
@@ -64,11 +65,12 @@ impl<S: 'static + Send + Sync + Clone> Palette<S> {
                     .child(div().h_px().w_full().bg(color.filled_element))
                     .child(
                         v_stack()
+                            .id("items")
                             .py_0p5()
                             .px_1()
                             .grow()
                             .max_h_96()
-                            .overflow_y_scroll(self.scroll_state.clone())
+                            .overflow_y_scroll()
                             .children(
                                 vec![if self.items.is_empty() {
                                     Some(
@@ -150,6 +152,7 @@ impl<S: 'static + Send + Sync + Clone> PaletteItem<S> {
     }
 }
 
+use gpui3::ElementId;
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -179,10 +182,10 @@ mod stories {
             Story::container(cx)
                 .child(Story::title_for::<_, Palette<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(Palette::new(ScrollState::default()))
+                .child(Palette::new("palette-1"))
                 .child(Story::label(cx, "With Items"))
                 .child(
-                    Palette::new(ScrollState::default())
+                    Palette::new("palette-2")
                         .placeholder("Execute a command...")
                         .items(vec![
                             PaletteItem::new("theme selector: toggle").keybinding(
