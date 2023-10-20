@@ -6,7 +6,7 @@ use futures::{
     FutureExt, StreamExt,
 };
 use gpui::AppContext;
-use language::{BundledFormatter, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use serde_json::{json, Value};
@@ -128,11 +128,8 @@ impl LspAdapter for TailwindLspAdapter {
         )
     }
 
-    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        vec![BundledFormatter::Prettier {
-            parser_name: None,
-            plugin_names: vec!["prettier-plugin-tailwindcss"],
-        }]
+    fn prettier_plugins(&self) -> &[&'static str] {
+        &["prettier-plugin-tailwindcss"]
     }
 }
 
