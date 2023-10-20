@@ -3,8 +3,7 @@ use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::AppContext;
 use language::{
-    language_settings::all_language_settings, BundledFormatter, LanguageServerName, LspAdapter,
-    LspAdapterDelegate,
+    language_settings::all_language_settings, LanguageServerName, LspAdapter, LspAdapterDelegate,
 };
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
@@ -108,10 +107,6 @@ impl LspAdapter for YamlLspAdapter {
             }
         }))
         .boxed()
-    }
-
-    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        vec![BundledFormatter::prettier("yaml")]
     }
 }
 

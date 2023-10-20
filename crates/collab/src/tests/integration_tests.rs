@@ -15,8 +15,8 @@ use gpui::{executor::Deterministic, test::EmptyView, AppContext, ModelHandle, Te
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, Formatter, InlayHintSettings},
-    tree_sitter_rust, Anchor, BundledFormatter, Diagnostic, DiagnosticEntry, FakeLspAdapter,
-    Language, LanguageConfig, LineEnding, OffsetRangeExt, Point, Rope,
+    tree_sitter_rust, Anchor, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
+    LanguageConfig, LineEnding, OffsetRangeExt, Point, Rope,
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
@@ -4530,6 +4530,7 @@ async fn test_prettier_formatting_buffer(
         LanguageConfig {
             name: "Rust".into(),
             path_suffixes: vec!["rs".to_string()],
+            prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -4537,10 +4538,7 @@ async fn test_prettier_formatting_buffer(
     let test_plugin = "test_plugin";
     let mut fake_language_servers = language
         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-            enabled_formatters: vec![BundledFormatter::Prettier {
-                parser_name: Some("test_parser"),
-                plugin_names: vec![test_plugin],
-            }],
+            prettier_plugins: vec![test_plugin],
             ..Default::default()
         }))
         .await;

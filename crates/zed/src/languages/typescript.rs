@@ -4,7 +4,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt};
 use gpui::AppContext;
-use language::{BundledFormatter, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
 use serde_json::{json, Value};
@@ -161,10 +161,6 @@ impl LspAdapter for TypeScriptLspAdapter {
             "provideFormatter": true
         }))
     }
-
-    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        vec![BundledFormatter::prettier("typescript")]
-    }
 }
 
 async fn get_cached_ts_server_binary(
@@ -312,10 +308,6 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn initialization_options(&self) -> Option<serde_json::Value> {
         None
-    }
-
-    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        vec![BundledFormatter::prettier("babel")]
     }
 }
 
