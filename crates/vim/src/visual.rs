@@ -180,8 +180,6 @@ pub fn visual_block_motion(
             head_x = map.x_for_point(head, &text_layout_details);
         }
 
-        dbg!(head, head_x, tail, tail_x);
-
         let positions = if is_reversed {
             head_x..tail_x
         } else {

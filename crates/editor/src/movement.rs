@@ -147,9 +147,7 @@ pub fn down_by_rows(
         goal_x = map.x_for_point(point, text_layout_details)
     }
 
-    dbg!(point);
     let mut clipped_point = map.clip_point(point, Bias::Right);
-    dbg!(clipped_point);
     if clipped_point.row() > point.row() {
         clipped_point = map.clip_point(point, Bias::Left);
     }
