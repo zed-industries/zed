@@ -366,13 +366,26 @@ impl ChatPanel {
         };
 
         let is_pending = message.is_pending();
-        let text = self
-            .markdown_data
-            .entry(message.id)
-            .or_insert_with(|| rich_text::render_markdown(message.body, &self.languages, None));
+        let theme = theme::current(cx);
+        let text = self.markdown_data.entry(message.id).or_insert_with(|| {
+            let mut markdown =
+                rich_text::render_markdown(message.body.clone(), &self.languages, None);
+            let self_client_id = self.client.id();
+            for (mention_range, user_id) in message.mentions {
+                let is_current_user = self_client_id == user_id;
+                markdown
+                    .add_mention(
+                        mention_range,
+                        is_current_user,
+                        theme.chat_panel.mention_highlight.clone(),
+                    )
+                    .log_err();
+            }
+            markdown
+        });
 
         let now = OffsetDateTime::now_utc();
-        let theme = theme::current(cx);
+
         let style = if is_pending {
             &theme.chat_panel.pending_message
         } else if is_continuation {
@@ -400,6 +413,7 @@ impl ChatPanel {
                             theme.editor.syntax.clone(),
                             style.body.clone(),
                             theme.editor.document_highlight_read_background,
+                            theme.chat_panel.self_mention_background,
                             cx,
                         )
                         .flex(1., true),
@@ -456,6 +470,7 @@ impl ChatPanel {
                                     theme.editor.syntax.clone(),
                                     style.body.clone(),
                                     theme.editor.document_highlight_read_background,
+                                    theme.chat_panel.self_mention_background,
                                     cx,
                                 )
                                 .flex(1., true),

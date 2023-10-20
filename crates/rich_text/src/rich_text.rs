@@ -1,5 +1,6 @@
 use std::{ops::Range, sync::Arc};
 
+use anyhow::bail;
 use futures::FutureExt;
 use gpui::{
     color::Color,
@@ -25,9 +26,15 @@ pub struct RichText {
     pub regions: Vec<RenderedRegion>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum BackgroundKind {
+    Code,
+    Mention,
+}
+
 #[derive(Debug, Clone)]
 pub struct RenderedRegion {
-    code: bool,
+    background_kind: Option<BackgroundKind>,
     link_url: Option<String>,
 }
 
@@ -37,6 +44,7 @@ impl RichText {
         syntax: Arc<SyntaxTheme>,
         style: TextStyle,
         code_span_background_color: Color,
+        self_mention_span_background_color: Color,
         cx: &mut ViewContext<V>,
     ) -> AnyElement<V> {
         let mut region_id = 0;
@@ -73,10 +81,17 @@ impl RichText {
                             }),
                     );
                 }
-                if region.code {
+                if region.background_kind == Some(BackgroundKind::Code) {
                     cx.scene().push_quad(gpui::Quad {
                         bounds,
                         background: Some(code_span_background_color),
+                        border: Default::default(),
+                        corner_radii: (2.0).into(),
+                    });
+                } else if region.background_kind == Some(BackgroundKind::Mention) {
+                    cx.scene().push_quad(gpui::Quad {
+                        bounds,
+                        background: Some(self_mention_span_background_color),
                         border: Default::default(),
                         corner_radii: (2.0).into(),
                     });
@@ -84,6 +99,30 @@ impl RichText {
             })
             .with_soft_wrap(true)
             .into_any()
+    }
+    pub fn add_mention(
+        &mut self,
+        range: Range<usize>,
+        is_current_user: bool,
+        mention_style: HighlightStyle,
+    ) -> anyhow::Result<()> {
+        if range.end > self.text.len() {
+            bail!(
+                "Mention in range {range:?} is outside of bounds for a message of length {}",
+                self.text.len()
+            );
+        }
+
+        if is_current_user {
+            self.region_ranges.push(range.clone());
+            self.regions.push(RenderedRegion {
+                background_kind: Some(BackgroundKind::Mention),
+                link_url: None,
+            });
+        }
+        self.highlights
+            .push((range, Highlight::Highlight(mention_style)));
+        Ok(())
     }
 }
 
@@ -101,7 +140,11 @@ pub fn render_markdown_mut(
     let mut current_language = None;
     let mut list_stack = Vec::new();
 
-    for event in Parser::new_ext(&block, Options::all()) {
+    // Smart Punctuation is disabled as that messes with offsets within the message.
+    let mut options = Options::all();
+    options.remove(Options::ENABLE_SMART_PUNCTUATION);
+
+    for event in Parser::new_ext(&block, options) {
         let prev_len = data.text.len();
         match event {
             Event::Text(t) => {
@@ -121,7 +164,7 @@ pub fn render_markdown_mut(
                         data.region_ranges.push(prev_len..data.text.len());
                         data.regions.push(RenderedRegion {
                             link_url: Some(link_url),
-                            code: false,
+                            background_kind: None,
                         });
                         style.underline = Some(Underline {
                             thickness: 1.0.into(),
@@ -162,7 +205,7 @@ pub fn render_markdown_mut(
                     ));
                 }
                 data.regions.push(RenderedRegion {
-                    code: true,
+                    background_kind: Some(BackgroundKind::Code),
                     link_url: link_url.clone(),
                 });
             }

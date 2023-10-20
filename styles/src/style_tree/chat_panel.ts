@@ -1,11 +1,8 @@
-import {
-    background,
-    border,
-    text,
-} from "./components"
+import { background, border, text } from "./components"
 import { icon_button } from "../component/icon_button"
 import { useTheme } from "../theme"
 import { interactive } from "../element"
+import { Color } from "ayu/dist/color"
 
 export default function chat_panel(): any {
     const theme = useTheme()
@@ -41,15 +38,13 @@ export default function chat_panel(): any {
                 left: 2,
                 top: 2,
                 bottom: 2,
-            }
+            },
         },
-        list: {
-
-        },
+        list: {},
         channel_select: {
             header: {
                 ...channel_name,
-                border: border(layer, { bottom: true })
+                border: border(layer, { bottom: true }),
             },
             item: channel_name,
             active_item: {
@@ -62,8 +57,8 @@ export default function chat_panel(): any {
             },
             menu: {
                 background: background(layer, "on"),
-                border: border(layer, { bottom: true })
-            }
+                border: border(layer, { bottom: true }),
+            },
         },
         icon_button: icon_button({
             variant: "ghost",
@@ -91,7 +86,8 @@ export default function chat_panel(): any {
                 top: 4,
             },
         },
-        mention_highlight: { weight: 'bold' },
+        mention_highlight: { weight: "bold" },
+        self_mention_background: background(layer, "active"),
         message: {
             ...interactive({
                 base: {
@@ -101,7 +97,7 @@ export default function chat_panel(): any {
                         bottom: 4,
                         left: SPACING / 2,
                         right: SPACING / 3,
-                    }
+                    },
                 },
                 state: {
                     hovered: {
@@ -135,7 +131,7 @@ export default function chat_panel(): any {
                         bottom: 4,
                         left: SPACING / 2,
                         right: SPACING / 3,
-                    }
+                    },
                 },
                 state: {
                     hovered: {
@@ -160,7 +156,7 @@ export default function chat_panel(): any {
                         bottom: 4,
                         left: SPACING / 2,
                         right: SPACING / 3,
-                    }
+                    },
                 },
                 state: {
                     hovered: {
@@ -171,6 +167,6 @@ export default function chat_panel(): any {
         },
         sign_in_prompt: {
             default: text(layer, "sans", "base"),
-        }
+        },
     }
 }

@@ -641,6 +641,7 @@ pub struct ChatPanel {
     pub avatar_container: ContainerStyle,
     pub message: ChatMessage,
     pub mention_highlight: HighlightStyle,
+    pub self_mention_background: Color,
     pub continuation_message: ChatMessage,
     pub last_message_bottom_spacing: f32,
     pub pending_message: ChatMessage,
