@@ -1,4 +1,8 @@
-use crate::{Element, FocusEvent, FocusHandle, StyleRefinement, ViewContext};
+use crate::{
+    Bounds, DispatchPhase, Element, FocusEvent, FocusHandle, MouseDownEvent, Pixels, Style,
+    StyleRefinement, ViewContext, WindowContext,
+};
+use refineable::Refineable;
 use smallvec::SmallVec;
 use std::sync::Arc;
 
@@ -133,5 +137,97 @@ pub trait Focusable: Element {
                 }
             }));
         self
+    }
+}
+
+pub trait ElementFocus<V: 'static + Send + Sync>: 'static + Send + Sync {
+    fn as_focusable(&self) -> Option<&FocusEnabled<V>>;
+
+    fn initialize<R>(
+        &self,
+        cx: &mut ViewContext<V>,
+        f: impl FnOnce(&mut ViewContext<V>) -> R,
+    ) -> R {
+        if let Some(focusable) = self.as_focusable() {
+            for listener in focusable.focus_listeners.iter().cloned() {
+                cx.on_focus_changed(move |view, event, cx| listener(view, event, cx));
+            }
+            cx.with_focus(focusable.focus_handle.clone(), |cx| f(cx))
+        } else {
+            f(cx)
+        }
+    }
+
+    fn refine_style(&self, style: &mut Style, cx: &WindowContext) {
+        if let Some(focusable) = self.as_focusable() {
+            if focusable.focus_handle.contains_focused(cx) {
+                style.refine(&focusable.focus_in_style);
+            }
+
+            if focusable.focus_handle.within_focused(cx) {
+                style.refine(&focusable.in_focus_style);
+            }
+
+            if focusable.focus_handle.is_focused(cx) {
+                style.refine(&focusable.focus_style);
+            }
+        }
+    }
+
+    fn paint(&self, bounds: Bounds<Pixels>, cx: &mut WindowContext) {
+        if let Some(focusable) = self.as_focusable() {
+            let focus_handle = focusable.focus_handle.clone();
+            cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                    if !cx.default_prevented() {
+                        cx.focus(&focus_handle);
+                        cx.prevent_default();
+                    }
+                }
+            })
+        }
+    }
+}
+
+pub struct FocusEnabled<V: 'static + Send + Sync> {
+    pub focus_handle: FocusHandle,
+    pub focus_listeners: FocusListeners<V>,
+    pub focus_style: StyleRefinement,
+    pub focus_in_style: StyleRefinement,
+    pub in_focus_style: StyleRefinement,
+}
+
+impl<V> ElementFocus<V> for FocusEnabled<V>
+where
+    V: 'static + Send + Sync,
+{
+    fn as_focusable(&self) -> Option<&FocusEnabled<V>> {
+        Some(self)
+    }
+}
+
+impl<V> From<FocusHandle> for FocusEnabled<V>
+where
+    V: 'static + Send + Sync,
+{
+    fn from(value: FocusHandle) -> Self {
+        Self {
+            focus_handle: value,
+            focus_listeners: FocusListeners::default(),
+            focus_style: StyleRefinement::default(),
+            focus_in_style: StyleRefinement::default(),
+            in_focus_style: StyleRefinement::default(),
+        }
+    }
+}
+
+pub struct FocusDisabled;
+
+impl<V> ElementFocus<V> for FocusDisabled
+where
+    V: 'static + Send + Sync,
+{
+    fn as_focusable(&self) -> Option<&FocusEnabled<V>> {
+        None
     }
 }

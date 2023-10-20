@@ -1,8 +1,13 @@
 use crate::{
-    point, Action, Bounds, DispatchContext, DispatchPhase, Element, FocusHandle, GroupStyle,
-    Keystroke, Modifiers, Pixels, Point, SharedString, StatefulInteractivity, StatelessInteraction,
+    point, Action, AppContext, BorrowWindow, Bounds, DispatchContext, DispatchPhase, Element,
+    ElementId, FocusHandle, KeyMatch, Keystroke, Modifiers, Pixels, Point, SharedString, Style,
     StyleRefinement, ViewContext,
 };
+use collections::HashMap;
+use derive_more::{Deref, DerefMut};
+use parking_lot::Mutex;
+use refineable::Refineable;
+use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     ops::Deref,
@@ -11,6 +16,29 @@ use std::{
 
 pub trait StatelessInteractive: Element {
     fn stateless_interactivity(&mut self) -> &mut StatelessInteraction<Self::ViewState>;
+
+    fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.stateless_interactivity().hover_style = f(StyleRefinement::default());
+        self
+    }
+
+    fn group_hover(
+        mut self,
+        group_name: impl Into<SharedString>,
+        f: impl FnOnce(StyleRefinement) -> StyleRefinement,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.stateless_interactivity().group_hover_style = Some(GroupStyle {
+            group: group_name.into(),
+            style: f(StyleRefinement::default()),
+        });
+        self
+    }
 
     fn on_mouse_down(
         mut self,
@@ -148,29 +176,6 @@ pub trait StatelessInteractive: Element {
         self
     }
 
-    fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.stateless_interactivity().hover_style = f(StyleRefinement::default());
-        self
-    }
-
-    fn group_hover(
-        mut self,
-        group_name: impl Into<SharedString>,
-        f: impl FnOnce(StyleRefinement) -> StyleRefinement,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        self.stateless_interactivity().group_hover_style = Some(GroupStyle {
-            group: group_name.into(),
-            style: f(StyleRefinement::default()),
-        });
-        self
-    }
-
     fn on_key_down(
         mut self,
         listener: impl Fn(
@@ -196,27 +201,6 @@ pub trait StatelessInteractive: Element {
         self
     }
 
-    fn on_key_up(
-        mut self,
-        listener: impl Fn(&mut Self::ViewState, &KeyUpEvent, DispatchPhase, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        self.stateless_interactivity().key_listeners.push((
-            TypeId::of::<KeyUpEvent>(),
-            Arc::new(move |view, event, _, phase, cx| {
-                let event = event.downcast_ref().unwrap();
-                listener(view, event, phase, cx);
-                None
-            }),
-        ));
-        self
-    }
-
     fn on_action<A: 'static>(
         mut self,
         listener: impl Fn(&mut Self::ViewState, &A, DispatchPhase, &mut ViewContext<Self::ViewState>)
@@ -229,6 +213,27 @@ pub trait StatelessInteractive: Element {
     {
         self.stateless_interactivity().key_listeners.push((
             TypeId::of::<A>(),
+            Arc::new(move |view, event, _, phase, cx| {
+                let event = event.downcast_ref().unwrap();
+                listener(view, event, phase, cx);
+                None
+            }),
+        ));
+        self
+    }
+
+    fn on_key_up(
+        mut self,
+        listener: impl Fn(&mut Self::ViewState, &KeyUpEvent, DispatchPhase, &mut ViewContext<Self::ViewState>)
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.stateless_interactivity().key_listeners.push((
+            TypeId::of::<KeyUpEvent>(),
             Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
                 listener(view, event, phase, cx);
@@ -278,6 +283,334 @@ pub trait StatefulInteractive: StatelessInteractive {
         self.stateful_interactivity()
             .mouse_click_listeners
             .push(Arc::new(move |view, event, cx| handler(view, event, cx)));
+        self
+    }
+}
+
+pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
+    fn as_stateless(&self) -> &StatelessInteraction<V>;
+    fn as_stateless_mut(&mut self) -> &mut StatelessInteraction<V>;
+    fn as_stateful(&self) -> Option<&StatefulInteractivity<V>>;
+    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>>;
+
+    fn initialize<R>(
+        &mut self,
+        cx: &mut ViewContext<V>,
+        f: impl FnOnce(&mut ViewContext<V>) -> R,
+    ) -> R {
+        if let Some(stateful) = self.as_stateful_mut() {
+            cx.with_element_id(stateful.id.clone(), |global_id, cx| {
+                stateful.key_listeners.push((
+                    TypeId::of::<KeyDownEvent>(),
+                    Arc::new(move |_, key_down, context, phase, cx| {
+                        if phase == DispatchPhase::Bubble {
+                            let key_down = key_down.downcast_ref::<KeyDownEvent>().unwrap();
+                            if let KeyMatch::Some(action) =
+                                cx.match_keystroke(&global_id, &key_down.keystroke, context)
+                            {
+                                return Some(action);
+                            }
+                        }
+
+                        None
+                    }),
+                ));
+                let result = stateful.stateless.initialize(cx, f);
+                stateful.key_listeners.pop();
+                result
+            })
+        } else {
+            cx.with_key_listeners(&self.as_stateless().key_listeners, f)
+        }
+    }
+
+    fn refine_style(
+        &self,
+        style: &mut Style,
+        bounds: Bounds<Pixels>,
+        element_state: &InteractiveElementState,
+        cx: &mut ViewContext<V>,
+    ) {
+        let mouse_position = cx.mouse_position();
+        let stateless = self.as_stateless();
+        if let Some(group_hover) = stateless.group_hover_style.as_ref() {
+            if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
+                if group_bounds.contains_point(&mouse_position) {
+                    style.refine(&group_hover.style);
+                }
+            }
+        }
+        if bounds.contains_point(&mouse_position) {
+            style.refine(&stateless.hover_style);
+        }
+
+        if let Some(stateful) = self.as_stateful() {
+            let active_state = element_state.active_state.lock();
+            if active_state.group {
+                if let Some(group_style) = stateful.group_active_style.as_ref() {
+                    style.refine(&group_style.style);
+                }
+            }
+            if active_state.element {
+                style.refine(&stateful.active_style);
+            }
+        }
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        element_state: &InteractiveElementState,
+        cx: &mut ViewContext<V>,
+    ) {
+        let stateless = self.as_stateless();
+        for listener in stateless.mouse_down_listeners.iter().cloned() {
+            cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in stateless.mouse_up_listeners.iter().cloned() {
+            cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in stateless.mouse_move_listeners.iter().cloned() {
+            cx.on_mouse_event(move |state, event: &MouseMoveEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in stateless.scroll_wheel_listeners.iter().cloned() {
+            cx.on_mouse_event(move |state, event: &ScrollWheelEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        let hover_group_bounds = stateless
+            .group_hover_style
+            .as_ref()
+            .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
+
+        if let Some(group_bounds) = hover_group_bounds {
+            paint_hover_listener(group_bounds, cx);
+        }
+
+        if stateless.hover_style.is_some() {
+            paint_hover_listener(bounds, cx);
+        }
+
+        if let Some(stateful) = self.as_stateful() {
+            let click_listeners = stateful.mouse_click_listeners.clone();
+
+            let pending_click = element_state.pending_click.clone();
+            let mouse_down = pending_click.lock().clone();
+            if let Some(mouse_down) = mouse_down {
+                cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                        let mouse_click = MouseClickEvent {
+                            down: mouse_down.clone(),
+                            up: event.clone(),
+                        };
+                        for listener in &click_listeners {
+                            listener(state, &mouse_click, cx);
+                        }
+                    }
+
+                    *pending_click.lock() = None;
+                });
+            } else {
+                cx.on_mouse_event(move |_state, event: &MouseDownEvent, phase, _cx| {
+                    if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                        *pending_click.lock() = Some(event.clone());
+                    }
+                });
+            }
+
+            let active_state = element_state.active_state.clone();
+            if active_state.lock().is_none() {
+                let active_group_bounds = stateful
+                    .group_active_style
+                    .as_ref()
+                    .and_then(|group_active| GroupBounds::get(&group_active.group, cx));
+                cx.on_mouse_event(move |_view, down: &MouseDownEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        let group = active_group_bounds
+                            .map_or(false, |bounds| bounds.contains_point(&down.position));
+                        let element = bounds.contains_point(&down.position);
+                        if group || element {
+                            *active_state.lock() = ActiveState { group, element };
+                            cx.notify();
+                        }
+                    }
+                });
+            } else {
+                cx.on_mouse_event(move |_, _: &MouseUpEvent, phase, cx| {
+                    if phase == DispatchPhase::Capture {
+                        *active_state.lock() = ActiveState::default();
+                        cx.notify();
+                    }
+                });
+            }
+        }
+    }
+}
+
+fn paint_hover_listener<V>(bounds: Bounds<Pixels>, cx: &mut ViewContext<V>)
+where
+    V: 'static + Send + Sync,
+{
+    let hovered = bounds.contains_point(&cx.mouse_position());
+    cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
+        if phase == DispatchPhase::Capture {
+            if bounds.contains_point(&event.position) != hovered {
+                cx.notify();
+            }
+        }
+    });
+}
+
+#[derive(Deref, DerefMut)]
+pub struct StatefulInteractivity<V: 'static + Send + Sync> {
+    pub id: ElementId,
+    #[deref]
+    #[deref_mut]
+    stateless: StatelessInteraction<V>,
+    pub mouse_click_listeners: SmallVec<[MouseClickListener<V>; 2]>,
+    pub active_style: StyleRefinement,
+    pub group_active_style: Option<GroupStyle>,
+}
+
+impl<V> ElementInteraction<V> for StatefulInteractivity<V>
+where
+    V: 'static + Send + Sync,
+{
+    fn as_stateful(&self) -> Option<&StatefulInteractivity<V>> {
+        Some(self)
+    }
+
+    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>> {
+        Some(self)
+    }
+
+    fn as_stateless(&self) -> &StatelessInteraction<V> {
+        &self.stateless
+    }
+
+    fn as_stateless_mut(&mut self) -> &mut StatelessInteraction<V> {
+        &mut self.stateless
+    }
+}
+
+impl<V> From<ElementId> for StatefulInteractivity<V>
+where
+    V: 'static + Send + Sync,
+{
+    fn from(id: ElementId) -> Self {
+        Self {
+            id,
+            stateless: StatelessInteraction::default(),
+            mouse_click_listeners: SmallVec::new(),
+            active_style: StyleRefinement::default(),
+            group_active_style: None,
+        }
+    }
+}
+
+pub struct StatelessInteraction<V> {
+    pub mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
+    pub mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
+    pub mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
+    pub scroll_wheel_listeners: SmallVec<[ScrollWheelListener<V>; 2]>,
+    pub key_listeners: SmallVec<[(TypeId, KeyListener<V>); 32]>,
+    pub hover_style: StyleRefinement,
+    pub group_hover_style: Option<GroupStyle>,
+}
+
+pub struct GroupStyle {
+    pub group: SharedString,
+    pub style: StyleRefinement,
+}
+
+#[derive(Default)]
+pub struct GroupBounds(HashMap<SharedString, SmallVec<[Bounds<Pixels>; 1]>>);
+
+impl GroupBounds {
+    pub fn get(name: &SharedString, cx: &mut AppContext) -> Option<Bounds<Pixels>> {
+        cx.default_global::<Self>()
+            .0
+            .get(name)
+            .and_then(|bounds_stack| bounds_stack.last())
+            .cloned()
+    }
+
+    pub fn push(name: SharedString, bounds: Bounds<Pixels>, cx: &mut AppContext) {
+        cx.default_global::<Self>()
+            .0
+            .entry(name)
+            .or_default()
+            .push(bounds);
+    }
+
+    pub fn pop(name: &SharedString, cx: &mut AppContext) {
+        cx.default_global::<GroupBounds>()
+            .0
+            .get_mut(name)
+            .unwrap()
+            .pop();
+    }
+}
+
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
+struct ActiveState {
+    pub group: bool,
+    pub element: bool,
+}
+
+impl ActiveState {
+    pub fn is_none(&self) -> bool {
+        !self.group && !self.element
+    }
+}
+
+#[derive(Default)]
+pub struct InteractiveElementState {
+    active_state: Arc<Mutex<ActiveState>>,
+    pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
+}
+
+impl<V> Default for StatelessInteraction<V> {
+    fn default() -> Self {
+        Self {
+            mouse_down_listeners: SmallVec::new(),
+            mouse_up_listeners: SmallVec::new(),
+            mouse_move_listeners: SmallVec::new(),
+            scroll_wheel_listeners: SmallVec::new(),
+            key_listeners: SmallVec::new(),
+            hover_style: StyleRefinement::default(),
+            group_hover_style: None,
+        }
+    }
+}
+
+impl<V> ElementInteraction<V> for StatelessInteraction<V>
+where
+    V: 'static + Send + Sync,
+{
+    fn as_stateful(&self) -> Option<&StatefulInteractivity<V>> {
+        None
+    }
+
+    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>> {
+        None
+    }
+
+    fn as_stateless(&self) -> &StatelessInteraction<V> {
+        self
+    }
+
+    fn as_stateless_mut(&mut self) -> &mut StatelessInteraction<V> {
         self
     }
 }
