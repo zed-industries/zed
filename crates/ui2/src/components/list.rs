@@ -520,13 +520,10 @@ impl<S: 'static + Send + Sync> ListDetailsEntry<S> {
                     .map(|meta| Label::new(meta).color(LabelColor::Muted)),
             )
             .child(
-                h_stack().gap_1().justify_end().children(
-                    self.actions
-                        .take()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|action| action),
-                ),
+                h_stack()
+                    .gap_1()
+                    .justify_end()
+                    .children(self.actions.take().unwrap_or_default()),
             )
     }
 }
