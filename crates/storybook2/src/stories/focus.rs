@@ -81,7 +81,6 @@ impl FocusStory {
         let child_2 = cx.focus_handle();
         view(cx.entity(|cx| ()), move |_, cx| {
             div()
-                .id("parent")
                 .focusable(&parent)
                 .context("parent")
                 .on_action(|_, action: &ActionA, phase, cx| {
@@ -106,12 +105,11 @@ impl FocusStory {
                 .focus_in(|style| style.bg(color_3))
                 .child(
                     div()
-                        .id("child-1")
+                        .focusable(&child_1)
                         .context("child-1")
                         .on_action(|_, action: &ActionB, phase, cx| {
                             println!("Action B dispatched on child 1 during {:?}", phase);
                         })
-                        .focusable(&child_1)
                         .w_full()
                         .h_6()
                         .bg(color_4)
@@ -131,12 +129,11 @@ impl FocusStory {
                 )
                 .child(
                     div()
-                        .id("child-2")
+                        .focusable(&child_2)
                         .context("child-2")
                         .on_action(|_, action: &ActionC, phase, cx| {
                             println!("Action C dispatched on child 2 during {:?}", phase);
                         })
-                        .focusable(&child_2)
                         .w_full()
                         .h_6()
                         .bg(color_4)

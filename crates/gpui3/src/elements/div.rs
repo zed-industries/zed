@@ -153,14 +153,34 @@ where
     }
 }
 
-impl<V, I> Div<V, I, FocusDisabled>
+impl<V> Div<V, StatefulInteraction<V>, FocusDisabled>
 where
-    I: ElementInteraction<V>,
     V: 'static + Send + Sync,
 {
-    pub fn focusable(self, handle: &FocusHandle) -> Div<V, I, FocusEnabled<V>> {
+    pub fn focusable(
+        self,
+        handle: &FocusHandle,
+    ) -> Div<V, StatefulInteraction<V>, FocusEnabled<V>> {
         Div {
             interaction: self.interaction,
+            focus: handle.clone().into(),
+            children: self.children,
+            group: self.group,
+            base_style: self.base_style,
+        }
+    }
+}
+
+impl<V> Div<V, StatelessInteraction<V>, FocusDisabled>
+where
+    V: 'static + Send + Sync,
+{
+    pub fn focusable(
+        self,
+        handle: &FocusHandle,
+    ) -> Div<V, StatefulInteraction<V>, FocusEnabled<V>> {
+        Div {
+            interaction: self.interaction.into_stateful(handle),
             focus: handle.clone().into(),
             children: self.children,
             group: self.group,

@@ -1573,6 +1573,7 @@ pub enum ElementId {
     View(EntityId),
     Number(usize),
     Name(SharedString),
+    FocusHandle(FocusId),
 }
 
 impl From<EntityId> for ElementId {
@@ -1602,5 +1603,11 @@ impl From<SharedString> for ElementId {
 impl From<&'static str> for ElementId {
     fn from(name: &'static str) -> Self {
         ElementId::Name(name.into())
+    }
+}
+
+impl<'a> From<&'a FocusHandle> for ElementId {
+    fn from(handle: &'a FocusHandle) -> Self {
+        ElementId::FocusHandle(handle.id)
     }
 }

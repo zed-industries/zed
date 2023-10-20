@@ -544,6 +544,21 @@ pub struct StatelessInteraction<V> {
     pub group_hover_style: Option<GroupStyle>,
 }
 
+impl<V> StatelessInteraction<V>
+where
+    V: 'static + Send + Sync,
+{
+    pub fn into_stateful(self, id: impl Into<ElementId>) -> StatefulInteraction<V> {
+        StatefulInteraction {
+            id: id.into(),
+            stateless: self,
+            mouse_click_listeners: SmallVec::new(),
+            active_style: StyleRefinement::default(),
+            group_active_style: None,
+        }
+    }
+}
+
 pub struct GroupStyle {
     pub group: SharedString,
     pub style: StyleRefinement,
