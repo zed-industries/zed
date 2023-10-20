@@ -1,60 +1,17 @@
 use crate::themes::rose_pine;
 use gpui3::{
-    div, view, Action, Context, Focusable, KeyBinding, ParentElement, StatelessInteractive, Styled,
-    View, WindowContext,
+    div, view, Context, Focusable, KeyBinding, ParentElement, StatelessInteractive, Styled, View,
+    WindowContext,
 };
-use std::any::Any;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct ActionA;
 
-impl Action for ActionA {
-    fn eq(&self, action: &dyn Action) -> bool {
-        action.as_any().downcast_ref::<Self>().is_some()
-    }
-
-    fn boxed_clone(&self) -> Box<dyn Action> {
-        Box::new(self.clone())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct ActionB;
 
-impl Action for ActionB {
-    fn eq(&self, action: &dyn Action) -> bool {
-        action.as_any().downcast_ref::<Self>().is_some()
-    }
-
-    fn boxed_clone(&self) -> Box<dyn Action> {
-        Box::new(self.clone())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct ActionC;
-
-impl Action for ActionC {
-    fn eq(&self, action: &dyn Action) -> bool {
-        action.as_any().downcast_ref::<Self>().is_some()
-    }
-
-    fn boxed_clone(&self) -> Box<dyn Action> {
-        Box::new(self.clone())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
 
 pub struct FocusStory {
     text: View<()>,

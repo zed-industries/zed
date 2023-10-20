@@ -63,7 +63,7 @@ impl KeyBinding {
         action: &dyn Action,
         contexts: &[&DispatchContext],
     ) -> Option<SmallVec<[Keystroke; 2]>> {
-        if self.action.eq(action) && self.matches_context(contexts) {
+        if self.action.partial_eq(action) && self.matches_context(contexts) {
             Some(self.keystrokes.clone())
         } else {
             None

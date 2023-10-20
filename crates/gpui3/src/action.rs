@@ -4,9 +4,29 @@ use collections::{HashMap, HashSet};
 use std::any::Any;
 
 pub trait Action: Any + Send + Sync {
-    fn eq(&self, action: &dyn Action) -> bool;
+    fn partial_eq(&self, action: &dyn Action) -> bool;
     fn boxed_clone(&self) -> Box<dyn Action>;
     fn as_any(&self) -> &dyn Any;
+}
+
+impl<T> Action for T
+where
+    T: Any + PartialEq + Clone + Send + Sync,
+{
+    fn partial_eq(&self, action: &dyn Action) -> bool {
+        action
+            .as_any()
+            .downcast_ref::<Self>()
+            .map_or(false, |a| self == a)
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Action> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
