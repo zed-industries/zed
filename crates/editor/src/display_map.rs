@@ -574,6 +574,7 @@ impl DisplaySnapshot {
     ) -> Line {
         let mut styles = Vec::new();
         let mut line = String::new();
+        let mut ended_in_newline = false;
 
         let range = display_row..display_row + 1;
         for chunk in self.highlighted_chunks(range, false, editor_style) {
@@ -589,6 +590,7 @@ impl DisplaySnapshot {
             } else {
                 Cow::Borrowed(&editor_style.text)
             };
+            ended_in_newline = chunk.chunk.ends_with("\n");
 
             styles.push((
                 chunk.chunk.len(),
@@ -596,6 +598,22 @@ impl DisplaySnapshot {
                     font_id: text_style.font_id,
                     color: text_style.color,
                     underline: text_style.underline,
+                },
+            ));
+        }
+
+        // our pixel positioning logic assumes each line ends in \n,
+        // this is almost always true except for the last line which
+        // may have no trailing newline.
+        if !ended_in_newline && display_row == self.max_point().row() {
+            line.push_str("\n");
+
+            styles.push((
+                "\n".len(),
+                RunStyle {
+                    font_id: editor_style.text.font_id,
+                    color: editor_style.text_color,
+                    underline: editor_style.text.underline,
                 },
             ));
         }
