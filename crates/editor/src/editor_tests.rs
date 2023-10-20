@@ -851,7 +851,7 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
 
     let view = cx
         .add_window(|cx| {
-            let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx);
+            let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcde\nαβγδε", cx);
             build_editor(buffer.clone(), cx)
         })
         .root(cx);
@@ -869,7 +869,7 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
             true,
             cx,
         );
-        assert_eq!(view.display_text(cx), "ⓐⓑ⋯ⓔ\nab⋯e\nαβ⋯ε\n");
+        assert_eq!(view.display_text(cx), "ⓐⓑ⋯ⓔ\nab⋯e\nαβ⋯ε");
 
         view.move_right(&MoveRight, cx);
         assert_eq!(
@@ -888,6 +888,11 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
         );
 
         view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(1, "ab⋯e".len())]
+        );
+        view.move_left(&MoveLeft, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[empty_range(1, "ab⋯".len())]
@@ -929,17 +934,18 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
             view.selections.display_ranges(cx),
             &[empty_range(1, "ab⋯e".len())]
         );
+        view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(2, "αβ⋯ε".len())]
+        );
         view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ⋯ⓔ".len())]
+            &[empty_range(1, "ab⋯e".len())]
         );
-        view.move_left(&MoveLeft, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ⋯".len())]
-        );
-        view.move_left(&MoveLeft, cx);
+
+        view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[empty_range(0, "ⓐⓑ".len())]
@@ -948,6 +954,11 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             &[empty_range(0, "ⓐ".len())]
+        );
+        view.move_left(&MoveLeft, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(0, "".len())]
         );
     });
 }
