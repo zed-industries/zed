@@ -316,7 +316,7 @@ impl SelectionsCollection {
         let layed_out_line = display_map.lay_out_line_for_row(row, &text_layout_details);
 
         let start_col = layed_out_line.closest_index_for_x(positions.start) as u32;
-        if start_col < line_len || (is_empty && start_col == line_len) {
+        if start_col < line_len || (is_empty && positions.start == layed_out_line.width()) {
             let start = DisplayPoint::new(row, start_col);
             let end_col = layed_out_line.closest_index_for_x(positions.end) as u32;
             let end = DisplayPoint::new(row, end_col);
