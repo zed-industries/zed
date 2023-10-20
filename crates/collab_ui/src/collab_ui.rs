@@ -8,7 +8,6 @@ mod incoming_call_notification;
 mod notifications;
 mod panel_settings;
 pub mod project_shared_notification;
-mod sharing_status_indicator;
 
 use call::{report_call_event_for_room, ActiveCall, Room};
 use gpui::{
@@ -42,7 +41,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     chat_panel::init(cx);
     incoming_call_notification::init(&app_state, cx);
     project_shared_notification::init(&app_state, cx);
-    sharing_status_indicator::init(cx);
 
     cx.add_global_action(toggle_screen_sharing);
     cx.add_global_action(toggle_mute);
