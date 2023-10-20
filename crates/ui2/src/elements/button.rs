@@ -197,6 +197,31 @@ impl<S: 'static + Send + Sync> Button<S> {
     }
 }
 
+#[derive(Element)]
+pub struct ButtonGroup<S: 'static + Send + Sync> {
+    state_type: PhantomData<S>,
+    buttons: Vec<Button<S>>,
+}
+
+impl<S: 'static + Send + Sync> ButtonGroup<S> {
+    pub fn new(buttons: Vec<Button<S>>) -> Self {
+        Self {
+            state_type: PhantomData,
+            buttons,
+        }
+    }
+
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        let mut el = h_stack().text_size(ui_size(cx, 1.));
+
+        for button in &mut self.buttons {
+            el = el.child(button.render(_view, cx));
+        }
+
+        el
+    }
+}
+
 #[cfg(feature = "stories")]
 pub use stories::*;
 

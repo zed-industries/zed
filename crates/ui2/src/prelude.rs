@@ -190,7 +190,7 @@ impl ThemeColor {
             border_variant: theme.lowest.variant.default.border,
             border_focused: theme.lowest.accent.default.border,
             border_transparent: system_color.transparent,
-            elevated_surface: theme.middle.base.default.background,
+            elevated_surface: theme.lowest.base.default.background,
             surface: theme.middle.base.default.background,
             background: theme.lowest.base.default.background,
             filled_element: theme.lowest.base.default.background,
@@ -395,6 +395,12 @@ pub enum DisclosureControlStyle {
     Chevron,
     /// Completely hides the disclosure control where possible.
     None,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, EnumIter)]
+pub enum OverflowStyle {
+    Hidden,
+    Wrap,
 }
 
 #[derive(Default, PartialEq, Copy, Clone, EnumIter, strum::Display)]

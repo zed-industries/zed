@@ -1,10 +1,13 @@
 use std::marker::PhantomData;
 
-use gpui3::{div, Div};
+use gpui3::{div, relative, Div};
 
-use crate::prelude::*;
 use crate::settings::user_settings;
-use crate::{h_stack, v_stack, Avatar, Icon, IconColor, IconElement, IconSize, Label, LabelColor};
+use crate::{
+    h_stack, v_stack, Avatar, ClickHandler, Icon, IconColor, IconElement, IconSize, Label,
+    LabelColor,
+};
+use crate::{prelude::*, Button};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub enum ListItemVariant {
@@ -201,6 +204,7 @@ pub enum ListEntrySize {
 #[derive(Element)]
 pub enum ListItem<S: 'static + Send + Sync> {
     Entry(ListEntry<S>),
+    Details(ListDetailsEntry<S>),
     Separator(ListSeparator<S>),
     Header(ListSubHeader<S>),
 }
@@ -208,6 +212,12 @@ pub enum ListItem<S: 'static + Send + Sync> {
 impl<S: 'static + Send + Sync> From<ListEntry<S>> for ListItem<S> {
     fn from(entry: ListEntry<S>) -> Self {
         Self::Entry(entry)
+    }
+}
+
+impl<S: 'static + Send + Sync> From<ListDetailsEntry<S>> for ListItem<S> {
+    fn from(entry: ListDetailsEntry<S>) -> Self {
+        Self::Details(entry)
     }
 }
 
@@ -229,6 +239,7 @@ impl<S: 'static + Send + Sync> ListItem<S> {
             ListItem::Entry(entry) => div().child(entry.render(view, cx)),
             ListItem::Separator(separator) => div().child(separator.render(view, cx)),
             ListItem::Header(header) => div().child(header.render(view, cx)),
+            ListItem::Details(details) => div().child(details.render(view, cx)),
         }
     }
 
@@ -255,6 +266,7 @@ pub struct ListEntry<S: 'static + Send + Sync> {
     size: ListEntrySize,
     state: InteractionState,
     toggle: Option<ToggleState>,
+    overflow: OverflowStyle,
 }
 
 impl<S: 'static + Send + Sync> ListEntry<S> {
@@ -270,6 +282,7 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
             // TODO: Should use Toggleable::NotToggleable
             // or remove Toggleable::NotToggleable from the system
             toggle: None,
+            overflow: OverflowStyle::Hidden,
         }
     }
     pub fn set_variant(mut self, variant: ListItemVariant) -> Self {
@@ -413,6 +426,96 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
                     .children(left_content)
                     .children(self.label.take()),
             )
+    }
+}
+
+struct ListDetailsEntryHandlers<S: 'static + Send + Sync> {
+    click: Option<ClickHandler<S>>,
+}
+
+impl<S: 'static + Send + Sync> Default for ListDetailsEntryHandlers<S> {
+    fn default() -> Self {
+        Self { click: None }
+    }
+}
+
+#[derive(Element)]
+pub struct ListDetailsEntry<S: 'static + Send + Sync> {
+    label: SharedString,
+    meta: Option<SharedString>,
+    left_content: Option<LeftContent>,
+    handlers: ListDetailsEntryHandlers<S>,
+    actions: Option<Vec<Button<S>>>,
+    // TODO: make this more generic instead of
+    // specifically for notifications
+    seen: bool,
+}
+
+impl<S: 'static + Send + Sync> ListDetailsEntry<S> {
+    pub fn new(label: impl Into<SharedString>) -> Self {
+        Self {
+            label: label.into(),
+            meta: None,
+            left_content: None,
+            handlers: ListDetailsEntryHandlers::default(),
+            actions: None,
+            seen: false,
+        }
+    }
+
+    pub fn meta(mut self, meta: impl Into<SharedString>) -> Self {
+        self.meta = Some(meta.into());
+        self
+    }
+
+    pub fn seen(mut self, seen: bool) -> Self {
+        self.seen = seen;
+        self
+    }
+
+    pub fn on_click(mut self, handler: ClickHandler<S>) -> Self {
+        self.handlers.click = Some(handler);
+        self
+    }
+
+    pub fn actions(mut self, actions: Vec<Button<S>>) -> Self {
+        self.actions = Some(actions);
+        self
+    }
+
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        let color = ThemeColor::new(cx);
+        let settings = user_settings(cx);
+
+        let (item_bg, item_bg_hover, item_bg_active) = match self.seen {
+            true => (
+                color.ghost_element,
+                color.ghost_element_hover,
+                color.ghost_element_active,
+            ),
+            false => (
+                color.filled_element,
+                color.filled_element_hover,
+                color.filled_element_active,
+            ),
+        };
+
+        let label_color = match self.seen {
+            true => LabelColor::Muted,
+            false => LabelColor::Default,
+        };
+
+        v_stack()
+            .relative()
+            .group("")
+            .bg(item_bg)
+            .p_1()
+            .w_full()
+            .line_height(relative(1.2))
+            .child(Label::new(self.label.clone()).color(label_color))
+            .when(self.meta.is_some(), |this| {
+                this.child(Label::new(self.meta.clone().unwrap()).color(LabelColor::Muted))
+            })
     }
 }
 

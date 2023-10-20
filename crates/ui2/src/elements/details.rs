@@ -1,12 +1,13 @@
 use std::marker::PhantomData;
 
-use crate::prelude::*;
+use crate::{prelude::*, v_stack, ButtonGroup};
 
 #[derive(Element)]
 pub struct Details<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     text: &'static str,
     meta: Option<&'static str>,
+    actions: Option<ButtonGroup<S>>,
 }
 
 impl<S: 'static + Send + Sync> Details<S> {
@@ -15,6 +16,7 @@ impl<S: 'static + Send + Sync> Details<S> {
             state_type: PhantomData,
             text,
             meta: None,
+            actions: None,
         }
     }
 
@@ -23,18 +25,22 @@ impl<S: 'static + Send + Sync> Details<S> {
         self
     }
 
+    pub fn actions(mut self, actions: ButtonGroup<S>) -> Self {
+        self.actions = Some(actions);
+        self
+    }
+
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
 
-        div()
-            // .flex()
-            // .w_full()
+        v_stack()
             .p_1()
             .gap_0p5()
             .text_xs()
             .text_color(color.text)
             .child(self.text)
             .children(self.meta.map(|m| m))
+            .children(self.actions.take().map(|a| a))
     }
 }
 

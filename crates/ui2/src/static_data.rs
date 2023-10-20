@@ -4,13 +4,13 @@ use std::str::FromStr;
 use gpui3::WindowContext;
 use rand::Rng;
 
-use crate::HighlightedText;
 use crate::{
-    Buffer, BufferRow, BufferRows, EditorPane, FileSystemStatus, GitStatus, HighlightedLine, Icon,
-    Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListItem, Livestream, MicStatus,
-    ModifierKeys, PaletteItem, Player, PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus,
-    Symbol, Tab, ThemeColor, ToggleState, VideoStatus,
+    Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
+    HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListItem,
+    Livestream, MicStatus, ModifierKeys, PaletteItem, Player, PlayerCallStatus,
+    PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, ThemeColor, ToggleState, VideoStatus,
 };
+use crate::{HighlightedText, ListDetailsEntry};
 
 pub fn static_tabs_example<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
     vec![
@@ -322,6 +322,34 @@ pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
         PlayerWithCallStatus::new(players[3].clone(), player_3_status),
         PlayerWithCallStatus::new(players[4].clone(), player_4_status),
     ]
+}
+
+pub fn static_new_notification_items<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
+    vec![
+        ListEntry::new(Label::new(
+            "maxdeviant invited you to join a stream in #design.",
+        ))
+        .set_left_icon(Icon::FileLock.into()),
+        ListEntry::new(Label::new("nathansobo accepted your contact request."))
+            .set_left_icon(Icon::FileToml.into()),
+    ]
+    .into_iter()
+    .map(From::from)
+    .collect()
+}
+
+pub fn static_read_notification_items<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
+    vec![
+        ListDetailsEntry::new("mikaylamaki added you as a contact.")
+            .actions(vec![Button::new("Decline"), Button::new("Accept")]),
+        ListDetailsEntry::new("maxdeviant invited you to a stream in #design.")
+            .seen(true)
+            .meta("This stream has ended."),
+        ListDetailsEntry::new("nathansobo accepted your contact request."),
+    ]
+    .into_iter()
+    .map(From::from)
+    .collect()
 }
 
 pub fn static_project_panel_project_items<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {

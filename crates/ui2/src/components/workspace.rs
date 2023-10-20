@@ -3,7 +3,7 @@ use std::sync::Arc;
 use chrono::DateTime;
 use gpui3::{px, relative, rems, view, Context, Size, View};
 
-use crate::prelude::*;
+use crate::{prelude::*, NotificationToast, NotificationsPanel};
 use crate::{
     static_livestream, theme, user_settings_mut, v_stack, AssistantPanel, Button, ChatMessage,
     ChatPanel, CollabPanel, EditorPane, FakeSettings, Label, LanguageSelector, Pane, PaneGroup,
@@ -249,6 +249,9 @@ impl Workspace {
                         )
                         .filter(|_| self.is_collab_panel_open()),
                     )
+                    // .child(NotificationToast::new(
+                    //     "maxbrunsfeld has requested to add you as a contact.".into(),
+                    // ))
                     .child(
                         v_stack()
                             .flex_1()
@@ -289,7 +292,7 @@ impl Workspace {
                         Some(
                             Panel::new(cx)
                                 .side(PanelSide::Right)
-                                .child(div().w_96().h_full().child("Notifications")),
+                                .child(NotificationsPanel::new()),
                         )
                         .filter(|_| self.is_notifications_panel_open()),
                     )
