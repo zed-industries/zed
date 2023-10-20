@@ -156,7 +156,7 @@ pub fn visual_block_motion(
         };
         let mut goal = SelectionGoal::HorizontalRange { start, end };
 
-        let was_reversed = head_x > tail_x;
+        let was_reversed = tail_x > head_x;
         if !was_reversed && !preserve_goal {
             head = movement::saturating_left(map, head);
         }
@@ -184,8 +184,6 @@ pub fn visual_block_motion(
 
         let positions = if is_reversed {
             head_x..tail_x
-        } else if head_x == tail_x {
-            map.x_for_point(movement::saturating_left(map, tail), &text_layout_details)..head_x
         } else {
             tail_x..head_x
         };
