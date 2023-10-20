@@ -10,6 +10,7 @@ use refineable::Refineable;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
+    fmt::Debug,
     ops::Deref,
     sync::Arc,
 };
@@ -176,11 +177,14 @@ pub trait StatelessInteractive: Element {
         self
     }
 
-    fn context(mut self, context: impl Into<DispatchContext>) -> Self
+    fn context<C>(mut self, context: C) -> Self
     where
         Self: Sized,
+        C: TryInto<DispatchContext>,
+        C::Error: Debug,
     {
-        self.stateless_interactivity().dispatch_context = context.into();
+        self.stateless_interactivity().dispatch_context =
+            context.try_into().expect("invalid dispatch context");
         self
     }
 
