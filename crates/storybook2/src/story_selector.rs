@@ -70,6 +70,7 @@ pub enum ComponentStory {
     Keybinding,
     LanguageSelector,
     MultiBuffer,
+    NotificationsPanel,
     Palette,
     Panel,
     ProjectPanel,
@@ -129,6 +130,10 @@ impl ComponentStory {
             .into_any(),
             Self::MultiBuffer => view(cx.entity(|cx| ()), |_, _| {
                 ui::MultiBufferStory::new().into_any()
+            })
+            .into_any(),
+            Self::NotificationsPanel => view(cx.entity(|cx| ()), |_, _| {
+                ui::NotificationsPanelStory::new().into_any()
             })
             .into_any(),
             Self::Palette => view(cx.entity(|cx| ()), |_, _| {
