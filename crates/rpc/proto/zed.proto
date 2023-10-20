@@ -335,6 +335,7 @@ message RoomUpdated {
 message LiveKitConnectionInfo {
     string server_url = 1;
     string token = 2;
+    bool can_publish = 3;
 }
 
 message ShareProject {

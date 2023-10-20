@@ -948,6 +948,7 @@ async fn create_room(
             Some(proto::LiveKitConnectionInfo {
                 server_url: live_kit.url().into(),
                 token,
+                can_publish: true,
             })
         })
     }
@@ -1028,6 +1029,7 @@ async fn join_room(
             Some(proto::LiveKitConnectionInfo {
                 server_url: live_kit.url().into(),
                 token,
+                can_publish: true,
             })
         } else {
             None
@@ -2598,25 +2600,32 @@ async fn join_channel_internal(
             .await?;
 
         let live_kit_connection_info = session.live_kit_client.as_ref().and_then(|live_kit| {
-            let token = if role == ChannelRole::Guest {
-                live_kit
-                    .guest_token(
-                        &joined_room.room.live_kit_room,
-                        &session.user_id.to_string(),
-                    )
-                    .trace_err()?
+            let (can_publish, token) = if role == ChannelRole::Guest {
+                (
+                    false,
+                    live_kit
+                        .guest_token(
+                            &joined_room.room.live_kit_room,
+                            &session.user_id.to_string(),
+                        )
+                        .trace_err()?,
+                )
             } else {
-                live_kit
-                    .room_token(
-                        &joined_room.room.live_kit_room,
-                        &session.user_id.to_string(),
-                    )
-                    .trace_err()?
+                (
+                    true,
+                    live_kit
+                        .room_token(
+                            &joined_room.room.live_kit_room,
+                            &session.user_id.to_string(),
+                        )
+                        .trace_err()?,
+                )
             };
 
             Some(LiveKitConnectionInfo {
                 server_url: live_kit.url().into(),
                 token,
+                can_publish,
             })
         });
 
