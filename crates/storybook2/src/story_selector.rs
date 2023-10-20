@@ -19,6 +19,7 @@ pub enum ElementStory {
     Icon,
     Input,
     Label,
+    Scroll,
     Text,
     ZIndex,
 }
@@ -46,6 +47,7 @@ impl ElementStory {
             Self::Label => {
                 view(cx.entity(|cx| ()), |_, _| ui::LabelStory::new().into_any()).into_any()
             }
+            Self::Scroll => ScrollStory::view(cx).into_any(),
             Self::Text => TextStory::view(cx).into_any(),
             Self::ZIndex => {
                 view(cx.entity(|cx| ()), |_, _| ZIndexStory::new().into_any()).into_any()

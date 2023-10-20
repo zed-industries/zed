@@ -277,7 +277,7 @@ where
                 for child_layout_id in &element_state.child_layout_ids {
                     let child_bounds = cx.layout_bounds(*child_layout_id);
                     child_min = child_min.min(&child_bounds.origin);
-                    child_max = child_min.max(&child_bounds.lower_right());
+                    child_max = child_max.max(&child_bounds.lower_right());
                 }
                 (child_max - child_min).into()
             };
@@ -298,9 +298,11 @@ where
                     style.apply_text_style(cx, |cx| {
                         style.apply_overflow(bounds, cx, |cx| {
                             let scroll_offset = element_state.interactive.scroll_offset();
-                            for child in &mut this.children {
-                                child.paint(view_state, scroll_offset, cx);
-                            }
+                            cx.with_scroll_offset(scroll_offset, |cx| {
+                                for child in &mut this.children {
+                                    child.paint(view_state, cx);
+                                }
+                            });
                         })
                     })
                 });

@@ -86,7 +86,7 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
                 rendered_element: &mut Self::ElementState,
                 cx: &mut gpui3::ViewContext<Self::ViewState>,
             ) {
-                rendered_element.paint(view_state, None, cx)
+                rendered_element.paint(view_state, cx)
             }
         }
     };

@@ -159,6 +159,7 @@ pub struct Window {
     key_matchers: HashMap<GlobalElementId, KeyMatcher>,
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
+    scroll_offset_stack: Vec<Point<Pixels>>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyListener)>>,
     key_dispatch_stack: Vec<KeyDispatchStackFrame>,
     freeze_key_dispatch_stack: bool,
@@ -234,6 +235,7 @@ impl Window {
             key_matchers: HashMap::default(),
             z_index_stack: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
+            scroll_offset_stack: Vec::new(),
             mouse_listeners: HashMap::default(),
             key_dispatch_stack: Vec::new(),
             freeze_key_dispatch_stack: false,
@@ -443,10 +445,13 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
-        self.window
+        let mut bounds = self
+            .window
             .layout_engine
             .layout_bounds(layout_id)
-            .map(Into::into)
+            .map(Into::into);
+        bounds.origin -= self.scroll_offset();
+        bounds
     }
 
     pub fn scale_factor(&self) -> f32 {
@@ -1134,6 +1139,30 @@ pub trait BorrowWindow: BorrowAppContext {
         let result = f(self);
         self.window_mut().content_mask_stack.pop();
         result
+    }
+
+    fn with_scroll_offset<R>(
+        &mut self,
+        offset: Option<Point<Pixels>>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let Some(offset) = offset else {
+            return f(self);
+        };
+
+        let offset = self.scroll_offset() + offset;
+        self.window_mut().scroll_offset_stack.push(offset);
+        let result = f(self);
+        self.window_mut().scroll_offset_stack.pop();
+        result
+    }
+
+    fn scroll_offset(&self) -> Point<Pixels> {
+        self.window()
+            .scroll_offset_stack
+            .last()
+            .copied()
+            .unwrap_or_default()
     }
 
     fn with_element_state<S: 'static + Send + Sync, R>(
