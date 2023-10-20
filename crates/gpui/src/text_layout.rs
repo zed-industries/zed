@@ -302,7 +302,11 @@ impl Line {
                 prev_x = glyph.position.x();
             }
         }
-        prev_index
+        if self.width() - x < x - prev_x {
+            prev_index + 1
+        } else {
+            prev_index
+        }
     }
 
     pub fn paint(

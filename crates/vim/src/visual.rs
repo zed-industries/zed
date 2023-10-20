@@ -169,10 +169,10 @@ pub fn visual_block_motion(
 
         let is_reversed = tail_x > head_x;
         if was_reversed && !is_reversed {
-            tail = movement::left(map, tail);
+            tail = movement::saturating_left(map, tail);
             tail_x = map.x_for_point(tail, &text_layout_details);
         } else if !was_reversed && is_reversed {
-            tail = movement::right(map, tail);
+            tail = movement::saturating_right(map, tail);
             tail_x = map.x_for_point(tail, &text_layout_details);
         }
         if !is_reversed && !preserve_goal {
@@ -180,8 +180,12 @@ pub fn visual_block_motion(
             head_x = map.x_for_point(head, &text_layout_details);
         }
 
+        dbg!(head, head_x, tail, tail_x);
+
         let positions = if is_reversed {
             head_x..tail_x
+        } else if head_x == tail_x {
+            map.x_for_point(movement::saturating_left(map, tail), &text_layout_details)..head_x
         } else {
             tail_x..head_x
         };
