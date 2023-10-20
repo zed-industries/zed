@@ -117,18 +117,17 @@ impl LspAdapter for TailwindLspAdapter {
     }
 
     async fn language_ids(&self) -> HashMap<String, String> {
-        HashMap::from_iter(
-            [
-                ("HTML".to_string(), "html".to_string()),
-                ("CSS".to_string(), "css".to_string()),
-                ("JavaScript".to_string(), "javascript".to_string()),
-                ("TSX".to_string(), "typescriptreact".to_string()),
-                ("Svelte".to_string(), "svelte".to_string()),
-                ("Elixir".to_string(), "phoenix-heex".to_string()),
-                ("HEEX".to_string(), "phoenix-heex".to_string()),
-            ]
-            .into_iter(),
-        )
+        HashMap::from_iter([
+            ("HTML".to_string(), "html".to_string()),
+            ("CSS".to_string(), "css".to_string()),
+            ("JavaScript".to_string(), "javascript".to_string()),
+            ("TSX".to_string(), "typescriptreact".to_string()),
+            ("Svelte".to_string(), "svelte".to_string()),
+            ("Elixir".to_string(), "phoenix-heex".to_string()),
+            ("HEEX".to_string(), "phoenix-heex".to_string()),
+            ("ERB".to_string(), "erb".to_string()),
+            ("PHP".to_string(), "php".to_string()),
+        ])
     }
 
     fn enabled_formatters(&self) -> Vec<BundledFormatter> {
