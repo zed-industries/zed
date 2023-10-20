@@ -38,6 +38,7 @@ impl<S: 'static + Send + Sync> Details<S> {
             .gap_0p5()
             .text_xs()
             .text_color(color.text)
+            .size_full()
             .child(self.text)
             .children(self.meta.map(|m| m))
             .children(self.actions.take().map(|a| a))
@@ -49,7 +50,7 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use crate::Story;
+    use crate::{Button, Story};
 
     use super::*;
 
@@ -78,6 +79,15 @@ mod stories {
                 .child(
                     Details::new("The quick brown fox jumps over the lazy dog")
                         .meta_text("Sphinx of black quartz, judge my vow."),
+                )
+                .child(Story::label(cx, "With meta and actions"))
+                .child(
+                    Details::new("The quick brown fox jumps over the lazy dog")
+                        .meta_text("Sphinx of black quartz, judge my vow.")
+                        .actions(ButtonGroup::new(vec![
+                            Button::new("Decline"),
+                            Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                        ])),
                 )
         }
     }
