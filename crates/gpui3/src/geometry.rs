@@ -4,7 +4,7 @@ use refineable::Refineable;
 use std::{
     cmp::{self, PartialOrd},
     fmt,
-    ops::{Add, AddAssign, Div, Mul, MulAssign, Sub, SubAssign},
+    ops::{Add, Div, Mul, MulAssign, Sub},
 };
 
 #[derive(Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash)]
@@ -64,26 +64,6 @@ where
     fn mul_assign(&mut self, rhs: S) {
         self.x = self.x.clone() * rhs.clone();
         self.y = self.y.clone() * rhs;
-    }
-}
-
-impl<T> SubAssign<Size<T>> for Point<T>
-where
-    T: Sub<Output = T> + Clone + Debug + Default,
-{
-    fn sub_assign(&mut self, rhs: Size<T>) {
-        self.x = self.x.clone() - rhs.width;
-        self.y = self.y.clone() - rhs.height;
-    }
-}
-
-impl<T> AddAssign<T> for Point<T>
-where
-    T: Add<Output = T> + Clone + Default + Debug,
-{
-    fn add_assign(&mut self, rhs: T) {
-        self.x = self.x.clone() + rhs.clone();
-        self.y = self.y.clone() + rhs;
     }
 }
 
@@ -187,7 +167,7 @@ impl Size<Pixels> {
 
 impl<T> Size<T>
 where
-    T: Ord + Clone + Default + Debug,
+    T: PartialOrd + Clone + Default + Debug,
 {
     pub fn max(&self, other: &Self) -> Self {
         Size {

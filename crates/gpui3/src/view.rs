@@ -90,8 +90,7 @@ impl<V: 'static + Send + Sync> Element for View<V> {
         element: &mut Self::ElementState,
         cx: &mut ViewContext<()>,
     ) {
-        self.state
-            .update(cx, |state, cx| element.paint(state, None, cx))
+        self.state.update(cx, |state, cx| element.paint(state, cx))
     }
 }
 
@@ -186,7 +185,7 @@ impl<V: Send + Sync + 'static> ViewObject for View<V> {
         cx.with_element_id(self.entity_id(), |_global_id, cx| {
             self.state.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<V>>().unwrap();
-                element.paint(state, None, cx);
+                element.paint(state, cx);
             });
         });
     }

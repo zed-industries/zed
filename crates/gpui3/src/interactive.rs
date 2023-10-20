@@ -477,7 +477,7 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
                     .get_or_insert_with(Arc::default)
                     .clone();
                 let line_height = cx.line_height();
-                let scroll_max = content_size - bounds.size;
+                let scroll_max = (content_size - bounds.size).max(&Size::default());
 
                 cx.on_mouse_event(move |_, event: &ScrollWheelEvent, _, cx| {
                     if bounds.contains_point(&event.position) {

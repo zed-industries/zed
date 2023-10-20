@@ -1,4 +1,4 @@
-use crate::{BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, ViewContext};
+use crate::{BorrowWindow, Bounds, ElementId, LayoutId, Pixels, ViewContext};
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::mem;
@@ -62,7 +62,7 @@ pub trait ParentElement: Element {
 trait ElementObject<V>: 'static + Send + Sync {
     fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
     fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId;
-    fn paint(&mut self, view_state: &mut V, offset: Option<Point<Pixels>>, cx: &mut ViewContext<V>);
+    fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
 }
 
 struct RenderedElement<E: Element> {
@@ -145,19 +145,13 @@ where
         layout_id
     }
 
-    fn paint(
-        &mut self,
-        view_state: &mut E::ViewState,
-        offset: Option<Point<Pixels>>,
-        cx: &mut ViewContext<E::ViewState>,
-    ) {
+    fn paint(&mut self, view_state: &mut E::ViewState, cx: &mut ViewContext<E::ViewState>) {
         self.phase = match mem::take(&mut self.phase) {
             ElementRenderPhase::LayoutRequested {
                 layout_id,
                 mut frame_state,
             } => {
-                let mut bounds = cx.layout_bounds(layout_id);
-                offset.map(|offset| bounds.origin += offset);
+                let bounds = cx.layout_bounds(layout_id);
                 if let Some(id) = self.element.id() {
                     cx.with_element_state(id, |element_state, cx| {
                         let mut element_state = element_state.unwrap();
@@ -192,13 +186,8 @@ impl<V: 'static + Send + Sync> AnyElement<V> {
         self.0.layout(view_state, cx)
     }
 
-    pub fn paint(
-        &mut self,
-        view_state: &mut V,
-        offset: Option<Point<Pixels>>,
-        cx: &mut ViewContext<V>,
-    ) {
-        self.0.paint(view_state, offset, cx)
+    pub fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
+        self.0.paint(view_state, cx)
     }
 }
 

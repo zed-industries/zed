@@ -97,9 +97,13 @@ impl<V: 'static + Send + Sync> Element for Text<V> {
                     return Size::default();
                 };
 
+                let line_count = lines
+                    .iter()
+                    .map(|line| line.wrap_count() + 1)
+                    .sum::<usize>();
                 let size = Size {
                     width: lines.iter().map(|line| line.layout.width).max().unwrap(),
-                    height: line_height * lines.len(),
+                    height: line_height * line_count,
                 };
 
                 element_state

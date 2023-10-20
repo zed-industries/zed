@@ -26,6 +26,10 @@ impl Line {
         )
     }
 
+    pub fn wrap_count(&self) -> usize {
+        self.layout.wrap_boundaries.len()
+    }
+
     pub fn paint(
         &self,
         origin: Point<Pixels>,
