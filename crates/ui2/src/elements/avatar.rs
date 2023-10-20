@@ -4,7 +4,7 @@ use gpui3::img;
 
 use crate::prelude::*;
 
-#[derive(Element, Clone)]
+#[derive(Element)]
 pub struct Avatar<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     src: SharedString,
