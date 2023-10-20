@@ -1,9 +1,8 @@
 use crate::{
-    div, AnyElement, BorrowWindow, Bounds, Div, Element, ElementFocus, ElementId,
-    ElementInteraction, FocusDisabled, FocusEnabled, FocusListeners, Focusable,
-    InteractiveElementState, IntoAnyElement, LayoutId, Pixels, SharedString, StatefulInteraction,
-    StatefulInteractive, StatelessInteraction, StatelessInteractive, StyleRefinement, Styled,
-    ViewContext,
+    div, AnyElement, BorrowWindow, Bounds, Div, DivState, Element, ElementFocus, ElementId,
+    ElementInteraction, FocusDisabled, FocusEnabled, FocusListeners, Focusable, IntoAnyElement,
+    LayoutId, Pixels, SharedString, StatefulInteraction, StatefulInteractive, StatelessInteraction,
+    StatelessInteractive, StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
@@ -78,7 +77,7 @@ where
     F: ElementFocus<V>,
 {
     type ViewState = V;
-    type ElementState = InteractiveElementState;
+    type ElementState = DivState;
 
     fn id(&self) -> Option<crate::ElementId> {
         self.base.id()
@@ -191,9 +190,5 @@ where
 
     fn set_in_focus_style(&mut self, style: StyleRefinement) {
         self.base.set_in_focus_style(style)
-    }
-
-    fn handle(&self) -> &crate::FocusHandle {
-        self.base.handle()
     }
 }

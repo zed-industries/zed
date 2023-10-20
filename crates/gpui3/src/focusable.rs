@@ -9,14 +9,13 @@ use std::sync::Arc;
 pub type FocusListeners<V> = SmallVec<[FocusListener<V>; 2]>;
 
 pub type FocusListener<V> =
-    Arc<dyn Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
+    Arc<dyn Fn(&mut V, &FocusHandle, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
 
 pub trait Focusable: Element {
     fn focus_listeners(&mut self) -> &mut FocusListeners<Self::ViewState>;
     fn set_focus_style(&mut self, style: StyleRefinement);
     fn set_focus_in_style(&mut self, style: StyleRefinement);
     fn set_in_focus_style(&mut self, style: StyleRefinement);
-    fn handle(&self) -> &FocusHandle;
 
     fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
@@ -52,10 +51,9 @@ pub trait Focusable: Element {
     where
         Self: Sized,
     {
-        let handle = self.handle().clone();
         self.focus_listeners()
-            .push(Arc::new(move |view, event, cx| {
-                if event.focused.as_ref() == Some(&handle) {
+            .push(Arc::new(move |view, focus_handle, event, cx| {
+                if event.focused.as_ref() == Some(focus_handle) {
                     listener(view, event, cx)
                 }
             }));
@@ -72,10 +70,9 @@ pub trait Focusable: Element {
     where
         Self: Sized,
     {
-        let handle = self.handle().clone();
         self.focus_listeners()
-            .push(Arc::new(move |view, event, cx| {
-                if event.blurred.as_ref() == Some(&handle) {
+            .push(Arc::new(move |view, focus_handle, event, cx| {
+                if event.blurred.as_ref() == Some(focus_handle) {
                     listener(view, event, cx)
                 }
             }));
@@ -92,17 +89,16 @@ pub trait Focusable: Element {
     where
         Self: Sized,
     {
-        let handle = self.handle().clone();
         self.focus_listeners()
-            .push(Arc::new(move |view, event, cx| {
+            .push(Arc::new(move |view, focus_handle, event, cx| {
                 let descendant_blurred = event
                     .blurred
                     .as_ref()
-                    .map_or(false, |blurred| handle.contains(blurred, cx));
+                    .map_or(false, |blurred| focus_handle.contains(blurred, cx));
                 let descendant_focused = event
                     .focused
                     .as_ref()
-                    .map_or(false, |focused| handle.contains(focused, cx));
+                    .map_or(false, |focused| focus_handle.contains(focused, cx));
 
                 if !descendant_blurred && descendant_focused {
                     listener(view, event, cx)
@@ -121,17 +117,16 @@ pub trait Focusable: Element {
     where
         Self: Sized,
     {
-        let handle = self.handle().clone();
         self.focus_listeners()
-            .push(Arc::new(move |view, event, cx| {
+            .push(Arc::new(move |view, focus_handle, event, cx| {
                 let descendant_blurred = event
                     .blurred
                     .as_ref()
-                    .map_or(false, |blurred| handle.contains(blurred, cx));
+                    .map_or(false, |blurred| focus_handle.contains(blurred, cx));
                 let descendant_focused = event
                     .focused
                     .as_ref()
-                    .map_or(false, |focused| handle.contains(focused, cx));
+                    .map_or(false, |focused| focus_handle.contains(focused, cx));
                 if descendant_blurred && !descendant_focused {
                     listener(view, event, cx)
                 }
@@ -142,17 +137,25 @@ pub trait Focusable: Element {
 
 pub trait ElementFocus<V: 'static + Send + Sync>: 'static + Send + Sync {
     fn as_focusable(&self) -> Option<&FocusEnabled<V>>;
+    fn as_focusable_mut(&mut self) -> Option<&mut FocusEnabled<V>>;
 
     fn initialize<R>(
-        &self,
+        &mut self,
+        focus_handle: Option<FocusHandle>,
         cx: &mut ViewContext<V>,
         f: impl FnOnce(Option<FocusHandle>, &mut ViewContext<V>) -> R,
     ) -> R {
-        if let Some(focusable) = self.as_focusable() {
+        if let Some(focusable) = self.as_focusable_mut() {
+            let focus_handle = focusable
+                .focus_handle
+                .get_or_insert_with(|| focus_handle.unwrap_or_else(|| cx.focus_handle()))
+                .clone();
             for listener in focusable.focus_listeners.iter().cloned() {
-                cx.on_focus_changed(move |view, event, cx| listener(view, event, cx));
+                let focus_handle = focus_handle.clone();
+                cx.on_focus_changed(move |view, event, cx| {
+                    listener(view, &focus_handle, event, cx)
+                });
             }
-            let focus_handle = focusable.focus_handle.clone();
             cx.with_focus(focus_handle.clone(), |cx| f(Some(focus_handle), cx))
         } else {
             f(None, cx)
@@ -161,15 +164,19 @@ pub trait ElementFocus<V: 'static + Send + Sync>: 'static + Send + Sync {
 
     fn refine_style(&self, style: &mut Style, cx: &WindowContext) {
         if let Some(focusable) = self.as_focusable() {
-            if focusable.focus_handle.contains_focused(cx) {
+            let focus_handle = focusable
+                .focus_handle
+                .as_ref()
+                .expect("must call initialize before refine_style");
+            if focus_handle.contains_focused(cx) {
                 style.refine(&focusable.focus_in_style);
             }
 
-            if focusable.focus_handle.within_focused(cx) {
+            if focus_handle.within_focused(cx) {
                 style.refine(&focusable.in_focus_style);
             }
 
-            if focusable.focus_handle.is_focused(cx) {
+            if focus_handle.is_focused(cx) {
                 style.refine(&focusable.focus_style);
             }
         }
@@ -177,7 +184,10 @@ pub trait ElementFocus<V: 'static + Send + Sync>: 'static + Send + Sync {
 
     fn paint(&self, bounds: Bounds<Pixels>, cx: &mut WindowContext) {
         if let Some(focusable) = self.as_focusable() {
-            let focus_handle = focusable.focus_handle.clone();
+            let focus_handle = focusable
+                .focus_handle
+                .clone()
+                .expect("must call initialize before paint");
             cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     if !cx.default_prevented() {
@@ -191,11 +201,36 @@ pub trait ElementFocus<V: 'static + Send + Sync>: 'static + Send + Sync {
 }
 
 pub struct FocusEnabled<V: 'static + Send + Sync> {
-    pub focus_handle: FocusHandle,
+    pub focus_handle: Option<FocusHandle>,
     pub focus_listeners: FocusListeners<V>,
     pub focus_style: StyleRefinement,
     pub focus_in_style: StyleRefinement,
     pub in_focus_style: StyleRefinement,
+}
+
+impl<V> FocusEnabled<V>
+where
+    V: 'static + Send + Sync,
+{
+    pub fn new() -> Self {
+        Self {
+            focus_handle: None,
+            focus_listeners: FocusListeners::default(),
+            focus_style: StyleRefinement::default(),
+            focus_in_style: StyleRefinement::default(),
+            in_focus_style: StyleRefinement::default(),
+        }
+    }
+
+    pub fn tracked(handle: &FocusHandle) -> Self {
+        Self {
+            focus_handle: Some(handle.clone()),
+            focus_listeners: FocusListeners::default(),
+            focus_style: StyleRefinement::default(),
+            focus_in_style: StyleRefinement::default(),
+            in_focus_style: StyleRefinement::default(),
+        }
+    }
 }
 
 impl<V> ElementFocus<V> for FocusEnabled<V>
@@ -203,6 +238,10 @@ where
     V: 'static + Send + Sync,
 {
     fn as_focusable(&self) -> Option<&FocusEnabled<V>> {
+        Some(self)
+    }
+
+    fn as_focusable_mut(&mut self) -> Option<&mut FocusEnabled<V>> {
         Some(self)
     }
 }
@@ -213,7 +252,7 @@ where
 {
     fn from(value: FocusHandle) -> Self {
         Self {
-            focus_handle: value,
+            focus_handle: Some(value),
             focus_listeners: FocusListeners::default(),
             focus_style: StyleRefinement::default(),
             focus_in_style: StyleRefinement::default(),
@@ -229,6 +268,10 @@ where
     V: 'static + Send + Sync,
 {
     fn as_focusable(&self) -> Option<&FocusEnabled<V>> {
+        None
+    }
+
+    fn as_focusable_mut(&mut self) -> Option<&mut FocusEnabled<V>> {
         None
     }
 }

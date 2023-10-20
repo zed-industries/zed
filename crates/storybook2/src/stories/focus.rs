@@ -76,12 +76,12 @@ impl FocusStory {
         let color_5 = theme.lowest.variant.default.foreground;
         let color_6 = theme.highest.negative.default.foreground;
 
-        let parent = cx.focus_handle();
         let child_1 = cx.focus_handle();
         let child_2 = cx.focus_handle();
         view(cx.entity(|cx| ()), move |_, cx| {
             div()
-                .focusable(&parent)
+                .id("parent")
+                .focusable()
                 .context("parent")
                 .on_action(|_, action: &ActionA, phase, cx| {
                     println!("Action A dispatched on parent during {:?}", phase);
@@ -105,7 +105,7 @@ impl FocusStory {
                 .focus_in(|style| style.bg(color_3))
                 .child(
                     div()
-                        .focusable(&child_1)
+                        .track_focus(&child_1)
                         .context("child-1")
                         .on_action(|_, action: &ActionB, phase, cx| {
                             println!("Action B dispatched on child 1 during {:?}", phase);
@@ -129,7 +129,7 @@ impl FocusStory {
                 )
                 .child(
                     div()
-                        .focusable(&child_2)
+                        .track_focus(&child_2)
                         .context("child-2")
                         .on_action(|_, action: &ActionC, phase, cx| {
                             println!("Action C dispatched on child 2 during {:?}", phase);

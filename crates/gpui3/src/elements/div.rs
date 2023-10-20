@@ -141,14 +141,14 @@ where
     pub fn compute_style(
         &self,
         bounds: Bounds<Pixels>,
-        state: &InteractiveElementState,
+        element_state: &DivState,
         cx: &mut ViewContext<V>,
     ) -> Style {
         let mut computed_style = Style::default();
         computed_style.refine(&self.base_style);
         self.focus.refine_style(&mut computed_style, cx);
         self.interaction
-            .refine_style(&mut computed_style, bounds, state, cx);
+            .refine_style(&mut computed_style, bounds, &element_state.interactive, cx);
         computed_style
     }
 }
@@ -157,13 +157,23 @@ impl<V> Div<V, StatefulInteraction<V>, FocusDisabled>
 where
     V: 'static + Send + Sync,
 {
-    pub fn focusable(
+    pub fn focusable(self) -> Div<V, StatefulInteraction<V>, FocusEnabled<V>> {
+        Div {
+            interaction: self.interaction,
+            focus: FocusEnabled::new(),
+            children: self.children,
+            group: self.group,
+            base_style: self.base_style,
+        }
+    }
+
+    pub fn track_focus(
         self,
         handle: &FocusHandle,
     ) -> Div<V, StatefulInteraction<V>, FocusEnabled<V>> {
         Div {
             interaction: self.interaction,
-            focus: handle.clone().into(),
+            focus: FocusEnabled::tracked(handle),
             children: self.children,
             group: self.group,
             base_style: self.base_style,
@@ -175,7 +185,7 @@ impl<V> Div<V, StatelessInteraction<V>, FocusDisabled>
 where
     V: 'static + Send + Sync,
 {
-    pub fn focusable(
+    pub fn track_focus(
         self,
         handle: &FocusHandle,
     ) -> Div<V, StatefulInteraction<V>, FocusEnabled<V>> {
@@ -198,10 +208,6 @@ where
         &mut self.focus.focus_listeners
     }
 
-    fn handle(&self) -> &FocusHandle {
-        &self.focus.focus_handle
-    }
-
     fn set_focus_style(&mut self, style: StyleRefinement) {
         self.focus.focus_style = style;
     }
@@ -215,6 +221,12 @@ where
     }
 }
 
+#[derive(Default)]
+pub struct DivState {
+    interactive: InteractiveElementState,
+    focus_handle: Option<FocusHandle>,
+}
+
 impl<V, I, F> Element for Div<V, I, F>
 where
     I: ElementInteraction<V>,
@@ -222,7 +234,7 @@ where
     V: 'static + Send + Sync,
 {
     type ViewState = V;
-    type ElementState = InteractiveElementState;
+    type ElementState = DivState;
 
     fn id(&self) -> Option<ElementId> {
         self.interaction
@@ -236,14 +248,17 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> Self::ElementState {
-        self.focus.initialize(cx, |focus_handle, cx| {
-            self.interaction
-                .initialize(element_state, focus_handle, cx, |cx| {
+        let mut element_state = element_state.unwrap_or_default();
+        self.focus
+            .initialize(element_state.focus_handle.take(), cx, |focus_handle, cx| {
+                element_state.focus_handle = focus_handle;
+                self.interaction.initialize(cx, |cx| {
                     for child in &mut self.children {
                         child.initialize(view_state, cx);
                     }
                 })
-        })
+            });
+        element_state
     }
 
     fn layout(
@@ -286,7 +301,8 @@ where
                     style.paint(bounds, cx);
 
                     this.focus.paint(bounds, cx);
-                    this.interaction.paint(bounds, element_state, cx);
+                    this.interaction
+                        .paint(bounds, &element_state.interactive, cx);
                 });
 
                 cx.stack(1, |cx| {
