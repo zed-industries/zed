@@ -38,14 +38,14 @@ impl DispatchContext {
 
         let key = source
             .chars()
-            .take_while(|ch| ch.is_alphanumeric())
+            .take_while(|c| is_identifier_char(*c))
             .collect::<String>();
         source = skip_whitespace(&source[key.len()..]);
         if let Some(suffix) = source.strip_prefix('=') {
             source = skip_whitespace(suffix);
             let value = source
                 .chars()
-                .take_while(|ch| ch.is_alphanumeric())
+                .take_while(|c| is_identifier_char(*c))
                 .collect::<String>();
             source = skip_whitespace(&source[value.len()..]);
             context.set(key, value);
@@ -106,7 +106,7 @@ impl DispatchContextPredicate {
     }
 
     pub fn eval(&self, contexts: &[&DispatchContext]) -> bool {
-        let Some(context) = contexts.first() else {
+        let Some(context) = contexts.last() else {
             return false;
         };
         match self {
@@ -122,7 +122,9 @@ impl DispatchContextPredicate {
                 .map(|value| value != right)
                 .unwrap_or(true),
             Self::Not(pred) => !pred.eval(contexts),
-            Self::Child(parent, child) => parent.eval(&contexts[1..]) && child.eval(contexts),
+            Self::Child(parent, child) => {
+                parent.eval(&contexts[..contexts.len() - 1]) && child.eval(contexts)
+            }
             Self::And(left, right) => left.eval(contexts) && right.eval(contexts),
             Self::Or(left, right) => left.eval(contexts) || right.eval(contexts),
         }
@@ -180,9 +182,9 @@ impl DispatchContextPredicate {
                 let (predicate, source) = Self::parse_expr(&source, PRECEDENCE_NOT)?;
                 Ok((DispatchContextPredicate::Not(Box::new(predicate)), source))
             }
-            _ if next.is_alphanumeric() || next == '_' => {
+            _ if is_identifier_char(next) => {
                 let len = source
-                    .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .find(|c: char| !is_identifier_char(c))
                     .unwrap_or(source.len());
                 let (identifier, rest) = source.split_at(len);
                 source = skip_whitespace(rest);
@@ -229,6 +231,10 @@ const PRECEDENCE_OR: u32 = 2;
 const PRECEDENCE_AND: u32 = 3;
 const PRECEDENCE_EQ: u32 = 4;
 const PRECEDENCE_NOT: u32 = 5;
+
+fn is_identifier_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '-'
+}
 
 fn skip_whitespace(source: &str) -> &str {
     let len = source

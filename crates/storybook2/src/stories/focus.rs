@@ -81,6 +81,8 @@ impl FocusStory {
         let child_2 = cx.focus_handle();
         view(cx.entity(|cx| ()), move |_, cx| {
             div()
+                .id("parent")
+                .focusable(&parent)
                 .context("parent")
                 .on_action(|_, action: &ActionA, phase, cx| {
                     println!("Action A dispatched on parent during {:?}", phase);
@@ -88,7 +90,6 @@ impl FocusStory {
                 .on_action(|_, action: &ActionB, phase, cx| {
                     println!("Action B dispatched on parent during {:?}", phase);
                 })
-                .focusable(&parent)
                 .on_focus(|_, _, _| println!("Parent focused"))
                 .on_blur(|_, _, _| println!("Parent blurred"))
                 .on_focus_in(|_, _, _| println!("Parent focus_in"))
@@ -107,8 +108,8 @@ impl FocusStory {
                     div()
                         .id("child-1")
                         .context("child-1")
-                        .on_action(|_, action: &ActionA, phase, cx| {
-                            println!("Action A dispatched on child 1 during {:?}", phase);
+                        .on_action(|_, action: &ActionB, phase, cx| {
+                            println!("Action B dispatched on child 1 during {:?}", phase);
                         })
                         .focusable(&child_1)
                         .w_full()
@@ -132,8 +133,8 @@ impl FocusStory {
                     div()
                         .id("child-2")
                         .context("child-2")
-                        .on_action(|_, action: &ActionB, phase, cx| {
-                            println!("Action B dispatched on child 2 during {:?}", phase);
+                        .on_action(|_, action: &ActionC, phase, cx| {
+                            println!("Action C dispatched on child 2 during {:?}", phase);
                         })
                         .focusable(&child_2)
                         .w_full()
