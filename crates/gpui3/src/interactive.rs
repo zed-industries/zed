@@ -479,9 +479,10 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
                 let line_height = cx.line_height();
                 let scroll_max = (content_size - bounds.size).max(&Size::default());
 
-                cx.on_mouse_event(move |_, event: &ScrollWheelEvent, _, cx| {
-                    if bounds.contains_point(&event.position) {
+                cx.on_mouse_event(move |_, event: &ScrollWheelEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                         let mut scroll_offset = scroll_offset.lock();
+                        let old_scroll_offset = *scroll_offset;
                         let delta = event.delta.pixel_delta(line_height);
 
                         if overflow.x == Overflow::Scroll {
@@ -494,7 +495,10 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
                                 (scroll_offset.y - delta.y).clamp(px(0.), scroll_max.height);
                         }
 
-                        cx.notify();
+                        if *scroll_offset != old_scroll_offset {
+                            cx.notify();
+                            cx.stop_propagation();
+                        }
                     }
                 });
             }
