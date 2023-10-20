@@ -6,12 +6,12 @@ use crate::prelude::*;
 use crate::{Icon, IconButton, Input, Label, LabelColor};
 
 #[derive(Element)]
-pub struct ChatPanel<S: 'static + Send + Sync + Clone> {
+pub struct ChatPanel<S: 'static + Send + Sync> {
     element_id: ElementId,
     messages: Vec<ChatMessage<S>>,
 }
 
-impl<S: 'static + Send + Sync + Clone> ChatPanel<S> {
+impl<S: 'static + Send + Sync> ChatPanel<S> {
     pub fn new(element_id: impl Into<ElementId>) -> Self {
         Self {
             element_id: element_id.into(),
@@ -62,7 +62,7 @@ impl<S: 'static + Send + Sync + Clone> ChatPanel<S> {
                             .flex_col()
                             .gap_3()
                             .overflow_y_scroll()
-                            .children(self.messages.clone()),
+                            .children(self.messages.drain(..)),
                     )
                     // Composer
                     .child(div().flex().my_2().child(Input::new("Message #design"))),
@@ -70,15 +70,15 @@ impl<S: 'static + Send + Sync + Clone> ChatPanel<S> {
     }
 }
 
-#[derive(Element, Clone)]
-pub struct ChatMessage<S: 'static + Send + Sync + Clone> {
+#[derive(Element)]
+pub struct ChatMessage<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     author: String,
     text: String,
     sent_at: NaiveDateTime,
 }
 
-impl<S: 'static + Send + Sync + Clone> ChatMessage<S> {
+impl<S: 'static + Send + Sync> ChatMessage<S> {
     pub fn new(author: String, text: String, sent_at: NaiveDateTime) -> Self {
         Self {
             state_type: PhantomData,
