@@ -429,7 +429,6 @@ mod tests {
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
         Buffer, DisplayMap, ExcerptRange, InlayId, MultiBuffer,
     };
-    use language::language_settings::AllLanguageSettings;
     use project::Project;
     use settings::SettingsStore;
     use util::post_inc;

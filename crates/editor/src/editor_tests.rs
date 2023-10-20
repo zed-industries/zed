@@ -847,7 +847,6 @@ fn test_move_cursor(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
-    todo!();
     init_test(cx, |_| {});
 
     let view = cx
@@ -889,6 +888,11 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
         );
 
         view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(1, "ab⋯e".len())]
+        );
+        view.move_left(&MoveLeft, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[empty_range(1, "ab⋯".len())]
@@ -933,22 +937,17 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
         view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ⋯ⓔ".len())]
-        );
-        view.move_left(&MoveLeft, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ⋯".len())]
-        );
-        view.move_left(&MoveLeft, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
             &[empty_range(0, "ⓐⓑ".len())]
         );
         view.move_left(&MoveLeft, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[empty_range(0, "ⓐ".len())]
+        );
+        view.move_left(&MoveLeft, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(0, "".len())]
         );
     });
 }

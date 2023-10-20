@@ -1007,7 +1007,7 @@ pub mod tests {
     use settings::SettingsStore;
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
-    use theme::{SyntaxTheme, Theme};
+    use theme::SyntaxTheme;
     use util::test::{marked_text_ranges, sample_text};
     use Bias::*;
 
