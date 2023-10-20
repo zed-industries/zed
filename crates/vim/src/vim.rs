@@ -25,7 +25,7 @@ pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::normal_replace;
 use serde::Deserialize;
-use settings::{Setting, SettingsStore};
+use settings::{update_settings_file, Setting, SettingsStore};
 use state::{EditorState, Mode, Operator, RecordedSelection, WorkspaceState};
 use std::{ops::Range, sync::Arc};
 use visual::{visual_block_motion, visual_replace};
@@ -48,6 +48,7 @@ actions!(
     vim,
     [Tab, Enter, Object, InnerObject, FindForward, FindBackward]
 );
+actions!(workspace, [ToggleVimMode]);
 impl_actions!(vim, [Number, SwitchMode, PushOperator]);
 
 #[derive(Copy, Clone, Debug)]
@@ -86,6 +87,14 @@ pub fn init(cx: &mut AppContext) {
 
     cx.add_action(|_: &mut Workspace, _: &Enter, cx| {
         Vim::active_editor_input_ignored("\n".into(), cx)
+    });
+
+    cx.add_action(|workspace: &mut Workspace, _: &ToggleVimMode, cx| {
+        let fs = workspace.app_state().fs.clone();
+        let currently_enabled = settings::get::<VimModeSetting>(cx).0;
+        update_settings_file::<VimModeSetting>(fs, cx, move |setting| {
+            *setting = Some(!currently_enabled)
+        })
     });
 
     // Any time settings change, update vim mode to match. The Vim struct
