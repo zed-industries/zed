@@ -23,6 +23,10 @@ impl DispatchContext {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.set.is_empty() && self.map.is_empty()
+    }
+
     pub fn clear(&mut self) {
         self.set.clear();
         self.map.clear();
@@ -47,17 +51,17 @@ impl DispatchContext {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub enum ActionContextPredicate {
+pub enum DispatchContextPredicate {
     Identifier(SharedString),
     Equal(SharedString, SharedString),
     NotEqual(SharedString, SharedString),
-    Child(Box<ActionContextPredicate>, Box<ActionContextPredicate>),
-    Not(Box<ActionContextPredicate>),
-    And(Box<ActionContextPredicate>, Box<ActionContextPredicate>),
-    Or(Box<ActionContextPredicate>, Box<ActionContextPredicate>),
+    Child(Box<DispatchContextPredicate>, Box<DispatchContextPredicate>),
+    Not(Box<DispatchContextPredicate>),
+    And(Box<DispatchContextPredicate>, Box<DispatchContextPredicate>),
+    Or(Box<DispatchContextPredicate>, Box<DispatchContextPredicate>),
 }
 
-impl ActionContextPredicate {
+impl DispatchContextPredicate {
     pub fn parse(source: &str) -> Result<Self> {
         let source = Self::skip_whitespace(source);
         let (predicate, rest) = Self::parse_expr(source, 0)?;
@@ -92,8 +96,10 @@ impl ActionContextPredicate {
     }
 
     fn parse_expr(mut source: &str, min_precedence: u32) -> anyhow::Result<(Self, &str)> {
-        type Op =
-            fn(ActionContextPredicate, ActionContextPredicate) -> Result<ActionContextPredicate>;
+        type Op = fn(
+            DispatchContextPredicate,
+            DispatchContextPredicate,
+        ) -> Result<DispatchContextPredicate>;
 
         let (mut predicate, rest) = Self::parse_primary(source)?;
         source = rest;
@@ -139,7 +145,7 @@ impl ActionContextPredicate {
             '!' => {
                 let source = Self::skip_whitespace(&source[1..]);
                 let (predicate, source) = Self::parse_expr(&source, PRECEDENCE_NOT)?;
-                Ok((ActionContextPredicate::Not(Box::new(predicate)), source))
+                Ok((DispatchContextPredicate::Not(Box::new(predicate)), source))
             }
             _ if next.is_alphanumeric() || next == '_' => {
                 let len = source
@@ -148,7 +154,7 @@ impl ActionContextPredicate {
                 let (identifier, rest) = source.split_at(len);
                 source = Self::skip_whitespace(rest);
                 Ok((
-                    ActionContextPredicate::Identifier(identifier.to_string().into()),
+                    DispatchContextPredicate::Identifier(identifier.to_string().into()),
                     source,
                 ))
             }
@@ -200,17 +206,17 @@ const PRECEDENCE_NOT: u32 = 5;
 
 #[cfg(test)]
 mod tests {
-    use super::ActionContextPredicate::{self, *};
+    use super::DispatchContextPredicate::{self, *};
 
     #[test]
     fn test_parse_identifiers() {
         // Identifiers
         assert_eq!(
-            ActionContextPredicate::parse("abc12").unwrap(),
+            DispatchContextPredicate::parse("abc12").unwrap(),
             Identifier("abc12".into())
         );
         assert_eq!(
-            ActionContextPredicate::parse("_1a").unwrap(),
+            DispatchContextPredicate::parse("_1a").unwrap(),
             Identifier("_1a".into())
         );
     }
@@ -218,11 +224,11 @@ mod tests {
     #[test]
     fn test_parse_negations() {
         assert_eq!(
-            ActionContextPredicate::parse("!abc").unwrap(),
+            DispatchContextPredicate::parse("!abc").unwrap(),
             Not(Box::new(Identifier("abc".into())))
         );
         assert_eq!(
-            ActionContextPredicate::parse(" ! ! abc").unwrap(),
+            DispatchContextPredicate::parse(" ! ! abc").unwrap(),
             Not(Box::new(Not(Box::new(Identifier("abc".into())))))
         );
     }
@@ -230,15 +236,15 @@ mod tests {
     #[test]
     fn test_parse_equality_operators() {
         assert_eq!(
-            ActionContextPredicate::parse("a == b").unwrap(),
+            DispatchContextPredicate::parse("a == b").unwrap(),
             Equal("a".into(), "b".into())
         );
         assert_eq!(
-            ActionContextPredicate::parse("c!=d").unwrap(),
+            DispatchContextPredicate::parse("c!=d").unwrap(),
             NotEqual("c".into(), "d".into())
         );
         assert_eq!(
-            ActionContextPredicate::parse("c == !d")
+            DispatchContextPredicate::parse("c == !d")
                 .unwrap_err()
                 .to_string(),
             "operands must be identifiers"
@@ -248,14 +254,14 @@ mod tests {
     #[test]
     fn test_parse_boolean_operators() {
         assert_eq!(
-            ActionContextPredicate::parse("a || b").unwrap(),
+            DispatchContextPredicate::parse("a || b").unwrap(),
             Or(
                 Box::new(Identifier("a".into())),
                 Box::new(Identifier("b".into()))
             )
         );
         assert_eq!(
-            ActionContextPredicate::parse("a || !b && c").unwrap(),
+            DispatchContextPredicate::parse("a || !b && c").unwrap(),
             Or(
                 Box::new(Identifier("a".into())),
                 Box::new(And(
@@ -265,7 +271,7 @@ mod tests {
             )
         );
         assert_eq!(
-            ActionContextPredicate::parse("a && b || c&&d").unwrap(),
+            DispatchContextPredicate::parse("a && b || c&&d").unwrap(),
             Or(
                 Box::new(And(
                     Box::new(Identifier("a".into())),
@@ -278,7 +284,7 @@ mod tests {
             )
         );
         assert_eq!(
-            ActionContextPredicate::parse("a == b && c || d == e && f").unwrap(),
+            DispatchContextPredicate::parse("a == b && c || d == e && f").unwrap(),
             Or(
                 Box::new(And(
                     Box::new(Equal("a".into(), "b".into())),
@@ -291,7 +297,7 @@ mod tests {
             )
         );
         assert_eq!(
-            ActionContextPredicate::parse("a && b && c && d").unwrap(),
+            DispatchContextPredicate::parse("a && b && c && d").unwrap(),
             And(
                 Box::new(And(
                     Box::new(And(
@@ -308,7 +314,7 @@ mod tests {
     #[test]
     fn test_parse_parenthesized_expressions() {
         assert_eq!(
-            ActionContextPredicate::parse("a && (b == c || d != e)").unwrap(),
+            DispatchContextPredicate::parse("a && (b == c || d != e)").unwrap(),
             And(
                 Box::new(Identifier("a".into())),
                 Box::new(Or(
@@ -318,7 +324,7 @@ mod tests {
             ),
         );
         assert_eq!(
-            ActionContextPredicate::parse(" ( a || b ) ").unwrap(),
+            DispatchContextPredicate::parse(" ( a || b ) ").unwrap(),
             Or(
                 Box::new(Identifier("a".into())),
                 Box::new(Identifier("b".into())),

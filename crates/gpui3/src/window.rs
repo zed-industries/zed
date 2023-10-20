@@ -1388,6 +1388,10 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         context: DispatchContext,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
+        if context.is_empty() {
+            return f(self);
+        }
+
         if !self.window.freeze_key_dispatch_stack {
             self.window
                 .key_dispatch_stack

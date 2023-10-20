@@ -176,6 +176,14 @@ pub trait StatelessInteractive: Element {
         self
     }
 
+    fn context(mut self, context: impl Into<DispatchContext>) -> Self
+    where
+        Self: Sized,
+    {
+        self.stateless_interactivity().dispatch_context = context.into();
+        self
+    }
+
     fn on_action<A: 'static>(
         mut self,
         listener: impl Fn(&mut Self::ViewState, &A, DispatchPhase, &mut ViewContext<Self::ViewState>)
@@ -320,7 +328,10 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
                 result
             })
         } else {
-            cx.with_key_listeners(&self.as_stateless().key_listeners, f)
+            let stateless = self.as_stateless();
+            cx.with_key_dispatch_context(stateless.dispatch_context.clone(), |cx| {
+                cx.with_key_listeners(&stateless.key_listeners, f)
+            })
         }
     }
 
@@ -519,6 +530,7 @@ where
 }
 
 pub struct StatelessInteraction<V> {
+    pub dispatch_context: DispatchContext,
     pub mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
     pub mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
     pub mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
@@ -583,6 +595,7 @@ pub struct InteractiveElementState {
 impl<V> Default for StatelessInteraction<V> {
     fn default() -> Self {
         Self {
+            dispatch_context: DispatchContext::new(),
             mouse_down_listeners: SmallVec::new(),
             mouse_up_listeners: SmallVec::new(),
             mouse_move_listeners: SmallVec::new(),

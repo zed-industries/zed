@@ -1,11 +1,11 @@
-use crate::{Action, ActionContextPredicate, DispatchContext, KeyMatch, Keystroke};
+use crate::{Action, DispatchContext, DispatchContextPredicate, KeyMatch, Keystroke};
 use anyhow::Result;
 use smallvec::SmallVec;
 
 pub struct KeyBinding {
     action: Box<dyn Action>,
     pub(super) keystrokes: SmallVec<[Keystroke; 2]>,
-    pub(super) context_predicate: Option<ActionContextPredicate>,
+    pub(super) context_predicate: Option<DispatchContextPredicate>,
 }
 
 impl KeyBinding {
@@ -15,7 +15,7 @@ impl KeyBinding {
 
     pub fn load(keystrokes: &str, action: Box<dyn Action>, context: Option<&str>) -> Result<Self> {
         let context = if let Some(context) = context {
-            Some(ActionContextPredicate::parse(context)?)
+            Some(DispatchContextPredicate::parse(context)?)
         } else {
             None
         };

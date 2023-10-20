@@ -1,4 +1,4 @@
-use crate::{ActionContextPredicate, KeyBinding, Keystroke};
+use crate::{DispatchContextPredicate, KeyBinding, Keystroke};
 use collections::HashSet;
 use smallvec::SmallVec;
 use std::{any::TypeId, collections::HashMap};
@@ -10,7 +10,8 @@ pub struct KeymapVersion(usize);
 pub struct Keymap {
     bindings: Vec<KeyBinding>,
     binding_indices_by_action_id: HashMap<TypeId, SmallVec<[usize; 3]>>,
-    disabled_keystrokes: HashMap<SmallVec<[Keystroke; 2]>, HashSet<Option<ActionContextPredicate>>>,
+    disabled_keystrokes:
+        HashMap<SmallVec<[Keystroke; 2]>, HashSet<Option<DispatchContextPredicate>>>,
     version: KeymapVersion,
 }
 
