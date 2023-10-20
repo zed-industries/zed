@@ -1,7 +1,7 @@
 use crate::{
     div, AnyElement, Bounds, Div, Element, ElementFocus, ElementId, ElementInteraction,
     FocusDisabled, FocusEnabled, FocusListeners, Focusable, InteractiveElementState,
-    IntoAnyElement, LayoutId, Pixels, SharedString, StatefulInteractive, StatefulInteractivity,
+    IntoAnyElement, LayoutId, Pixels, SharedString, StatefulInteraction, StatefulInteractive,
     StatelessInteraction, StatelessInteractive, StyleRefinement, Styled, ViewContext,
 };
 use util::ResultExt;
@@ -42,7 +42,7 @@ where
     V: 'static + Send + Sync,
     F: ElementFocus<V>,
 {
-    pub fn id(self, id: impl Into<ElementId>) -> Svg<V, StatefulInteractivity<V>, F> {
+    pub fn id(self, id: impl Into<ElementId>) -> Svg<V, StatefulInteraction<V>, F> {
         Svg {
             base: self.base.id(id),
             path: self.path,
@@ -135,12 +135,12 @@ where
     }
 }
 
-impl<V, F> StatefulInteractive for Svg<V, StatefulInteractivity<V>, F>
+impl<V, F> StatefulInteractive for Svg<V, StatefulInteraction<V>, F>
 where
     V: 'static + Send + Sync,
     F: ElementFocus<V>,
 {
-    fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<Self::ViewState> {
+    fn stateful_interactivity(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
         self.base.stateful_interactivity()
     }
 }

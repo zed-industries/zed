@@ -2,7 +2,7 @@ use crate::{
     AnyElement, BorrowWindow, Bounds, Element, ElementFocus, ElementId, ElementInteraction,
     FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable, GlobalElementId,
     GroupBounds, InteractiveElementState, IntoAnyElement, LayoutId, Overflow, ParentElement,
-    Pixels, Point, SharedString, StatefulInteractive, StatefulInteractivity, StatelessInteraction,
+    Pixels, Point, SharedString, StatefulInteraction, StatefulInteractive, StatelessInteraction,
     StatelessInteractive, Style, StyleRefinement, Styled, ViewContext,
 };
 use parking_lot::Mutex;
@@ -61,7 +61,7 @@ where
     F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
-    pub fn id(self, id: impl Into<ElementId>) -> Div<V, StatefulInteractivity<V>, F> {
+    pub fn id(self, id: impl Into<ElementId>) -> Div<V, StatefulInteraction<V>, F> {
         Div {
             interaction: id.into().into(),
             focus: self.focus,
@@ -331,12 +331,12 @@ where
     }
 }
 
-impl<V, F> StatefulInteractive for Div<V, StatefulInteractivity<V>, F>
+impl<V, F> StatefulInteractive for Div<V, StatefulInteraction<V>, F>
 where
     F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
-    fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<Self::ViewState> {
+    fn stateful_interactivity(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
         &mut self.interaction
     }
 }

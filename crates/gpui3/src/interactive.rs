@@ -176,6 +176,27 @@ pub trait StatelessInteractive: Element {
         self
     }
 
+    fn on_action<A: 'static>(
+        mut self,
+        listener: impl Fn(&mut Self::ViewState, &A, DispatchPhase, &mut ViewContext<Self::ViewState>)
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.stateless_interactivity().key_listeners.push((
+            TypeId::of::<A>(),
+            Arc::new(move |view, event, _, phase, cx| {
+                let event = event.downcast_ref().unwrap();
+                listener(view, event, phase, cx);
+                None
+            }),
+        ));
+        self
+    }
+
     fn on_key_down(
         mut self,
         listener: impl Fn(
@@ -192,27 +213,6 @@ pub trait StatelessInteractive: Element {
     {
         self.stateless_interactivity().key_listeners.push((
             TypeId::of::<KeyDownEvent>(),
-            Arc::new(move |view, event, _, phase, cx| {
-                let event = event.downcast_ref().unwrap();
-                listener(view, event, phase, cx);
-                None
-            }),
-        ));
-        self
-    }
-
-    fn on_action<A: 'static>(
-        mut self,
-        listener: impl Fn(&mut Self::ViewState, &A, DispatchPhase, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        self.stateless_interactivity().key_listeners.push((
-            TypeId::of::<A>(),
             Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
                 listener(view, event, phase, cx);
@@ -245,7 +245,7 @@ pub trait StatelessInteractive: Element {
 }
 
 pub trait StatefulInteractive: StatelessInteractive {
-    fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<Self::ViewState>;
+    fn stateful_interactivity(&mut self) -> &mut StatefulInteraction<Self::ViewState>;
 
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
@@ -290,8 +290,8 @@ pub trait StatefulInteractive: StatelessInteractive {
 pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
     fn as_stateless(&self) -> &StatelessInteraction<V>;
     fn as_stateless_mut(&mut self) -> &mut StatelessInteraction<V>;
-    fn as_stateful(&self) -> Option<&StatefulInteractivity<V>>;
-    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>>;
+    fn as_stateful(&self) -> Option<&StatefulInteraction<V>>;
+    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteraction<V>>;
 
     fn initialize<R>(
         &mut self,
@@ -472,7 +472,7 @@ where
 }
 
 #[derive(Deref, DerefMut)]
-pub struct StatefulInteractivity<V: 'static + Send + Sync> {
+pub struct StatefulInteraction<V: 'static + Send + Sync> {
     pub id: ElementId,
     #[deref]
     #[deref_mut]
@@ -482,15 +482,15 @@ pub struct StatefulInteractivity<V: 'static + Send + Sync> {
     pub group_active_style: Option<GroupStyle>,
 }
 
-impl<V> ElementInteraction<V> for StatefulInteractivity<V>
+impl<V> ElementInteraction<V> for StatefulInteraction<V>
 where
     V: 'static + Send + Sync,
 {
-    fn as_stateful(&self) -> Option<&StatefulInteractivity<V>> {
+    fn as_stateful(&self) -> Option<&StatefulInteraction<V>> {
         Some(self)
     }
 
-    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>> {
+    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteraction<V>> {
         Some(self)
     }
 
@@ -503,7 +503,7 @@ where
     }
 }
 
-impl<V> From<ElementId> for StatefulInteractivity<V>
+impl<V> From<ElementId> for StatefulInteraction<V>
 where
     V: 'static + Send + Sync,
 {
@@ -598,11 +598,11 @@ impl<V> ElementInteraction<V> for StatelessInteraction<V>
 where
     V: 'static + Send + Sync,
 {
-    fn as_stateful(&self) -> Option<&StatefulInteractivity<V>> {
+    fn as_stateful(&self) -> Option<&StatefulInteraction<V>> {
         None
     }
 
-    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>> {
+    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteraction<V>> {
         None
     }
 

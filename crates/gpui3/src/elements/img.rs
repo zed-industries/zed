@@ -1,8 +1,8 @@
 use crate::{
     div, AnyElement, BorrowWindow, Bounds, Div, Element, ElementFocus, ElementId,
     ElementInteraction, FocusDisabled, FocusEnabled, FocusListeners, Focusable,
-    InteractiveElementState, IntoAnyElement, LayoutId, Pixels, SharedString, StatefulInteractive,
-    StatefulInteractivity, StatelessInteraction, StatelessInteractive, StyleRefinement, Styled,
+    InteractiveElementState, IntoAnyElement, LayoutId, Pixels, SharedString, StatefulInteraction,
+    StatefulInteractive, StatelessInteraction, StatelessInteractive, StyleRefinement, Styled,
     ViewContext,
 };
 use futures::FutureExt;
@@ -51,7 +51,7 @@ where
     V: 'static + Send + Sync,
     F: ElementFocus<V>,
 {
-    pub fn id(self, id: impl Into<ElementId>) -> Img<V, StatefulInteractivity<V>, F> {
+    pub fn id(self, id: impl Into<ElementId>) -> Img<V, StatefulInteraction<V>, F> {
         Img {
             base: self.base.id(id),
             uri: self.uri,
@@ -162,12 +162,12 @@ where
     }
 }
 
-impl<V, F> StatefulInteractive for Img<V, StatefulInteractivity<V>, F>
+impl<V, F> StatefulInteractive for Img<V, StatefulInteraction<V>, F>
 where
     V: 'static + Send + Sync,
     F: ElementFocus<V>,
 {
-    fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<Self::ViewState> {
+    fn stateful_interactivity(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
         self.base.stateful_interactivity()
     }
 }
