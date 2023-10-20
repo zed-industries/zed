@@ -4,12 +4,12 @@ use crate::prelude::*;
 use crate::{example_editor_actions, OrderMethod, Palette};
 
 #[derive(Element)]
-pub struct CommandPalette<S: 'static + Send + Sync + Clone> {
+pub struct CommandPalette<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync + Clone> CommandPalette<S> {
+impl<S: 'static + Send + Sync> CommandPalette<S> {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
@@ -38,11 +38,11 @@ mod stories {
     use super::*;
 
     #[derive(Element)]
-    pub struct CommandPaletteStory<S: 'static + Send + Sync + Clone> {
+    pub struct CommandPaletteStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
 
-    impl<S: 'static + Send + Sync + Clone> CommandPaletteStory<S> {
+    impl<S: 'static + Send + Sync> CommandPaletteStory<S> {
         pub fn new() -> Self {
             Self {
                 state_type: PhantomData,

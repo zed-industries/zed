@@ -79,11 +79,11 @@ mod stories {
     use super::*;
 
     #[derive(Element)]
-    pub struct ToastStory<S: 'static + Send + Sync + Clone> {
+    pub struct ToastStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
 
-    impl<S: 'static + Send + Sync + Clone> ToastStory<S> {
+    impl<S: 'static + Send + Sync> ToastStory<S> {
         pub fn new() -> Self {
             Self {
                 state_type: PhantomData,

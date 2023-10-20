@@ -6,13 +6,13 @@ use crate::prelude::*;
 use crate::{Icon, IconButton, Label, Panel, PanelSide};
 
 #[derive(Element)]
-pub struct AssistantPanel<S: 'static + Send + Sync + Clone> {
+pub struct AssistantPanel<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
     current_side: PanelSide,
 }
 
-impl<S: 'static + Send + Sync + Clone> AssistantPanel<S> {
+impl<S: 'static + Send + Sync> AssistantPanel<S> {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
@@ -87,11 +87,11 @@ mod stories {
     use super::*;
 
     #[derive(Element)]
-    pub struct AssistantPanelStory<S: 'static + Send + Sync + Clone> {
+    pub struct AssistantPanelStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
 
-    impl<S: 'static + Send + Sync + Clone> AssistantPanelStory<S> {
+    impl<S: 'static + Send + Sync> AssistantPanelStory<S> {
         pub fn new() -> Self {
             Self {
                 state_type: PhantomData,

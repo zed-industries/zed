@@ -10,13 +10,13 @@ use crate::{h_stack, HighlightedText};
 pub struct Symbol(pub Vec<HighlightedText>);
 
 #[derive(Element)]
-pub struct Breadcrumb<S: 'static + Send + Sync + Clone> {
+pub struct Breadcrumb<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     path: PathBuf,
     symbols: Vec<Symbol>,
 }
 
-impl<S: 'static + Send + Sync + Clone> Breadcrumb<S> {
+impl<S: 'static + Send + Sync> Breadcrumb<S> {
     pub fn new(path: PathBuf, symbols: Vec<Symbol>) -> Self {
         Self {
             state_type: PhantomData,
@@ -91,11 +91,11 @@ mod stories {
     use super::*;
 
     #[derive(Element)]
-    pub struct BreadcrumbStory<S: 'static + Send + Sync + Clone> {
+    pub struct BreadcrumbStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
 
-    impl<S: 'static + Send + Sync + Clone> BreadcrumbStory<S> {
+    impl<S: 'static + Send + Sync> BreadcrumbStory<S> {
         pub fn new() -> Self {
             Self {
                 state_type: PhantomData,

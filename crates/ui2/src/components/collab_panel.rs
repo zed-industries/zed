@@ -7,12 +7,12 @@ use gpui3::{img, svg, SharedString};
 use std::marker::PhantomData;
 
 #[derive(Element)]
-pub struct CollabPanel<S: 'static + Send + Sync + Clone> {
+pub struct CollabPanel<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
+impl<S: 'static + Send + Sync> CollabPanel<S> {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
@@ -165,11 +165,11 @@ mod stories {
     use super::*;
 
     #[derive(Element)]
-    pub struct CollabPanelStory<S: 'static + Send + Sync + Clone> {
+    pub struct CollabPanelStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
 
-    impl<S: 'static + Send + Sync + Clone> CollabPanelStory<S> {
+    impl<S: 'static + Send + Sync> CollabPanelStory<S> {
         pub fn new() -> Self {
             Self {
                 state_type: PhantomData,

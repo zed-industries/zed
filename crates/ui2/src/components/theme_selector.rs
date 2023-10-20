@@ -4,12 +4,12 @@ use crate::prelude::*;
 use crate::{OrderMethod, Palette, PaletteItem};
 
 #[derive(Element)]
-pub struct ThemeSelector<S: 'static + Send + Sync + Clone> {
+pub struct ThemeSelector<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync + Clone> ThemeSelector<S> {
+impl<S: 'static + Send + Sync> ThemeSelector<S> {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),

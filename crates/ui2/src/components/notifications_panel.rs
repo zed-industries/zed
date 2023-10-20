@@ -4,12 +4,12 @@ use crate::{prelude::*, static_new_notification_items, static_read_notification_
 use crate::{List, ListHeader};
 
 #[derive(Element)]
-pub struct NotificationsPanel<S: 'static + Send + Sync + Clone> {
+pub struct NotificationsPanel<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync + Clone> NotificationsPanel<S> {
+impl<S: 'static + Send + Sync> NotificationsPanel<S> {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),

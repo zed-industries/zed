@@ -6,12 +6,12 @@ use crate::{
 };
 
 #[derive(Element)]
-pub struct ProjectPanel<S: 'static + Send + Sync + Clone> {
+pub struct ProjectPanel<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync + Clone> ProjectPanel<S> {
+impl<S: 'static + Send + Sync> ProjectPanel<S> {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),

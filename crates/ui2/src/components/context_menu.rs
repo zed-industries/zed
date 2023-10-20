@@ -74,11 +74,11 @@ mod stories {
     use super::*;
 
     #[derive(Element)]
-    pub struct ContextMenuStory<S: 'static + Send + Sync + Clone> {
+    pub struct ContextMenuStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
 
-    impl<S: 'static + Send + Sync + Clone> ContextMenuStory<S> {
+    impl<S: 'static + Send + Sync> ContextMenuStory<S> {
         pub fn new() -> Self {
             Self {
                 state_type: PhantomData,

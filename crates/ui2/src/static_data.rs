@@ -324,7 +324,7 @@ pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
     ]
 }
 
-pub fn static_new_notification_items<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
+pub fn static_new_notification_items<S: 'static + Send + Sync>() -> Vec<ListItem<S>> {
     vec![
         ListDetailsEntry::new("maxdeviant invited you to join a stream in #design.")
             .meta("4 people in stream."),
@@ -335,7 +335,7 @@ pub fn static_new_notification_items<S: 'static + Send + Sync + Clone>() -> Vec<
     .collect()
 }
 
-pub fn static_read_notification_items<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
+pub fn static_read_notification_items<S: 'static + Send + Sync>() -> Vec<ListItem<S>> {
     vec![
         ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
             Button::new("Decline"),
@@ -351,7 +351,7 @@ pub fn static_read_notification_items<S: 'static + Send + Sync + Clone>() -> Vec
     .collect()
 }
 
-pub fn static_project_panel_project_items<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
+pub fn static_project_panel_project_items<S: 'static + Send + Sync>() -> Vec<ListItem<S>> {
     vec![
         ListEntry::new(Label::new("zed"))
             .set_left_icon(Icon::FolderOpen.into())
@@ -478,7 +478,7 @@ pub fn static_project_panel_project_items<S: 'static + Send + Sync + Clone>() ->
     .collect()
 }
 
-pub fn static_project_panel_single_items<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
+pub fn static_project_panel_single_items<S: 'static + Send + Sync>() -> Vec<ListItem<S>> {
     vec![
         ListEntry::new(Label::new("todo.md"))
             .set_left_icon(Icon::FileDoc.into())
@@ -495,7 +495,7 @@ pub fn static_project_panel_single_items<S: 'static + Send + Sync + Clone>() -> 
     .collect()
 }
 
-pub fn static_collab_panel_current_call<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
+pub fn static_collab_panel_current_call<S: 'static + Send + Sync>() -> Vec<ListItem<S>> {
     vec![
         ListEntry::new(Label::new("as-cii")).set_left_avatar("http://github.com/as-cii.png?s=50"),
         ListEntry::new(Label::new("nathansobo"))
@@ -508,7 +508,7 @@ pub fn static_collab_panel_current_call<S: 'static + Send + Sync + Clone>() -> V
     .collect()
 }
 
-pub fn static_collab_panel_channels<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
+pub fn static_collab_panel_channels<S: 'static + Send + Sync>() -> Vec<ListItem<S>> {
     vec![
         ListEntry::new(Label::new("zed"))
             .set_left_icon(Icon::Hash.into())
@@ -572,7 +572,7 @@ pub fn static_collab_panel_channels<S: 'static + Send + Sync + Clone>() -> Vec<L
     .collect()
 }
 
-pub fn example_editor_actions<S: 'static + Send + Sync + Clone>() -> Vec<PaletteItem<S>> {
+pub fn example_editor_actions<S: 'static + Send + Sync>() -> Vec<PaletteItem<S>> {
     vec![
         PaletteItem::new("New File").keybinding(Keybinding::new(
             "N".to_string(),
