@@ -5,8 +5,8 @@ use strum::{EnumIter, IntoEnumIterator};
 
 use crate::prelude::*;
 
-#[derive(Element, Clone)]
-pub struct Keybinding<S: 'static + Send + Sync + Clone> {
+#[derive(Element)]
+pub struct Keybinding<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
 
     /// A keybinding consists of a key and a set of modifier keys.
@@ -16,7 +16,7 @@ pub struct Keybinding<S: 'static + Send + Sync + Clone> {
     keybinding: Vec<(String, ModifierKeys)>,
 }
 
-impl<S: 'static + Send + Sync + Clone> Keybinding<S> {
+impl<S: 'static + Send + Sync> Keybinding<S> {
     pub fn new(key: String, modifiers: ModifierKeys) -> Self {
         Self {
             state_type: PhantomData,

@@ -4,7 +4,7 @@ use crate::prelude::*;
 use crate::{h_stack, v_stack, Keybinding, Label, LabelColor};
 
 #[derive(Element)]
-pub struct Palette<S: 'static + Send + Sync + Clone> {
+pub struct Palette<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
     input_placeholder: SharedString,
@@ -13,7 +13,7 @@ pub struct Palette<S: 'static + Send + Sync + Clone> {
     default_order: OrderMethod,
 }
 
-impl<S: 'static + Send + Sync + Clone> Palette<S> {
+impl<S: 'static + Send + Sync> Palette<S> {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
@@ -85,7 +85,7 @@ impl<S: 'static + Send + Sync + Clone> Palette<S> {
                                 .into_iter()
                                 .flatten(),
                             )
-                            .children(self.items.iter().enumerate().map(|(index, item)| {
+                            .children(self.items.drain(..).enumerate().map(|(index, item)| {
                                 h_stack()
                                     .id(index)
                                     .justify_between()
@@ -94,21 +94,21 @@ impl<S: 'static + Send + Sync + Clone> Palette<S> {
                                     .rounded_lg()
                                     .hover(|style| style.bg(color.ghost_element_hover))
                                     .active(|style| style.bg(color.ghost_element_active))
-                                    .child(item.clone())
+                                    .child(item)
                             })),
                     ),
             )
     }
 }
 
-#[derive(Element, Clone)]
-pub struct PaletteItem<S: 'static + Send + Sync + Clone> {
+#[derive(Element)]
+pub struct PaletteItem<S: 'static + Send + Sync> {
     pub label: SharedString,
     pub sublabel: Option<SharedString>,
     pub keybinding: Option<Keybinding<S>>,
 }
 
-impl<S: 'static + Send + Sync + Clone> PaletteItem<S> {
+impl<S: 'static + Send + Sync> PaletteItem<S> {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
@@ -148,7 +148,7 @@ impl<S: 'static + Send + Sync + Clone> PaletteItem<S> {
                     .child(Label::new(self.label.clone()))
                     .children(self.sublabel.clone().map(|sublabel| Label::new(sublabel))),
             )
-            .children(self.keybinding.clone())
+            .children(self.keybinding.take())
     }
 }
 
