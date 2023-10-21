@@ -352,7 +352,7 @@ impl View for ProjectSearchView {
                         major_text = Cow::Borrowed("Not Authenticated");
                         show_minor_text = false;
                         Some(
-                            "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables"
+                            "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables.\nIf this variable was set using the Assistant Panel, please restart Zed to Authenticate."
                                 .to_string(),
                         )
                     }
