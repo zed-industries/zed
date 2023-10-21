@@ -1,6 +1,6 @@
 use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    tests::{room_participants, RoomParticipants, TestClient, TestServer},
+    tests::{channel_id, room_participants, RoomParticipants, TestClient, TestServer},
 };
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
@@ -467,6 +467,94 @@ async fn test_calling_multiple_users_simultaneously(
             pending: Default::default()
         }
     );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_joining_channels_and_calling_multiple_users_simultaneously(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .await;
+
+    let channel_1 = server
+        .make_channel(
+            "channel1",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
+        )
+        .await;
+
+    let channel_2 = server
+        .make_channel(
+            "channel2",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
+        )
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    // Simultaneously join channel 1 and then channel 2
+    active_call_a
+        .update(cx_a, |call, cx| call.join_channel(channel_1, cx))
+        .detach();
+    let join_channel_2 = active_call_a.update(cx_a, |call, cx| call.join_channel(channel_2, cx));
+
+    join_channel_2.await.unwrap();
+
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    deterministic.run_until_parked();
+
+    assert_eq!(channel_id(&room_a, cx_a), channel_2);
+
+    todo!();
+
+    // Leave the room
+    active_call_a
+        .update(cx_a, |call, cx| {
+            let hang_up = call.hang_up(cx);
+            hang_up
+        })
+        .await
+        .unwrap();
+
+    // Simultaneously join channel 1 and call user B and user C from client A.
+    let join_channel = active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, cx));
+
+    let b_invite = active_call_a.update(cx_a, |call, cx| {
+        call.invite(client_b.user_id().unwrap(), None, cx)
+    });
+    let c_invite = active_call_a.update(cx_a, |call, cx| {
+        call.invite(client_c.user_id().unwrap(), None, cx)
+    });
+    join_channel.await.unwrap();
+    b_invite.await.unwrap();
+    c_invite.await.unwrap();
+
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    deterministic.run_until_parked();
+
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: vec!["user_b".to_string(), "user_c".to_string()]
+        }
+    );
+
+    assert_eq!(channel_id(&room_a, cx_a), channel_1);
 }
 
 #[gpui::test(iterations = 10)]
