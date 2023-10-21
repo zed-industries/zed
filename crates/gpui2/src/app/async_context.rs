@@ -13,6 +13,16 @@ impl Context for AsyncAppContext {
     type EntityContext<'a, 'w, T: 'static + Send + Sync> = ModelContext<'a, T>;
     type Result<T> = Result<T>;
 
+    fn refresh(&mut self) -> Self::Result<()> {
+        let app = self
+            .0
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut lock = app.lock(); // Need this to compile
+        lock.refresh();
+        Ok(())
+    }
+
     fn entity<T: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
@@ -21,7 +31,7 @@ impl Context for AsyncAppContext {
             .0
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let mut lock = app.lock();
+        let mut lock = app.lock(); // Need this to compile
         Ok(lock.entity(build_entity))
     }
 
@@ -34,7 +44,7 @@ impl Context for AsyncAppContext {
             .0
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let mut lock = app.lock();
+        let mut lock = app.lock(); // Need this to compile
         Ok(lock.update_entity(handle, update))
     }
 
@@ -46,8 +56,20 @@ impl Context for AsyncAppContext {
             .0
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let mut lock = app.lock();
+        let lock = app.lock(); // Need this to compile
         Ok(lock.read_global(read))
+    }
+
+    fn update_global<G: 'static + Send + Sync, R>(
+        &mut self,
+        update: impl FnOnce(&mut G, &mut Self::BorrowedContext<'_, '_>) -> R,
+    ) -> Self::Result<R> {
+        let app = self
+            .0
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut lock = app.lock(); // Need this to compile
+        Ok(lock.update_global(update))
     }
 }
 
@@ -106,6 +128,10 @@ impl Context for AsyncWindowContext {
     type EntityContext<'a, 'w, T: 'static + Send + Sync> = ViewContext<'a, 'w, T>;
     type Result<T> = Result<T>;
 
+    fn refresh(&mut self) -> Self::Result<()> {
+        self.app.refresh()
+    }
+
     fn entity<R: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, R>) -> R,
@@ -128,5 +154,13 @@ impl Context for AsyncWindowContext {
         read: impl FnOnce(&G, &Self::BorrowedContext<'_, '_>) -> R,
     ) -> Result<R> {
         self.app.read_window(self.window, |cx| cx.read_global(read))
+    }
+
+    fn update_global<G: 'static + Send + Sync, R>(
+        &mut self,
+        update: impl FnOnce(&mut G, &mut Self::BorrowedContext<'_, '_>) -> R,
+    ) -> Result<R> {
+        self.app
+            .update_window(self.window, |cx| cx.update_global(update))
     }
 }

@@ -128,6 +128,11 @@ impl Executor {
         Task::Spawned(task)
     }
 
+    pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
+        // todo!("integrate with deterministic dispatcher")
+        futures::executor::block_on(future)
+    }
+
     pub fn is_main_thread(&self) -> bool {
         self.dispatcher.is_main_thread()
     }

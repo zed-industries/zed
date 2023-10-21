@@ -406,24 +406,6 @@ impl AppContext {
             .unwrap()
     }
 
-    pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
-    where
-        G: 'static + Send + Sync,
-    {
-        let mut global = self
-            .global_stacks_by_type
-            .get_mut(&TypeId::of::<G>())
-            .and_then(|stack| stack.pop())
-            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
-            .unwrap();
-        let result = f(global.downcast_mut().unwrap(), self);
-        self.global_stacks_by_type
-            .get_mut(&TypeId::of::<G>())
-            .unwrap()
-            .push(global);
-        result
-    }
-
     pub fn default_global<G: 'static + Default + Sync + Send>(&mut self) -> &mut G {
         let stack = self
             .global_stacks_by_type
@@ -448,18 +430,20 @@ impl AppContext {
         }
     }
 
-    pub(crate) fn push_global<T: Send + Sync + 'static>(&mut self, state: T) {
+    pub(crate) fn push_global<T: Send + Sync + 'static>(&mut self, global: T) {
         self.global_stacks_by_type
             .entry(TypeId::of::<T>())
             .or_default()
-            .push(Box::new(state));
+            .push(Box::new(global));
     }
 
-    pub(crate) fn pop_global<T: 'static>(&mut self) {
+    pub(crate) fn pop_global<T: 'static>(&mut self) -> Box<T> {
         self.global_stacks_by_type
             .get_mut(&TypeId::of::<T>())
             .and_then(|stack| stack.pop())
-            .expect("state stack underflow");
+            .expect("state stack underflow")
+            .downcast()
+            .unwrap()
     }
 
     pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
@@ -497,6 +481,10 @@ impl Context for AppContext {
     type EntityContext<'a, 'w, T: Send + Sync + 'static> = ModelContext<'a, T>;
     type Result<T> = T;
 
+    fn refresh(&mut self) {
+        self.push_effect(Effect::Refresh);
+    }
+
     fn entity<T: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
@@ -523,6 +511,24 @@ impl Context for AppContext {
 
     fn read_global<G: 'static + Send + Sync, R>(&self, read: impl FnOnce(&G, &Self) -> R) -> R {
         read(self.global(), self)
+    }
+
+    fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: 'static + Send + Sync,
+    {
+        let mut global = self
+            .global_stacks_by_type
+            .get_mut(&TypeId::of::<G>())
+            .and_then(|stack| stack.pop())
+            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
+            .unwrap();
+        let result = f(global.downcast_mut().unwrap(), self);
+        self.global_stacks_by_type
+            .get_mut(&TypeId::of::<G>())
+            .unwrap()
+            .push(global);
+        result
     }
 }
 

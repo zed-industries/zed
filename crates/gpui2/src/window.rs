@@ -1060,6 +1060,10 @@ impl Context for WindowContext<'_, '_> {
     type EntityContext<'a, 'w, T: 'static + Send + Sync> = ViewContext<'a, 'w, T>;
     type Result<T> = T;
 
+    fn refresh(&mut self) {
+        self.app.refresh();
+    }
+
     fn entity<T: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
@@ -1089,6 +1093,16 @@ impl Context for WindowContext<'_, '_> {
 
     fn read_global<G: 'static + Send + Sync, R>(&self, read: impl FnOnce(&G, &Self) -> R) -> R {
         read(self.app.global(), self)
+    }
+
+    fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: 'static + Send + Sync,
+    {
+        let mut global = self.app.pop_global::<G>();
+        let result = f(global.as_mut(), self);
+        self.app.push_global(global);
+        result
     }
 }
 
@@ -1540,6 +1554,10 @@ where
     type EntityContext<'b, 'c, U: 'static + Send + Sync> = ViewContext<'b, 'c, U>;
     type Result<U> = U;
 
+    fn refresh(&mut self) {
+        self.app.refresh();
+    }
+
     fn entity<T2: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T2>) -> T2,
@@ -1560,6 +1578,16 @@ where
         read: impl FnOnce(&G, &Self::BorrowedContext<'_, '_>) -> R,
     ) -> R {
         read(self.global(), self)
+    }
+
+    fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: 'static + Send + Sync,
+    {
+        let mut global = self.app.pop_global::<G>();
+        let result = f(global.as_mut(), self);
+        self.app.push_global(global);
+        result
     }
 }
 

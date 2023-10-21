@@ -70,6 +70,8 @@ pub trait Context {
     type EntityContext<'a, 'w, T: 'static + Send + Sync>;
     type Result<T>;
 
+    fn refresh(&mut self) -> Self::Result<()>;
+
     fn entity<T: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
@@ -85,6 +87,13 @@ pub trait Context {
         &self,
         read: impl FnOnce(&G, &Self::BorrowedContext<'_, '_>) -> R,
     ) -> Self::Result<R>;
+
+    fn update_global<G, R>(
+        &mut self,
+        f: impl FnOnce(&mut G, &mut Self::BorrowedContext<'_, '_>) -> R,
+    ) -> Self::Result<R>
+    where
+        G: 'static + Send + Sync;
 }
 
 pub enum GlobalKey {
@@ -114,6 +123,10 @@ impl<C: Context> Context for MainThread<C> {
     type BorrowedContext<'a, 'w> = MainThread<C::BorrowedContext<'a, 'w>>;
     type EntityContext<'a, 'w, T: 'static + Send + Sync> = MainThread<C::EntityContext<'a, 'w, T>>;
     type Result<T> = C::Result<T>;
+
+    fn refresh(&mut self) -> Self::Result<()> {
+        self.0.refresh()
+    }
 
     fn entity<T: Send + Sync + 'static>(
         &mut self,
@@ -158,6 +171,21 @@ impl<C: Context> Context for MainThread<C> {
                 >(cx)
             };
             read(global, cx)
+        })
+    }
+
+    fn update_global<G: 'static + Send + Sync, R>(
+        &mut self,
+        update: impl FnOnce(&mut G, &mut Self::BorrowedContext<'_, '_>) -> R,
+    ) -> Self::Result<R> {
+        self.0.update_global(|global, cx| {
+            let cx = unsafe {
+                mem::transmute::<
+                    &mut C::BorrowedContext<'_, '_>,
+                    &mut MainThread<C::BorrowedContext<'_, '_>>,
+                >(cx)
+            };
+            update(global, cx)
         })
     }
 }

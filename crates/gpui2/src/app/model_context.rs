@@ -136,6 +136,10 @@ impl<'a, T: 'static> Context for ModelContext<'a, T> {
     type EntityContext<'b, 'c, U: Send + Sync + 'static> = ModelContext<'b, U>;
     type Result<U> = U;
 
+    fn refresh(&mut self) {
+        self.app.refresh();
+    }
+
     fn entity<U: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, U>) -> U,
@@ -156,5 +160,15 @@ impl<'a, T: 'static> Context for ModelContext<'a, T> {
         read: impl FnOnce(&G, &Self::BorrowedContext<'_, '_>) -> R,
     ) -> R {
         read(self.app.global(), self)
+    }
+
+    fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: 'static + Send + Sync,
+    {
+        let mut global = self.app.pop_global::<G>();
+        let result = f(global.as_mut(), self);
+        self.app.push_global(global);
+        result
     }
 }

@@ -2,7 +2,7 @@ use crate::{settings_store::SettingsStore, Setting};
 use anyhow::Result;
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui2::{AppContext, Context};
+use gpui2::{AppContext, Context, Executor};
 use std::{
     io::ErrorKind,
     path::{Path, PathBuf},
@@ -48,7 +48,7 @@ pub fn test_settings() -> String {
 }
 
 pub fn watch_config_file(
-    executor: Arc<Background>,
+    executor: &Executor,
     fs: Arc<dyn Fs>,
     path: PathBuf,
 ) -> mpsc::UnboundedReceiver<String> {
@@ -83,7 +83,7 @@ pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,
 ) {
-    let user_settings_content = cx.background().block(user_settings_file_rx.next()).unwrap();
+    let user_settings_content = cx.executor().block(user_settings_file_rx.next()).unwrap();
     cx.update_global(|store: &mut SettingsStore, cx| {
         store
             .set_user_settings(&user_settings_content, cx)
@@ -91,14 +91,15 @@ pub fn handle_settings_file_changes(
     });
     cx.spawn(move |mut cx| async move {
         while let Some(user_settings_content) = user_settings_file_rx.next().await {
-            cx.update(|cx| {
-                cx.update_global(|store: &mut SettingsStore, cx| {
-                    store
-                        .set_user_settings(&user_settings_content, cx)
-                        .log_err();
-                });
-                cx.refresh_windows();
+            let result = cx.update_global(|store: &mut SettingsStore, cx| {
+                store
+                    .set_user_settings(&user_settings_content, cx)
+                    .log_err();
+                cx.refresh();
             });
+            if result.is_err() {
+                break; // App dropped
+            }
         }
     })
     .detach();
@@ -124,10 +125,10 @@ pub fn update_settings_file<T: Setting>(
     update: impl 'static + Send + FnOnce(&mut T::FileContent),
 ) {
     cx.spawn(|cx| async move {
-        let old_text = load_settings(&fs).await;
-        let new_text = cx.read_global(|store: &SettingsStore, cx| {
+        let old_text = load_settings(&fs).await?;
+        let new_text = cx.read_global(|store: &SettingsStore, _cx| {
             store.new_text_for_update::<T>(old_text, update)
-        });
+        })?;
         fs.atomic_write(paths::SETTINGS.clone(), new_text).await?;
         anyhow::Ok(())
     })

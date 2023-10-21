@@ -18,7 +18,7 @@ use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
 /// A value that can be defined as a user setting.
 ///
 /// Settings can be loaded from a combination of multiple JSON files.
-pub trait Setting: 'static {
+pub trait Setting: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
     /// be deserialized. If this is `None`, then the setting will be deserialized
     /// from the root object.
@@ -89,7 +89,10 @@ pub struct SettingsStore {
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
     raw_local_settings: BTreeMap<(usize, Arc<Path>), serde_json::Value>,
-    tab_size_callback: Option<(TypeId, Box<dyn Fn(&dyn Any) -> Option<usize>>)>,
+    tab_size_callback: Option<(
+        TypeId,
+        Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>,
+    )>,
 }
 
 impl Default for SettingsStore {
@@ -110,7 +113,7 @@ struct SettingValue<T> {
     local_values: Vec<(usize, Arc<Path>, T)>,
 }
 
-trait AnySettingValue {
+trait AnySettingValue: 'static + Send + Sync {
     fn key(&self) -> Option<&'static str>;
     fn setting_type_name(&self) -> &'static str;
     fn deserialize_setting(&self, json: &serde_json::Value) -> Result<DeserializedSetting>;
