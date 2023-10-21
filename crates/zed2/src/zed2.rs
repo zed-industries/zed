@@ -47,7 +47,7 @@ pub fn connect_to_cli(
 pub struct AppState;
 
 pub async fn handle_cli_connection(
-    (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
+    (mut requests, _responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
     _app_state: Arc<AppState>,
     mut _cx: AsyncAppContext,
 ) {

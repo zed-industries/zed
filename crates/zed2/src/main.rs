@@ -24,13 +24,13 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc, Weak,
+        Arc,
     },
     thread,
 };
 use util::{
     channel::{parse_zed_link, RELEASE_CHANNEL},
-    http, paths, ResultExt,
+    paths, ResultExt,
 };
 use zed2::{ensure_only_instance, AppState, Assets, IsOnlyInstance};
 // use zed2::{
@@ -42,7 +42,7 @@ use zed2::{ensure_only_instance, AppState, Assets, IsOnlyInstance};
 mod open_listener;
 
 fn main() {
-    let http = http::client();
+    // let http = http::client();
     init_paths();
     init_logger();
 
@@ -51,7 +51,7 @@ fn main() {
     }
 
     log::info!("========== starting zed ==========");
-    let mut app = App::production(Arc::new(Assets));
+    let app = App::production(Arc::new(Assets));
 
     // let installation_id = app.background().block(installation_id()).ok();
     // let session_id = Uuid::new_v4().to_string();
@@ -62,9 +62,10 @@ fn main() {
     let fs = Arc::new(RealFs);
     let user_settings_file_rx =
         watch_config_file(&app.executor(), fs.clone(), paths::SETTINGS.clone());
-    let user_keymap_file_rx = watch_config_file(&app.executor(), fs.clone(), paths::KEYMAP.clone());
+    let _user_keymap_file_rx =
+        watch_config_file(&app.executor(), fs.clone(), paths::KEYMAP.clone());
 
-    let login_shell_env_loaded = if stdout_is_a_pty() {
+    let _login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
     } else {
         app.executor().spawn(async {
@@ -75,18 +76,18 @@ fn main() {
     let (listener, mut open_rx) = OpenListener::new();
     let listener = Arc::new(listener);
     let callback_listener = listener.clone();
-    app.on_open_urls(move |urls, _| callback_listener.open_urls(urls))
-        .on_reopen(move |cx| {
-            // todo!("workspace")
-            // if cx.has_global::<Weak<AppState>>() {
-            // if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
-            // workspace::open_new(&app_state, cx, |workspace, cx| {
-            //     Editor::new_file(workspace, &Default::default(), cx)
-            // })
-            // .detach();
-            // }
-            // }
-        });
+    app.on_open_urls(move |urls, _| callback_listener.open_urls(urls));
+    app.on_reopen(move |_cx| {
+        // todo!("workspace")
+        // if cx.has_global::<Weak<AppState>>() {
+        // if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
+        // workspace::open_new(&app_state, cx, |workspace, cx| {
+        //     Editor::new_file(workspace, &Default::default(), cx)
+        // })
+        // .detach();
+        // }
+        // }
+    });
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
@@ -207,19 +208,20 @@ fn main() {
             }
         }
 
-        let mut triggered_authentication = false;
+        let mut _triggered_authentication = false;
 
         match open_rx.try_next() {
-            Ok(Some(OpenRequest::Paths { paths })) => {
+            Ok(Some(OpenRequest::Paths { paths: _ })) => {
                 // todo!("workspace")
                 // cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
                 //     .detach();
             }
             Ok(Some(OpenRequest::CliConnection { connection })) => {
-                cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
+                let app_state = app_state.clone();
+                cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
                     .detach();
             }
-            Ok(Some(OpenRequest::JoinChannel { channel_id })) => {
+            Ok(Some(OpenRequest::JoinChannel { channel_id: _ })) => {
                 // triggered_authentication = true;
                 // let app_state = app_state.clone();
                 // let client = client.clone();
@@ -239,19 +241,20 @@ fn main() {
                 .detach(),
         }
 
-        cx.spawn(|mut cx| {
-            let app_state = app_state.clone();
+        let app_state = app_state.clone();
+        cx.spawn(|cx| {
             async move {
                 while let Some(request) = open_rx.next().await {
                     match request {
-                        OpenRequest::Paths { paths } => {
+                        OpenRequest::Paths { paths: _ } => {
                             // todo!("workspace")
                             // cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
                             //     .detach();
                         }
                         OpenRequest::CliConnection { connection } => {
+                            let app_state = app_state.clone();
                             if cx
-                                .spawn(|cx| {
+                                .spawn(move |cx| {
                                     handle_cli_connection(connection, app_state.clone(), cx)
                                 })
                                 .map(Task::detach)
@@ -260,7 +263,7 @@ fn main() {
                                 break;
                             }
                         }
-                        OpenRequest::JoinChannel { channel_id } => {
+                        OpenRequest::JoinChannel { channel_id: _ } => {
                             // cx
                             // .update(|cx| {
                             //     workspace::join_channel(channel_id, app_state.clone(), None, cx)
@@ -307,7 +310,7 @@ fn main() {
 //     }
 // }
 
-async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
+async fn restore_or_create_workspace(_app_state: &Arc<AppState>, mut _cx: AsyncAppContext) {
     todo!("workspace")
     // if let Some(location) = workspace::last_opened_workspace_paths().await {
     //     cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))
@@ -391,7 +394,7 @@ struct PanicRequest {
     token: String,
 }
 
-static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
+static _PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 // fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: String) {
 //     let is_pty = stdout_is_a_pty();
@@ -757,13 +760,13 @@ fn connect_to_cli(
 }
 
 async fn handle_cli_connection(
-    (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
-    app_state: Arc<AppState>,
-    mut cx: AsyncAppContext,
+    (mut requests, _responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
+    _app_state: Arc<AppState>,
+    mut _cx: AsyncAppContext,
 ) {
     if let Some(request) = requests.next().await {
         match request {
-            CliRequest::Open { paths, wait } => {
+            CliRequest::Open { paths: _, wait: _ } => {
                 // let mut caret_positions = HashMap::new();
 
                 // todo!("workspace")
