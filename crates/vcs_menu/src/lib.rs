@@ -1,4 +1,5 @@
 use anyhow::{anyhow, bail, Result};
+use fs::repository::Branch;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
@@ -22,18 +23,9 @@ pub type BranchList = Picker<BranchListDelegate>;
 pub fn build_branch_list(
     workspace: ViewHandle<Workspace>,
     cx: &mut ViewContext<BranchList>,
-) -> BranchList {
-    Picker::new(
-        BranchListDelegate {
-            matches: vec![],
-            workspace,
-            selected_index: 0,
-            last_query: String::default(),
-            branch_name_trailoff_after: 29,
-        },
-        cx,
-    )
-    .with_theme(|theme| theme.picker.clone())
+) -> Result<BranchList> {
+    Ok(Picker::new(BranchListDelegate::new(workspace, 29, cx)?, cx)
+        .with_theme(|theme| theme.picker.clone()))
 }
 
 fn toggle(
@@ -43,31 +35,24 @@ fn toggle(
 ) -> Option<Task<Result<()>>> {
     Some(cx.spawn(|workspace, mut cx| async move {
         workspace.update(&mut cx, |workspace, cx| {
+            // Modal branch picker has a longer trailoff than a popover one.
+            let delegate = BranchListDelegate::new(cx.handle(), 70, cx)?;
             workspace.toggle_modal(cx, |_, cx| {
-                let workspace = cx.handle();
                 cx.add_view(|cx| {
-                    Picker::new(
-                        BranchListDelegate {
-                            matches: vec![],
-                            workspace,
-                            selected_index: 0,
-                            last_query: String::default(),
-                            /// Modal branch picker has a longer trailoff than a popover one.
-                            branch_name_trailoff_after: 70,
-                        },
-                        cx,
-                    )
-                    .with_theme(|theme| theme.picker.clone())
-                    .with_max_size(800., 1200.)
+                    Picker::new(delegate, cx)
+                        .with_theme(|theme| theme.picker.clone())
+                        .with_max_size(800., 1200.)
                 })
             });
-        })?;
+            Ok::<_, anyhow::Error>(())
+        })??;
         Ok(())
     }))
 }
 
 pub struct BranchListDelegate {
     matches: Vec<StringMatch>,
+    all_branches: Vec<Branch>,
     workspace: ViewHandle<Workspace>,
     selected_index: usize,
     last_query: String,
@@ -76,6 +61,31 @@ pub struct BranchListDelegate {
 }
 
 impl BranchListDelegate {
+    fn new(
+        workspace: ViewHandle<Workspace>,
+        branch_name_trailoff_after: usize,
+        cx: &AppContext,
+    ) -> Result<Self> {
+        let project = workspace.read(cx).project().read(&cx);
+
+        let Some(worktree) = project.visible_worktrees(cx).next() else {
+            bail!("Cannot update branch list as there are no visible worktrees")
+        };
+        let mut cwd = worktree.read(cx).abs_path().to_path_buf();
+        cwd.push(".git");
+        let Some(repo) = project.fs().open_repo(&cwd) else {
+            bail!("Project does not have associated git repository.")
+        };
+        let all_branches = repo.lock().branches()?;
+        Ok(Self {
+            matches: vec![],
+            workspace,
+            all_branches,
+            selected_index: 0,
+            last_query: Default::default(),
+            branch_name_trailoff_after,
+        })
+    }
     fn display_error_toast(&self, message: String, cx: &mut ViewContext<BranchList>) {
         const GIT_CHECKOUT_FAILURE_ID: usize = 2048;
         self.workspace.update(cx, |model, ctx| {
@@ -83,6 +93,7 @@ impl BranchListDelegate {
         });
     }
 }
+
 impl PickerDelegate for BranchListDelegate {
     fn placeholder_text(&self) -> Arc<str> {
         "Select branch...".into()
@@ -102,45 +113,28 @@ impl PickerDelegate for BranchListDelegate {
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
         cx.spawn(move |picker, mut cx| async move {
-            let Some(candidates) = picker
-                .read_with(&mut cx, |view, cx| {
-                    let delegate = view.delegate();
-                    let project = delegate.workspace.read(cx).project().read(&cx);
-
-                    let Some(worktree) = project.visible_worktrees(cx).next() else {
-                        bail!("Cannot update branch list as there are no visible worktrees")
-                    };
-                    let mut cwd = worktree.read(cx).abs_path().to_path_buf();
-                    cwd.push(".git");
-                    let Some(repo) = project.fs().open_repo(&cwd) else {
-                        bail!("Project does not have associated git repository.")
-                    };
-                    let mut branches = repo.lock().branches()?;
-                    const RECENT_BRANCHES_COUNT: usize = 10;
-                    if query.is_empty() && branches.len() > RECENT_BRANCHES_COUNT {
-                        // Truncate list of recent branches
-                        // Do a partial sort to show recent-ish branches first.
-                        branches.select_nth_unstable_by(RECENT_BRANCHES_COUNT - 1, |lhs, rhs| {
-                            rhs.unix_timestamp.cmp(&lhs.unix_timestamp)
-                        });
-                        branches.truncate(RECENT_BRANCHES_COUNT);
-                        branches.sort_unstable_by(|lhs, rhs| lhs.name.cmp(&rhs.name));
-                    }
-                    Ok(branches
-                        .iter()
-                        .cloned()
-                        .enumerate()
-                        .map(|(ix, command)| StringMatchCandidate {
-                            id: ix,
-                            char_bag: command.name.chars().collect(),
-                            string: command.name.into(),
-                        })
-                        .collect::<Vec<_>>())
-                })
-                .log_err()
-            else {
-                return;
-            };
+            let candidates = picker.read_with(&mut cx, |view, _| {
+                const RECENT_BRANCHES_COUNT: usize = 10;
+                let mut branches = view.delegate().all_branches.clone();
+                if query.is_empty() && branches.len() > RECENT_BRANCHES_COUNT {
+                    // Truncate list of recent branches
+                    // Do a partial sort to show recent-ish branches first.
+                    branches.select_nth_unstable_by(RECENT_BRANCHES_COUNT - 1, |lhs, rhs| {
+                        rhs.unix_timestamp.cmp(&lhs.unix_timestamp)
+                    });
+                    branches.truncate(RECENT_BRANCHES_COUNT);
+                    branches.sort_unstable_by(|lhs, rhs| lhs.name.cmp(&rhs.name));
+                }
+                branches
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, command)| StringMatchCandidate {
+                        id: ix,
+                        char_bag: command.name.chars().collect(),
+                        string: command.name.into(),
+                    })
+                    .collect::<Vec<StringMatchCandidate>>()
+            });
             let Some(candidates) = candidates.log_err() else {
                 return;
             };
