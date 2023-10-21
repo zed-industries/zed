@@ -289,12 +289,13 @@ impl ActiveCall {
         let room_id = call.room_id.clone();
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let join =
-            cx.spawn(|this, cx| async move { Room::join(room_id, client, user_store, cx).await });
+        let join = self
+            ._join_debouncer
+            .spawn(cx, move |cx| Room::join(room_id, client, user_store, cx));
 
         cx.spawn(|this, mut cx| async move {
             let room = join.await?;
-            this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))
+            this.update(&mut cx, |this, cx| this.set_room(room.clone(), cx))
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.report_call_event("accept incoming", cx)
@@ -332,20 +333,18 @@ impl ActiveCall {
 
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let join = cx.spawn(|this, cx| async move {
+        let join = self._join_debouncer.spawn(cx, move |cx| async move {
             Room::join_channel(channel_id, client, user_store, cx).await
         });
 
-        // self._join_debouncer.spawn(cx, move |cx| async move {});
-
         cx.spawn(move |this, mut cx| async move {
             let room = join.await?;
-            this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))
+            this.update(&mut cx, |this, cx| this.set_room(room.clone(), cx))
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.report_call_event("join channel", cx)
             });
-            Ok(Some(room))
+            Ok(room)
         })
     }
 
