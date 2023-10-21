@@ -26,7 +26,6 @@ use std::{
 };
 use util::http::{self, HttpClient};
 
-#[derive(Clone)]
 pub struct App(Arc<Mutex<AppContext>>);
 
 impl App {
@@ -83,13 +82,47 @@ impl App {
     where
         F: 'static + FnOnce(&mut MainThread<AppContext>),
     {
-        let this = self.clone();
+        let this = self.0.clone();
         let platform = self.0.lock().platform.clone();
         platform.borrow_on_main_thread().run(Box::new(move || {
-            let cx = &mut *this.0.lock();
+            let cx = &mut *this.lock();
             let cx = unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) };
             on_finish_launching(cx);
         }));
+    }
+
+    pub fn on_open_urls<F>(&self, mut callback: F) -> &Self
+    where
+        F: 'static + FnMut(Vec<String>, &mut AppContext),
+    {
+        let this = Arc::downgrade(&self.0);
+        self.0
+            .lock()
+            .platform
+            .borrow_on_main_thread()
+            .on_open_urls(Box::new(move |urls| {
+                if let Some(app) = this.upgrade() {
+                    callback(urls, &mut app.lock());
+                }
+            }));
+        self
+    }
+
+    pub fn on_reopen<F>(&self, mut callback: F) -> &Self
+    where
+        F: 'static + FnMut(&mut AppContext),
+    {
+        let this = Arc::downgrade(&self.0);
+        self.0
+            .lock()
+            .platform
+            .borrow_on_main_thread()
+            .on_reopen(Box::new(move || {
+                if let Some(app) = this.upgrade() {
+                    callback(&mut app.lock());
+                }
+            }));
+        self
     }
 
     pub fn executor(&self) -> Executor {

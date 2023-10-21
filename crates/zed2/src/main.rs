@@ -18,7 +18,6 @@ use settings2::{default_settings, handle_settings_file_changes, watch_config_fil
 use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
-    collections::HashMap,
     env,
     fs::OpenOptions,
     io::IsTerminal,
@@ -78,15 +77,15 @@ fn main() {
     let callback_listener = listener.clone();
     app.on_open_urls(move |urls, _| callback_listener.open_urls(urls))
         .on_reopen(move |cx| {
-            if cx.has_global::<Weak<AppState>>() {
-                if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
-                    // todo!("workspace")
-                    // workspace::open_new(&app_state, cx, |workspace, cx| {
-                    //     Editor::new_file(workspace, &Default::default(), cx)
-                    // })
-                    // .detach();
-                }
-            }
+            // todo!("workspace")
+            // if cx.has_global::<Weak<AppState>>() {
+            // if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
+            // workspace::open_new(&app_state, cx, |workspace, cx| {
+            //     Editor::new_file(workspace, &Default::default(), cx)
+            // })
+            // .detach();
+            // }
+            // }
         });
 
     app.run(move |cx| {

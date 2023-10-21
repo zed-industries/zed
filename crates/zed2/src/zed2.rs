@@ -48,12 +48,12 @@ pub struct AppState;
 
 pub async fn handle_cli_connection(
     (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
-    app_state: Arc<AppState>,
-    mut cx: AsyncAppContext,
+    _app_state: Arc<AppState>,
+    mut _cx: AsyncAppContext,
 ) {
     if let Some(request) = requests.next().await {
         match request {
-            CliRequest::Open { paths, wait } => {
+            CliRequest::Open { paths: _, wait: _ } => {
                 // let mut caret_positions = HashMap::new();
 
                 // let paths = if paths.is_empty() {
