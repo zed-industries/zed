@@ -95,6 +95,10 @@ impl App {
     pub fn executor(&self) -> Executor {
         self.0.lock().executor.clone()
     }
+
+    pub fn text_system(&self) -> Arc<TextSystem> {
+        self.0.lock().text_system.clone()
+    }
 }
 
 type Handler = Box<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>;

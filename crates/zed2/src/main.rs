@@ -652,8 +652,7 @@ fn load_embedded_fonts(app: &App) {
             });
         }
     }));
-    app.platform()
-        .fonts()
+    app.text_system()
         .add_fonts(&embedded_fonts.into_inner())
         .unwrap();
 }
