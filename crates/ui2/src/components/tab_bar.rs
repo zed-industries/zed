@@ -90,7 +90,7 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
     }
 }
 
-use gpui3::ElementId;
+use gpui2::ElementId;
 #[cfg(feature = "stories")]
 pub use stories::*;
 

@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{div, relative, Div};
+use gpui2::{div, relative, Div};
 
 use crate::settings::user_settings;
 use crate::{

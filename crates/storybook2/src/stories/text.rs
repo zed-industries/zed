@@ -1,4 +1,4 @@
-use gpui3::{div, view, white, Context, ParentElement, Styled, View, WindowContext};
+use gpui2::{div, view, white, Context, ParentElement, Styled, View, WindowContext};
 
 pub struct TextStory {
     text: View<()>,

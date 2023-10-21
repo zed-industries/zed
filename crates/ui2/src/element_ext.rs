@@ -1,4 +1,4 @@
-use gpui3::Element;
+use gpui2::Element;
 
 pub trait ElementExt<S: 'static + Send + Sync>: Element<ViewState = S> {
     /// Applies a given function `then` to the current element if `condition` is true.

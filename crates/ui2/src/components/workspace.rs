@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::DateTime;
-use gpui3::{px, relative, rems, view, Context, Size, View};
+use gpui2::{px, relative, rems, view, Context, Size, View};
 
 use crate::{prelude::*, NotificationsPanel};
 use crate::{

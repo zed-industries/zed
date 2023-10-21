@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{relative, Hsla, WindowContext};
+use gpui2::{relative, Hsla, WindowContext};
 use smallvec::SmallVec;
 
 use crate::prelude::*;

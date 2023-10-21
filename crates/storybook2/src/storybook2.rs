@@ -9,7 +9,7 @@ mod themes;
 use std::sync::Arc;
 
 use clap::Parser;
-use gpui3::{
+use gpui2::{
     div, px, size, view, AnyView, BorrowAppContext, Bounds, Context, Element, ViewContext,
     WindowBounds, WindowOptions,
 };
@@ -53,7 +53,7 @@ fn main() {
     let theme = themes::load_theme(theme_name).unwrap();
 
     let asset_source = Arc::new(Assets);
-    gpui3::App::production(asset_source).run(move |cx| {
+    gpui2::App::production(asset_source).run(move |cx| {
         let selector =
             story_selector.unwrap_or(StorySelector::Component(ComponentStory::Workspace));
 

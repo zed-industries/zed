@@ -1,4 +1,4 @@
-use gpui3::{view, Context, View};
+use gpui2::{view, Context, View};
 
 use crate::prelude::*;
 use crate::{h_stack, Icon, IconButton, IconColor, Input};

@@ -39,21 +39,21 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
     let (impl_generics, ty_generics, where_clause) = ast.generics.split_for_impl();
 
     let gen = quote! {
-        impl #impl_generics gpui3::IntoAnyElement<#state_type> for #type_name #ty_generics
+        impl #impl_generics gpui2::IntoAnyElement<#state_type> for #type_name #ty_generics
         #where_clause
         {
-            fn into_any(self) -> gpui3::AnyElement<#state_type> {
-                gpui3::AnyElement::new(self)
+            fn into_any(self) -> gpui2::AnyElement<#state_type> {
+                gpui2::AnyElement::new(self)
             }
         }
 
-        impl #impl_generics gpui3::Element for #type_name #ty_generics
+        impl #impl_generics gpui2::Element for #type_name #ty_generics
         #where_clause
         {
             type ViewState = #state_type;
-            type ElementState = gpui3::AnyElement<#state_type>;
+            type ElementState = gpui2::AnyElement<#state_type>;
 
-            fn id(&self) -> Option<gpui3::ElementId> {
+            fn id(&self) -> Option<gpui2::ElementId> {
                 None
             }
 
@@ -61,9 +61,9 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
                 &mut self,
                 view_state: &mut Self::ViewState,
                 _: Option<Self::ElementState>,
-                cx: &mut gpui3::ViewContext<Self::ViewState>
+                cx: &mut gpui2::ViewContext<Self::ViewState>
             ) -> Self::ElementState {
-                use gpui3::IntoAnyElement;
+                use gpui2::IntoAnyElement;
 
                 let mut element = self.render(view_state, cx).into_any();
                 element.initialize(view_state, cx);
@@ -74,17 +74,17 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
                 &mut self,
                 view_state: &mut Self::ViewState,
                 rendered_element: &mut Self::ElementState,
-                cx: &mut gpui3::ViewContext<Self::ViewState>,
-            ) -> gpui3::LayoutId {
+                cx: &mut gpui2::ViewContext<Self::ViewState>,
+            ) -> gpui2::LayoutId {
                 rendered_element.layout(view_state, cx)
             }
 
             fn paint(
                 &mut self,
-                bounds: gpui3::Bounds<gpui3::Pixels>,
+                bounds: gpui2::Bounds<gpui2::Pixels>,
                 view_state: &mut Self::ViewState,
                 rendered_element: &mut Self::ElementState,
-                cx: &mut gpui3::ViewContext<Self::ViewState>,
+                cx: &mut gpui2::ViewContext<Self::ViewState>,
             ) {
                 rendered_element.paint(view_state, cx)
             }

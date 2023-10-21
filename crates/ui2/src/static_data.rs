@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use gpui3::WindowContext;
+use gpui2::WindowContext;
 use rand::Rng;
 
 use crate::{

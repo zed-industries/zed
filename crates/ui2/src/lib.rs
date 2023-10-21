@@ -16,7 +16,7 @@ pub use static_data::*;
 
 // This needs to be fully qualified with `crate::` otherwise we get a panic
 // at:
-//   thread '<unnamed>' panicked at crates/gpui3/src/platform/mac/platform.rs:66:81:
+//   thread '<unnamed>' panicked at crates/gpui2/src/platform/mac/platform.rs:66:81:
 //   called `Option::unwrap()` on a `None` value
 //
 // AFAICT this is something to do with conflicting names between crates and modules that

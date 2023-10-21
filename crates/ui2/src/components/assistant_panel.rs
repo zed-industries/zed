@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{rems, AbsoluteLength};
+use gpui2::{rems, AbsoluteLength};
 
 use crate::prelude::*;
 use crate::{Icon, IconButton, Label, Panel, PanelSide};

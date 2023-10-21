@@ -3272,7 +3272,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gpui3"
+name = "gpui2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3295,7 +3295,7 @@ dependencies = [
  "font-kit",
  "foreign-types",
  "futures 0.3.28",
- "gpui3_macros",
+ "gpui2_macros",
  "gpui_macros",
  "image",
  "itertools 0.10.5",
@@ -3337,7 +3337,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gpui3_macros"
+name = "gpui2_macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
@@ -7788,7 +7788,7 @@ dependencies = [
  "backtrace-on-stack-overflow",
  "chrono",
  "clap 4.4.4",
- "gpui3",
+ "gpui2",
  "itertools 0.11.0",
  "log",
  "rust-embed",
@@ -9012,7 +9012,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "gpui3",
+ "gpui2",
  "itertools 0.11.0",
  "rand 0.8.5",
  "serde",

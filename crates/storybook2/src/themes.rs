@@ -3,7 +3,7 @@ mod rose_pine;
 pub use rose_pine::*;
 
 use anyhow::{Context, Result};
-use gpui3::serde_json;
+use gpui2::serde_json;
 use serde::Deserialize;
 use ui::Theme;
 

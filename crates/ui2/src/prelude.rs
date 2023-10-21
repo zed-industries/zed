@@ -1,4 +1,4 @@
-pub use gpui3::{
+pub use gpui2::{
     div, Element, ElementId, IntoAnyElement, ParentElement, SharedString, StatefulInteractive,
     StatelessInteractive, Styled, ViewContext, WindowContext,
 };
@@ -6,7 +6,7 @@ pub use gpui3::{
 use crate::settings::user_settings;
 pub use crate::{theme, ButtonVariant, ElementExt, Theme};
 
-use gpui3::{hsla, rems, rgb, Hsla, Rems};
+use gpui2::{hsla, rems, rgb, Hsla, Rems};
 use strum::EnumIter;
 
 // TODO Remove uses in favor of ThemeColor

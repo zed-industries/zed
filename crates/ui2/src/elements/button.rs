@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use gpui3::{DefiniteLength, Hsla, MouseButton, WindowContext};
+use gpui2::{DefiniteLength, Hsla, MouseButton, WindowContext};
 
 use crate::settings::user_settings;
 use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor};
@@ -227,7 +227,7 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui3::rems;
+    use gpui2::rems;
     use strum::IntoEnumIterator;
 
     use crate::{h_stack, v_stack, LabelColor, Story};

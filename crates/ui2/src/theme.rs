@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use gpui3::{
+use gpui2::{
     AnyElement, BorrowAppContext, Bounds, Element, Hsla, IntoAnyElement, LayoutId, Pixels, Result,
     ViewContext, WindowContext,
 };
@@ -160,7 +160,7 @@ impl<E: Element> Element for Themed<E> {
     type ViewState = E::ViewState;
     type ElementState = E::ElementState;
 
-    fn id(&self) -> Option<gpui3::ElementId> {
+    fn id(&self) -> Option<gpui2::ElementId> {
         None
     }
 

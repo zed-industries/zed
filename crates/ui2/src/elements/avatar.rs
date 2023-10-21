@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::img;
+use gpui2::img;
 
 use crate::prelude::*;
 

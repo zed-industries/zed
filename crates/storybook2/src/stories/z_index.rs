@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{px, rgb, Div, Hsla};
+use gpui2::{px, rgb, Div, Hsla};
 use ui::prelude::*;
 
 use crate::story::Story;

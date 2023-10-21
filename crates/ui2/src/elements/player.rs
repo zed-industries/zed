@@ -1,4 +1,4 @@
-use gpui3::{Hsla, ViewContext};
+use gpui2::{Hsla, ViewContext};
 
 use crate::ThemeColor;
 

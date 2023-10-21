@@ -1,5 +1,5 @@
 use crate::themes::rose_pine;
-use gpui3::{
+use gpui2::{
     div, view, Context, Focusable, KeyBinding, ParentElement, StatelessInteractive, Styled, View,
     WindowContext,
 };

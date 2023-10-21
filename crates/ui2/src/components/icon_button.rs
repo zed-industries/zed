@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use gpui3::MouseButton;
+use gpui2::MouseButton;
 
 use crate::{h_stack, prelude::*};
 use crate::{ClickHandler, Icon, IconColor, IconElement};

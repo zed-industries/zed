@@ -1,5 +1,5 @@
 use crate::themes::rose_pine;
-use gpui3::{
+use gpui2::{
     div, px, view, Context, Element, ParentElement, SharedString, Styled, View, WindowContext,
 };
 use ui::ElementExt;

@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{Hsla, WindowContext};
+use gpui2::{Hsla, WindowContext};
 
 use crate::prelude::*;
 use crate::{h_stack, v_stack, Icon, IconElement};
@@ -238,7 +238,7 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui3::rems;
+    use gpui2::rems;
 
     use crate::{
         empty_buffer_example, hello_world_rust_buffer_example,

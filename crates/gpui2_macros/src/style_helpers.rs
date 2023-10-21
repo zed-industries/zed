@@ -123,7 +123,7 @@ fn generate_predefined_setter(
         .iter()
         .map(|field_tokens| {
             quote! {
-                style.#field_tokens = Some((#negation_token gpui3::#length_tokens).into());
+                style.#field_tokens = Some((#negation_token gpui2::#length_tokens).into());
             }
         })
         .collect::<Vec<_>>();
@@ -163,7 +163,7 @@ fn generate_custom_value_setter(
 
     let method = quote! {
         #[doc = #doc_string]
-        fn #method_name(mut self, length: impl std::clone::Clone + Into<gpui3::#length_type>) -> Self where Self: std::marker::Sized {
+        fn #method_name(mut self, length: impl std::clone::Clone + Into<gpui2::#length_type>) -> Self where Self: std::marker::Sized {
             let style = self.style();
             #(#field_assignments)*
             self

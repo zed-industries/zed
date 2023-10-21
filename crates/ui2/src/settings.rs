@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use gpui3::{
+use gpui2::{
     rems, AbsoluteLength, AnyElement, BorrowAppContext, Bounds, LayoutId, Pixels, WindowContext,
 };
 
@@ -104,7 +104,7 @@ impl<E: Element> Element for WithSettings<E> {
     type ViewState = E::ViewState;
     type ElementState = E::ElementState;
 
-    fn id(&self) -> Option<gpui3::ElementId> {
+    fn id(&self) -> Option<gpui2::ElementId> {
         None
     }
 

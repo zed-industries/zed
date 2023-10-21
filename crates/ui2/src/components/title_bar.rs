@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use gpui3::{view, Context, View};
+use gpui2::{view, Context, View};
 
 use crate::prelude::*;
 use crate::settings::user_settings;

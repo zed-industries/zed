@@ -5,7 +5,7 @@ use crate::stories::*;
 use anyhow::anyhow;
 use clap::builder::PossibleValue;
 use clap::ValueEnum;
-use gpui3::{view, AnyView, Context};
+use gpui2::{view, AnyView, Context};
 use strum::{EnumIter, EnumString, IntoEnumIterator};
 use ui::prelude::*;
 

@@ -1,4 +1,4 @@
-use gpui3::AnyElement;
+use gpui2::AnyElement;
 use smallvec::SmallVec;
 
 use crate::prelude::*;

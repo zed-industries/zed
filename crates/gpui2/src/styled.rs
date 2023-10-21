@@ -1,5 +1,5 @@
 use crate::{
-    self as gpui3, hsla, point, px, relative, rems, AlignItems, DefiniteLength, Display, Fill,
+    self as gpui2, hsla, point, px, relative, rems, AlignItems, DefiniteLength, Display, Fill,
     FlexDirection, Hsla, JustifyContent, Length, Position, Rems, SharedString, StyleRefinement,
 };
 use crate::{BoxShadow, TextStyleRefinement};
@@ -8,7 +8,7 @@ use smallvec::smallvec;
 pub trait Styled {
     fn style(&mut self) -> &mut StyleRefinement;
 
-    gpui3_macros::style_helpers!();
+    gpui2_macros::style_helpers!();
 
     /// Sets the size of the element to the full width and height.
     fn full(mut self) -> Self

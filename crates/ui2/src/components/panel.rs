@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{AbsoluteLength, AnyElement};
+use gpui2::{AbsoluteLength, AnyElement};
 use smallvec::SmallVec;
 
 use crate::prelude::*;

@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{svg, Hsla};
+use gpui2::{svg, Hsla};
 use strum::EnumIter;
 
 use crate::prelude::*;

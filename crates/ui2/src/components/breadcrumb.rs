@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::path::PathBuf;
 
-use gpui3::Div;
+use gpui2::Div;
 
 use crate::prelude::*;
 use crate::{h_stack, HighlightedText};

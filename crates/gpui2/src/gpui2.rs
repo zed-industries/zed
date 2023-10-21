@@ -32,7 +32,7 @@ pub use elements::*;
 pub use executor::*;
 pub use focusable::*;
 pub use geometry::*;
-pub use gpui3_macros::*;
+pub use gpui2_macros::*;
 pub use image_cache::*;
 pub use interactive::*;
 pub use keymap::*;
