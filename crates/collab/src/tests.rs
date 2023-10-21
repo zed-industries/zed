@@ -40,6 +40,6 @@ fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomP
     })
 }
 
-fn channel_id(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> u64 {
-    cx.read(|cx| room.read(cx).channel_id().unwrap())
+fn channel_id(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> Option<u64> {
+    cx.read(|cx| room.read(cx).channel_id())
 }

@@ -517,9 +517,43 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
     let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
     deterministic.run_until_parked();
 
-    assert_eq!(channel_id(&room_a, cx_a), channel_2);
+    assert_eq!(channel_id(&room_a, cx_a), Some(channel_2));
 
-    todo!();
+    // Leave the room
+    active_call_a
+        .update(cx_a, |call, cx| {
+            let hang_up = call.hang_up(cx);
+            hang_up
+        })
+        .await
+        .unwrap();
+
+    // Initiating invites and then joining a channel should fail gracefully
+    let b_invite = active_call_a.update(cx_a, |call, cx| {
+        call.invite(client_b.user_id().unwrap(), None, cx)
+    });
+    let c_invite = active_call_a.update(cx_a, |call, cx| {
+        call.invite(client_c.user_id().unwrap(), None, cx)
+    });
+
+    let join_channel = active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, cx));
+
+    b_invite.await.unwrap();
+    c_invite.await.unwrap();
+    assert!(join_channel.await.is_err());
+
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    deterministic.run_until_parked();
+
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: vec!["user_b".to_string(), "user_c".to_string()]
+        }
+    );
+
+    assert_eq!(channel_id(&room_a, cx_a), None);
 
     // Leave the room
     active_call_a
@@ -539,6 +573,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
     let c_invite = active_call_a.update(cx_a, |call, cx| {
         call.invite(client_c.user_id().unwrap(), None, cx)
     });
+
     join_channel.await.unwrap();
     b_invite.await.unwrap();
     c_invite.await.unwrap();
@@ -554,7 +589,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
         }
     );
 
-    assert_eq!(channel_id(&room_a, cx_a), channel_1);
+    assert_eq!(channel_id(&room_a, cx_a), Some(channel_1));
 }
 
 #[gpui::test(iterations = 10)]
