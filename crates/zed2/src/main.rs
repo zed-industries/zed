@@ -9,7 +9,7 @@ use cli::{
 };
 use fs::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui2::{App, AsyncAppContext, Task};
+use gpui2::{App, AssetSource, AsyncAppContext, Task};
 use log::LevelFilter;
 
 use parking_lot::Mutex;
@@ -29,7 +29,10 @@ use std::{
     },
     thread,
 };
-use util::{channel::RELEASE_CHANNEL, http, paths, ResultExt};
+use util::{
+    channel::{parse_zed_link, RELEASE_CHANNEL},
+    http, paths, ResultExt,
+};
 use zed2::{ensure_only_instance, AppState, Assets, IsOnlyInstance};
 // use zed2::{
 //     assets::Assets,
@@ -59,8 +62,8 @@ fn main() {
 
     let fs = Arc::new(RealFs);
     let user_settings_file_rx =
-        watch_config_file(app.executor(), fs.clone(), paths::SETTINGS.clone());
-    let user_keymap_file_rx = watch_config_file(app.executor(), fs.clone(), paths::KEYMAP.clone());
+        watch_config_file(&app.executor(), fs.clone(), paths::SETTINGS.clone());
+    let user_keymap_file_rx = watch_config_file(&app.executor(), fs.clone(), paths::KEYMAP.clone());
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
@@ -194,7 +197,7 @@ fn main() {
                 listener.open_urls(urls)
             }
         } else {
-            upload_previous_panics(http.clone(), cx);
+            // upload_previous_panics(http.clone(), cx);
 
             // TODO Development mode that forces the CLI mode usually runs Zed binary as is instead
             // of an *app, hence gets no specific callbacks run. Emulate them here, if needed.
@@ -248,8 +251,15 @@ fn main() {
                             //     .detach();
                         }
                         OpenRequest::CliConnection { connection } => {
-                            cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
-                                .detach();
+                            if cx
+                                .spawn(|cx| {
+                                    handle_cli_connection(connection, app_state.clone(), cx)
+                                })
+                                .map(Task::detach)
+                                .is_err()
+                            {
+                                break;
+                            }
                         }
                         OpenRequest::JoinChannel { channel_id } => {
                             // cx
@@ -626,9 +636,10 @@ fn collect_url_args() -> Vec<String> {
 }
 
 fn load_embedded_fonts(app: &App) {
-    let font_paths = Assets.list("fonts");
+    let font_paths = Assets.list(&"fonts".into()).unwrap();
     let embedded_fonts = Mutex::new(Vec::new());
-    smol::block_on(app.background().scoped(|scope| {
+    let executor = app.executor();
+    executor.block(executor.scoped(|scope| {
         for font_path in &font_paths {
             if !font_path.ends_with(".ttf") {
                 continue;
@@ -755,7 +766,7 @@ async fn handle_cli_connection(
     if let Some(request) = requests.next().await {
         match request {
             CliRequest::Open { paths, wait } => {
-                let mut caret_positions = HashMap::new();
+                // let mut caret_positions = HashMap::new();
 
                 // todo!("workspace")
                 // let paths = if paths.is_empty() {

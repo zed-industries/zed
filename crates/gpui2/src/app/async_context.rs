@@ -1,9 +1,10 @@
 use crate::{
-    AnyWindowHandle, AppContext, Context, Handle, ModelContext, Result, ViewContext, WindowContext,
+    AnyWindowHandle, AppContext, Context, Handle, ModelContext, Result, Task, ViewContext,
+    WindowContext,
 };
 use anyhow::anyhow;
 use parking_lot::Mutex;
-use std::sync::Weak;
+use std::{future::Future, sync::Weak};
 
 #[derive(Clone)]
 pub struct AsyncAppContext(pub(crate) Weak<Mutex<AppContext>>);
@@ -98,6 +99,22 @@ impl AsyncAppContext {
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut app_context = app.lock();
         app_context.update_window(handle.id, update)
+    }
+
+    pub fn spawn<Fut, R>(
+        &self,
+        f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static,
+    ) -> Result<Task<R>>
+    where
+        Fut: Future<Output = R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let app = self
+            .0
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let app_context = app.lock();
+        Ok(app_context.spawn(f))
     }
 }
 
