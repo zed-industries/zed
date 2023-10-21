@@ -7,7 +7,10 @@ pub mod semantic_index_settings;
 mod semantic_index_tests;
 
 use crate::semantic_index_settings::SemanticIndexSettings;
-use ai::embedding::{Embedding, EmbeddingProvider, OpenAIEmbeddings};
+use ai::{
+    completion::OPENAI_API_URL,
+    embedding::{Embedding, EmbeddingProvider, OpenAIEmbeddings},
+};
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use db::VectorDatabase;
@@ -55,6 +58,19 @@ pub fn init(
         .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
         .join("embeddings_db");
 
+    let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
+        Some(api_key)
+    } else if let Some((_, api_key)) = cx
+        .platform()
+        .read_credentials(OPENAI_API_URL)
+        .log_err()
+        .flatten()
+    {
+        String::from_utf8(api_key).log_err()
+    } else {
+        None
+    };
+
     cx.subscribe_global::<WorkspaceCreated, _>({
         move |event, cx| {
             let Some(semantic_index) = SemanticIndex::global(cx) else {
@@ -88,7 +104,7 @@ pub fn init(
         let semantic_index = SemanticIndex::new(
             fs,
             db_file_path,
-            Arc::new(OpenAIEmbeddings::new(http_client, cx.background())),
+            Arc::new(OpenAIEmbeddings::new(api_key, http_client, cx.background())),
             language_registry,
             cx.clone(),
         )
