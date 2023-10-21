@@ -3272,36 +3272,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gpui2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "derive_more",
- "futures 0.3.28",
- "gpui",
- "gpui2_macros",
- "log",
- "parking_lot 0.11.2",
- "refineable",
- "rust-embed",
- "serde",
- "settings",
- "simplelog",
- "smallvec",
- "theme",
- "util",
-]
-
-[[package]]
-name = "gpui2_macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "gpui3"
 version = "0.1.0"
 dependencies = [
