@@ -11,8 +11,8 @@ use smallvec::SmallVec;
 use crate::{
     current_platform, image_cache::ImageCache, Action, AssetSource, Context, DisplayId, Executor,
     FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly,
-    Platform, SharedString, SubscriberSet, SvgRenderer, Task, TextStyle, TextStyleRefinement,
-    TextSystem, View, Window, WindowContext, WindowHandle, WindowId,
+    Platform, SemanticVersion, SharedString, SubscriberSet, SvgRenderer, Task, TextStyle,
+    TextStyleRefinement, TextSystem, View, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -123,6 +123,18 @@ impl App {
                 }
             }));
         self
+    }
+
+    pub fn app_version(&self) -> Result<SemanticVersion> {
+        self.0.lock().platform.borrow_on_main_thread().app_version()
+    }
+
+    pub fn os_name(&self) -> &'static str {
+        self.0.lock().platform.borrow_on_main_thread().os_name()
+    }
+
+    pub fn os_version(&self) -> Result<SemanticVersion> {
+        self.0.lock().platform.borrow_on_main_thread().os_version()
     }
 
     pub fn executor(&self) -> Executor {
@@ -348,7 +360,7 @@ impl AppContext {
         .ok();
     }
 
-    pub fn apply_refresh(&mut self) {
+    fn apply_refresh(&mut self) {
         for window in self.windows.values_mut() {
             if let Some(window) = window.as_mut() {
                 window.dirty = true;

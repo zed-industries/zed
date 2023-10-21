@@ -3,13 +3,15 @@
 
 use crate::open_listener::{OpenListener, OpenRequest};
 use anyhow::{anyhow, Context, Result};
+use backtrace::Backtrace;
 use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
 use fs::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui2::{App, AssetSource, AsyncAppContext, Task};
+use gpui2::{App, AppContext, AssetSource, AsyncAppContext, SemanticVersion, Task};
+use isahc::{prelude::Configurable, Request};
 use log::LevelFilter;
 
 use parking_lot::Mutex;
@@ -19,17 +21,21 @@ use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
     env,
+    ffi::OsStr,
     fs::OpenOptions,
-    io::IsTerminal,
+    io::{IsTerminal, Write},
+    panic,
     path::Path,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
     },
     thread,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use util::{
-    channel::{parse_zed_link, RELEASE_CHANNEL},
+    channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
+    http::HttpClient,
     paths, ResultExt,
 };
 use zed2::{ensure_only_instance, AppState, Assets, IsOnlyInstance};
@@ -75,8 +81,8 @@ fn main() {
 
     let (listener, mut open_rx) = OpenListener::new();
     let listener = Arc::new(listener);
-    let callback_listener = listener.clone();
-    app.on_open_urls(move |urls, _| callback_listener.open_urls(urls));
+    let open_listener = listener.clone();
+    app.on_open_urls(move |urls, _| open_listener.open_urls(urls));
     app.on_reopen(move |_cx| {
         // todo!("workspace")
         // if cx.has_global::<Weak<AppState>>() {
@@ -394,192 +400,184 @@ struct PanicRequest {
     token: String,
 }
 
-static _PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
+static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
-// fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: String) {
-//     let is_pty = stdout_is_a_pty();
-//     let platform = app.platform();
+fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: String) {
+    let is_pty = stdout_is_a_pty();
+    let app_version = app.app_version().ok();
+    let os_name = app.os_name();
+    let os_version = app.os_version().ok();
 
-//     panic::set_hook(Box::new(move |info| {
-//         let prior_panic_count = PANIC_COUNT.fetch_add(1, Ordering::SeqCst);
-//         if prior_panic_count > 0 {
-//             // Give the panic-ing thread time to write the panic file
-//             loop {
-//                 std::thread::yield_now();
-//             }
-//         }
+    panic::set_hook(Box::new(move |info| {
+        let prior_panic_count = PANIC_COUNT.fetch_add(1, Ordering::SeqCst);
+        if prior_panic_count > 0 {
+            // Give the panic-ing thread time to write the panic file
+            loop {
+                std::thread::yield_now();
+            }
+        }
 
-//         let thread = thread::current();
-//         let thread_name = thread.name().unwrap_or("<unnamed>");
+        let thread = thread::current();
+        let thread_name = thread.name().unwrap_or("<unnamed>");
 
-//         let payload = info
-//             .payload()
-//             .downcast_ref::<&str>()
-//             .map(|s| s.to_string())
-//             .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.clone()))
-//             .unwrap_or_else(|| "Box<Any>".to_string());
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.clone()))
+            .unwrap_or_else(|| "Box<Any>".to_string());
 
-//         if *util::channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
-//             let location = info.location().unwrap();
-//             let backtrace = Backtrace::new();
-//             eprintln!(
-//                 "Thread {:?} panicked with {:?} at {}:{}:{}\n{:?}",
-//                 thread_name,
-//                 payload,
-//                 location.file(),
-//                 location.line(),
-//                 location.column(),
-//                 backtrace,
-//             );
-//             std::process::exit(-1);
-//         }
+        if *util::channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
+            let location = info.location().unwrap();
+            let backtrace = Backtrace::new();
+            eprintln!(
+                "Thread {:?} panicked with {:?} at {}:{}:{}\n{:?}",
+                thread_name,
+                payload,
+                location.file(),
+                location.line(),
+                location.column(),
+                backtrace,
+            );
+            std::process::exit(-1);
+        }
 
-//         let app_version = ZED_APP_VERSION
-//             .or_else(|| platform.app_version().ok())
-//             .map_or("dev".to_string(), |v| v.to_string());
+        let app_version = client::ZED_APP_VERSION
+            .or(app_version)
+            .map_or("dev".to_string(), |v| v.to_string());
 
-//         let backtrace = Backtrace::new();
-//         let mut backtrace = backtrace
-//             .frames()
-//             .iter()
-//             .filter_map(|frame| Some(format!("{:#}", frame.symbols().first()?.name()?)))
-//             .collect::<Vec<_>>();
+        let backtrace = Backtrace::new();
+        let mut backtrace = backtrace
+            .frames()
+            .iter()
+            .filter_map(|frame| Some(format!("{:#}", frame.symbols().first()?.name()?)))
+            .collect::<Vec<_>>();
 
-//         // Strip out leading stack frames for rust panic-handling.
-//         if let Some(ix) = backtrace
-//             .iter()
-//             .position(|name| name == "rust_begin_unwind")
-//         {
-//             backtrace.drain(0..=ix);
-//         }
+        // Strip out leading stack frames for rust panic-handling.
+        if let Some(ix) = backtrace
+            .iter()
+            .position(|name| name == "rust_begin_unwind")
+        {
+            backtrace.drain(0..=ix);
+        }
 
-//         let panic_data = Panic {
-//             thread: thread_name.into(),
-//             payload: payload.into(),
-//             location_data: info.location().map(|location| LocationData {
-//                 file: location.file().into(),
-//                 line: location.line(),
-//             }),
-//             app_version: app_version.clone(),
-//             release_channel: RELEASE_CHANNEL.display_name().into(),
-//             os_name: platform.os_name().into(),
-//             os_version: platform
-//                 .os_version()
-//                 .ok()
-//                 .map(|os_version| os_version.to_string()),
-//             architecture: env::consts::ARCH.into(),
-//             panicked_on: SystemTime::now()
-//                 .duration_since(UNIX_EPOCH)
-//                 .unwrap()
-//                 .as_millis(),
-//             backtrace,
-//             installation_id: installation_id.clone(),
-//             session_id: session_id.clone(),
-//         };
+        let panic_data = Panic {
+            thread: thread_name.into(),
+            payload: payload.into(),
+            location_data: info.location().map(|location| LocationData {
+                file: location.file().into(),
+                line: location.line(),
+            }),
+            app_version: app_version.clone(),
+            release_channel: RELEASE_CHANNEL.display_name().into(),
+            os_name: os_name.into(),
+            os_version: os_version.as_ref().map(SemanticVersion::to_string),
+            architecture: env::consts::ARCH.into(),
+            panicked_on: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            backtrace,
+            installation_id: installation_id.clone(),
+            session_id: session_id.clone(),
+        };
 
-//         if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
-//             log::error!("{}", panic_data_json);
-//         }
+        if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
+            log::error!("{}", panic_data_json);
+        }
 
-//         if !is_pty {
-//             if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
-//                 let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-//                 let panic_file_path = paths::LOGS_DIR.join(format!("zed-{}.panic", timestamp));
-//                 let panic_file = std::fs::OpenOptions::new()
-//                     .append(true)
-//                     .create(true)
-//                     .open(&panic_file_path)
-//                     .log_err();
-//                 if let Some(mut panic_file) = panic_file {
-//                     writeln!(&mut panic_file, "{}", panic_data_json).log_err();
-//                     panic_file.flush().log_err();
-//                 }
-//             }
-//         }
+        if !is_pty {
+            if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
+                let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
+                let panic_file_path = paths::LOGS_DIR.join(format!("zed-{}.panic", timestamp));
+                let panic_file = std::fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(&panic_file_path)
+                    .log_err();
+                if let Some(mut panic_file) = panic_file {
+                    writeln!(&mut panic_file, "{}", panic_data_json).log_err();
+                    panic_file.flush().log_err();
+                }
+            }
+        }
 
-//         std::process::abort();
-//     }));
-// }
+        std::process::abort();
+    }));
+}
 
-// fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
-//     let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
+    let telemetry_settings = *settings2::get::<client::TelemetrySettings>(cx);
 
-//     cx.background()
-//         .spawn({
-//             async move {
-//                 let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
-//                 let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
-//                 while let Some(child) = children.next().await {
-//                     let child = child?;
-//                     let child_path = child.path();
+    cx.executor()
+        .spawn(async move {
+            let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
+            let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
+            while let Some(child) = children.next().await {
+                let child = child?;
+                let child_path = child.path();
 
-//                     if child_path.extension() != Some(OsStr::new("panic")) {
-//                         continue;
-//                     }
-//                     let filename = if let Some(filename) = child_path.file_name() {
-//                         filename.to_string_lossy()
-//                     } else {
-//                         continue;
-//                     };
+                if child_path.extension() != Some(OsStr::new("panic")) {
+                    continue;
+                }
+                let filename = if let Some(filename) = child_path.file_name() {
+                    filename.to_string_lossy()
+                } else {
+                    continue;
+                };
 
-//                     if !filename.starts_with("zed") {
-//                         continue;
-//                     }
+                if !filename.starts_with("zed") {
+                    continue;
+                }
 
-//                     if telemetry_settings.diagnostics {
-//                         let panic_file_content = smol::fs::read_to_string(&child_path)
-//                             .await
-//                             .context("error reading panic file")?;
+                if telemetry_settings.diagnostics {
+                    let panic_file_content = smol::fs::read_to_string(&child_path)
+                        .await
+                        .context("error reading panic file")?;
 
-//                         let panic = serde_json::from_str(&panic_file_content)
-//                             .ok()
-//                             .or_else(|| {
-//                                 panic_file_content
-//                                     .lines()
-//                                     .next()
-//                                     .and_then(|line| serde_json::from_str(line).ok())
-//                             })
-//                             .unwrap_or_else(|| {
-//                                 log::error!(
-//                                     "failed to deserialize panic file {:?}",
-//                                     panic_file_content
-//                                 );
-//                                 None
-//                             });
+                    let panic = serde_json::from_str(&panic_file_content)
+                        .ok()
+                        .or_else(|| {
+                            panic_file_content
+                                .lines()
+                                .next()
+                                .and_then(|line| serde_json::from_str(line).ok())
+                        })
+                        .unwrap_or_else(|| {
+                            log::error!(
+                                "failed to deserialize panic file {:?}",
+                                panic_file_content
+                            );
+                            None
+                        });
 
-//                         if let Some(panic) = panic {
-//                             let body = serde_json::to_string(&PanicRequest {
-//                                 panic,
-//                                 token: ZED_SECRET_CLIENT_TOKEN.into(),
-//                             })
-//                             .unwrap();
+                    if let Some(panic) = panic {
+                        let body = serde_json::to_string(&PanicRequest {
+                            panic,
+                            token: client::ZED_SECRET_CLIENT_TOKEN.into(),
+                        })
+                        .unwrap();
 
-//                             let request = Request::post(&panic_report_url)
-//                                 .redirect_policy(isahc::config::RedirectPolicy::Follow)
-//                                 .header("Content-Type", "application/json")
-//                                 .body(body.into())?;
-//                             let response =
-//                                 http.send(request).await.context("error sending panic")?;
-//                             if !response.status().is_success() {
-//                                 log::error!(
-//                                     "Error uploading panic to server: {}",
-//                                     response.status()
-//                                 );
-//                             }
-//                         }
-//                     }
+                        let request = Request::post(&panic_report_url)
+                            .redirect_policy(isahc::config::RedirectPolicy::Follow)
+                            .header("Content-Type", "application/json")
+                            .body(body.into())?;
+                        let response = http.send(request).await.context("error sending panic")?;
+                        if !response.status().is_success() {
+                            log::error!("Error uploading panic to server: {}", response.status());
+                        }
+                    }
+                }
 
-//                     // We've done what we can, delete the file
-//                     std::fs::remove_file(child_path)
-//                         .context("error removing panic")
-//                         .log_err();
-//                 }
-//                 Ok::<_, anyhow::Error>(())
-//             }
-//             .log_err()
-//         })
-//         .detach();
-// }
+                // We've done what we can, delete the file
+                std::fs::remove_file(child_path)
+                    .context("error removing panic")
+                    .log_err();
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+}
 
 async fn load_login_shell_environment() -> Result<()> {
     let marker = "ZED_LOGIN_SHELL_START";

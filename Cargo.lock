@@ -1450,6 +1450,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "client2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-recursion 0.3.2",
+ "async-tungstenite",
+ "collections",
+ "db",
+ "feature_flags",
+ "futures 0.3.28",
+ "gpui",
+ "gpui2",
+ "image",
+ "lazy_static",
+ "log",
+ "parking_lot 0.11.2",
+ "postage",
+ "rand 0.8.5",
+ "rpc",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "settings",
+ "smol",
+ "sum_tree",
+ "sysinfo",
+ "tempfile",
+ "text",
+ "thiserror",
+ "time",
+ "tiny_http",
+ "url",
+ "util",
+ "uuid 1.4.1",
+]
+
+[[package]]
 name = "clock"
 version = "0.1.0"
 dependencies = [
@@ -10379,6 +10416,7 @@ dependencies = [
  "backtrace",
  "chrono",
  "cli",
+ "client2",
  "collections",
  "ctor",
  "env_logger 0.9.3",
