@@ -357,8 +357,16 @@ impl ChatPanel {
             let is_continuation = last_message.id != this_message.id
                 && this_message.sender.id == last_message.sender.id;
 
+            if this_message
+                .mentions
+                .iter()
+                .any(|(_, user_id)| Some(*user_id) == self.client.user_id())
+            {
+                active_chat.rendered_message(this_message.id);
+            }
+
             (
-                active_chat.message(ix).clone(),
+                this_message.clone(),
                 is_continuation,
                 active_chat.message_count() == ix + 1,
                 is_admin,

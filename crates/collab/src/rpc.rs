@@ -3061,11 +3061,16 @@ async fn acknowledge_channel_message(
 ) -> Result<()> {
     let channel_id = ChannelId::from_proto(request.channel_id);
     let message_id = MessageId::from_proto(request.message_id);
-    session
+    let notifications = session
         .db()
         .await
         .observe_channel_message(channel_id, session.user_id, message_id)
         .await?;
+    send_notifications(
+        &*session.connection_pool().await,
+        &session.peer,
+        notifications,
+    );
     Ok(())
 }
 

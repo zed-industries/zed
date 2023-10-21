@@ -321,7 +321,7 @@ impl Database {
 
             let mut notifications = Vec::new();
             notifications.extend(
-                self.respond_to_notification(
+                self.mark_notification_as_read_with_response(
                     responder_id,
                     &rpc::Notification::ContactRequest {
                         sender_id: requester_id.to_proto(),

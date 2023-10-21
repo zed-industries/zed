@@ -1,5 +1,6 @@
 use super::*;
 use futures::Stream;
+use rpc::Notification;
 use sea_orm::TryInsertResult;
 use time::OffsetDateTime;
 
@@ -326,11 +327,24 @@ impl Database {
         channel_id: ChannelId,
         user_id: UserId,
         message_id: MessageId,
-    ) -> Result<()> {
+    ) -> Result<NotificationBatch> {
         self.transaction(|tx| async move {
             self.observe_channel_message_internal(channel_id, user_id, message_id, &*tx)
                 .await?;
-            Ok(())
+            let mut batch = NotificationBatch::default();
+            batch.extend(
+                self.mark_notification_as_read(
+                    user_id,
+                    &Notification::ChannelMessageMention {
+                        message_id: message_id.to_proto(),
+                        sender_id: Default::default(),
+                        channel_id: Default::default(),
+                    },
+                    &*tx,
+                )
+                .await?,
+            );
+            Ok(batch)
         })
         .await
     }

@@ -370,6 +370,18 @@ impl ChannelChat {
         cursor.item().unwrap()
     }
 
+    pub fn rendered_message(&self, id: ChannelMessageId) {
+        let ChannelMessageId::Saved(id) = id else {
+            return;
+        };
+        self.rpc
+            .send(proto::AckChannelMessage {
+                channel_id: self.channel.id,
+                message_id: id,
+            })
+            .ok();
+    }
+
     pub fn messages_in_range(&self, range: Range<usize>) -> impl Iterator<Item = &ChannelMessage> {
         let mut cursor = self.messages.cursor::<Count>();
         cursor.seek(&Count(range.start), Bias::Right, &());

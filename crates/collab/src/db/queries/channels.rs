@@ -386,7 +386,7 @@ impl Database {
             }
 
             Ok(self
-                .respond_to_notification(
+                .mark_notification_as_read_with_response(
                     user_id,
                     &rpc::Notification::ChannelInvitation {
                         channel_id: channel_id.to_proto(),

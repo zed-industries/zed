@@ -129,22 +129,47 @@ impl Database {
 
     /// Populate the response for the notification with the given kind and
     /// entity id.
-    pub async fn respond_to_notification(
+    pub async fn mark_notification_as_read_with_response(
         &self,
         recipient_id: UserId,
         notification: &Notification,
         response: bool,
         tx: &DatabaseTransaction,
     ) -> Result<Option<(UserId, proto::Notification)>> {
+        self.mark_notification_as_read_internal(recipient_id, notification, Some(response), tx)
+            .await
+    }
+
+    pub async fn mark_notification_as_read(
+        &self,
+        recipient_id: UserId,
+        notification: &Notification,
+        tx: &DatabaseTransaction,
+    ) -> Result<Option<(UserId, proto::Notification)>> {
+        self.mark_notification_as_read_internal(recipient_id, notification, None, tx)
+            .await
+    }
+
+    async fn mark_notification_as_read_internal(
+        &self,
+        recipient_id: UserId,
+        notification: &Notification,
+        response: Option<bool>,
+        tx: &DatabaseTransaction,
+    ) -> Result<Option<(UserId, proto::Notification)>> {
         if let Some(id) = self
-            .find_notification(recipient_id, notification, tx)
+            .find_notification(recipient_id, notification, &*tx)
             .await?
         {
             let row = notification::Entity::update(notification::ActiveModel {
                 id: ActiveValue::Unchanged(id),
                 recipient_id: ActiveValue::Unchanged(recipient_id),
-                response: ActiveValue::Set(Some(response)),
                 is_read: ActiveValue::Set(true),
+                response: if let Some(response) = response {
+                    ActiveValue::Set(Some(response))
+                } else {
+                    ActiveValue::NotSet
+                },
                 ..Default::default()
             })
             .exec(tx)
