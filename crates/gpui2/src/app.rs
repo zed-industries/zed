@@ -9,10 +9,10 @@ use refineable::Refineable;
 use smallvec::SmallVec;
 
 use crate::{
-    current_platform, image_cache::ImageCache, AssetSource, Context, DisplayId, Executor,
+    current_platform, image_cache::ImageCache, Action, AssetSource, Context, DisplayId, Executor,
     FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly,
-    Platform, SubscriberSet, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View,
-    Window, WindowContext, WindowHandle, WindowId,
+    Platform, SharedString, SubscriberSet, SvgRenderer, Task, TextStyle, TextStyleRefinement,
+    TextSystem, View, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -55,10 +55,10 @@ impl App {
             Mutex::new(AppContext {
                 this: this.clone(),
                 text_system: Arc::new(TextSystem::new(platform.text_system())),
-                pending_updates: 0,
-                flushing_effects: false,
-                next_frame_callbacks: Default::default(),
                 platform: MainThreadOnly::new(platform, executor.clone()),
+                flushing_effects: false,
+                pending_updates: 0,
+                next_frame_callbacks: Default::default(),
                 executor,
                 svg_renderer: SvgRenderer::new(asset_source),
                 image_cache: ImageCache::new(http_client),
@@ -68,6 +68,7 @@ impl App {
                 entities,
                 windows: SlotMap::with_key(),
                 keymap: Arc::new(RwLock::new(Keymap::default())),
+                action_builders: HashMap::default(),
                 pending_notifications: Default::default(),
                 pending_effects: Default::default(),
                 observers: SubscriberSet::new(),
@@ -90,12 +91,17 @@ impl App {
             on_finish_launching(cx);
         }));
     }
+
+    pub fn executor(&self) -> Executor {
+        self.0.lock().executor.clone()
+    }
 }
 
 type Handler = Box<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>;
 type EventHandler = Box<dyn Fn(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>;
 type ReleaseHandler = Box<dyn Fn(&mut dyn Any, &mut AppContext) + Send + Sync + 'static>;
 type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
+type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
 
 pub struct AppContext {
     this: Weak<Mutex<AppContext>>,
@@ -113,6 +119,7 @@ pub struct AppContext {
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) keymap: Arc<RwLock<Keymap>>,
+    action_builders: HashMap<SharedString, ActionBuilder>,
     pub(crate) pending_notifications: HashSet<EntityId>,
     pending_effects: VecDeque<Effect>,
     pub(crate) observers: SubscriberSet<EntityId, Handler>,
@@ -132,6 +139,20 @@ impl AppContext {
         }
         self.pending_updates -= 1;
         result
+    }
+
+    pub(crate) fn read_window<R>(
+        &mut self,
+        id: WindowId,
+        read: impl FnOnce(&WindowContext) -> R,
+    ) -> Result<R> {
+        let window = self
+            .windows
+            .get(id)
+            .ok_or_else(|| anyhow!("window not found"))?
+            .as_ref()
+            .unwrap();
+        Ok(read(&WindowContext::immutable(self, &window)))
     }
 
     pub(crate) fn update_window<R>(
@@ -385,6 +406,24 @@ impl AppContext {
             .unwrap()
     }
 
+    pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: 'static + Send + Sync,
+    {
+        let mut global = self
+            .global_stacks_by_type
+            .get_mut(&TypeId::of::<G>())
+            .and_then(|stack| stack.pop())
+            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
+            .unwrap();
+        let result = f(global.downcast_mut().unwrap(), self);
+        self.global_stacks_by_type
+            .get_mut(&TypeId::of::<G>())
+            .unwrap()
+            .push(global);
+        result
+    }
+
     pub fn default_global<G: 'static + Default + Sync + Send>(&mut self) -> &mut G {
         let stack = self
             .global_stacks_by_type
@@ -394,6 +433,19 @@ impl AppContext {
             stack.push(Box::new(G::default()));
         }
         stack.last_mut().unwrap().downcast_mut::<G>().unwrap()
+    }
+
+    pub fn set_global<T: Send + Sync + 'static>(&mut self, global: T) {
+        let global = Box::new(global);
+        let stack = self
+            .global_stacks_by_type
+            .entry(TypeId::of::<T>())
+            .or_default();
+        if let Some(last) = stack.last_mut() {
+            *last = global;
+        } else {
+            stack.push(global)
+        }
     }
 
     pub(crate) fn push_global<T: Send + Sync + 'static>(&mut self, state: T) {
@@ -422,9 +474,26 @@ impl AppContext {
         self.keymap.write().add_bindings(bindings);
         self.push_effect(Effect::Refresh);
     }
+
+    pub fn register_action_type<A: Action>(&mut self) {
+        self.action_builders.insert(A::qualified_name(), A::build);
+    }
+
+    pub fn build_action(
+        &mut self,
+        name: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<Box<dyn Action>> {
+        let build = self
+            .action_builders
+            .get(name)
+            .ok_or_else(|| anyhow!("no action type registered for {}", name))?;
+        (build)(params)
+    }
 }
 
 impl Context for AppContext {
+    type BorrowedContext<'a, 'w> = Self;
     type EntityContext<'a, 'w, T: Send + Sync + 'static> = ModelContext<'a, T>;
     type Result<T> = T;
 
@@ -450,6 +519,10 @@ impl Context for AppContext {
             cx.entities.end_lease(entity);
             result
         })
+    }
+
+    fn read_global<G: 'static + Send + Sync, R>(&self, read: impl FnOnce(&G, &Self) -> R) -> R {
+        read(self.global(), self)
     }
 }
 

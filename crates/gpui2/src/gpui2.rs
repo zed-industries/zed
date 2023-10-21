@@ -56,6 +56,7 @@ pub use window::*;
 use derive_more::{Deref, DerefMut};
 use std::{
     any::{Any, TypeId},
+    borrow::Borrow,
     mem,
     ops::{Deref, DerefMut},
     sync::Arc,
@@ -65,6 +66,7 @@ use taffy::TaffyLayoutEngine;
 type AnyBox = Box<dyn Any + Send + Sync>;
 
 pub trait Context {
+    type BorrowedContext<'a, 'w>: Context;
     type EntityContext<'a, 'w, T: 'static + Send + Sync>;
     type Result<T>;
 
@@ -77,6 +79,11 @@ pub trait Context {
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+    ) -> Self::Result<R>;
+
+    fn read_global<G: 'static + Send + Sync, R>(
+        &self,
+        read: impl FnOnce(&G, &Self::BorrowedContext<'_, '_>) -> R,
     ) -> Self::Result<R>;
 }
 
@@ -104,6 +111,7 @@ impl<T> DerefMut for MainThread<T> {
 }
 
 impl<C: Context> Context for MainThread<C> {
+    type BorrowedContext<'a, 'w> = MainThread<C::BorrowedContext<'a, 'w>>;
     type EntityContext<'a, 'w, T: 'static + Send + Sync> = MainThread<C::EntityContext<'a, 'w, T>>;
     type Result<T> = C::Result<T>;
 
@@ -137,6 +145,21 @@ impl<C: Context> Context for MainThread<C> {
             update(entity, cx)
         })
     }
+
+    fn read_global<G: 'static + Send + Sync, R>(
+        &self,
+        read: impl FnOnce(&G, &Self::BorrowedContext<'_, '_>) -> R,
+    ) -> Self::Result<R> {
+        self.0.read_global(|global, cx| {
+            let cx = unsafe {
+                mem::transmute::<
+                    &C::BorrowedContext<'_, '_>,
+                    &MainThread<C::BorrowedContext<'_, '_>>,
+                >(cx)
+            };
+            read(global, cx)
+        })
+    }
 }
 
 pub trait BorrowAppContext {
@@ -152,14 +175,18 @@ pub trait BorrowAppContext {
         result
     }
 
-    fn with_global<T: Send + Sync + 'static, F, R>(&mut self, state: T, f: F) -> R
+    fn with_global<T: Send + Sync + 'static, F, R>(&mut self, global: T, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.app_mut().push_global(state);
+        self.app_mut().push_global(global);
         let result = f(self);
         self.app_mut().pop_global::<T>();
         result
+    }
+
+    fn set_global<T: Send + Sync + 'static>(&mut self, global: T) {
+        self.app_mut().set_global(global)
     }
 }
 
@@ -195,6 +222,12 @@ impl Default for SharedString {
 impl AsRef<str> for SharedString {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+impl Borrow<str> for SharedString {
+    fn borrow(&self) -> &str {
+        self.as_ref()
     }
 }
 

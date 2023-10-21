@@ -1,10 +1,12 @@
-use crate::PlatformDispatcher;
+use crate::{AppContext, PlatformDispatcher};
 use smol::prelude::*;
 use std::{
+    fmt::Debug,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
+use util::TryFutureExt;
 
 #[derive(Clone)]
 pub struct Executor {
@@ -27,6 +29,16 @@ impl<T> Task<T> {
             Task::Ready(_) => {}
             Task::Spawned(task) => task.detach(),
         }
+    }
+}
+
+impl<E, T> Task<Result<T, E>>
+where
+    T: 'static + Send,
+    E: 'static + Send + Debug,
+{
+    pub fn detach_and_log_err(self, cx: &mut AppContext) {
+        cx.executor().spawn(self.log_err()).detach();
     }
 }
 

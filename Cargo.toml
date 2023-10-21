@@ -81,6 +81,7 @@ members = [
     "crates/welcome",
     "crates/xtask",
     "crates/zed",
+    "crates/zed2",
     "crates/zed-actions"
 ]
 default-members = ["crates/zed"]

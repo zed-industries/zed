@@ -132,6 +132,7 @@ impl<'a, T: EventEmitter + Send + Sync + 'static> ModelContext<'a, T> {
 }
 
 impl<'a, T: 'static> Context for ModelContext<'a, T> {
+    type BorrowedContext<'b, 'c> = ModelContext<'b, T>;
     type EntityContext<'b, 'c, U: Send + Sync + 'static> = ModelContext<'b, U>;
     type Result<U> = U;
 
@@ -148,5 +149,12 @@ impl<'a, T: 'static> Context for ModelContext<'a, T> {
         update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,
     ) -> R {
         self.app.update_entity(handle, update)
+    }
+
+    fn read_global<G: 'static + Send + Sync, R>(
+        &self,
+        read: impl FnOnce(&G, &Self::BorrowedContext<'_, '_>) -> R,
+    ) -> R {
+        read(self.app.global(), self)
     }
 }

@@ -28,4 +28,4 @@ ui = { package = "ui2", path = "../ui2", features = ["stories"] }
 util = { path = "../util" }
 
 [dev-dependencies]
-gpui2 = { path = "../gpui2", features = ["test"] }
+gpui2 = { path = "../gpui2", features = ["test-support"] }

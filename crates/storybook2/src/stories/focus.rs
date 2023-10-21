@@ -3,14 +3,15 @@ use gpui2::{
     div, view, Context, Focusable, KeyBinding, ParentElement, StatelessInteractive, Styled, View,
     WindowContext,
 };
+use serde::Deserialize;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Default, PartialEq, Deserialize)]
 struct ActionA;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Default, PartialEq, Deserialize)]
 struct ActionB;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Default, PartialEq, Deserialize)]
 struct ActionC;
 
 pub struct FocusStory {
@@ -24,6 +25,8 @@ impl FocusStory {
             KeyBinding::new("cmd-a", ActionB, Some("child-1")),
             KeyBinding::new("cmd-c", ActionC, None),
         ]);
+        cx.register_action_type::<ActionA>();
+        cx.register_action_type::<ActionB>();
         let theme = rose_pine();
 
         let color_1 = theme.lowest.negative.default.foreground;

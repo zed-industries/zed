@@ -9,18 +9,19 @@ use std::sync::Weak;
 pub struct AsyncAppContext(pub(crate) Weak<Mutex<AppContext>>);
 
 impl Context for AsyncAppContext {
+    type BorrowedContext<'a, 'w> = AppContext;
     type EntityContext<'a, 'w, T: 'static + Send + Sync> = ModelContext<'a, T>;
     type Result<T> = Result<T>;
 
     fn entity<T: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
-    ) -> Result<Handle<T>> {
+    ) -> Self::Result<Handle<T>> {
         let app = self
             .0
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let mut lock = app.lock(); // Does not compile without this variable.
+        let mut lock = app.lock();
         Ok(lock.entity(build_entity))
     }
 
@@ -28,17 +29,42 @@ impl Context for AsyncAppContext {
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+    ) -> Self::Result<R> {
+        let app = self
+            .0
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut lock = app.lock();
+        Ok(lock.update_entity(handle, update))
+    }
+
+    fn read_global<G: 'static + Send + Sync, R>(
+        &self,
+        read: impl FnOnce(&G, &Self::BorrowedContext<'_, '_>) -> R,
+    ) -> Self::Result<R> {
+        let app = self
+            .0
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut lock = app.lock();
+        Ok(lock.read_global(read))
+    }
+}
+
+impl AsyncAppContext {
+    pub fn read_window<R>(
+        &self,
+        handle: AnyWindowHandle,
+        update: impl FnOnce(&WindowContext) -> R,
     ) -> Result<R> {
         let app = self
             .0
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let mut lock = app.lock(); // Does not compile without this variable.
-        Ok(lock.update_entity(handle, update))
+        let mut app_context = app.lock();
+        app_context.read_window(handle.id, update)
     }
-}
 
-impl AsyncAppContext {
     pub fn update_window<R>(
         &self,
         handle: AnyWindowHandle,
@@ -76,6 +102,7 @@ impl AsyncWindowContext {
 }
 
 impl Context for AsyncWindowContext {
+    type BorrowedContext<'a, 'w> = WindowContext<'a, 'w>;
     type EntityContext<'a, 'w, T: 'static + Send + Sync> = ViewContext<'a, 'w, T>;
     type Result<T> = Result<T>;
 
@@ -94,5 +121,12 @@ impl Context for AsyncWindowContext {
     ) -> Result<R> {
         self.app
             .update_window(self.window, |cx| cx.update_entity(handle, update))
+    }
+
+    fn read_global<G: 'static + Send + Sync, R>(
+        &self,
+        read: impl FnOnce(&G, &Self::BorrowedContext<'_, '_>) -> R,
+    ) -> Result<R> {
+        self.app.read_window(self.window, |cx| cx.read_global(read))
     }
 }

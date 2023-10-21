@@ -7,7 +7,7 @@ description = "The next version of Zed's GPU-accelerated UI framework"
 publish = false
 
 [features]
-test = ["backtrace", "dhat", "env_logger", "collections/test-support", "util/test-support"]
+test-support = ["backtrace", "dhat", "env_logger", "collections/test-support", "util/test-support"]
 
 [lib]
 path = "src/gpui2.rs"

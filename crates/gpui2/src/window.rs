@@ -288,6 +288,13 @@ pub struct WindowContext<'a, 'w> {
 }
 
 impl<'a, 'w> WindowContext<'a, 'w> {
+    pub(crate) fn immutable(app: &'a AppContext, window: &'w Window) -> Self {
+        Self {
+            app: Reference::Immutable(app),
+            window: Reference::Immutable(window),
+        }
+    }
+
     pub(crate) fn mutable(app: &'a mut AppContext, window: &'w mut Window) -> Self {
         Self {
             app: Reference::Mutable(app),
@@ -1049,6 +1056,7 @@ impl<'a, 'w> MainThread<WindowContext<'a, 'w>> {
 }
 
 impl Context for WindowContext<'_, '_> {
+    type BorrowedContext<'a, 'w> = WindowContext<'a, 'w>;
     type EntityContext<'a, 'w, T: 'static + Send + Sync> = ViewContext<'a, 'w, T>;
     type Result<T> = T;
 
@@ -1077,6 +1085,10 @@ impl Context for WindowContext<'_, '_> {
         );
         self.entities.end_lease(entity);
         result
+    }
+
+    fn read_global<G: 'static + Send + Sync, R>(&self, read: impl FnOnce(&G, &Self) -> R) -> R {
+        read(self.app.global(), self)
     }
 }
 
@@ -1520,7 +1532,11 @@ impl<'a, 'w, S: EventEmitter + Send + Sync + 'static> ViewContext<'a, 'w, S> {
     }
 }
 
-impl<'a, 'w, S> Context for ViewContext<'a, 'w, S> {
+impl<'a, 'w, V> Context for ViewContext<'a, 'w, V>
+where
+    V: 'static + Send + Sync,
+{
+    type BorrowedContext<'b, 'c> = ViewContext<'b, 'c, V>;
     type EntityContext<'b, 'c, U: 'static + Send + Sync> = ViewContext<'b, 'c, U>;
     type Result<U> = U;
 
@@ -1531,12 +1547,19 @@ impl<'a, 'w, S> Context for ViewContext<'a, 'w, S> {
         self.window_cx.entity(build_entity)
     }
 
-    fn update_entity<U: Send + Sync + 'static, R>(
+    fn update_entity<U: 'static + Send + Sync, R>(
         &mut self,
         handle: &Handle<U>,
         update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,
     ) -> R {
         self.window_cx.update_entity(handle, update)
+    }
+
+    fn read_global<G: 'static + Send + Sync, R>(
+        &self,
+        read: impl FnOnce(&G, &Self::BorrowedContext<'_, '_>) -> R,
+    ) -> R {
+        read(self.global(), self)
     }
 }
 

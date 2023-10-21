@@ -1,18 +1,42 @@
 use crate::SharedString;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
-use std::any::Any;
+use serde::Deserialize;
+use std::any::{type_name, Any};
 
 pub trait Action: Any + Send + Sync {
+    fn qualified_name() -> SharedString
+    where
+        Self: Sized;
+    fn build(value: Option<serde_json::Value>) -> Result<Box<dyn Action>>
+    where
+        Self: Sized;
+
     fn partial_eq(&self, action: &dyn Action) -> bool;
     fn boxed_clone(&self) -> Box<dyn Action>;
     fn as_any(&self) -> &dyn Any;
 }
 
-impl<T> Action for T
+impl<A> Action for A
 where
-    T: Any + PartialEq + Clone + Send + Sync,
+    A: for<'a> Deserialize<'a> + Any + PartialEq + Clone + Default + Send + Sync,
 {
+    fn qualified_name() -> SharedString {
+        type_name::<A>().into()
+    }
+
+    fn build(params: Option<serde_json::Value>) -> Result<Box<dyn Action>>
+    where
+        Self: Sized,
+    {
+        let action = if let Some(params) = params {
+            serde_json::from_value(params).context("failed to deserialize action")?
+        } else {
+            Self::default()
+        };
+        Ok(Box::new(action))
+    }
+
     fn partial_eq(&self, action: &dyn Action) -> bool {
         action
             .as_any()
@@ -130,15 +154,15 @@ impl DispatchContextPredicate {
             return false;
         };
         match self {
-            Self::Identifier(name) => context.set.contains(&name),
+            Self::Identifier(name) => context.set.contains(name),
             Self::Equal(left, right) => context
                 .map
-                .get(&left)
+                .get(left)
                 .map(|value| value == right)
                 .unwrap_or(false),
             Self::NotEqual(left, right) => context
                 .map
-                .get(&left)
+                .get(left)
                 .map(|value| value != right)
                 .unwrap_or(true),
             Self::Not(pred) => !pred.eval(contexts),
