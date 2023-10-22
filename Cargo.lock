@@ -1458,7 +1458,7 @@ dependencies = [
  "async-tungstenite",
  "collections",
  "db",
- "feature_flags",
+ "feature_flags2",
  "futures 0.3.28",
  "gpui2",
  "image",
@@ -2674,6 +2674,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
+]
+
+[[package]]
+name = "feature_flags2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui2",
 ]
 
 [[package]]

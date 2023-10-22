@@ -193,16 +193,14 @@ impl UserStore {
                         }
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
-                            if let Some(this) = this.upgrade(&cx) {
-                                this.update(&mut cx, |this, cx| {
-                                    cx.notify();
-                                    this.clear_contacts()
-                                })
-                                .await;
-                            }
+                            this.update(&mut cx, |this, cx| {
+                                cx.notify();
+                                this.clear_contacts()
+                            })
+                            .await;
                         }
                         Status::ConnectionLost => {
-                            if let Some(this) = this.upgrade(&cx) {
+                            if let Some(this) = this.upgrade() {
                                 this.update(&mut cx, |this, cx| {
                                     cx.notify();
                                     this.clear_contacts()

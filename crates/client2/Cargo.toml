@@ -19,7 +19,7 @@ util = { path = "../util" }
 rpc = { path = "../rpc" }
 text = { path = "../text" }
 settings2 = { path = "../settings2" }
-feature_flags = { path = "../feature_flags" }
+feature_flags2 = { path = "../feature_flags2" }
 sum_tree = { path = "../sum_tree" }
 
 anyhow.workspace = true
