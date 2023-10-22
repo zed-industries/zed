@@ -1,13 +1,13 @@
 use crate::{
     px, size, Action, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext,
-    DisplayId, Edges, Effect, Element, EntityId, EventEmitter, Executor, FocusEvent, FontId,
-    GlobalElementId, GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch,
-    KeyMatcher, Keystroke, LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent,
-    Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad,
-    Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder,
-    Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task, Underline,
-    UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    DisplayId, Edges, Effect, Element, EntityId, EventEmitter, FocusEvent, FontId, GlobalElementId,
+    GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher,
+    Keystroke, LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path,
+    Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference,
+    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow,
+    SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle,
+    WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -424,6 +424,16 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             let future = f(window, cx);
             async move { future.await }
         })
+    }
+
+    pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: 'static + Send + Sync,
+    {
+        let mut global = self.app.pop_global::<G>();
+        let result = f(global.as_mut(), self);
+        self.app.push_global(global);
+        result
     }
 
     pub fn request_layout(
@@ -1093,13 +1103,8 @@ impl<'a, 'w> MainThread<WindowContext<'a, 'w>> {
 }
 
 impl Context for WindowContext<'_, '_> {
-    type BorrowedContext<'a, 'w> = WindowContext<'a, 'w>;
     type EntityContext<'a, 'w, T: 'static + Send + Sync> = ViewContext<'a, 'w, T>;
     type Result<T> = T;
-
-    fn refresh(&mut self) {
-        self.app.refresh();
-    }
 
     fn entity<T: Send + Sync + 'static>(
         &mut self,
@@ -1125,20 +1130,6 @@ impl Context for WindowContext<'_, '_> {
             &mut ViewContext::mutable(&mut *self.app, &mut *self.window, handle.id),
         );
         self.entities.end_lease(entity);
-        result
-    }
-
-    fn read_global<G: 'static + Send + Sync, R>(&self, read: impl FnOnce(&G, &Self) -> R) -> R {
-        read(self.app.global(), self)
-    }
-
-    fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
-    where
-        G: 'static + Send + Sync,
-    {
-        let mut global = self.app.pop_global::<G>();
-        let result = f(global.as_mut(), self);
-        self.app.push_global(global);
         result
     }
 }
@@ -1561,6 +1552,16 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         })
     }
 
+    pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: 'static + Send + Sync,
+    {
+        let mut global = self.app.pop_global::<G>();
+        let result = f(global.as_mut(), self);
+        self.app.push_global(global);
+        result
+    }
+
     pub fn on_mouse_event<Event: 'static>(
         &mut self,
         handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static,
@@ -1587,13 +1588,8 @@ impl<'a, 'w, V> Context for ViewContext<'a, 'w, V>
 where
     V: 'static + Send + Sync,
 {
-    type BorrowedContext<'b, 'c> = ViewContext<'b, 'c, V>;
     type EntityContext<'b, 'c, U: 'static + Send + Sync> = ViewContext<'b, 'c, U>;
     type Result<U> = U;
-
-    fn refresh(&mut self) {
-        self.app.refresh();
-    }
 
     fn entity<T2: Send + Sync + 'static>(
         &mut self,
@@ -1608,23 +1604,6 @@ where
         update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,
     ) -> R {
         self.window_cx.update_entity(handle, update)
-    }
-
-    fn read_global<G: 'static + Send + Sync, R>(
-        &self,
-        read: impl FnOnce(&G, &Self::BorrowedContext<'_, '_>) -> R,
-    ) -> R {
-        read(self.global(), self)
-    }
-
-    fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
-    where
-        G: 'static + Send + Sync,
-    {
-        let mut global = self.app.pop_global::<G>();
-        let result = f(global.as_mut(), self);
-        self.app.push_global(global);
-        result
     }
 }
 

@@ -19,24 +19,6 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         }
     }
 
-    // todo!
-    // fn update<R>(&mut self, update: impl FnOnce(&mut T, &mut Self) -> R) -> R {
-    //     let mut entity = self
-    //         .app
-    //         .entities
-    //         .get_mut(self.entity_id)
-    //         .unwrap()
-    //         .take()
-    //         .unwrap();
-    //     let result = update(entity.downcast_mut::<T>().unwrap(), self);
-    //     self.app
-    //         .entities
-    //         .get_mut(self.entity_id)
-    //         .unwrap()
-    //         .replace(entity);
-    //     result
-    // }
-
     pub fn handle(&self) -> WeakHandle<T> {
         self.app.entities.weak_handle(self.entity_id)
     }
@@ -120,6 +102,16 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
             emitter: self.entity_id,
         });
     }
+
+    pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: 'static + Send + Sync,
+    {
+        let mut global = self.app.pop_global::<G>();
+        let result = f(global.as_mut(), self);
+        self.app.push_global(global);
+        result
+    }
 }
 
 impl<'a, T: EventEmitter + Send + Sync + 'static> ModelContext<'a, T> {
@@ -132,13 +124,8 @@ impl<'a, T: EventEmitter + Send + Sync + 'static> ModelContext<'a, T> {
 }
 
 impl<'a, T: 'static> Context for ModelContext<'a, T> {
-    type BorrowedContext<'b, 'c> = ModelContext<'b, T>;
     type EntityContext<'b, 'c, U: Send + Sync + 'static> = ModelContext<'b, U>;
     type Result<U> = U;
-
-    fn refresh(&mut self) {
-        self.app.refresh();
-    }
 
     fn entity<U: Send + Sync + 'static>(
         &mut self,
@@ -153,22 +140,5 @@ impl<'a, T: 'static> Context for ModelContext<'a, T> {
         update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,
     ) -> R {
         self.app.update_entity(handle, update)
-    }
-
-    fn read_global<G: 'static + Send + Sync, R>(
-        &self,
-        read: impl FnOnce(&G, &Self::BorrowedContext<'_, '_>) -> R,
-    ) -> R {
-        read(self.app.global(), self)
-    }
-
-    fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
-    where
-        G: 'static + Send + Sync,
-    {
-        let mut global = self.app.pop_global::<G>();
-        let result = f(global.as_mut(), self);
-        self.app.push_global(global);
-        result
     }
 }

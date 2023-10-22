@@ -184,6 +184,10 @@ pub struct AppContext {
 }
 
 impl AppContext {
+    pub fn refresh(&mut self) {
+        self.push_effect(Effect::Refresh);
+    }
+
     pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
         self.pending_updates += 1;
         let result = update(self);
@@ -443,13 +447,26 @@ impl AppContext {
         style
     }
 
+    pub fn has_global<G: 'static>(&self) -> bool {
+        self.global_stacks_by_type
+            .get(&TypeId::of::<G>())
+            .map_or(false, |stack| !stack.is_empty())
+    }
+
     pub fn global<G: 'static>(&self) -> &G {
         self.global_stacks_by_type
             .get(&TypeId::of::<G>())
             .and_then(|stack| stack.last())
-            .and_then(|any_state| any_state.downcast_ref::<G>())
+            .map(|any_state| any_state.downcast_ref::<G>().unwrap())
             .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
             .unwrap()
+    }
+
+    pub fn try_global<G: 'static>(&self) -> Option<&G> {
+        self.global_stacks_by_type
+            .get(&TypeId::of::<G>())
+            .and_then(|stack| stack.last())
+            .map(|any_state| any_state.downcast_ref::<G>().unwrap())
     }
 
     pub fn global_mut<G: 'static>(&mut self) -> &mut G {
@@ -483,6 +500,24 @@ impl AppContext {
         } else {
             stack.push(global)
         }
+    }
+
+    pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: 'static + Send + Sync,
+    {
+        let mut global = self
+            .global_stacks_by_type
+            .get_mut(&TypeId::of::<G>())
+            .and_then(|stack| stack.pop())
+            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
+            .unwrap();
+        let result = f(global.downcast_mut().unwrap(), self);
+        self.global_stacks_by_type
+            .get_mut(&TypeId::of::<G>())
+            .unwrap()
+            .push(global);
+        result
     }
 
     pub(crate) fn push_global<T: Send + Sync + 'static>(&mut self, global: T) {
@@ -551,13 +586,8 @@ impl AppContext {
 }
 
 impl Context for AppContext {
-    type BorrowedContext<'a, 'w> = Self;
     type EntityContext<'a, 'w, T: Send + Sync + 'static> = ModelContext<'a, T>;
     type Result<T> = T;
-
-    fn refresh(&mut self) {
-        self.push_effect(Effect::Refresh);
-    }
 
     fn entity<T: Send + Sync + 'static>(
         &mut self,
@@ -581,28 +611,6 @@ impl Context for AppContext {
             cx.entities.end_lease(entity);
             result
         })
-    }
-
-    fn read_global<G: 'static + Send + Sync, R>(&self, read: impl FnOnce(&G, &Self) -> R) -> R {
-        read(self.global(), self)
-    }
-
-    fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
-    where
-        G: 'static + Send + Sync,
-    {
-        let mut global = self
-            .global_stacks_by_type
-            .get_mut(&TypeId::of::<G>())
-            .and_then(|stack| stack.pop())
-            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
-            .unwrap();
-        let result = f(global.downcast_mut().unwrap(), self);
-        self.global_stacks_by_type
-            .get_mut(&TypeId::of::<G>())
-            .unwrap()
-            .push(global);
-        result
     }
 }
 
@@ -660,6 +668,16 @@ impl MainThread<AppContext> {
             window.root_view.replace(root_view.into_any());
             cx.windows.get_mut(id).unwrap().replace(window);
             handle
+        })
+    }
+
+    pub fn update_global<G: 'static + Send + Sync, R>(
+        &mut self,
+        update: impl FnOnce(&mut G, &mut MainThread<AppContext>) -> R,
+    ) -> R {
+        self.0.update_global(|global, cx| {
+            let cx = unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) };
+            update(global, cx)
         })
     }
 }

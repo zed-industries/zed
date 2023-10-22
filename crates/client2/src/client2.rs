@@ -810,7 +810,7 @@ impl Client {
         let mut read_from_keychain = false;
         let mut credentials = self.state.read().credentials.clone();
         if credentials.is_none() && try_keychain {
-            credentials = read_credentials_from_keychain(cx);
+            credentials = read_credentials_from_keychain(cx).await;
             read_from_keychain = credentials.is_some();
         }
         if credentials.is_none() {
@@ -893,9 +893,10 @@ impl Client {
     ) -> Result<()> {
         let executor = cx.executor()?;
         log::info!("add connection to peer");
-        let (connection_id, handle_io, mut incoming) = self
-            .peer
-            .add_connection(conn, move |duration| executor.timer(duration));
+        let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn, {
+            let executor = executor.clone();
+            move |duration| executor.timer(duration)
+        });
         let handle_io = executor.spawn(handle_io);
 
         let peer_id = async {
@@ -1041,13 +1042,14 @@ impl Client {
         credentials: &Credentials,
         cx: &AsyncAppContext,
     ) -> Task<Result<Connection, EstablishConnectionError>> {
-        let use_preview_server = cx.read(|cx| {
-            if cx.has_global::<ReleaseChannel>() {
-                *cx.global::<ReleaseChannel>() != ReleaseChannel::Stable
-            } else {
-                false
-            }
-        });
+        let executor = match cx.executor() {
+            Ok(executor) => executor,
+            Err(error) => return Task::ready(Err(error)),
+        };
+
+        let use_preview_server = cx
+            .try_read_global(|channel: &ReleaseChannel, _| channel != ReleaseChannel::Stable)
+            .unwrap_or(false);
 
         let request = Request::builder()
             .header(
@@ -1057,7 +1059,7 @@ impl Client {
             .header("x-zed-protocol-version", rpc::PROTOCOL_VERSION);
 
         let http = self.http.clone();
-        cx.background().spawn(async move {
+        executor.spawn(async move {
             let mut rpc_url = Self::get_rpc_url(http, use_preview_server).await?;
             let rpc_host = rpc_url
                 .host_str()
@@ -1098,11 +1100,8 @@ impl Client {
         self: &Arc<Self>,
         cx: &AsyncAppContext,
     ) -> Task<Result<Credentials>> {
-        let platform = cx.platform();
-        let executor = cx.background();
         let http = self.http.clone();
-
-        executor.clone().spawn(async move {
+        cx.spawn(|cx| async move {
             // Generate a pair of asymmetric encryption keys. The public key will be used by the
             // zed server to encrypt the user's access token, so that it can'be intercepted by
             // any other app running on the user's device.
@@ -1189,6 +1188,7 @@ impl Client {
                 access_token,
             })
         })
+        .unwrap_or_else(|error| Task::ready(Err(error)))
     }
 
     async fn authenticate_as_admin(
