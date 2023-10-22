@@ -134,7 +134,7 @@ impl ChatPanel {
             ListState::<Self>::new(0, Orientation::Bottom, 1000., move |this, ix, cx| {
                 this.render_message(ix, cx)
             });
-        message_list.set_scroll_handler(|visible_range, this, cx| {
+        message_list.set_scroll_handler(|visible_range, _, this, cx| {
             if visible_range.start < MESSAGE_LOADING_THRESHOLD {
                 this.load_more_messages(&LoadMoreMessages, cx);
             }

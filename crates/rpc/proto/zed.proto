@@ -1616,6 +1616,7 @@ message AddNotification {
 
 message GetNotificationsResponse {
     repeated Notification notifications = 1;
+    bool done = 2;
 }
 
 message DeleteNotification {

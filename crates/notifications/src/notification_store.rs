@@ -21,6 +21,7 @@ pub struct NotificationStore {
     channel_messages: HashMap<u64, ChannelMessage>,
     channel_store: ModelHandle<ChannelStore>,
     notifications: SumTree<NotificationEntry>,
+    loaded_all_notifications: bool,
     _watch_connection_status: Task<Option<()>>,
     _subscriptions: Vec<client::Subscription>,
 }
@@ -83,9 +84,10 @@ impl NotificationStore {
                 let this = this.upgrade(&cx)?;
                 match status {
                     client::Status::Connected { .. } => {
-                        this.update(&mut cx, |this, cx| this.handle_connect(cx))
-                            .await
-                            .log_err()?;
+                        if let Some(task) = this.update(&mut cx, |this, cx| this.handle_connect(cx))
+                        {
+                            task.await.log_err()?;
+                        }
                     }
                     _ => this.update(&mut cx, |this, cx| this.handle_disconnect(cx)),
                 }
@@ -96,6 +98,7 @@ impl NotificationStore {
         Self {
             channel_store: ChannelStore::global(cx),
             notifications: Default::default(),
+            loaded_all_notifications: false,
             channel_messages: Default::default(),
             _watch_connection_status: watch_connection_status,
             _subscriptions: vec![
@@ -142,22 +145,46 @@ impl NotificationStore {
         None
     }
 
-    pub fn load_more_notifications(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let request = self
-            .client
-            .request(proto::GetNotifications { before_id: None });
-        cx.spawn(|this, cx| async move {
+    pub fn load_more_notifications(
+        &self,
+        clear_old: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.loaded_all_notifications && !clear_old {
+            return None;
+        }
+
+        let before_id = if clear_old {
+            None
+        } else {
+            self.notifications.first().map(|entry| entry.id)
+        };
+        let request = self.client.request(proto::GetNotifications { before_id });
+        Some(cx.spawn(|this, mut cx| async move {
             let response = request.await?;
-            Self::add_notifications(this, false, response.notifications, cx).await?;
+            this.update(&mut cx, |this, _| {
+                this.loaded_all_notifications = response.done
+            });
+            Self::add_notifications(
+                this,
+                response.notifications,
+                AddNotificationsOptions {
+                    is_new: false,
+                    clear_old,
+                    includes_first: response.done,
+                },
+                cx,
+            )
+            .await?;
             Ok(())
-        })
+        }))
     }
 
-    fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<Result<()>>> {
         self.notifications = Default::default();
         self.channel_messages = Default::default();
         cx.notify();
-        self.load_more_notifications(cx)
+        self.load_more_notifications(true, cx)
     }
 
     fn handle_disconnect(&mut self, cx: &mut ModelContext<Self>) {
@@ -172,8 +199,12 @@ impl NotificationStore {
     ) -> Result<()> {
         Self::add_notifications(
             this,
-            true,
             envelope.payload.notification.into_iter().collect(),
+            AddNotificationsOptions {
+                is_new: true,
+                clear_old: false,
+                includes_first: false,
+            },
             cx,
         )
         .await
@@ -193,8 +224,8 @@ impl NotificationStore {
 
     async fn add_notifications(
         this: ModelHandle<Self>,
-        is_new: bool,
         notifications: Vec<proto::Notification>,
+        options: AddNotificationsOptions,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let mut user_ids = Vec::new();
@@ -256,6 +287,20 @@ impl NotificationStore {
             })
             .await?;
         this.update(&mut cx, |this, cx| {
+            if options.clear_old {
+                cx.emit(NotificationEvent::NotificationsUpdated {
+                    old_range: 0..this.notifications.summary().count,
+                    new_count: 0,
+                });
+                this.notifications = SumTree::default();
+                this.channel_messages.clear();
+                this.loaded_all_notifications = false;
+            }
+
+            if options.includes_first {
+                this.loaded_all_notifications = true;
+            }
+
             this.channel_messages
                 .extend(messages.into_iter().filter_map(|message| {
                     if let ChannelMessageId::Saved(id) = message.id {
@@ -269,7 +314,7 @@ impl NotificationStore {
                 notifications
                     .into_iter()
                     .map(|notification| (notification.id, Some(notification))),
-                is_new,
+                options.is_new,
                 cx,
             );
         });
@@ -405,4 +450,10 @@ impl<'a> sum_tree::Dimension<'a, NotificationSummary> for UnreadCount {
     fn add_summary(&mut self, summary: &NotificationSummary, _: &()) {
         self.0 += summary.unread_count;
     }
+}
+
+struct AddNotificationsOptions {
+    is_new: bool,
+    clear_old: bool,
+    includes_first: bool,
 }

@@ -3184,7 +3184,10 @@ async fn get_notifications(
                 .map(|id| db::NotificationId::from_proto(id)),
         )
         .await?;
-    response.send(proto::GetNotificationsResponse { notifications })?;
+    response.send(proto::GetNotificationsResponse {
+        done: notifications.len() < NOTIFICATION_COUNT_PER_PAGE,
+        notifications,
+    })?;
     Ok(())
 }
 

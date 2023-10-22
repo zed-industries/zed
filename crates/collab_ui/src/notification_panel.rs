@@ -1,7 +1,4 @@
-use crate::{
-    chat_panel::ChatPanel, format_timestamp, is_channels_feature_enabled, render_avatar,
-    NotificationPanelSettings,
-};
+use crate::{chat_panel::ChatPanel, format_timestamp, render_avatar, NotificationPanelSettings};
 use anyhow::Result;
 use channel::ChannelStore;
 use client::{Client, Notification, User, UserStore};
@@ -29,6 +26,7 @@ use workspace::{
     Workspace,
 };
 
+const LOADING_THRESHOLD: usize = 30;
 const MARK_AS_READ_DELAY: Duration = Duration::from_secs(1);
 const TOAST_DURATION: Duration = Duration::from_secs(5);
 const NOTIFICATION_PANEL_KEY: &'static str = "NotificationPanel";
@@ -98,11 +96,21 @@ impl NotificationPanel {
             })
             .detach();
 
-            let notification_list =
+            let mut notification_list =
                 ListState::<Self>::new(0, Orientation::Top, 1000., move |this, ix, cx| {
                     this.render_notification(ix, cx)
                         .unwrap_or_else(|| Empty::new().into_any())
                 });
+            notification_list.set_scroll_handler(|visible_range, count, this, cx| {
+                if count.saturating_sub(visible_range.end) < LOADING_THRESHOLD {
+                    if let Some(task) = this
+                        .notification_store
+                        .update(cx, |store, cx| store.load_more_notifications(false, cx))
+                    {
+                        task.detach();
+                    }
+                }
+            });
 
             let mut this = Self {
                 fs,
@@ -653,15 +661,14 @@ impl Panel for NotificationPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         self.active = active;
-        if active {
-            if !is_channels_feature_enabled(cx) {
-                cx.emit(Event::Dismissed);
-            }
+        if self.notification_store.read(cx).notification_count() == 0 {
+            cx.emit(Event::Dismissed);
         }
     }
 
     fn icon_path(&self, cx: &gpui::WindowContext) -> Option<&'static str> {
-        (settings::get::<NotificationPanelSettings>(cx).button && is_channels_feature_enabled(cx))
+        (settings::get::<NotificationPanelSettings>(cx).button
+            && self.notification_store.read(cx).notification_count() > 0)
             .then(|| "icons/bell.svg")
     }
 
