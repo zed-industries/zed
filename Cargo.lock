@@ -91,6 +91,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "isahc",
+ "language",
  "lazy_static",
  "log",
  "matrixmultiply",
@@ -9146,6 +9147,7 @@ name = "vcs_menu"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "fs",
  "fuzzy",
  "gpui",
  "picker",

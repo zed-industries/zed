@@ -6,7 +6,6 @@ mod face_pile;
 pub mod notification_panel;
 pub mod notifications;
 mod panel_settings;
-mod sharing_status_indicator;
 
 use call::{report_call_event_for_room, ActiveCall, Room};
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
@@ -46,7 +45,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     collab_panel::init(cx);
     chat_panel::init(cx);
     notifications::init(&app_state, cx);
-    sharing_status_indicator::init(cx);
 
     cx.add_global_action(toggle_screen_sharing);
     cx.add_global_action(toggle_mute);

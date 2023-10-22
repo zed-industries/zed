@@ -6,7 +6,7 @@ use futures::{
     FutureExt, StreamExt,
 };
 use gpui::AppContext;
-use language::{BundledFormatter, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use serde_json::{json, Value};
@@ -117,22 +117,21 @@ impl LspAdapter for TailwindLspAdapter {
     }
 
     async fn language_ids(&self) -> HashMap<String, String> {
-        HashMap::from_iter(
-            [
-                ("HTML".to_string(), "html".to_string()),
-                ("CSS".to_string(), "css".to_string()),
-                ("JavaScript".to_string(), "javascript".to_string()),
-                ("TSX".to_string(), "typescriptreact".to_string()),
-            ]
-            .into_iter(),
-        )
+        HashMap::from_iter([
+            ("HTML".to_string(), "html".to_string()),
+            ("CSS".to_string(), "css".to_string()),
+            ("JavaScript".to_string(), "javascript".to_string()),
+            ("TSX".to_string(), "typescriptreact".to_string()),
+            ("Svelte".to_string(), "svelte".to_string()),
+            ("Elixir".to_string(), "phoenix-heex".to_string()),
+            ("HEEX".to_string(), "phoenix-heex".to_string()),
+            ("ERB".to_string(), "erb".to_string()),
+            ("PHP".to_string(), "php".to_string()),
+        ])
     }
 
-    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        vec![BundledFormatter::Prettier {
-            parser_name: None,
-            plugin_names: vec!["prettier-plugin-tailwindcss"],
-        }]
+    fn prettier_plugins(&self) -> &[&'static str] {
+        &["prettier-plugin-tailwindcss"]
     }
 }
 

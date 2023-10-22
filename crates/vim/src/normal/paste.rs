@@ -30,6 +30,7 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
         vim.update_active_editor(cx, |editor, cx| {
+            let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
@@ -168,8 +169,14 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                             let mut cursor = anchor.to_display_point(map);
                             if *line_mode {
                                 if !before {
-                                    cursor =
-                                        movement::down(map, cursor, SelectionGoal::None, false).0;
+                                    cursor = movement::down(
+                                        map,
+                                        cursor,
+                                        SelectionGoal::None,
+                                        false,
+                                        &text_layout_details,
+                                    )
+                                    .0;
                                 }
                                 cursor = movement::indented_line_beginning(map, cursor, true);
                             } else if !is_multiline {

@@ -71,6 +71,7 @@ use link_go_to_definition::{
 };
 use log::error;
 use lsp::LanguageServerId;
+use movement::TextLayoutDetails;
 use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
@@ -3476,6 +3477,14 @@ impl Editor {
             .collect()
     }
 
+    pub fn text_layout_details(&self, cx: &WindowContext) -> TextLayoutDetails {
+        TextLayoutDetails {
+            font_cache: cx.font_cache().clone(),
+            text_layout_cache: cx.text_layout_cache().clone(),
+            editor_style: self.style(cx),
+        }
+    }
+
     fn splice_inlay_hints(
         &self,
         to_remove: Vec<InlayId>,
@@ -5410,6 +5419,7 @@ impl Editor {
     }
 
     pub fn transpose(&mut self, _: &Transpose, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
         self.transact(cx, |this, cx| {
             let edits = this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 let mut edits: Vec<(Range<usize>, String)> = Default::default();
@@ -5433,7 +5443,10 @@ impl Editor {
 
                     *head.column_mut() += 1;
                     head = display_map.clip_point(head, Bias::Right);
-                    selection.collapse_to(head, SelectionGoal::Column(head.column()));
+                    let goal = SelectionGoal::HorizontalPosition(
+                        display_map.x_for_point(head, &text_layout_details),
+                    );
+                    selection.collapse_to(head, goal);
 
                     let transpose_start = display_map
                         .buffer_snapshot
@@ -5697,13 +5710,21 @@ impl Editor {
             return;
         }
 
+        let text_layout_details = &self.text_layout_details(cx);
+
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::up(map, selection.start, selection.goal, false);
+                let (cursor, goal) = movement::up(
+                    map,
+                    selection.start,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
                 selection.collapse_to(cursor, goal);
             });
         })
@@ -5731,22 +5752,33 @@ impl Editor {
             Autoscroll::fit()
         };
 
+        let text_layout_details = &self.text_layout_details(cx);
+
         self.change_selections(Some(autoscroll), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) =
-                    movement::up_by_rows(map, selection.end, row_count, selection.goal, false);
+                let (cursor, goal) = movement::up_by_rows(
+                    map,
+                    selection.end,
+                    row_count,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
                 selection.collapse_to(cursor, goal);
             });
         });
     }
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            s.move_heads_with(|map, head, goal| movement::up(map, head, goal, false))
+            s.move_heads_with(|map, head, goal| {
+                movement::up(map, head, goal, false, &text_layout_details)
+            })
         })
     }
 
@@ -5758,13 +5790,20 @@ impl Editor {
             return;
         }
 
+        let text_layout_details = &self.text_layout_details(cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::down(map, selection.end, selection.goal, false);
+                let (cursor, goal) = movement::down(
+                    map,
+                    selection.end,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
                 selection.collapse_to(cursor, goal);
             });
         });
@@ -5802,22 +5841,32 @@ impl Editor {
             Autoscroll::fit()
         };
 
+        let text_layout_details = &self.text_layout_details(cx);
         self.change_selections(Some(autoscroll), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) =
-                    movement::down_by_rows(map, selection.end, row_count, selection.goal, false);
+                let (cursor, goal) = movement::down_by_rows(
+                    map,
+                    selection.end,
+                    row_count,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
                 selection.collapse_to(cursor, goal);
             });
         });
     }
 
     pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            s.move_heads_with(|map, head, goal| movement::down(map, head, goal, false))
+            s.move_heads_with(|map, head, goal| {
+                movement::down(map, head, goal, false, &text_layout_details)
+            })
         });
     }
 
@@ -6336,11 +6385,14 @@ impl Editor {
     fn add_selection(&mut self, above: bool, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections.all::<Point>(cx);
+        let text_layout_details = self.text_layout_details(cx);
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection.display_range(&display_map).sorted();
-            let columns = cmp::min(range.start.column(), range.end.column())
-                ..cmp::max(range.start.column(), range.end.column());
+
+            let start_x = display_map.x_for_point(range.start, &text_layout_details);
+            let end_x = display_map.x_for_point(range.end, &text_layout_details);
+            let positions = start_x.min(end_x)..start_x.max(end_x);
 
             selections.clear();
             let mut stack = Vec::new();
@@ -6348,8 +6400,9 @@ impl Editor {
                 if let Some(selection) = self.selections.build_columnar_selection(
                     &display_map,
                     row,
-                    &columns,
+                    &positions,
                     oldest_selection.reversed,
+                    &text_layout_details,
                 ) {
                     stack.push(selection.id);
                     selections.push(selection);
@@ -6377,12 +6430,15 @@ impl Editor {
                     let range = selection.display_range(&display_map).sorted();
                     debug_assert_eq!(range.start.row(), range.end.row());
                     let mut row = range.start.row();
-                    let columns = if let SelectionGoal::ColumnRange { start, end } = selection.goal
+                    let positions = if let SelectionGoal::HorizontalRange { start, end } =
+                        selection.goal
                     {
                         start..end
                     } else {
-                        cmp::min(range.start.column(), range.end.column())
-                            ..cmp::max(range.start.column(), range.end.column())
+                        let start_x = display_map.x_for_point(range.start, &text_layout_details);
+                        let end_x = display_map.x_for_point(range.end, &text_layout_details);
+
+                        start_x.min(end_x)..start_x.max(end_x)
                     };
 
                     while row != end_row {
@@ -6395,8 +6451,9 @@ impl Editor {
                         if let Some(new_selection) = self.selections.build_columnar_selection(
                             &display_map,
                             row,
-                            &columns,
+                            &positions,
                             selection.reversed,
+                            &text_layout_details,
                         ) {
                             state.stack.push(new_selection.id);
                             if above {
@@ -6690,6 +6747,7 @@ impl Editor {
     }
 
     pub fn toggle_comments(&mut self, action: &ToggleComments, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
         self.transact(cx, |this, cx| {
             let mut selections = this.selections.all::<Point>(cx);
             let mut edits = Vec::new();
@@ -6932,7 +6990,10 @@ impl Editor {
                         point.row += 1;
                         point = snapshot.clip_point(point, Bias::Left);
                         let display_point = point.to_display_point(display_snapshot);
-                        (display_point, SelectionGoal::Column(display_point.column()))
+                        let goal = SelectionGoal::HorizontalPosition(
+                            display_snapshot.x_for_point(display_point, &text_layout_details),
+                        );
+                        (display_point, goal)
                     })
                 });
             }

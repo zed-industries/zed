@@ -53,6 +53,8 @@ pub struct OpenAIRequest {
     pub model: String,
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
+    pub stop: Vec<String>,
+    pub temperature: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

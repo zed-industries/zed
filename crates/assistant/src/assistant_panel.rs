@@ -1,12 +1,15 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAIModel},
     codegen::{self, Codegen, CodegenKind},
-    prompts::{generate_content_prompt, PromptCodeSnippet},
+    prompts::generate_content_prompt,
     MessageId, MessageMetadata, MessageStatus, Role, SavedConversation, SavedConversationMetadata,
     SavedMessage,
 };
-use ai::completion::{
-    stream_completion, OpenAICompletionProvider, OpenAIRequest, RequestMessage, OPENAI_API_URL,
+use ai::{
+    completion::{
+        stream_completion, OpenAICompletionProvider, OpenAIRequest, RequestMessage, OPENAI_API_URL,
+    },
+    templates::repository_context::PromptCodeSnippet,
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
@@ -609,6 +612,18 @@ impl AssistantPanel {
 
         let project = pending_assist.project.clone();
 
+        let project_name = if let Some(project) = project.upgrade(cx) {
+            Some(
+                project
+                    .read(cx)
+                    .worktree_root_names(cx)
+                    .collect::<Vec<&str>>()
+                    .join("/"),
+            )
+        } else {
+            None
+        };
+
         self.inline_prompt_history
             .retain(|prompt| prompt != user_prompt);
         self.inline_prompt_history.push_back(user_prompt.into());
@@ -646,7 +661,19 @@ impl AssistantPanel {
             None
         };
 
-        let codegen_kind = codegen.read(cx).kind().clone();
+        // Higher Temperature increases the randomness of model outputs.
+        // If Markdown or No Language is Known, increase the randomness for more creative output
+        // If Code, decrease temperature to get more deterministic outputs
+        let temperature = if let Some(language) = language_name.clone() {
+            if language.to_string() != "Markdown".to_string() {
+                0.5
+            } else {
+                1.0
+            }
+        } else {
+            1.0
+        };
+
         let user_prompt = user_prompt.to_string();
 
         let snippets = if retrieve_context {
@@ -668,14 +695,7 @@ impl AssistantPanel {
             let snippets = cx.spawn(|_, cx| async move {
                 let mut snippets = Vec::new();
                 for result in search_results.await {
-                    snippets.push(PromptCodeSnippet::new(result, &cx));
-
-                    // snippets.push(result.buffer.read_with(&cx, |buffer, _| {
-                    //     buffer
-                    //         .snapshot()
-                    //         .text_for_range(result.range)
-                    //         .collect::<String>()
-                    // }));
+                    snippets.push(PromptCodeSnippet::new(result.buffer, result.range, &cx));
                 }
                 snippets
             });
@@ -696,11 +716,11 @@ impl AssistantPanel {
             generate_content_prompt(
                 user_prompt,
                 language_name,
-                &buffer,
+                buffer,
                 range,
-                codegen_kind,
                 snippets,
                 model_name,
+                project_name,
             )
         });
 
@@ -717,18 +737,23 @@ impl AssistantPanel {
         }
 
         cx.spawn(|_, mut cx| async move {
-            let prompt = prompt.await;
+            // I Don't know if we want to return a ? here.
+            let prompt = prompt.await?;
 
             messages.push(RequestMessage {
                 role: Role::User,
                 content: prompt,
             });
+
             let request = OpenAIRequest {
                 model: model.full_name().into(),
                 messages,
                 stream: true,
+                stop: vec!["|END|>".to_string()],
+                temperature,
             };
             codegen.update(&mut cx, |codegen, cx| codegen.start(request, cx));
+            anyhow::Ok(())
         })
         .detach();
     }
@@ -1718,6 +1743,8 @@ impl Conversation {
                     .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
                     .collect(),
                 stream: true,
+                stop: vec![],
+                temperature: 1.0,
             };
 
             let stream = stream_completion(api_key, cx.background().clone(), request);
@@ -2002,6 +2029,8 @@ impl Conversation {
                     model: self.model.full_name().to_string(),
                     messages: messages.collect(),
                     stream: true,
+                    stop: vec![],
+                    temperature: 1.0,
                 };
 
                 let stream = stream_completion(api_key, cx.background().clone(), request);

@@ -466,7 +466,11 @@ impl CollabTitlebarItem {
     pub fn toggle_vcs_menu(&mut self, _: &ToggleVcsMenu, cx: &mut ViewContext<Self>) {
         if self.branch_popover.take().is_none() {
             if let Some(workspace) = self.workspace.upgrade(cx) {
-                let view = cx.add_view(|cx| build_branch_list(workspace, cx));
+                let Some(view) =
+                    cx.add_option_view(|cx| build_branch_list(workspace, cx).log_err())
+                else {
+                    return;
+                };
                 cx.subscribe(&view, |this, _, event, cx| {
                     match event {
                         PickerEvent::Dismiss => {

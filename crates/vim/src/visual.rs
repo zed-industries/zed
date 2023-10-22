@@ -57,6 +57,7 @@ pub fn init(cx: &mut AppContext) {
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
+            let text_layout_details = editor.text_layout_details(cx);
             if vim.state().mode == Mode::VisualBlock
                 && !matches!(
                     motion,
@@ -67,7 +68,7 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
             {
                 let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
                 visual_block_motion(is_up_or_down, editor, cx, |map, point, goal| {
-                    motion.move_point(map, point, goal, times)
+                    motion.move_point(map, point, goal, times, &text_layout_details)
                 })
             } else {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -89,9 +90,13 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                             current_head = movement::left(map, selection.end)
                         }
 
-                        let Some((new_head, goal)) =
-                            motion.move_point(map, current_head, selection.goal, times)
-                        else {
+                        let Some((new_head, goal)) = motion.move_point(
+                            map,
+                            current_head,
+                            selection.goal,
+                            times,
+                            &text_layout_details,
+                        ) else {
                             return;
                         };
 
@@ -135,19 +140,23 @@ pub fn visual_block_motion(
         SelectionGoal,
     ) -> Option<(DisplayPoint, SelectionGoal)>,
 ) {
+    let text_layout_details = editor.text_layout_details(cx);
     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
         let map = &s.display_map();
         let mut head = s.newest_anchor().head().to_display_point(map);
         let mut tail = s.oldest_anchor().tail().to_display_point(map);
 
-        let (start, end) = match s.newest_anchor().goal {
-            SelectionGoal::ColumnRange { start, end } if preserve_goal => (start, end),
-            SelectionGoal::Column(start) if preserve_goal => (start, start + 1),
-            _ => (tail.column(), head.column()),
-        };
-        let goal = SelectionGoal::ColumnRange { start, end };
+        let mut head_x = map.x_for_point(head, &text_layout_details);
+        let mut tail_x = map.x_for_point(tail, &text_layout_details);
 
-        let was_reversed = tail.column() > head.column();
+        let (start, end) = match s.newest_anchor().goal {
+            SelectionGoal::HorizontalRange { start, end } if preserve_goal => (start, end),
+            SelectionGoal::HorizontalPosition(start) if preserve_goal => (start, start),
+            _ => (tail_x, head_x),
+        };
+        let mut goal = SelectionGoal::HorizontalRange { start, end };
+
+        let was_reversed = tail_x > head_x;
         if !was_reversed && !preserve_goal {
             head = movement::saturating_left(map, head);
         }
@@ -156,32 +165,56 @@ pub fn visual_block_motion(
             return;
         };
         head = new_head;
+        head_x = map.x_for_point(head, &text_layout_details);
 
-        let is_reversed = tail.column() > head.column();
+        let is_reversed = tail_x > head_x;
         if was_reversed && !is_reversed {
-            tail = movement::left(map, tail)
+            tail = movement::saturating_left(map, tail);
+            tail_x = map.x_for_point(tail, &text_layout_details);
         } else if !was_reversed && is_reversed {
-            tail = movement::right(map, tail)
+            tail = movement::saturating_right(map, tail);
+            tail_x = map.x_for_point(tail, &text_layout_details);
         }
         if !is_reversed && !preserve_goal {
-            head = movement::saturating_right(map, head)
+            head = movement::saturating_right(map, head);
+            head_x = map.x_for_point(head, &text_layout_details);
         }
 
-        let columns = if is_reversed {
-            head.column()..tail.column()
-        } else if head.column() == tail.column() {
-            head.column()..(head.column() + 1)
+        let positions = if is_reversed {
+            head_x..tail_x
         } else {
-            tail.column()..head.column()
+            tail_x..head_x
         };
+
+        if !preserve_goal {
+            goal = SelectionGoal::HorizontalRange {
+                start: positions.start,
+                end: positions.end,
+            };
+        }
 
         let mut selections = Vec::new();
         let mut row = tail.row();
 
         loop {
-            let start = map.clip_point(DisplayPoint::new(row, columns.start), Bias::Left);
-            let end = map.clip_point(DisplayPoint::new(row, columns.end), Bias::Left);
-            if columns.start <= map.line_len(row) {
+            let layed_out_line = map.lay_out_line_for_row(row, &text_layout_details);
+            let start = DisplayPoint::new(
+                row,
+                layed_out_line.closest_index_for_x(positions.start) as u32,
+            );
+            let mut end = DisplayPoint::new(
+                row,
+                layed_out_line.closest_index_for_x(positions.end) as u32,
+            );
+            if end <= start {
+                if start.column() == map.line_len(start.row()) {
+                    end = start;
+                } else {
+                    end = movement::saturating_right(map, start);
+                }
+            }
+
+            if positions.start <= layed_out_line.width() {
                 let selection = Selection {
                     id: s.new_selection_id(),
                     start: start.to_point(map),
@@ -882,6 +915,28 @@ mod test {
             "The «qˇ»uick brown
 
             fox «jˇ»umps over
+            the lazy dog
+            "
+        })
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_issue_2123(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "The ˇquick brown
+            fox jumps over
+            the lazy dog
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["ctrl-v", "right", "down"])
+            .await;
+        cx.assert_shared_state(indoc! {
+            "The «quˇ»ick brown
+            fox «juˇ»mps over
             the lazy dog
             "
         })
