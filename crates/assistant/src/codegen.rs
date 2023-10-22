@@ -1,5 +1,6 @@
 use crate::streaming_diff::{Hunk, StreamingDiff};
-use ai::completion::{CompletionProvider, OpenAIRequest};
+use ai::completion::CompletionProvider;
+use ai::providers::open_ai::OpenAIRequest;
 use anyhow::Result;
 use editor::{multi_buffer, Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
