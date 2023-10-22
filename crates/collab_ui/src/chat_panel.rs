@@ -346,32 +346,38 @@ impl ChatPanel {
     }
 
     fn render_message(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let (message, is_continuation, is_last, is_admin) = {
-            let active_chat = self.active_chat.as_ref().unwrap().0.read(cx);
-            let is_admin = self
-                .channel_store
-                .read(cx)
-                .is_user_admin(active_chat.channel().id);
-            let last_message = active_chat.message(ix.saturating_sub(1));
-            let this_message = active_chat.message(ix);
-            let is_continuation = last_message.id != this_message.id
-                && this_message.sender.id == last_message.sender.id;
+        let (message, is_continuation, is_last, is_admin) = self
+            .active_chat
+            .as_ref()
+            .unwrap()
+            .0
+            .update(cx, |active_chat, cx| {
+                let is_admin = self
+                    .channel_store
+                    .read(cx)
+                    .is_user_admin(active_chat.channel().id);
+                let last_message = active_chat.message(ix.saturating_sub(1));
+                let this_message = active_chat.message(ix).clone();
+                let is_continuation = last_message.id != this_message.id
+                    && this_message.sender.id == last_message.sender.id;
 
-            if this_message
-                .mentions
-                .iter()
-                .any(|(_, user_id)| Some(*user_id) == self.client.user_id())
-            {
-                active_chat.rendered_message(this_message.id);
-            }
+                if let ChannelMessageId::Saved(id) = this_message.id {
+                    if this_message
+                        .mentions
+                        .iter()
+                        .any(|(_, user_id)| Some(*user_id) == self.client.user_id())
+                    {
+                        active_chat.acknowledge_message(id);
+                    }
+                }
 
-            (
-                this_message.clone(),
-                is_continuation,
-                active_chat.message_count() == ix + 1,
-                is_admin,
-            )
-        };
+                (
+                    this_message,
+                    is_continuation,
+                    active_chat.message_count() == ix + 1,
+                    is_admin,
+                )
+            });
 
         let is_pending = message.is_pending();
         let theme = theme::current(cx);

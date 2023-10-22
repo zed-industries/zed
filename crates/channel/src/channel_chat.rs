@@ -21,6 +21,7 @@ use util::{post_inc, ResultExt as _, TryFutureExt};
 pub struct ChannelChat {
     channel: Arc<Channel>,
     messages: SumTree<ChannelMessage>,
+    acknowledged_message_ids: HashSet<u64>,
     channel_store: ModelHandle<ChannelStore>,
     loaded_all_messages: bool,
     last_acknowledged_id: Option<u64>,
@@ -117,6 +118,7 @@ impl ChannelChat {
                 rpc: client,
                 outgoing_messages_lock: Default::default(),
                 messages: Default::default(),
+                acknowledged_message_ids: Default::default(),
                 loaded_all_messages,
                 next_pending_message_id: 0,
                 last_acknowledged_id: None,
@@ -370,16 +372,15 @@ impl ChannelChat {
         cursor.item().unwrap()
     }
 
-    pub fn rendered_message(&self, id: ChannelMessageId) {
-        let ChannelMessageId::Saved(id) = id else {
-            return;
-        };
-        self.rpc
-            .send(proto::AckChannelMessage {
-                channel_id: self.channel.id,
-                message_id: id,
-            })
-            .ok();
+    pub fn acknowledge_message(&mut self, id: u64) {
+        if self.acknowledged_message_ids.insert(id) {
+            self.rpc
+                .send(proto::AckChannelMessage {
+                    channel_id: self.channel.id,
+                    message_id: id,
+                })
+                .ok();
+        }
     }
 
     pub fn messages_in_range(&self, range: Range<usize>) -> impl Iterator<Item = &ChannelMessage> {
