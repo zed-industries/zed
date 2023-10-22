@@ -1,12 +1,11 @@
+use gpui2::{
+    AnyElement, Bounds, Element, Hsla, IntoAnyElement, LayoutId, Pixels, Result, ViewContext,
+    WindowContext,
+};
+use serde::{de::Visitor, Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-
-use gpui2::{
-    AnyElement, BorrowAppContext, Bounds, Element, Hsla, IntoAnyElement, LayoutId, Pixels, Result,
-    ViewContext, WindowContext,
-};
-use serde::{de::Visitor, Deserialize, Deserializer};
 
 #[derive(Deserialize, Clone, Default, Debug)]
 pub struct Theme {
@@ -138,7 +137,9 @@ where
     E: Element,
     F: FnOnce(&mut ViewContext<E::ViewState>) -> E,
 {
-    let child = cx.with_global(theme.clone(), |cx| build_child(cx));
+    cx.default_global::<ThemeStack>().0.push(theme.clone());
+    let child = build_child(cx);
+    cx.default_global::<ThemeStack>().0.pop();
     Themed { theme, child }
 }
 
@@ -156,6 +157,9 @@ where
     }
 }
 
+#[derive(Default)]
+struct ThemeStack(Vec<Theme>);
+
 impl<E: Element> Element for Themed<E> {
     type ViewState = E::ViewState;
     type ElementState = E::ElementState;
@@ -170,9 +174,10 @@ impl<E: Element> Element for Themed<E> {
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> Self::ElementState {
-        cx.with_global(self.theme.clone(), |cx| {
-            self.child.initialize(view_state, element_state, cx)
-        })
+        cx.default_global::<ThemeStack>().0.push(self.theme.clone());
+        let element_state = self.child.initialize(view_state, element_state, cx);
+        cx.default_global::<ThemeStack>().0.pop();
+        element_state
     }
 
     fn layout(
@@ -184,9 +189,10 @@ impl<E: Element> Element for Themed<E> {
     where
         Self: Sized,
     {
-        cx.with_global(self.theme.clone(), |cx| {
-            self.child.layout(view_state, element_state, cx)
-        })
+        cx.default_global::<ThemeStack>().0.push(self.theme.clone());
+        let layout_id = self.child.layout(view_state, element_state, cx);
+        cx.default_global::<ThemeStack>().0.pop();
+        layout_id
     }
 
     fn paint(
@@ -198,9 +204,9 @@ impl<E: Element> Element for Themed<E> {
     ) where
         Self: Sized,
     {
-        cx.with_global(self.theme.clone(), |cx| {
-            self.child.paint(bounds, view_state, frame_state, cx);
-        });
+        cx.default_global::<ThemeStack>().0.push(self.theme.clone());
+        self.child.paint(bounds, view_state, frame_state, cx);
+        cx.default_global::<ThemeStack>().0.pop();
     }
 }
 

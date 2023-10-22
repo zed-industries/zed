@@ -159,7 +159,7 @@ impl Telemetry {
         }
 
         let this = self.clone();
-        cx.spawn(|mut cx| async move {
+        cx.spawn(|cx| async move {
             let mut system = System::new_all();
             system.refresh_all();
 

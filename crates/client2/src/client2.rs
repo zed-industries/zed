@@ -14,8 +14,8 @@ use futures::{
     future::BoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryFutureExt as _, TryStreamExt,
 };
 use gpui2::{
-    serde_json, AnyHandle, AnyWeakHandle, AnyWindowHandle, AppContext, AsyncAppContext, Handle,
-    SemanticVersion, Task, ViewContext, WeakHandle,
+    serde_json, AnyHandle, AnyWeakHandle, AppContext, AsyncAppContext, Handle, SemanticVersion,
+    Task, WeakHandle,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -235,7 +235,7 @@ struct ClientState {
             dyn Send
                 + Sync
                 + Fn(
-                    Subscriber,
+                    AnyHandle,
                     Box<dyn AnyTypedEnvelope>,
                     &Arc<Client>,
                     AsyncAppContext,
@@ -245,16 +245,8 @@ struct ClientState {
 }
 
 enum WeakSubscriber {
-    Entity {
-        handle: AnyWeakHandle,
-        window_handle: Option<AnyWindowHandle>,
-    },
+    Entity { handle: AnyWeakHandle },
     Pending(Vec<Box<dyn AnyTypedEnvelope>>),
-}
-
-struct Subscriber {
-    handle: AnyHandle,
-    window_handle: Option<AnyWindowHandle>,
 }
 
 #[derive(Clone, Debug)]
@@ -310,7 +302,7 @@ impl Drop for Subscription {
     }
 }
 
-pub struct PendingEntitySubscription<T> {
+pub struct PendingEntitySubscription<T: 'static> {
     client: Arc<Client>,
     remote_id: u64,
     _entity_type: PhantomData<T>,
@@ -335,7 +327,6 @@ where
             id,
             WeakSubscriber::Entity {
                 handle: model.downgrade().into(),
-                window_handle: None,
             },
         );
         drop(state);
@@ -349,7 +340,10 @@ where
     }
 }
 
-impl<T> Drop for PendingEntitySubscription<T> {
+impl<T> Drop for PendingEntitySubscription<T>
+where
+    T: 'static,
+{
     fn drop(&mut self) {
         if !self.consumed {
             let mut state = self.client.state.write();
@@ -494,7 +488,7 @@ impl Client {
             Status::ConnectionLost => {
                 let this = self.clone();
                 let reconnect_interval = state.reconnect_interval;
-                state._reconnect_task = Some(cx.spawn(|cx| async move {
+                state._reconnect_task = Some(cx.spawn(move |cx| async move {
                     #[cfg(any(test, feature = "test-support"))]
                     let mut rng = StdRng::seed_from_u64(0);
                     #[cfg(not(any(test, feature = "test-support")))]
@@ -521,39 +515,21 @@ impl Client {
                 }));
             }
             Status::SignedOut | Status::UpgradeRequired => {
-                cx.update(|cx| self.telemetry.set_authenticated_user_info(None, false, cx));
+                cx.update(|cx| self.telemetry.set_authenticated_user_info(None, false, cx))
+                    .log_err();
                 state._reconnect_task.take();
             }
             _ => {}
         }
     }
 
-    pub fn add_view_for_remote_entity<T>(
-        self: &Arc<Self>,
-        remote_id: u64,
-        cx: &mut ViewContext<T>,
-    ) -> Subscription
-    where
-        T: 'static + Send + Sync,
-    {
-        let id = (TypeId::of::<T>(), remote_id);
-        self.state.write().entities_by_type_and_remote_id.insert(
-            id,
-            WeakSubscriber::Entity {
-                handle: cx.handle().into(),
-                window_handle: Some(cx.window_handle()),
-            },
-        );
-        Subscription::Entity {
-            client: Arc::downgrade(self),
-            id,
-        }
-    }
-
     pub fn subscribe_to_entity<T>(
         self: &Arc<Self>,
         remote_id: u64,
-    ) -> Result<PendingEntitySubscription<T>> {
+    ) -> Result<PendingEntitySubscription<T>>
+    where
+        T: 'static + Send + Sync,
+    {
         let id = (TypeId::of::<T>(), remote_id);
 
         let mut state = self.state.write();
@@ -594,7 +570,7 @@ impl Client {
         let prev_handler = state.message_handlers.insert(
             message_type_id,
             Arc::new(move |subscriber, envelope, client, cx| {
-                let subscriber = subscriber.handle.downcast::<E>().unwrap();
+                let subscriber = subscriber.downcast::<E>().unwrap();
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
                 handler(subscriber, *envelope, client.clone(), cx).boxed()
             }),
@@ -643,22 +619,15 @@ impl Client {
         F: 'static + Future<Output = Result<()>> + Send,
     {
         self.add_entity_message_handler::<M, E, _, _>(move |subscriber, message, client, cx| {
-            handler(
-                subscriber.handle.downcast::<E>().unwrap(),
-                message,
-                client,
-                cx,
-            )
+            handler(subscriber.downcast::<E>().unwrap(), message, client, cx)
         })
     }
 
     fn add_entity_message_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
     where
         M: EntityMessage,
-        H: 'static
-            + Send
-            + Sync
-            + Fn(Subscriber, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        E: 'static + Send + Sync,
+        H: 'static + Send + Sync + Fn(AnyHandle, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<()>> + Send,
     {
         let model_type_id = TypeId::of::<E>();
@@ -1079,7 +1048,7 @@ impl Client {
                 write!(&mut url, "&impersonate={}", impersonate_login).unwrap();
             }
 
-            cx.run_on_main(|cx| cx.open_url(&url))?.await;
+            cx.run_on_main(move |cx| cx.open_url(&url))?.await;
 
             // Receive the HTTP request from the user's browser. Retrieve the user id and encrypted
             // access token from the query params.
@@ -1269,10 +1238,7 @@ impl Client {
             .get(&payload_type_id)
             .and_then(|handle| handle.upgrade())
         {
-            subscriber = Some(Subscriber {
-                handle,
-                window_handle: None,
-            });
+            subscriber = Some(handle);
         } else if let Some((extract_entity_id, entity_type_id)) =
             state.entity_id_extractors.get(&payload_type_id).zip(
                 state
@@ -1292,14 +1258,8 @@ impl Client {
                     return;
                 }
                 Some(weak_subscriber @ _) => match weak_subscriber {
-                    WeakSubscriber::Entity {
-                        handle,
-                        window_handle,
-                    } => {
-                        subscriber = handle.upgrade().map(|handle| Subscriber {
-                            handle,
-                            window_handle: window_handle.clone(),
-                        });
+                    WeakSubscriber::Entity { handle } => {
+                        subscriber = handle.upgrade();
                     }
 
                     WeakSubscriber::Pending(_) => {}
@@ -1331,7 +1291,7 @@ impl Client {
                 sender_id,
                 type_name
             );
-            cx.spawn_on_main(|_| async move {
+            cx.spawn_on_main(move |_| async move {
                     match future.await {
                         Ok(()) => {
                             log::debug!(

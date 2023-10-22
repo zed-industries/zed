@@ -430,7 +430,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     where
         G: 'static + Send + Sync,
     {
-        let global_type = TypeId::of::<G>();
         let mut global = self.app.lease_global::<G>();
         let result = f(global.as_mut(), self);
         self.app.set_global(global);

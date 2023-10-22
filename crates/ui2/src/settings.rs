@@ -1,8 +1,6 @@
 use std::ops::Deref;
 
-use gpui2::{
-    rems, AbsoluteLength, AnyElement, BorrowAppContext, Bounds, LayoutId, Pixels, WindowContext,
-};
+use gpui2::{rems, AbsoluteLength, WindowContext};
 
 use crate::prelude::*;
 
@@ -72,78 +70,3 @@ impl Default for FakeSettings {
 }
 
 impl FakeSettings {}
-
-pub fn with_settings<E, F>(
-    settings: FakeSettings,
-    cx: &mut ViewContext<E::ViewState>,
-    build_child: F,
-) -> WithSettings<E>
-where
-    E: Element,
-    F: FnOnce(&mut ViewContext<E::ViewState>) -> E,
-{
-    let child = cx.with_global(settings.clone(), |cx| build_child(cx));
-    WithSettings { settings, child }
-}
-
-pub struct WithSettings<E> {
-    pub(crate) settings: FakeSettings,
-    pub(crate) child: E,
-}
-
-impl<E> IntoAnyElement<E::ViewState> for WithSettings<E>
-where
-    E: Element,
-{
-    fn into_any(self) -> AnyElement<E::ViewState> {
-        AnyElement::new(self)
-    }
-}
-
-impl<E: Element> Element for WithSettings<E> {
-    type ViewState = E::ViewState;
-    type ElementState = E::ElementState;
-
-    fn id(&self) -> Option<gpui2::ElementId> {
-        None
-    }
-
-    fn initialize(
-        &mut self,
-        view_state: &mut Self::ViewState,
-        element_state: Option<Self::ElementState>,
-        cx: &mut ViewContext<Self::ViewState>,
-    ) -> Self::ElementState {
-        cx.with_global(self.settings.clone(), |cx| {
-            self.child.initialize(view_state, element_state, cx)
-        })
-    }
-
-    fn layout(
-        &mut self,
-        view_state: &mut E::ViewState,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<E::ViewState>,
-    ) -> LayoutId
-    where
-        Self: Sized,
-    {
-        cx.with_global(self.settings.clone(), |cx| {
-            self.child.layout(view_state, element_state, cx)
-        })
-    }
-
-    fn paint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        view_state: &mut Self::ViewState,
-        frame_state: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
-    ) where
-        Self: Sized,
-    {
-        cx.with_global(self.settings.clone(), |cx| {
-            self.child.paint(bounds, view_state, frame_state, cx);
-        });
-    }
-}

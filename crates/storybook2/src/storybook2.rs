@@ -10,14 +10,13 @@ use std::sync::Arc;
 
 use clap::Parser;
 use gpui2::{
-    div, px, size, view, AnyView, BorrowAppContext, Bounds, Context, Element, ViewContext,
-    WindowBounds, WindowOptions,
+    div, px, size, view, AnyView, Bounds, Context, Element, ViewContext, WindowBounds,
+    WindowOptions,
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 use story_selector::ComponentStory;
-use ui::prelude::*;
-use ui::{themed, with_settings, FakeSettings};
+use ui::{prelude::*, themed};
 
 use crate::assets::Assets;
 use crate::story_selector::StorySelector;
@@ -67,13 +66,7 @@ fn main() {
             },
             move |cx| {
                 view(
-                    cx.entity(|cx| {
-                        cx.with_global(FakeSettings::default(), |cx| {
-                            cx.with_global(theme.clone(), |cx| {
-                                StoryWrapper::new(selector.story(cx), theme)
-                            })
-                        })
-                    }),
+                    cx.entity(|cx| StoryWrapper::new(selector.story(cx), theme)),
                     StoryWrapper::render,
                 )
             },
@@ -87,27 +80,20 @@ fn main() {
 pub struct StoryWrapper {
     story: AnyView,
     theme: Theme,
-    settings: FakeSettings,
 }
 
 impl StoryWrapper {
     pub(crate) fn new(story: AnyView, theme: Theme) -> Self {
-        Self {
-            story,
-            theme,
-            settings: FakeSettings::default(),
-        }
+        Self { story, theme }
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
-        with_settings(self.settings.clone(), cx, |cx| {
-            themed(self.theme.clone(), cx, |cx| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .size_full()
-                    .child(self.story.clone())
-            })
+        themed(self.theme.clone(), cx, |cx| {
+            div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .child(self.story.clone())
         })
     }
 }

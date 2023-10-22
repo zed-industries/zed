@@ -38,6 +38,7 @@ use util::{
     http::HttpClient,
     paths, ResultExt,
 };
+use uuid::Uuid;
 use zed2::{ensure_only_instance, AppState, Assets, IsOnlyInstance};
 // use zed2::{
 //     assets::Assets,
@@ -59,7 +60,7 @@ fn main() {
     log::info!("========== starting zed ==========");
     let app = App::production(Arc::new(Assets));
 
-    // let installation_id = app.background().block(installation_id()).ok();
+    // let installation_id = app.executor().block(installation_id()).ok();
     // let session_id = Uuid::new_v4().to_string();
     // init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
@@ -259,15 +260,10 @@ fn main() {
                         }
                         OpenRequest::CliConnection { connection } => {
                             let app_state = app_state.clone();
-                            if cx
-                                .spawn(move |cx| {
-                                    handle_cli_connection(connection, app_state.clone(), cx)
-                                })
-                                .map(Task::detach)
-                                .is_err()
-                            {
-                                break;
-                            }
+                            cx.spawn(move |cx| {
+                                handle_cli_connection(connection, app_state.clone(), cx)
+                            })
+                            .detach();
                         }
                         OpenRequest::JoinChannel { channel_id: _ } => {
                             // cx
@@ -404,9 +400,7 @@ static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: String) {
     let is_pty = stdout_is_a_pty();
-    let app_version = app.app_version().ok();
-    let os_name = app.os_name();
-    let os_version = app.os_version().ok();
+    let app_metadata = app.metadata();
 
     panic::set_hook(Box::new(move |info| {
         let prior_panic_count = PANIC_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -442,8 +436,8 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
             std::process::exit(-1);
         }
 
-        let app_version = client::ZED_APP_VERSION
-            .or(app_version)
+        let app_version = client2::ZED_APP_VERSION
+            .or(app_metadata.app_version)
             .map_or("dev".to_string(), |v| v.to_string());
 
         let backtrace = Backtrace::new();
@@ -470,8 +464,11 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
             }),
             app_version: app_version.clone(),
             release_channel: RELEASE_CHANNEL.display_name().into(),
-            os_name: os_name.into(),
-            os_version: os_version.as_ref().map(SemanticVersion::to_string),
+            os_name: app_metadata.os_name.into(),
+            os_version: app_metadata
+                .os_version
+                .as_ref()
+                .map(SemanticVersion::to_string),
             architecture: env::consts::ARCH.into(),
             panicked_on: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -507,11 +504,11 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
 }
 
 fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
-    let telemetry_settings = *settings2::get::<client::TelemetrySettings>(cx);
+    let telemetry_settings = *settings2::get::<client2::TelemetrySettings>(cx);
 
     cx.executor()
         .spawn(async move {
-            let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
+            let panic_report_url = format!("{}/api/panic", &*client2::ZED_SERVER_URL);
             let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
             while let Some(child) = children.next().await {
                 let child = child?;
@@ -554,7 +551,7 @@ fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
                     if let Some(panic) = panic {
                         let body = serde_json::to_string(&PanicRequest {
                             panic,
-                            token: client::ZED_SECRET_CLIENT_TOKEN.into(),
+                            token: client2::ZED_SECRET_CLIENT_TOKEN.into(),
                         })
                         .unwrap();
 

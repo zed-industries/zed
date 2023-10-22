@@ -2,7 +2,7 @@ use crate::{settings_store::SettingsStore, Setting};
 use anyhow::Result;
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui2::{AppContext, Context, Executor};
+use gpui2::{AppContext, Executor};
 use std::{
     io::ErrorKind,
     path::{Path, PathBuf},
