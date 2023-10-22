@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 use crate::{
     current_platform, image_cache::ImageCache, Action, AppMetadata, AssetSource, Context,
     DispatchPhase, DisplayId, Executor, FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap,
-    LayoutId, MainThread, MainThreadOnly, Platform, SemanticVersion, SharedString, SubscriberSet,
+    LayoutId, MainThread, MainThreadOnly, Platform, SharedString, SubscriberSet, Subscription,
     SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window, WindowContext,
     WindowHandle, WindowId,
 };
@@ -75,18 +75,20 @@ impl App {
                 svg_renderer: SvgRenderer::new(asset_source),
                 image_cache: ImageCache::new(http_client),
                 text_style_stack: Vec::new(),
-                global_stacks_by_type: HashMap::default(),
+                globals_by_type: HashMap::default(),
                 unit_entity,
                 entities,
                 windows: SlotMap::with_key(),
                 keymap: Arc::new(RwLock::new(Keymap::default())),
                 global_action_listeners: HashMap::default(),
                 action_builders: HashMap::default(),
-                pending_notifications: Default::default(),
-                pending_effects: Default::default(),
+                pending_effects: VecDeque::new(),
+                pending_notifications: HashSet::default(),
+                pending_global_notifications: HashSet::default(),
                 observers: SubscriberSet::new(),
-                event_handlers: SubscriberSet::new(),
-                release_handlers: SubscriberSet::new(),
+                event_listeners: SubscriberSet::new(),
+                release_listeners: SubscriberSet::new(),
+                global_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
             })
@@ -154,8 +156,8 @@ impl App {
 }
 
 type Handler = Box<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>;
-type EventHandler = Box<dyn Fn(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>;
-type ReleaseHandler = Box<dyn Fn(&mut dyn Any, &mut AppContext) + Send + Sync + 'static>;
+type Listener = Box<dyn Fn(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>;
+type ReleaseListener = Box<dyn Fn(&mut dyn Any, &mut AppContext) + Send + Sync + 'static>;
 type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
 type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
 
@@ -171,7 +173,7 @@ pub struct AppContext {
     pub(crate) svg_renderer: SvgRenderer,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
-    pub(crate) global_stacks_by_type: HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>,
+    pub(crate) globals_by_type: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
     pub(crate) unit_entity: Handle<()>,
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
@@ -179,11 +181,13 @@ pub struct AppContext {
     pub(crate) global_action_listeners:
         HashMap<TypeId, Vec<Box<dyn Fn(&dyn Action, DispatchPhase, &mut Self) + Send + Sync>>>,
     action_builders: HashMap<SharedString, ActionBuilder>,
-    pub(crate) pending_notifications: HashSet<EntityId>,
     pending_effects: VecDeque<Effect>,
+    pub(crate) pending_notifications: HashSet<EntityId>,
+    pub(crate) pending_global_notifications: HashSet<TypeId>,
     pub(crate) observers: SubscriberSet<EntityId, Handler>,
-    pub(crate) event_handlers: SubscriberSet<EntityId, EventHandler>,
-    pub(crate) release_handlers: SubscriberSet<EntityId, ReleaseHandler>,
+    pub(crate) event_listeners: SubscriberSet<EntityId, Listener>,
+    pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
+    pub(crate) global_observers: SubscriberSet<TypeId, Listener>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
 }
@@ -194,7 +198,7 @@ impl AppContext {
     }
 
     pub fn refresh(&mut self) {
-        self.push_effect(Effect::Refresh);
+        self.pending_effects.push_back(Effect::Refresh);
     }
 
     pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
@@ -250,14 +254,19 @@ impl AppContext {
     pub(crate) fn push_effect(&mut self, effect: Effect) {
         match &effect {
             Effect::Notify { emitter } => {
-                if self.pending_notifications.insert(*emitter) {
-                    self.pending_effects.push_back(effect);
+                if !self.pending_notifications.insert(*emitter) {
+                    return;
                 }
             }
-            Effect::Emit { .. } => self.pending_effects.push_back(effect),
-            Effect::FocusChanged { .. } => self.pending_effects.push_back(effect),
-            Effect::Refresh => self.pending_effects.push_back(effect),
-        }
+            Effect::NotifyGlobalObservers { global_type } => {
+                if !self.pending_global_notifications.insert(*global_type) {
+                    return;
+                }
+            }
+            _ => {}
+        };
+
+        self.pending_effects.push_back(effect);
     }
 
     fn flush_effects(&mut self) {
@@ -266,13 +275,18 @@ impl AppContext {
             self.release_dropped_focus_handles();
             if let Some(effect) = self.pending_effects.pop_front() {
                 match effect {
-                    Effect::Notify { emitter } => self.apply_notify_effect(emitter),
+                    Effect::Notify { emitter } => {
+                        self.apply_notify_effect(emitter);
+                    }
                     Effect::Emit { emitter, event } => self.apply_emit_effect(emitter, event),
                     Effect::FocusChanged { window_id, focused } => {
-                        self.apply_focus_changed(window_id, focused)
+                        self.apply_focus_changed_effect(window_id, focused);
                     }
                     Effect::Refresh => {
-                        self.apply_refresh();
+                        self.apply_refresh_effect();
+                    }
+                    Effect::NotifyGlobalObservers { global_type } => {
+                        self.apply_notify_global_observers_effect(global_type);
                     }
                 }
             } else {
@@ -307,8 +321,8 @@ impl AppContext {
 
             for (entity_id, mut entity) in dropped {
                 self.observers.remove(&entity_id);
-                self.event_handlers.remove(&entity_id);
-                for release_callback in self.release_handlers.remove(&entity_id) {
+                self.event_listeners.remove(&entity_id);
+                for release_callback in self.release_listeners.remove(&entity_id) {
                     release_callback(&mut entity, self);
                 }
             }
@@ -348,12 +362,12 @@ impl AppContext {
     }
 
     fn apply_emit_effect(&mut self, emitter: EntityId, event: Box<dyn Any>) {
-        self.event_handlers
+        self.event_listeners
             .clone()
             .retain(&emitter, |handler| handler(&event, self));
     }
 
-    fn apply_focus_changed(&mut self, window_id: WindowId, focused: Option<FocusId>) {
+    fn apply_focus_changed_effect(&mut self, window_id: WindowId, focused: Option<FocusId>) {
         self.update_window(window_id, |cx| {
             if cx.window.focus == focused {
                 let mut listeners = mem::take(&mut cx.window.focus_listeners);
@@ -379,12 +393,21 @@ impl AppContext {
         .ok();
     }
 
-    fn apply_refresh(&mut self) {
+    fn apply_refresh_effect(&mut self) {
         for window in self.windows.values_mut() {
             if let Some(window) = window.as_mut() {
                 window.dirty = true;
             }
         }
+    }
+
+    fn apply_notify_global_observers_effect(&mut self, type_id: TypeId) {
+        self.pending_global_notifications.insert(type_id);
+        let global = self.globals_by_type.remove(&type_id).unwrap();
+        self.global_observers
+            .clone()
+            .retain(&type_id, |observer| observer(global.as_ref(), self));
+        self.globals_by_type.insert(type_id, global);
     }
 
     pub fn to_async(&self) -> AsyncAppContext {
@@ -460,92 +483,87 @@ impl AppContext {
     }
 
     pub fn has_global<G: 'static>(&self) -> bool {
-        self.global_stacks_by_type
-            .get(&TypeId::of::<G>())
-            .map_or(false, |stack| !stack.is_empty())
+        self.globals_by_type.contains_key(&TypeId::of::<G>())
     }
 
     pub fn global<G: 'static>(&self) -> &G {
-        self.global_stacks_by_type
+        self.globals_by_type
             .get(&TypeId::of::<G>())
-            .and_then(|stack| stack.last())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
             .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
             .unwrap()
     }
 
     pub fn try_global<G: 'static>(&self) -> Option<&G> {
-        self.global_stacks_by_type
+        self.globals_by_type
             .get(&TypeId::of::<G>())
-            .and_then(|stack| stack.last())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
     }
 
     pub fn global_mut<G: 'static>(&mut self) -> &mut G {
-        self.global_stacks_by_type
-            .get_mut(&TypeId::of::<G>())
-            .and_then(|stack| stack.last_mut())
+        let global_type = TypeId::of::<G>();
+        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.globals_by_type
+            .get_mut(&global_type)
             .and_then(|any_state| any_state.downcast_mut::<G>())
             .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
             .unwrap()
     }
 
     pub fn default_global<G: 'static + Default + Sync + Send>(&mut self) -> &mut G {
-        let stack = self
-            .global_stacks_by_type
-            .entry(TypeId::of::<G>())
-            .or_default();
-        if stack.is_empty() {
-            stack.push(Box::new(G::default()));
-        }
-        stack.last_mut().unwrap().downcast_mut::<G>().unwrap()
+        let global_type = TypeId::of::<G>();
+        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.globals_by_type
+            .insert(global_type, Box::new(G::default()));
+        self.globals_by_type
+            .get_mut(&global_type)
+            .unwrap()
+            .downcast_mut::<G>()
+            .unwrap()
     }
 
     pub fn set_global<T: Send + Sync + 'static>(&mut self, global: T) {
-        let global = Box::new(global);
-        let stack = self
-            .global_stacks_by_type
-            .entry(TypeId::of::<T>())
-            .or_default();
-        if let Some(last) = stack.last_mut() {
-            *last = global;
-        } else {
-            stack.push(global)
-        }
+        let global_type = TypeId::of::<T>();
+        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.globals_by_type.insert(global_type, Box::new(global));
     }
 
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
         G: 'static + Send + Sync,
     {
-        let mut global = self
-            .global_stacks_by_type
-            .get_mut(&TypeId::of::<G>())
-            .and_then(|stack| stack.pop())
-            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
-            .unwrap();
-        let result = f(global.downcast_mut().unwrap(), self);
-        self.global_stacks_by_type
-            .get_mut(&TypeId::of::<G>())
-            .unwrap()
-            .push(global);
+        let mut global = self.lease_global::<G>();
+        let result = f(global.as_mut(), self);
+        self.restore_global(global);
         result
     }
 
-    pub(crate) fn push_global<T: Send + Sync + 'static>(&mut self, global: T) {
-        self.global_stacks_by_type
-            .entry(TypeId::of::<T>())
-            .or_default()
-            .push(Box::new(global));
+    pub fn observe_global<G: 'static>(
+        &mut self,
+        f: impl Fn(&G, &mut Self) + Send + Sync + 'static,
+    ) -> Subscription {
+        self.global_observers.insert(
+            TypeId::of::<G>(),
+            Box::new(move |global, cx| {
+                f(global.downcast_ref::<G>().unwrap(), cx);
+                true
+            }),
+        )
     }
 
-    pub(crate) fn pop_global<T: 'static>(&mut self) -> Box<T> {
-        self.global_stacks_by_type
-            .get_mut(&TypeId::of::<T>())
-            .and_then(|stack| stack.pop())
-            .expect("state stack underflow")
+    pub(crate) fn lease_global<G: 'static + Send + Sync>(&mut self) -> Box<G> {
+        self.globals_by_type
+            .remove(&TypeId::of::<G>())
+            .ok_or_else(|| anyhow!("no global registered of type {}", type_name::<G>()))
+            .unwrap()
             .downcast()
             .unwrap()
+    }
+
+    pub(crate) fn restore_global<G: 'static + Send + Sync>(&mut self, global: Box<G>) {
+        let global_type = TypeId::of::<G>();
+        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.globals_by_type.insert(global_type, global);
     }
 
     pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
@@ -558,7 +576,7 @@ impl AppContext {
 
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
         self.keymap.write().add_bindings(bindings);
-        self.push_effect(Effect::Refresh);
+        self.pending_effects.push_back(Effect::Refresh);
     }
 
     pub fn on_action<A: Action>(
@@ -711,6 +729,9 @@ pub(crate) enum Effect {
         focused: Option<FocusId>,
     },
     Refresh,
+    NotifyGlobalObservers {
+        global_type: TypeId,
+    },
 }
 
 #[cfg(test)]

@@ -153,16 +153,6 @@ pub trait BorrowAppContext {
         result
     }
 
-    fn with_global<T: Send + Sync + 'static, F, R>(&mut self, global: T, f: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        self.app_mut().push_global(global);
-        let result = f(self);
-        self.app_mut().pop_global::<T>();
-        result
-    }
-
     fn set_global<T: Send + Sync + 'static>(&mut self, global: T) {
         self.app_mut().set_global(global)
     }

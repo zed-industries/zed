@@ -53,7 +53,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
     ) -> Subscription {
         let this = self.handle();
         let handle = handle.downgrade();
-        self.app.event_handlers.insert(
+        self.app.event_listeners.insert(
             handle.id,
             Box::new(move |event, cx| {
                 let event = event.downcast_ref().expect("invalid event type");
@@ -71,7 +71,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         &mut self,
         on_release: impl Fn(&mut T, &mut AppContext) + Send + Sync + 'static,
     ) -> Subscription {
-        self.app.release_handlers.insert(
+        self.app.release_listeners.insert(
             self.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
@@ -86,7 +86,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         on_release: impl Fn(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + Sync + 'static,
     ) -> Subscription {
         let this = self.handle();
-        self.app.release_handlers.insert(
+        self.app.release_listeners.insert(
             handle.id,
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
@@ -98,18 +98,20 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
     }
 
     pub fn notify(&mut self) {
-        self.app.push_effect(Effect::Notify {
-            emitter: self.entity_id,
-        });
+        if self.app.pending_notifications.insert(self.entity_id) {
+            self.app.pending_effects.push_back(Effect::Notify {
+                emitter: self.entity_id,
+            });
+        }
     }
 
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
         G: 'static + Send + Sync,
     {
-        let mut global = self.app.pop_global::<G>();
+        let mut global = self.app.lease_global::<G>();
         let result = f(global.as_mut(), self);
-        self.app.push_global(global);
+        self.app.restore_global(global);
         result
     }
 
@@ -128,7 +130,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
 
 impl<'a, T: EventEmitter + Send + Sync + 'static> ModelContext<'a, T> {
     pub fn emit(&mut self, event: T::Event) {
-        self.app.push_effect(Effect::Emit {
+        self.app.pending_effects.push_back(Effect::Emit {
             emitter: self.entity_id,
             event: Box::new(event),
         });

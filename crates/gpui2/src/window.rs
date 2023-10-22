@@ -325,7 +325,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         let window_id = self.window.handle.id;
         self.window.focus = Some(handle.id);
-        self.push_effect(Effect::FocusChanged {
+        self.app.push_effect(Effect::FocusChanged {
             window_id,
             focused: Some(handle.id),
         });
@@ -339,7 +339,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         let window_id = self.window.handle.id;
         self.window.focus = None;
-        self.push_effect(Effect::FocusChanged {
+        self.app.push_effect(Effect::FocusChanged {
             window_id,
             focused: None,
         });
@@ -430,9 +430,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     where
         G: 'static + Send + Sync,
     {
-        let mut global = self.app.pop_global::<G>();
+        let global_type = TypeId::of::<G>();
+        let mut global = self.app.lease_global::<G>();
         let result = f(global.as_mut(), self);
-        self.app.push_global(global);
+        self.app.set_global(global);
         result
     }
 
@@ -1017,6 +1018,20 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         key_match
     }
 
+    pub fn observe_global<G: 'static>(
+        &mut self,
+        f: impl Fn(&G, &mut WindowContext<'_, '_>) + Send + Sync + 'static,
+    ) -> Subscription {
+        let window_id = self.window.handle.id;
+        self.global_observers.insert(
+            TypeId::of::<G>(),
+            Box::new(move |global, cx| {
+                let global = global.downcast_ref::<G>().unwrap();
+                cx.update_window(window_id, |cx| f(global, cx)).is_ok()
+            }),
+        )
+    }
+
     fn dispatch_action(
         &mut self,
         action: Box<dyn Action>,
@@ -1364,7 +1379,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         let this = self.handle();
         let handle = handle.downgrade();
         let window_handle = self.window.handle;
-        self.app.event_handlers.insert(
+        self.app.event_listeners.insert(
             handle.id,
             Box::new(move |event, cx| {
                 cx.update_window(window_handle.id, |cx| {
@@ -1386,7 +1401,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         on_release: impl Fn(&mut V, &mut WindowContext) + Send + Sync + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
-        self.app.release_handlers.insert(
+        self.app.release_listeners.insert(
             self.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
@@ -1403,7 +1418,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
     ) -> Subscription {
         let this = self.handle();
         let window_handle = self.window.handle;
-        self.app.release_handlers.insert(
+        self.app.release_listeners.insert(
             handle.id,
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
@@ -1556,10 +1571,28 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
     where
         G: 'static + Send + Sync,
     {
-        let mut global = self.app.pop_global::<G>();
+        let mut global = self.app.lease_global::<G>();
         let result = f(global.as_mut(), self);
-        self.app.push_global(global);
+        self.app.restore_global(global);
         result
+    }
+
+    pub fn observe_global<G: 'static>(
+        &mut self,
+        f: impl Fn(&mut V, &G, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
+    ) -> Subscription {
+        let window_id = self.window.handle.id;
+        let handle = self.handle();
+        self.global_observers.insert(
+            TypeId::of::<G>(),
+            Box::new(move |global, cx| {
+                let global = global.downcast_ref::<G>().unwrap();
+                cx.update_window(window_id, |cx| {
+                    handle.update(cx, |view, cx| f(view, global, cx)).is_ok()
+                })
+                .unwrap_or(false)
+            }),
+        )
     }
 
     pub fn on_mouse_event<Event: 'static>(
@@ -1575,10 +1608,11 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
     }
 }
 
-impl<'a, 'w, S: EventEmitter + Send + Sync + 'static> ViewContext<'a, 'w, S> {
-    pub fn emit(&mut self, event: S::Event) {
-        self.window_cx.app.push_effect(Effect::Emit {
-            emitter: self.entity_id,
+impl<'a, 'w, V: EventEmitter + Send + Sync + 'static> ViewContext<'a, 'w, V> {
+    pub fn emit(&mut self, event: V::Event) {
+        let emitter = self.entity_id;
+        self.app.push_effect(Effect::Emit {
+            emitter,
             event: Box::new(event),
         });
     }

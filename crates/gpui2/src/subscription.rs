@@ -32,21 +32,21 @@ where
         })))
     }
 
-    pub fn insert(&self, emitter: EmitterKey, callback: Callback) -> Subscription {
+    pub fn insert(&self, emitter_key: EmitterKey, callback: Callback) -> Subscription {
         let mut lock = self.0.lock();
         let subscriber_id = post_inc(&mut lock.next_subscriber_id);
         lock.subscribers
-            .entry(emitter.clone())
+            .entry(emitter_key.clone())
             .or_default()
             .insert(subscriber_id, callback);
         let this = self.0.clone();
         Subscription {
             unsubscribe: Some(Box::new(move || {
                 let mut lock = this.lock();
-                if let Some(subscribers) = lock.subscribers.get_mut(&emitter) {
+                if let Some(subscribers) = lock.subscribers.get_mut(&emitter_key) {
                     subscribers.remove(&subscriber_id);
                     if subscribers.is_empty() {
-                        lock.subscribers.remove(&emitter);
+                        lock.subscribers.remove(&emitter_key);
                         return;
                     }
                 }
@@ -54,7 +54,8 @@ where
                 // We didn't manage to remove the subscription, which means it was dropped
                 // while invoking the callback. Mark it as dropped so that we can remove it
                 // later.
-                lock.dropped_subscribers.insert((emitter, subscriber_id));
+                lock.dropped_subscribers
+                    .insert((emitter_key, subscriber_id));
             })),
         }
     }
