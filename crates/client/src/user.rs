@@ -400,6 +400,12 @@ impl UserStore {
         &self.incoming_contact_requests
     }
 
+    pub fn has_incoming_contact_request(&self, user_id: u64) -> bool {
+        self.incoming_contact_requests
+            .iter()
+            .any(|user| user.id == user_id)
+    }
+
     pub fn outgoing_contact_requests(&self) -> &[Arc<User>] {
         &self.outgoing_contact_requests
     }

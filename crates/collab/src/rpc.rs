@@ -4,7 +4,7 @@ use crate::{
     auth,
     db::{
         self, BufferId, ChannelId, ChannelVisibility, ChannelsForUser, CreatedChannelMessage,
-        Database, MessageId, ProjectId, RoomId, ServerId, User, UserId,
+        Database, MessageId, NotificationId, ProjectId, RoomId, ServerId, User, UserId,
     },
     executor::Executor,
     AppState, Result,
@@ -273,6 +273,7 @@ impl Server {
             .add_request_handler(get_channel_messages)
             .add_request_handler(get_channel_messages_by_id)
             .add_request_handler(get_notifications)
+            .add_request_handler(mark_notification_as_read)
             .add_request_handler(link_channel)
             .add_request_handler(unlink_channel)
             .add_request_handler(move_channel)
@@ -3184,6 +3185,27 @@ async fn get_notifications(
         )
         .await?;
     response.send(proto::GetNotificationsResponse { notifications })?;
+    Ok(())
+}
+
+async fn mark_notification_as_read(
+    request: proto::MarkNotificationRead,
+    response: Response<proto::MarkNotificationRead>,
+    session: Session,
+) -> Result<()> {
+    let database = &session.db().await;
+    let notifications = database
+        .mark_notification_as_read_by_id(
+            session.user_id,
+            NotificationId::from_proto(request.notification_id),
+        )
+        .await?;
+    send_notifications(
+        &*session.connection_pool().await,
+        &session.peer,
+        notifications,
+    );
+    response.send(proto::Ack {})?;
     Ok(())
 }
 

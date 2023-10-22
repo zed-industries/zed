@@ -150,6 +150,28 @@ impl Database {
             .await
     }
 
+    pub async fn mark_notification_as_read_by_id(
+        &self,
+        recipient_id: UserId,
+        notification_id: NotificationId,
+    ) -> Result<NotificationBatch> {
+        self.transaction(|tx| async move {
+            let row = notification::Entity::update(notification::ActiveModel {
+                id: ActiveValue::Unchanged(notification_id),
+                recipient_id: ActiveValue::Unchanged(recipient_id),
+                is_read: ActiveValue::Set(true),
+                ..Default::default()
+            })
+            .exec(&*tx)
+            .await?;
+            Ok(model_to_proto(self, row)
+                .map(|notification| (recipient_id, notification))
+                .into_iter()
+                .collect())
+        })
+        .await
+    }
+
     async fn mark_notification_as_read_internal(
         &self,
         recipient_id: UserId,

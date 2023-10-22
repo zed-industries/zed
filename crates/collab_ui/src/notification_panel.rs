@@ -5,6 +5,7 @@ use crate::{
 use anyhow::Result;
 use channel::ChannelStore;
 use client::{Client, Notification, User, UserStore};
+use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
@@ -16,6 +17,7 @@ use gpui::{
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
+use rpc::proto;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::{sync::Arc, time::Duration};
@@ -27,6 +29,7 @@ use workspace::{
     Workspace,
 };
 
+const MARK_AS_READ_DELAY: Duration = Duration::from_secs(1);
 const TOAST_DURATION: Duration = Duration::from_secs(5);
 const NOTIFICATION_PANEL_KEY: &'static str = "NotificationPanel";
 
@@ -45,6 +48,7 @@ pub struct NotificationPanel {
     current_notification_toast: Option<(u64, Task<()>)>,
     local_timezone: UtcOffset,
     has_focus: bool,
+    mark_as_read_tasks: HashMap<u64, Task<Result<()>>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -114,6 +118,7 @@ impl NotificationPanel {
                 current_notification_toast: None,
                 subscriptions: Vec::new(),
                 active: false,
+                mark_as_read_tasks: HashMap::default(),
                 width: None,
             };
 
@@ -186,6 +191,7 @@ impl NotificationPanel {
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement<Self>> {
         let entry = self.notification_store.read(cx).notification_at(ix)?;
+        let notification_id = entry.id;
         let now = OffsetDateTime::now_utc();
         let timestamp = entry.timestamp;
         let NotificationPresenter {
@@ -206,6 +212,10 @@ impl NotificationPanel {
         } else {
             style.unread_text.clone()
         };
+
+        if self.active && !entry.is_read {
+            self.did_render_notification(notification_id, &notification, cx);
+        }
 
         enum Decline {}
         enum Accept {}
@@ -322,7 +332,7 @@ impl NotificationPanel {
                 Some(NotificationPresenter {
                     icon: "icons/plus.svg",
                     text: format!("{} wants to add you as a contact", requester.github_login),
-                    needs_response: user_store.is_contact_request_pending(&requester),
+                    needs_response: user_store.has_incoming_contact_request(requester.id),
                     actor: Some(requester),
                     can_navigate: false,
                 })
@@ -376,6 +386,38 @@ impl NotificationPanel {
                     can_navigate: true,
                 })
             }
+        }
+    }
+
+    fn did_render_notification(
+        &mut self,
+        notification_id: u64,
+        notification: &Notification,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let should_mark_as_read = match notification {
+            Notification::ContactRequestAccepted { .. } => true,
+            Notification::ContactRequest { .. }
+            | Notification::ChannelInvitation { .. }
+            | Notification::ChannelMessageMention { .. } => false,
+        };
+
+        if should_mark_as_read {
+            self.mark_as_read_tasks
+                .entry(notification_id)
+                .or_insert_with(|| {
+                    let client = self.client.clone();
+                    cx.spawn(|this, mut cx| async move {
+                        cx.background().timer(MARK_AS_READ_DELAY).await;
+                        client
+                            .request(proto::MarkNotificationRead { notification_id })
+                            .await?;
+                        this.update(&mut cx, |this, _| {
+                            this.mark_as_read_tasks.remove(&notification_id);
+                        })?;
+                        Ok(())
+                    })
+                });
         }
     }
 

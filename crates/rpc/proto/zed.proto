@@ -180,7 +180,7 @@ message Envelope {
         GetNotifications get_notifications = 150;
         GetNotificationsResponse get_notifications_response = 151;
         DeleteNotification delete_notification = 152;
-        MarkNotificationsRead mark_notifications_read = 153; // Current max
+        MarkNotificationRead mark_notification_read = 153; // Current max
     }
 }
 
@@ -1622,8 +1622,8 @@ message DeleteNotification {
     uint64 notification_id = 1;
 }
 
-message MarkNotificationsRead {
-    repeated uint64 notification_ids = 1;
+message MarkNotificationRead {
+    uint64 notification_id = 1;
 }
 
 message Notification {
