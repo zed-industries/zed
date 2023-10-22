@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use collections::{hash_map::Entry, HashMap, HashSet};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
-use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
+use gpui2::{AsyncAppContext, EventEmitter, Handle, ImageData, ModelContext, Task};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use std::sync::{Arc, Weak};
@@ -103,7 +103,7 @@ pub enum ContactEventKind {
     Cancelled,
 }
 
-impl Entity for UserStore {
+impl EventEmitter for UserStore {
     type Event = Event;
 }
 
@@ -217,7 +217,7 @@ impl UserStore {
     }
 
     async fn handle_update_invite_info(
-        this: ModelHandle<Self>,
+        this: Handle<Self>,
         message: TypedEnvelope<proto::UpdateInviteInfo>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -233,7 +233,7 @@ impl UserStore {
     }
 
     async fn handle_show_contacts(
-        this: ModelHandle<Self>,
+        this: Handle<Self>,
         _: TypedEnvelope<proto::ShowContacts>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -247,7 +247,7 @@ impl UserStore {
     }
 
     async fn handle_update_contacts(
-        this: ModelHandle<Self>,
+        this: Handle<Self>,
         message: TypedEnvelope<proto::UpdateContacts>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -689,7 +689,7 @@ impl User {
 impl Contact {
     async fn from_proto(
         contact: proto::Contact,
-        user_store: &ModelHandle<UserStore>,
+        user_store: &Handle<UserStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
         let user = user_store

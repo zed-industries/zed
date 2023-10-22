@@ -1,5 +1,5 @@
 use crate::{
-    AppContext, Context, Effect, EntityId, EventEmitter, Handle, Reference, Subscription,
+    AppContext, Context, Effect, EntityId, EventEmitter, Executor, Handle, Reference, Subscription,
     WeakHandle,
 };
 use std::marker::PhantomData;
@@ -51,7 +51,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         self.app.observers.insert(
             handle.id,
             Box::new(move |cx| {
-                if let Some((this, handle)) = this.upgrade(cx).zip(handle.upgrade(cx)) {
+                if let Some((this, handle)) = this.upgrade().zip(handle.upgrade()) {
                     this.update(cx, |this, cx| on_notify(this, handle, cx));
                     true
                 } else {
@@ -75,7 +75,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
             handle.id,
             Box::new(move |event, cx| {
                 let event = event.downcast_ref().expect("invalid event type");
-                if let Some((this, handle)) = this.upgrade(cx).zip(handle.upgrade(cx)) {
+                if let Some((this, handle)) = this.upgrade().zip(handle.upgrade()) {
                     this.update(cx, |this, cx| on_event(this, handle, event, cx));
                     true
                 } else {
@@ -108,7 +108,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
             handle.id,
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
-                if let Some(this) = this.upgrade(cx) {
+                if let Some(this) = this.upgrade() {
                     this.update(cx, |this, cx| on_release(this, entity, cx));
                 }
             }),

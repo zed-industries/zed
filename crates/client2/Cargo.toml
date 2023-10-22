@@ -9,7 +9,7 @@ path = "src/client2.rs"
 doctest = false
 
 [features]
-test-support = ["collections/test-support", "gpui/test-support", "rpc/test-support"]
+test-support = ["collections/test-support", "gpui2/test-support", "rpc/test-support"]
 
 [dependencies]
 collections = { path = "../collections" }
@@ -18,7 +18,7 @@ gpui2 = { path = "../gpui2" }
 util = { path = "../util" }
 rpc = { path = "../rpc" }
 text = { path = "../text" }
-settings = { path = "../settings" }
+settings2 = { path = "../settings2" }
 feature_flags = { path = "../feature_flags" }
 sum_tree = { path = "../sum_tree" }
 

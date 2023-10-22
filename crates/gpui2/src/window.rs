@@ -1,13 +1,13 @@
 use crate::{
     px, size, Action, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext,
-    DisplayId, Edges, Effect, Element, EntityId, EventEmitter, FocusEvent, FontId, GlobalElementId,
-    GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher,
-    Keystroke, LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path,
-    Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow,
-    SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle,
-    WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    DisplayId, Edges, Effect, Element, EntityId, EventEmitter, Executor, FocusEvent, FontId,
+    GlobalElementId, GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch,
+    KeyMatcher, Keystroke, LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent,
+    Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad,
+    Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder,
+    Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task, Underline,
+    UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -167,7 +167,6 @@ pub struct Window {
     focus_parents_by_child: HashMap<FocusId, FocusId>,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
-    propagate: bool,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     scale_factor: f32,
@@ -243,7 +242,6 @@ impl Window {
             focus_parents_by_child: HashMap::default(),
             focus_listeners: Vec::new(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
-            propagate: true,
             default_prevented: true,
             mouse_position,
             scale_factor,
@@ -300,6 +298,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             app: Reference::Mutable(app),
             window: Reference::Mutable(window),
         }
+    }
+
+    pub fn window_handle(&self) -> AnyWindowHandle {
+        self.window.handle
     }
 
     pub fn notify(&mut self) {
@@ -475,10 +477,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         text_style
             .line_height
             .to_pixels(text_style.font_size.into(), rem_size)
-    }
-
-    pub fn stop_propagation(&mut self) {
-        self.window.propagate = false;
     }
 
     pub fn prevent_default(&mut self) {
@@ -878,7 +876,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             }
 
             // Handlers may set this to false by calling `stop_propagation`
-            self.window.propagate = true;
+            self.app.propagate_event = true;
             self.window.default_prevented = false;
 
             if let Some(mut handlers) = self
@@ -893,16 +891,16 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 // special purposes, such as detecting events outside of a given Bounds.
                 for (_, handler) in &handlers {
                     handler(any_mouse_event, DispatchPhase::Capture, self);
-                    if !self.window.propagate {
+                    if !self.app.propagate_event {
                         break;
                     }
                 }
 
                 // Bubble phase, where most normal handlers do their work.
-                if self.window.propagate {
+                if self.app.propagate_event {
                     for (_, handler) in handlers.iter().rev() {
                         handler(any_mouse_event, DispatchPhase::Bubble, self);
-                        if !self.window.propagate {
+                        if !self.app.propagate_event {
                             break;
                         }
                     }
@@ -940,7 +938,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                             ) {
                                 self.dispatch_action(action, &key_dispatch_stack[..ix]);
                             }
-                            if !self.window.propagate {
+                            if !self.app.propagate_event {
                                 break;
                             }
                         }
@@ -951,7 +949,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 }
             }
 
-            if self.window.propagate {
+            if self.app.propagate_event {
                 for (ix, frame) in key_dispatch_stack.iter().enumerate().rev() {
                     match frame {
                         KeyDispatchStackFrame::Listener {
@@ -968,7 +966,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                                     self.dispatch_action(action, &key_dispatch_stack[..ix]);
                                 }
 
-                                if !self.window.propagate {
+                                if !self.app.propagate_event {
                                     break;
                                 }
                             }
@@ -1015,22 +1013,41 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         dispatch_stack: &[KeyDispatchStackFrame],
     ) {
         let action_type = action.as_any().type_id();
-        for stack_frame in dispatch_stack {
-            if let KeyDispatchStackFrame::Listener {
-                event_type,
-                listener,
-            } = stack_frame
-            {
-                if action_type == *event_type {
-                    listener(action.as_any(), &[], DispatchPhase::Capture, self);
-                    if !self.window.propagate {
-                        break;
+
+        if let Some(mut global_listeners) = self.app.global_action_listeners.remove(&action_type) {
+            for listener in &global_listeners {
+                listener(action.as_ref(), DispatchPhase::Capture, self);
+                if !self.app.propagate_event {
+                    break;
+                }
+            }
+            global_listeners.extend(
+                self.global_action_listeners
+                    .remove(&action_type)
+                    .unwrap_or_default(),
+            );
+            self.global_action_listeners
+                .insert(action_type, global_listeners);
+        }
+
+        if self.app.propagate_event {
+            for stack_frame in dispatch_stack {
+                if let KeyDispatchStackFrame::Listener {
+                    event_type,
+                    listener,
+                } = stack_frame
+                {
+                    if action_type == *event_type {
+                        listener(action.as_any(), &[], DispatchPhase::Capture, self);
+                        if !self.app.propagate_event {
+                            break;
+                        }
                     }
                 }
             }
         }
 
-        if self.window.propagate {
+        if self.app.propagate_event {
             for stack_frame in dispatch_stack.iter().rev() {
                 if let KeyDispatchStackFrame::Listener {
                     event_type,
@@ -1039,11 +1056,31 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 {
                     if action_type == *event_type {
                         listener(action.as_any(), &[], DispatchPhase::Bubble, self);
-                        if !self.window.propagate {
+                        if !self.app.propagate_event {
                             break;
                         }
                     }
                 }
+            }
+        }
+
+        if self.app.propagate_event {
+            if let Some(mut global_listeners) =
+                self.app.global_action_listeners.remove(&action_type)
+            {
+                for listener in global_listeners.iter().rev() {
+                    listener(action.as_ref(), DispatchPhase::Bubble, self);
+                    if !self.app.propagate_event {
+                        break;
+                    }
+                }
+                global_listeners.extend(
+                    self.global_action_listeners
+                        .remove(&action_type)
+                        .unwrap_or_default(),
+                );
+                self.global_action_listeners
+                    .insert(action_type, global_listeners);
             }
         }
     }
@@ -1313,7 +1350,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
             handle.id,
             Box::new(move |cx| {
                 cx.update_window(window_handle.id, |cx| {
-                    if let Some(handle) = handle.upgrade(cx) {
+                    if let Some(handle) = handle.upgrade() {
                         this.update(cx, |this, cx| on_notify(this, handle, cx))
                             .is_ok()
                     } else {
@@ -1340,7 +1377,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
             handle.id,
             Box::new(move |event, cx| {
                 cx.update_window(window_handle.id, |cx| {
-                    if let Some(handle) = handle.upgrade(cx) {
+                    if let Some(handle) = handle.upgrade() {
                         let event = event.downcast_ref().expect("invalid event type");
                         this.update(cx, |this, cx| on_event(this, handle, event, cx))
                             .is_ok()
@@ -1504,7 +1541,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
             let cx = unsafe { mem::transmute::<&mut Self, &mut MainThread<Self>>(self) };
             Task::ready(Ok(f(view, cx)))
         } else {
-            let handle = self.handle().upgrade(self).unwrap();
+            let handle = self.handle().upgrade().unwrap();
             self.window_cx.run_on_main(move |cx| handle.update(cx, f))
         }
     }
@@ -1528,7 +1565,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         &mut self,
         handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static,
     ) {
-        let handle = self.handle().upgrade(self).unwrap();
+        let handle = self.handle().upgrade().unwrap();
         self.window_cx.on_mouse_event(move |event, phase, cx| {
             handle.update(cx, |view, cx| {
                 handler(view, event, phase, cx);

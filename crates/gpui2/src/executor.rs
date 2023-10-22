@@ -8,6 +8,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 use util::TryFutureExt;
 
@@ -149,6 +150,11 @@ impl Executor {
         for task in spawned {
             task.await;
         }
+    }
+
+    pub fn timer(&self, duration: Duration) -> smol::Timer {
+        // todo!("integrate with deterministic dispatcher")
+        smol::Timer::after(duration)
     }
 
     pub fn is_main_thread(&self) -> bool {

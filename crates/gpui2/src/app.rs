@@ -9,10 +9,11 @@ use refineable::Refineable;
 use smallvec::SmallVec;
 
 use crate::{
-    current_platform, image_cache::ImageCache, Action, AssetSource, Context, DisplayId, Executor,
-    FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly,
-    Platform, SemanticVersion, SharedString, SubscriberSet, SvgRenderer, Task, TextStyle,
-    TextStyleRefinement, TextSystem, View, Window, WindowContext, WindowHandle, WindowId,
+    current_platform, image_cache::ImageCache, Action, AssetSource, Context, DispatchPhase,
+    DisplayId, Executor, FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap, LayoutId,
+    MainThread, MainThreadOnly, Platform, SemanticVersion, SharedString, SubscriberSet,
+    SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window, WindowContext,
+    WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -67,6 +68,7 @@ impl App {
                 entities,
                 windows: SlotMap::with_key(),
                 keymap: Arc::new(RwLock::new(Keymap::default())),
+                global_action_listeners: HashMap::default(),
                 action_builders: HashMap::default(),
                 pending_notifications: Default::default(),
                 pending_effects: Default::default(),
@@ -74,6 +76,7 @@ impl App {
                 event_handlers: SubscriberSet::new(),
                 release_handlers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
+                propagate_event: true,
             })
         }))
     }
@@ -168,6 +171,8 @@ pub struct AppContext {
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) keymap: Arc<RwLock<Keymap>>,
+    pub(crate) global_action_listeners:
+        HashMap<TypeId, Vec<Box<dyn Fn(&dyn Action, DispatchPhase, &mut Self) + Send + Sync>>>,
     action_builders: HashMap<SharedString, ActionBuilder>,
     pub(crate) pending_notifications: HashSet<EntityId>,
     pending_effects: VecDeque<Effect>,
@@ -175,6 +180,7 @@ pub struct AppContext {
     pub(crate) event_handlers: SubscriberSet<EntityId, EventHandler>,
     pub(crate) release_handlers: SubscriberSet<EntityId, ReleaseHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
+    pub(crate) propagate_event: bool,
 }
 
 impl AppContext {
@@ -508,6 +514,21 @@ impl AppContext {
         self.push_effect(Effect::Refresh);
     }
 
+    pub fn on_action<A: Action>(
+        &mut self,
+        listener: impl Fn(&A, &mut Self) + Send + Sync + 'static,
+    ) {
+        self.global_action_listeners
+            .entry(TypeId::of::<A>())
+            .or_default()
+            .push(Box::new(move |action, phase, cx| {
+                if phase == DispatchPhase::Bubble {
+                    let action = action.as_any().downcast_ref().unwrap();
+                    listener(action, cx)
+                }
+            }));
+    }
+
     pub fn register_action_type<A: Action>(&mut self) {
         self.action_builders.insert(A::qualified_name(), A::build);
     }
@@ -522,6 +543,10 @@ impl AppContext {
             .get(name)
             .ok_or_else(|| anyhow!("no action type registered for {}", name))?;
         (build)(params)
+    }
+
+    pub fn stop_propagation(&mut self) {
+        self.propagate_event = false;
     }
 }
 
@@ -608,6 +633,18 @@ impl MainThread<AppContext> {
 
     pub fn activate(&mut self, ignoring_other_apps: bool) {
         self.platform().activate(ignoring_other_apps);
+    }
+
+    pub fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
+        self.platform().write_credentials(url, username, password)
+    }
+
+    pub fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
+        self.platform().read_credentials(url)
+    }
+
+    pub fn delete_credentials(&self, url: &str) -> Result<()> {
+        self.platform().delete_credentials(url)
     }
 
     pub fn open_window<S: 'static + Send + Sync>(

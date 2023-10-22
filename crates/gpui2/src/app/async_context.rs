@@ -1,8 +1,9 @@
 use crate::{
-    AnyWindowHandle, AppContext, Context, Handle, ModelContext, Result, Task, ViewContext,
-    WindowContext,
+    AnyWindowHandle, AppContext, Context, Executor, Handle, MainThread, ModelContext, Result, Task,
+    ViewContext, WindowContext,
 };
 use anyhow::anyhow;
+use derive_more::{Deref, DerefMut};
 use parking_lot::Mutex;
 use std::{future::Future, sync::Weak};
 
@@ -75,6 +76,15 @@ impl Context for AsyncAppContext {
 }
 
 impl AsyncAppContext {
+    pub fn executor(&self) -> Result<Executor> {
+        let app = self
+            .0
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let lock = app.lock(); // Need this to compile
+        Ok(lock.executor().clone())
+    }
+
     pub fn read_window<R>(
         &self,
         handle: AnyWindowHandle,
@@ -116,10 +126,27 @@ impl AsyncAppContext {
         let app_context = app.lock();
         Ok(app_context.spawn(f))
     }
+
+    pub fn run_on_main<R>(
+        &self,
+        f: impl FnOnce(&mut MainThread<AppContext>) -> R + Send + 'static,
+    ) -> Result<Task<R>>
+    where
+        R: Send + 'static,
+    {
+        let app = self
+            .0
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut app_context = app.lock();
+        Ok(app_context.run_on_main(f))
+    }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deref, DerefMut)]
 pub struct AsyncWindowContext {
+    #[deref]
+    #[deref_mut]
     app: AsyncAppContext,
     window: AnyWindowHandle,
 }

@@ -4,7 +4,7 @@ use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{SecondaryMap, SlotMap};
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     marker::PhantomData,
     mem,
     sync::{
@@ -70,9 +70,12 @@ impl EntityMap {
 
     pub fn weak_handle<T: 'static + Send + Sync>(&self, id: EntityId) -> WeakHandle<T> {
         WeakHandle {
-            id,
+            any_handle: AnyWeakHandle {
+                id,
+                entity_type: TypeId::of::<T>(),
+                entity_map: Arc::downgrade(&self.0),
+            },
             entity_type: PhantomData,
-            entity_map: Arc::downgrade(&self.0),
         }
     }
 
@@ -112,44 +115,45 @@ impl<T> Drop for Lease<T> {
 #[derive(Deref, DerefMut)]
 pub struct Slot<T: Send + Sync + 'static>(Handle<T>);
 
-pub struct Handle<T: Send + Sync> {
+pub struct AnyHandle {
     pub(crate) id: EntityId,
-    entity_type: PhantomData<T>,
+    entity_type: TypeId,
     entity_map: Weak<RwLock<EntityMapState>>,
 }
 
-impl<T: 'static + Send + Sync> Handle<T> {
-    fn new(id: EntityId, entity_map: Weak<RwLock<EntityMapState>>) -> Self {
+impl AnyHandle {
+    fn new(id: EntityId, entity_type: TypeId, entity_map: Weak<RwLock<EntityMapState>>) -> Self {
         Self {
             id,
-            entity_type: PhantomData,
+            entity_type,
             entity_map,
         }
     }
 
-    pub fn downgrade(&self) -> WeakHandle<T> {
-        WeakHandle {
+    pub fn downgrade(&self) -> AnyWeakHandle {
+        AnyWeakHandle {
             id: self.id,
             entity_type: self.entity_type,
             entity_map: self.entity_map.clone(),
         }
     }
 
-    /// Update the entity referenced by this handle with the given function.
-    ///
-    /// The update function receives a context appropriate for its environment.
-    /// When updating in an `AppContext`, it receives a `ModelContext`.
-    /// When updating an a `WindowContext`, it receives a `ViewContext`.
-    pub fn update<C: Context, R>(
-        &self,
-        cx: &mut C,
-        update: impl FnOnce(&mut T, &mut C::EntityContext<'_, '_, T>) -> R,
-    ) -> C::Result<R> {
-        cx.update_entity(self, update)
+    pub fn downcast<T>(&self) -> Option<Handle<T>>
+    where
+        T: 'static + Send + Sync,
+    {
+        if TypeId::of::<T>() == self.entity_type {
+            Some(Handle {
+                any_handle: self.clone(),
+                entity_type: PhantomData,
+            })
+        } else {
+            None
+        }
     }
 }
 
-impl<T: Send + Sync> Clone for Handle<T> {
+impl Clone for AnyHandle {
     fn clone(&self) -> Self {
         if let Some(entity_map) = self.entity_map.upgrade() {
             let entity_map = entity_map.read();
@@ -163,13 +167,13 @@ impl<T: Send + Sync> Clone for Handle<T> {
 
         Self {
             id: self.id,
-            entity_type: PhantomData,
+            entity_type: self.entity_type,
             entity_map: self.entity_map.clone(),
         }
     }
 }
 
-impl<T: Send + Sync> Drop for Handle<T> {
+impl Drop for AnyHandle {
     fn drop(&mut self) {
         if let Some(entity_map) = self.entity_map.upgrade() {
             let entity_map = entity_map.upgradable_read();
@@ -193,34 +197,115 @@ impl<T: Send + Sync> Drop for Handle<T> {
     }
 }
 
-pub struct WeakHandle<T> {
-    pub(crate) id: EntityId,
-    entity_type: PhantomData<T>,
-    entity_map: Weak<RwLock<EntityMapState>>,
+impl<T> From<Handle<T>> for AnyHandle
+where
+    T: 'static + Send + Sync,
+{
+    fn from(handle: Handle<T>) -> Self {
+        handle.any_handle
+    }
 }
 
-impl<T: 'static + Send + Sync> Clone for WeakHandle<T> {
+#[derive(Deref, DerefMut)]
+pub struct Handle<T: Send + Sync> {
+    #[deref]
+    #[deref_mut]
+    any_handle: AnyHandle,
+    entity_type: PhantomData<T>,
+}
+
+impl<T: 'static + Send + Sync> Handle<T> {
+    fn new(id: EntityId, entity_map: Weak<RwLock<EntityMapState>>) -> Self {
+        Self {
+            any_handle: AnyHandle::new(id, TypeId::of::<T>(), entity_map),
+            entity_type: PhantomData,
+        }
+    }
+
+    pub fn downgrade(&self) -> WeakHandle<T> {
+        WeakHandle {
+            any_handle: self.any_handle.downgrade(),
+            entity_type: self.entity_type,
+        }
+    }
+
+    /// Update the entity referenced by this handle with the given function.
+    ///
+    /// The update function receives a context appropriate for its environment.
+    /// When updating in an `AppContext`, it receives a `ModelContext`.
+    /// When updating an a `WindowContext`, it receives a `ViewContext`.
+    pub fn update<C: Context, R>(
+        &self,
+        cx: &mut C,
+        update: impl FnOnce(&mut T, &mut C::EntityContext<'_, '_, T>) -> R,
+    ) -> C::Result<R> {
+        cx.update_entity(self, update)
+    }
+}
+
+impl<T: Send + Sync> Clone for Handle<T> {
     fn clone(&self) -> Self {
         Self {
-            id: self.id,
+            any_handle: self.any_handle.clone(),
             entity_type: self.entity_type,
-            entity_map: self.entity_map.clone(),
         }
     }
 }
 
-impl<T: Send + Sync + 'static> WeakHandle<T> {
-    pub fn upgrade(&self, _: &impl Context) -> Option<Handle<T>> {
+#[derive(Clone)]
+pub struct AnyWeakHandle {
+    pub(crate) id: EntityId,
+    entity_type: TypeId,
+    entity_map: Weak<RwLock<EntityMapState>>,
+}
+
+impl AnyWeakHandle {
+    pub fn upgrade(&self) -> Option<AnyHandle> {
         let entity_map = &self.entity_map.upgrade()?;
         entity_map
             .read()
             .ref_counts
             .get(self.id)?
             .fetch_add(1, SeqCst);
-        Some(Handle {
+        Some(AnyHandle {
             id: self.id,
             entity_type: self.entity_type,
             entity_map: self.entity_map.clone(),
+        })
+    }
+}
+
+impl<T> From<WeakHandle<T>> for AnyWeakHandle
+where
+    T: 'static + Send + Sync,
+{
+    fn from(handle: WeakHandle<T>) -> Self {
+        handle.any_handle
+    }
+}
+
+#[derive(Deref, DerefMut)]
+pub struct WeakHandle<T> {
+    #[deref]
+    #[deref_mut]
+    any_handle: AnyWeakHandle,
+    entity_type: PhantomData<T>,
+}
+
+impl<T: 'static + Send + Sync> Clone for WeakHandle<T> {
+    fn clone(&self) -> Self {
+        Self {
+            any_handle: self.any_handle.clone(),
+            entity_type: self.entity_type,
+        }
+    }
+}
+
+impl<T: Send + Sync + 'static> WeakHandle<T> {
+    pub fn upgrade(&self) -> Option<Handle<T>> {
+        Some(Handle {
+            any_handle: self.any_handle.upgrade()?,
+            entity_type: self.entity_type,
         })
     }
 
@@ -240,7 +325,7 @@ impl<T: Send + Sync + 'static> WeakHandle<T> {
         Result<C::Result<R>>: crate::Flatten<R>,
     {
         crate::Flatten::flatten(
-            self.upgrade(cx)
+            self.upgrade()
                 .ok_or_else(|| anyhow!("entity release"))
                 .map(|this| cx.update_entity(&this, update)),
         )
