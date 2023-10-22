@@ -1,9 +1,9 @@
 use ai::models::{LanguageModel, OpenAILanguageModel};
-use ai::templates::base::{PromptArguments, PromptChain, PromptPriority, PromptTemplate};
-use ai::templates::file_context::FileContext;
-use ai::templates::generate::GenerateInlineContent;
-use ai::templates::preamble::EngineerPreamble;
-use ai::templates::repository_context::{PromptCodeSnippet, RepositoryContext};
+use ai::prompts::base::{PromptArguments, PromptChain, PromptPriority, PromptTemplate};
+use ai::prompts::file_context::FileContext;
+use ai::prompts::generate::GenerateInlineContent;
+use ai::prompts::preamble::EngineerPreamble;
+use ai::prompts::repository_context::{PromptCodeSnippet, RepositoryContext};
 use language::{BufferSnapshot, OffsetRangeExt, ToOffset};
 use std::cmp::{self, Reverse};
 use std::ops::Range;

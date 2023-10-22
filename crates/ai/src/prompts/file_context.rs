@@ -4,8 +4,8 @@ use language::ToOffset;
 
 use crate::models::LanguageModel;
 use crate::models::TruncationDirection;
-use crate::templates::base::PromptArguments;
-use crate::templates::base::PromptTemplate;
+use crate::prompts::base::PromptArguments;
+use crate::prompts::base::PromptTemplate;
 use std::fmt::Write;
 use std::ops::Range;
 use std::sync::Arc;

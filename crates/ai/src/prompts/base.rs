@@ -6,7 +6,7 @@ use language::BufferSnapshot;
 use util::ResultExt;
 
 use crate::models::LanguageModel;
-use crate::templates::repository_context::PromptCodeSnippet;
+use crate::prompts::repository_context::PromptCodeSnippet;
 
 pub(crate) enum PromptFileType {
     Text,

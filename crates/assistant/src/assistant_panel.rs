@@ -9,7 +9,7 @@ use ai::{
     completion::{
         stream_completion, OpenAICompletionProvider, OpenAIRequest, RequestMessage, OPENAI_API_URL,
     },
-    templates::repository_context::PromptCodeSnippet,
+    prompts::repository_context::PromptCodeSnippet,
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};

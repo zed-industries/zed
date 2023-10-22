@@ -1,4 +1,4 @@
-use crate::templates::base::{PromptArguments, PromptFileType, PromptTemplate};
+use crate::prompts::base::{PromptArguments, PromptFileType, PromptTemplate};
 use anyhow::anyhow;
 use std::fmt::Write;
 
