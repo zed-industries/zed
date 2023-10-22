@@ -8,6 +8,7 @@ use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
+use db2::kvp::KEY_VALUE_STORE;
 use fs::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui2::{App, AppContext, AssetSource, AsyncAppContext, SemanticVersion, Task};
@@ -35,7 +36,7 @@ use std::{
 };
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
-    http::HttpClient,
+    http::{self, HttpClient},
     paths, ResultExt,
 };
 use uuid::Uuid;
@@ -49,7 +50,7 @@ use zed2::{ensure_only_instance, AppState, Assets, IsOnlyInstance};
 mod open_listener;
 
 fn main() {
-    // let http = http::client();
+    let http = http::client();
     init_paths();
     init_logger();
 
@@ -60,9 +61,9 @@ fn main() {
     log::info!("========== starting zed ==========");
     let app = App::production(Arc::new(Assets));
 
-    // let installation_id = app.executor().block(installation_id()).ok();
-    // let session_id = Uuid::new_v4().to_string();
-    // init_panic_hook(&app, installation_id.clone(), session_id.clone());
+    let installation_id = app.executor().block(installation_id()).ok();
+    let session_id = Uuid::new_v4().to_string();
+    init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
     load_embedded_fonts(&app);
 
@@ -107,7 +108,7 @@ fn main() {
         handle_settings_file_changes(user_settings_file_rx, cx);
         // handle_keymap_file_changes(user_keymap_file_rx, cx);
 
-        // let client = client::Client::new(http.clone(), cx);
+        let client = client2::Client::new(http.clone(), cx);
         // let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         // let copilot_language_server_id = languages.next_language_server_id();
         // languages.set_executor(cx.background().clone());
@@ -204,7 +205,7 @@ fn main() {
                 listener.open_urls(urls)
             }
         } else {
-            // upload_previous_panics(http.clone(), cx);
+            upload_previous_panics(http.clone(), cx);
 
             // TODO Development mode that forces the CLI mode usually runs Zed binary as is instead
             // of an *app, hence gets no specific callbacks run. Emulate them here, if needed.
@@ -296,21 +297,21 @@ fn main() {
 //     Ok::<_, anyhow::Error>(())
 // }
 
-// async fn installation_id() -> Result<String> {
-//     let legacy_key_name = "device_id";
+async fn installation_id() -> Result<String> {
+    let legacy_key_name = "device_id";
 
-//     if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(legacy_key_name) {
-//         Ok(installation_id)
-//     } else {
-//         let installation_id = Uuid::new_v4().to_string();
+    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(legacy_key_name) {
+        Ok(installation_id)
+    } else {
+        let installation_id = Uuid::new_v4().to_string();
 
-//         KEY_VALUE_STORE
-//             .write_kvp(legacy_key_name.to_string(), installation_id.clone())
-//             .await?;
+        KEY_VALUE_STORE
+            .write_kvp(legacy_key_name.to_string(), installation_id.clone())
+            .await?;
 
-//         Ok(installation_id)
-//     }
-// }
+        Ok(installation_id)
+    }
+}
 
 async fn restore_or_create_workspace(_app_state: &Arc<AppState>, mut _cx: AsyncAppContext) {
     todo!("workspace")

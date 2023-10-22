@@ -2210,6 +2210,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "db2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "env_logger 0.9.3",
+ "gpui2",
+ "indoc",
+ "lazy_static",
+ "log",
+ "parking_lot 0.11.2",
+ "serde",
+ "serde_derive",
+ "smol",
+ "sqlez",
+ "sqlez_macros",
+ "tempdir",
+ "util",
+]
+
+[[package]]
 name = "deflate"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10427,6 +10449,7 @@ dependencies = [
  "client2",
  "collections",
  "ctor",
+ "db2",
  "env_logger 0.9.3",
  "feature_flags",
  "fs",

@@ -32,7 +32,7 @@ client2 = { path = "../client2" }
 # copilot = { path = "../copilot" }
 # copilot_button = { path = "../copilot_button" }
 # diagnostics = { path = "../diagnostics" }
-# db = { path = "../db" }
+db2 = { path = "../db2" }
 # editor = { path = "../editor" }
 # feedback = { path = "../feedback" }
 # file_finder = { path = "../file_finder" }
