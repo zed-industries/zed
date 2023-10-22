@@ -184,8 +184,8 @@ pub trait PlatformTextSystem: Send + Sync {
 #[derive(Clone, Debug)]
 pub struct AppMetadata {
     pub os_name: &'static str,
-    pub os_version: SemanticVersion,
-    pub app_version: SemanticVersion,
+    pub os_version: Option<SemanticVersion>,
+    pub app_version: Option<SemanticVersion>,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]

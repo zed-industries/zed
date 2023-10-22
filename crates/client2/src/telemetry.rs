@@ -41,9 +41,9 @@ struct ClickhouseEventRequestBody {
     installation_id: Option<Arc<str>>,
     session_id: Option<Arc<str>>,
     is_staff: Option<bool>,
-    app_version: Option<Arc<str>>,
+    app_version: Option<String>,
     os_name: &'static str,
-    os_version: Option<Arc<str>>,
+    os_version: Option<String>,
     architecture: &'static str,
     release_channel: Option<&'static str>,
     events: Vec<ClickhouseEventWrapper>,
@@ -190,7 +190,13 @@ impl Telemetry {
                     core_count: system.cpus().len() as u32,
                 };
 
-                let telemetry_settings = cx.update(|cx| *settings2::get::<TelemetrySettings>(cx));
+                let telemetry_settings = if let Ok(telemetry_settings) =
+                    cx.update(|cx| *settings2::get::<TelemetrySettings>(cx))
+                {
+                    telemetry_settings
+                } else {
+                    break;
+                };
 
                 this.report_clickhouse_event(memory_event, telemetry_settings);
                 this.report_clickhouse_event(cpu_event, telemetry_settings);
@@ -287,9 +293,15 @@ impl Telemetry {
                             installation_id: state.installation_id.clone(),
                             session_id: state.session_id.clone(),
                             is_staff: state.is_staff.clone(),
-                            app_version: state.app_version.clone(),
-                            os_name: state.os_name,
-                            os_version: state.os_version.clone(),
+                            app_version: state
+                                .app_metadata
+                                .app_version
+                                .map(|version| version.to_string()),
+                            os_name: state.app_metadata.os_name,
+                            os_version: state
+                                .app_metadata
+                                .os_version
+                                .map(|version| version.to_string()),
                             architecture: state.architecture,
 
                             release_channel: state.release_channel,

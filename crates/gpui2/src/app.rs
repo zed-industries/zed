@@ -59,8 +59,8 @@ impl App {
         let unit_entity = entities.insert(entities.reserve(), ());
         let app_metadata = AppMetadata {
             os_name: platform.os_name(),
-            os_version: platform.os_version().unwrap_or_default(),
-            app_version: platform.app_version().unwrap_or_default(),
+            os_version: platform.os_version().ok(),
+            app_version: platform.app_version().ok(),
         };
         Self(Arc::new_cyclic(|this| {
             Mutex::new(AppContext {
