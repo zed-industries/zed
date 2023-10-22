@@ -653,6 +653,9 @@ pub struct ChatPanel {
 pub struct NotificationPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub title: ContainedText,
+    pub title_icon: SvgStyle,
+    pub title_height: f32,
     pub list: ContainerStyle,
     pub avatar: AvatarStyle,
     pub avatar_container: ContainerStyle,

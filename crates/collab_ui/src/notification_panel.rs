@@ -21,7 +21,7 @@ use rpc::proto;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::{sync::Arc, time::Duration};
-use theme::{IconButton, Theme};
+use theme::{ui, Theme};
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -197,9 +197,9 @@ impl NotificationPanel {
         let NotificationPresenter {
             actor,
             text,
-            icon,
             needs_response,
             can_navigate,
+            ..
         } = self.present_notification(entry, cx)?;
 
         let theme = theme::current(cx);
@@ -227,17 +227,21 @@ impl NotificationPanel {
                 Flex::column()
                     .with_child(
                         Flex::row()
-                            .with_children(
-                                actor.map(|actor| render_avatar(actor.avatar.clone(), &theme)),
-                            )
-                            .with_child(render_icon_button(&theme.chat_panel.icon_button, icon))
+                            .with_children(actor.map(|actor| {
+                                render_avatar(
+                                    actor.avatar.clone(),
+                                    &style.avatar,
+                                    style.avatar_container,
+                                )
+                            }))
                             .with_child(
                                 Label::new(
                                     format_timestamp(timestamp, now, self.local_timezone),
                                     style.timestamp.text.clone(),
                                 )
                                 .contained()
-                                .with_style(style.timestamp.container),
+                                .with_style(style.timestamp.container)
+                                .flex_float(),
                             )
                             .align_children_center(),
                     )
@@ -245,8 +249,12 @@ impl NotificationPanel {
                     .with_children(if let Some(is_accepted) = response {
                         Some(
                             Label::new(
-                                if is_accepted { "Accepted" } else { "Declined" },
-                                style.button.text.clone(),
+                                if is_accepted {
+                                    "You Accepted"
+                                } else {
+                                    "You Declined"
+                                },
+                                style.read_text.text.clone(),
                             )
                             .into_any(),
                         )
@@ -573,19 +581,34 @@ impl View for NotificationPanel {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = theme::current(cx);
+        let style = &theme.notification_panel;
         let element = if self.client.user_id().is_none() {
             self.render_sign_in_prompt(&theme, cx)
         } else if self.notification_list.item_count() == 0 {
             self.render_empty_state(&theme, cx)
         } else {
-            List::new(self.notification_list.clone())
-                .contained()
-                .with_style(theme.chat_panel.list)
+            Flex::column()
+                .with_child(
+                    Flex::row()
+                        .with_child(Label::new("Notifications", style.title.text.clone()))
+                        .with_child(ui::svg(&style.title_icon).flex_float())
+                        .align_children_center()
+                        .contained()
+                        .with_style(style.title.container)
+                        .constrained()
+                        .with_height(style.title_height),
+                )
+                .with_child(
+                    List::new(self.notification_list.clone())
+                        .contained()
+                        .with_style(style.list)
+                        .flex(1., true),
+                )
                 .into_any()
         };
         element
             .contained()
-            .with_style(theme.chat_panel.container)
+            .with_style(style.container)
             .constrained()
             .with_min_width(150.)
             .into_any()
@@ -673,19 +696,6 @@ impl Panel for NotificationPanel {
     fn is_focus_event(event: &Self::Event) -> bool {
         matches!(event, Event::Focus)
     }
-}
-
-fn render_icon_button<V: View>(style: &IconButton, svg_path: &'static str) -> impl Element<V> {
-    Svg::new(svg_path)
-        .with_color(style.color)
-        .constrained()
-        .with_width(style.icon_width)
-        .aligned()
-        .constrained()
-        .with_width(style.button_width)
-        .with_height(style.button_width)
-        .contained()
-        .with_style(style.container)
 }
 
 pub struct NotificationToast {

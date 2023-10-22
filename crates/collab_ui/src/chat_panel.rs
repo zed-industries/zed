@@ -443,7 +443,8 @@ impl ChatPanel {
                                 Flex::row()
                                     .with_child(render_avatar(
                                         message.sender.avatar.clone(),
-                                        &theme,
+                                        &theme.chat_panel.avatar,
+                                        theme.chat_panel.avatar_container,
                                     ))
                                     .with_child(
                                         Label::new(

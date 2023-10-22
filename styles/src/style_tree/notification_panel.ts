@@ -1,9 +1,9 @@
-import { background, text } from "./components"
+import { background, border, text } from "./components"
 import { icon_button } from "../component/icon_button"
 import { useTheme } from "../theme"
 import { interactive } from "../element"
 
-export default function chat_panel(): any {
+export default function (): any {
     const theme = useTheme()
     const layer = theme.middle
 
@@ -12,12 +12,32 @@ export default function chat_panel(): any {
         avatar: {
             icon_width: 24,
             icon_height: 24,
-            corner_radius: 4,
+            corner_radius: 12,
             outer_width: 24,
-            outer_corner_radius: 16,
+            outer_corner_radius: 24,
         },
-        read_text: text(layer, "sans", "disabled"),
-        unread_text: text(layer, "sans", "base"),
+        title: {
+            ...text(layer, "sans", "default"),
+            padding: { left: 8, right: 8 },
+            border: border(layer, { bottom: true }),
+        },
+        title_height: 32,
+        title_icon: {
+            asset: "icons/feedback.svg",
+            color: text(theme.lowest, "sans", "default").color,
+            dimensions: {
+                width: 16,
+                height: 16,
+            },
+        },
+        read_text: {
+            padding: { top: 4, bottom: 4 },
+            ...text(layer, "sans", "disabled"),
+        },
+        unread_text: {
+            padding: { top: 4, bottom: 4 },
+            ...text(layer, "sans", "base"),
+        },
         button: interactive({
             base: {
                 ...text(theme.lowest, "sans", "on", { size: "xs" }),
@@ -42,7 +62,12 @@ export default function chat_panel(): any {
                 bottom: 2,
             },
         },
-        list: {},
+        list: {
+            padding: {
+                left: 8,
+                right: 8,
+            },
+        },
         icon_button: icon_button({
             variant: "ghost",
             color: "variant",

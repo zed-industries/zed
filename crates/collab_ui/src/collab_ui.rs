@@ -11,7 +11,7 @@ use call::{report_call_event_for_room, ActiveCall, Room};
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
 use gpui::{
     actions,
-    elements::{Empty, Image},
+    elements::{ContainerStyle, Empty, Image},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -20,7 +20,7 @@ use gpui::{
     AnyElement, AppContext, Element, ImageData, Task,
 };
 use std::{rc::Rc, sync::Arc};
-use theme::Theme;
+use theme::AvatarStyle;
 use time::{OffsetDateTime, UtcOffset};
 use util::ResultExt;
 use workspace::AppState;
@@ -133,8 +133,11 @@ fn notification_window_options(
     }
 }
 
-fn render_avatar<T: 'static>(avatar: Option<Arc<ImageData>>, theme: &Arc<Theme>) -> AnyElement<T> {
-    let avatar_style = theme.chat_panel.avatar;
+fn render_avatar<T: 'static>(
+    avatar: Option<Arc<ImageData>>,
+    avatar_style: &AvatarStyle,
+    container: ContainerStyle,
+) -> AnyElement<T> {
     avatar
         .map(|avatar| {
             Image::from_data(avatar)
@@ -154,7 +157,7 @@ fn render_avatar<T: 'static>(avatar: Option<Arc<ImageData>>, theme: &Arc<Theme>)
                 .into_any()
         })
         .contained()
-        .with_style(theme.chat_panel.avatar_container)
+        .with_style(container)
         .into_any()
 }
 
