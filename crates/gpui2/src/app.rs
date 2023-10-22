@@ -9,9 +9,9 @@ use refineable::Refineable;
 use smallvec::SmallVec;
 
 use crate::{
-    current_platform, image_cache::ImageCache, Action, AssetSource, Context, DispatchPhase,
-    DisplayId, Executor, FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap, LayoutId,
-    MainThread, MainThreadOnly, Platform, SemanticVersion, SharedString, SubscriberSet,
+    current_platform, image_cache::ImageCache, Action, AppMetadata, AssetSource, Context,
+    DispatchPhase, DisplayId, Executor, FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap,
+    LayoutId, MainThread, MainThreadOnly, Platform, SemanticVersion, SharedString, SubscriberSet,
     SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window, WindowContext,
     WindowHandle, WindowId,
 };
@@ -49,13 +49,25 @@ impl App {
         http_client: Arc<dyn HttpClient>,
     ) -> Self {
         let executor = platform.executor();
+        assert!(
+            executor.is_main_thread(),
+            "must construct App on main thread"
+        );
+
+        let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
         let unit_entity = entities.insert(entities.reserve(), ());
+        let app_metadata = AppMetadata {
+            os_name: platform.os_name(),
+            os_version: platform.os_version().unwrap_or_default(),
+            app_version: platform.app_version().unwrap_or_default(),
+        };
         Self(Arc::new_cyclic(|this| {
             Mutex::new(AppContext {
                 this: this.clone(),
-                text_system: Arc::new(TextSystem::new(platform.text_system())),
+                text_system,
                 platform: MainThreadOnly::new(platform, executor.clone()),
+                app_metadata,
                 flushing_effects: false,
                 pending_updates: 0,
                 next_frame_callbacks: Default::default(),
@@ -128,16 +140,8 @@ impl App {
         self
     }
 
-    pub fn app_version(&self) -> Result<SemanticVersion> {
-        self.0.lock().platform.borrow_on_main_thread().app_version()
-    }
-
-    pub fn os_name(&self) -> &'static str {
-        self.0.lock().platform.borrow_on_main_thread().os_name()
-    }
-
-    pub fn os_version(&self) -> Result<SemanticVersion> {
-        self.0.lock().platform.borrow_on_main_thread().os_version()
+    pub fn metadata(&self) -> AppMetadata {
+        self.0.lock().app_metadata.clone()
     }
 
     pub fn executor(&self) -> Executor {
@@ -158,6 +162,7 @@ type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<d
 pub struct AppContext {
     this: Weak<Mutex<AppContext>>,
     pub(crate) platform: MainThreadOnly<dyn Platform>,
+    app_metadata: AppMetadata,
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
     pending_updates: usize,
@@ -184,6 +189,10 @@ pub struct AppContext {
 }
 
 impl AppContext {
+    pub fn app_metadata(&self) -> AppMetadata {
+        self.app_metadata.clone()
+    }
+
     pub fn refresh(&mut self) {
         self.push_effect(Effect::Refresh);
     }
@@ -379,7 +388,10 @@ impl AppContext {
     }
 
     pub fn to_async(&self) -> AsyncAppContext {
-        AsyncAppContext(unsafe { mem::transmute(self.this.clone()) })
+        AsyncAppContext {
+            app: unsafe { mem::transmute(self.this.clone()) },
+            executor: self.executor.clone(),
+        }
     }
 
     pub fn executor(&self) -> &Executor {
@@ -639,7 +651,7 @@ impl MainThread<AppContext> {
         self.platform.borrow_on_main_thread()
     }
 
-    pub fn activate(&mut self, ignoring_other_apps: bool) {
+    pub fn activate(&self, ignoring_other_apps: bool) {
         self.platform().activate(ignoring_other_apps);
     }
 
@@ -653,6 +665,10 @@ impl MainThread<AppContext> {
 
     pub fn delete_credentials(&self, url: &str) -> Result<()> {
         self.platform().delete_credentials(url)
+    }
+
+    pub fn open_url(&self, url: &str) {
+        self.platform().open_url(url);
     }
 
     pub fn open_window<S: 'static + Send + Sync>(

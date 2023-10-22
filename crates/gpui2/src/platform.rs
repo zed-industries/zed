@@ -181,6 +181,13 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Vec<usize>;
 }
 
+#[derive(Clone, Debug)]
+pub struct AppMetadata {
+    pub os_name: &'static str,
+    pub os_version: SemanticVersion,
+    pub app_version: SemanticVersion,
+}
+
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub enum AtlasKey {
     Glyph(RenderGlyphParams),
@@ -404,7 +411,7 @@ impl Default for CursorStyle {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SemanticVersion {
     major: usize,
     minor: usize,

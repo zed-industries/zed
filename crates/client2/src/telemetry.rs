@@ -1,5 +1,5 @@
 use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
-use gpui2::{serde_json, AppContext, Executor, Task};
+use gpui2::{serde_json, AppContext, AppMetadata, Executor, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -15,15 +15,12 @@ pub struct Telemetry {
     state: Mutex<TelemetryState>,
 }
 
-#[derive(Default)]
 struct TelemetryState {
     metrics_id: Option<Arc<str>>,      // Per logged-in user
     installation_id: Option<Arc<str>>, // Per app installation (different for dev, preview, and stable)
     session_id: Option<Arc<str>>,      // Per app launch
-    app_version: Option<Arc<str>>,
     release_channel: Option<&'static str>,
-    os_name: &'static str,
-    os_version: Option<Arc<str>>,
+    app_metadata: AppMetadata,
     architecture: &'static str,
     clickhouse_events_queue: Vec<ClickhouseEventWrapper>,
     flush_clickhouse_events_task: Option<Task<()>>,
@@ -115,7 +112,6 @@ const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(30);
 
 impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
-        let platform = cx.platform();
         let release_channel = if cx.has_global::<ReleaseChannel>() {
             Some(cx.global::<ReleaseChannel>().display_name())
         } else {
@@ -124,12 +120,10 @@ impl Telemetry {
         // TODO: Replace all hardware stuff with nested SystemSpecs json
         let this = Arc::new(Self {
             http_client: client,
-            executor: cx.background().clone(),
+            executor: cx.executor().clone(),
             state: Mutex::new(TelemetryState {
-                os_name: platform.os_name().into(),
-                os_version: platform.os_version().ok().map(|v| v.to_string().into()),
+                app_metadata: cx.app_metadata(),
                 architecture: env::consts::ARCH,
-                app_version: platform.app_version().ok().map(|v| v.to_string().into()),
                 release_channel,
                 installation_id: None,
                 metrics_id: None,
@@ -196,7 +190,7 @@ impl Telemetry {
                     core_count: system.cpus().len() as u32,
                 };
 
-                let telemetry_settings = cx.update(|cx| *settings::get::<TelemetrySettings>(cx));
+                let telemetry_settings = cx.update(|cx| *settings2::get::<TelemetrySettings>(cx));
 
                 this.report_clickhouse_event(memory_event, telemetry_settings);
                 this.report_clickhouse_event(cpu_event, telemetry_settings);
@@ -211,7 +205,7 @@ impl Telemetry {
         is_staff: bool,
         cx: &AppContext,
     ) {
-        if !settings::get::<TelemetrySettings>(cx).metrics {
+        if !settings2::get::<TelemetrySettings>(cx).metrics {
             return;
         }
 

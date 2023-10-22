@@ -11,12 +11,11 @@ use async_tungstenite::tungstenite::{
     http::{Request, StatusCode},
 };
 use futures::{
-    future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryFutureExt as _,
-    TryStreamExt,
+    future::BoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryFutureExt as _, TryStreamExt,
 };
 use gpui2::{
-    serde_json, AnyHandle, AnyWeakHandle, AnyWindowHandle, AppContext, AsyncAppContext,
-    AsyncWindowContext, Handle, SemanticVersion, Task, ViewContext, WeakHandle, WindowId,
+    serde_json, AnyHandle, AnyWeakHandle, AnyWindowHandle, AppContext, AsyncAppContext, Handle,
+    SemanticVersion, Task, ViewContext,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -240,7 +239,7 @@ struct ClientState {
                     Box<dyn AnyTypedEnvelope>,
                     &Arc<Client>,
                     AsyncAppContext,
-                ) -> LocalBoxFuture<'static, Result<()>>,
+                ) -> BoxFuture<'static, Result<()>>,
         >,
     >,
 }
@@ -248,7 +247,7 @@ struct ClientState {
 enum WeakSubscriber {
     Entity {
         handle: AnyWeakHandle,
-        window_id: Option<WindowId>,
+        window_handle: Option<AnyWindowHandle>,
     },
     Pending(Vec<Box<dyn AnyTypedEnvelope>>),
 }
@@ -336,7 +335,7 @@ where
             id,
             WeakSubscriber::Entity {
                 handle: model.downgrade().into(),
-                window_id: None,
+                window_handle: None,
             },
         );
         drop(state);
@@ -511,7 +510,7 @@ impl Client {
                                 },
                                 &cx,
                             );
-                            cx.background().timer(delay).await;
+                            cx.executor().timer(delay).await;
                             delay = delay
                                 .mul_f32(rng.gen_range(1.0..=2.0))
                                 .min(reconnect_interval);
@@ -522,7 +521,7 @@ impl Client {
                 }));
             }
             Status::SignedOut | Status::UpgradeRequired => {
-                cx.read(|cx| self.telemetry.set_authenticated_user_info(None, false, cx));
+                cx.update(|cx| self.telemetry.set_authenticated_user_info(None, false, cx));
                 state._reconnect_task.take();
             }
             _ => {}
@@ -533,13 +532,16 @@ impl Client {
         self: &Arc<Self>,
         remote_id: u64,
         cx: &mut ViewContext<T>,
-    ) -> Subscription {
+    ) -> Subscription
+    where
+        T: 'static + Send + Sync,
+    {
         let id = (TypeId::of::<T>(), remote_id);
         self.state.write().entities_by_type_and_remote_id.insert(
             id,
             WeakSubscriber::Entity {
-                handle: cx.handle().into_any(),
-                window_id: Some(cx.window_id()),
+                handle: cx.handle().into(),
+                window_handle: Some(cx.window_handle()),
             },
         );
         Subscription::Entity {
@@ -573,33 +575,28 @@ impl Client {
     #[track_caller]
     pub fn add_message_handler<M, E, H, F>(
         self: &Arc<Self>,
-        model: Handle<E>,
+        entity: Handle<E>,
         handler: H,
     ) -> Subscription
     where
         M: EnvelopedMessage,
         E: 'static + Send + Sync,
         H: 'static + Send + Sync + Fn(Handle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
-        F: 'static + Future<Output = Result<()>>,
+        F: 'static + Future<Output = Result<()>> + Send,
     {
         let message_type_id = TypeId::of::<M>();
 
         let mut state = self.state.write();
         state
             .models_by_message_type
-            .insert(message_type_id, model.downgrade().into_any());
+            .insert(message_type_id, entity.downgrade().into());
 
         let prev_handler = state.message_handlers.insert(
             message_type_id,
-            Arc::new(move |handle, envelope, client, cx| {
-                let handle = if let Subscriber::Model(handle) = handle {
-                    handle
-                } else {
-                    unreachable!();
-                };
-                let model = handle.downcast::<E>().unwrap();
+            Arc::new(move |subscriber, envelope, client, cx| {
+                let subscriber = subscriber.handle.downcast::<E>().unwrap();
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                handler(model, *envelope, client.clone(), cx).boxed_local()
+                handler(subscriber, *envelope, client.clone(), cx).boxed()
             }),
         );
         if prev_handler.is_some() {
@@ -627,7 +624,7 @@ impl Client {
         M: RequestMessage,
         E: 'static + Send + Sync,
         H: 'static + Send + Sync + Fn(Handle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
-        F: 'static + Future<Output = Result<M::Response>>,
+        F: 'static + Future<Output = Result<M::Response>> + Send,
     {
         self.add_message_handler(model, move |handle, envelope, this, cx| {
             Self::respond_to_request(
@@ -638,37 +635,12 @@ impl Client {
         })
     }
 
-    pub fn add_view_message_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
-    where
-        M: EntityMessage,
-        H: 'static
-            + Send
-            + Sync
-            + Fn(WeakHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncWindowContext) -> F,
-        F: 'static + Future<Output = Result<()>>,
-    {
-        self.add_entity_message_handler::<M, E, _, _>(move |subscriber, message, client, cx| {
-            if let Some(window_handle) = subscriber.window_handle {
-                cx.update_window(subscriber, |cx| {
-                    handler(
-                        subscriber.handle.downcast::<E>().unwrap(),
-                        message,
-                        client,
-                        cx,
-                    )
-                })
-            } else {
-                panic!()
-            }
-        })
-    }
-
     pub fn add_model_message_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
     where
         M: EntityMessage,
         E: 'static + Send + Sync,
         H: 'static + Send + Sync + Fn(Handle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
-        F: 'static + Future<Output = Result<()>>,
+        F: 'static + Future<Output = Result<()>> + Send,
     {
         self.add_entity_message_handler::<M, E, _, _>(move |subscriber, message, client, cx| {
             handler(
@@ -687,7 +659,7 @@ impl Client {
             + Send
             + Sync
             + Fn(Subscriber, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
-        F: 'static + Future<Output = Result<()>>,
+        F: 'static + Future<Output = Result<()>> + Send,
     {
         let model_type_id = TypeId::of::<E>();
         let message_type_id = TypeId::of::<M>();
@@ -713,7 +685,7 @@ impl Client {
             message_type_id,
             Arc::new(move |handle, envelope, client, cx| {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                handler(handle, *envelope, client.clone(), cx).boxed_local()
+                handler(handle, *envelope, client.clone(), cx).boxed()
             }),
         );
         if prev_handler.is_some() {
@@ -726,28 +698,9 @@ impl Client {
         M: EntityMessage + RequestMessage,
         E: 'static + Send + Sync,
         H: 'static + Send + Sync + Fn(Handle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
-        F: 'static + Future<Output = Result<M::Response>>,
+        F: 'static + Future<Output = Result<M::Response>> + Send,
     {
         self.add_model_message_handler(move |entity, envelope, client, cx| {
-            Self::respond_to_request::<M, _>(
-                envelope.receipt(),
-                handler(entity, envelope, client.clone(), cx),
-                client,
-            )
-        })
-    }
-
-    pub fn add_view_request_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
-    where
-        M: EntityMessage + RequestMessage,
-        E: 'static + Send + Sync,
-        H: 'static
-            + Send
-            + Sync
-            + Fn(Handle<E>, TypedEnvelope<M>, Arc<Self>, AsyncWindowContext) -> F,
-        F: 'static + Future<Output = Result<M::Response>>,
-    {
-        self.add_view_message_handler(move |entity, envelope, client, cx| {
             Self::respond_to_request::<M, _>(
                 envelope.receipt(),
                 handler(entity, envelope, client.clone(), cx),
@@ -778,11 +731,11 @@ impl Client {
         }
     }
 
-    pub fn has_keychain_credentials(&self, cx: &AsyncAppContext) -> bool {
-        read_credentials_from_keychain(cx).is_some()
+    pub async fn has_keychain_credentials(&self, cx: &AsyncAppContext) -> bool {
+        read_credentials_from_keychain(cx).await.is_some()
     }
 
-    #[async_recursion(?Send)]
+    #[async_recursion]
     pub async fn authenticate_and_connect(
         self: &Arc<Self>,
         try_keychain: bool,
@@ -840,7 +793,7 @@ impl Client {
             self.set_status(Status::Reconnecting, cx);
         }
 
-        let mut timeout = futures::FutureExt::fuse(cx.executor()?.timer(CONNECTION_TIMEOUT));
+        let mut timeout = futures::FutureExt::fuse(cx.executor().timer(CONNECTION_TIMEOUT));
         futures::select_biased! {
             connection = self.establish_connection(&credentials, cx).fuse() => {
                 match connection {
@@ -891,7 +844,7 @@ impl Client {
         conn: Connection,
         cx: &AsyncAppContext,
     ) -> Result<()> {
-        let executor = cx.executor()?;
+        let executor = cx.executor();
         log::info!("add connection to peer");
         let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn, {
             let executor = executor.clone();
@@ -955,7 +908,7 @@ impl Client {
                     }
                 }
             }
-        })?
+        })
         .detach();
 
         cx.spawn({
@@ -978,7 +931,8 @@ impl Client {
                     }
                 }
             }
-        })?;
+        })
+        .detach();
 
         Ok(())
     }
@@ -1042,13 +996,8 @@ impl Client {
         credentials: &Credentials,
         cx: &AsyncAppContext,
     ) -> Task<Result<Connection, EstablishConnectionError>> {
-        let executor = match cx.executor() {
-            Ok(executor) => executor,
-            Err(error) => return Task::ready(Err(error)),
-        };
-
         let use_preview_server = cx
-            .try_read_global(|channel: &ReleaseChannel, _| channel != ReleaseChannel::Stable)
+            .try_read_global(|channel: &ReleaseChannel, _| *channel != ReleaseChannel::Stable)
             .unwrap_or(false);
 
         let request = Request::builder()
@@ -1059,7 +1008,7 @@ impl Client {
             .header("x-zed-protocol-version", rpc::PROTOCOL_VERSION);
 
         let http = self.http.clone();
-        executor.spawn(async move {
+        cx.executor().spawn(async move {
             let mut rpc_url = Self::get_rpc_url(http, use_preview_server).await?;
             let rpc_host = rpc_url
                 .host_str()
@@ -1130,15 +1079,15 @@ impl Client {
                 write!(&mut url, "&impersonate={}", impersonate_login).unwrap();
             }
 
-            platform.open_url(&url);
+            cx.run_on_main(|cx| cx.open_url(&url))?.await;
 
             // Receive the HTTP request from the user's browser. Retrieve the user id and encrypted
             // access token from the query params.
             //
             // TODO - Avoid ever starting more than one HTTP server. Maybe switch to using a
             // custom URL scheme instead of this local HTTP server.
-            let (user_id, access_token) = executor
-                .spawn(async move {
+            let (user_id, access_token) = cx
+                .spawn(|_| async move {
                     for _ in 0..100 {
                         if let Some(req) = server.recv_timeout(Duration::from_secs(1))? {
                             let path = req.url();
@@ -1181,14 +1130,13 @@ impl Client {
             let access_token = private_key
                 .decrypt_string(&access_token)
                 .context("failed to decrypt access token")?;
-            platform.activate(true);
+            cx.run_on_main(|cx| cx.activate(true))?.await;
 
             Ok(Credentials {
                 user_id: user_id.parse()?,
                 access_token,
             })
         })
-        .unwrap_or_else(|error| Task::ready(Err(error)))
     }
 
     async fn authenticate_as_admin(
@@ -1344,12 +1292,16 @@ impl Client {
                     return;
                 }
                 Some(weak_subscriber @ _) => match weak_subscriber {
-                    WeakSubscriber::Model(handle) => {
-                        subscriber = handle.upgrade(cx).map(Subscriber::Model);
+                    WeakSubscriber::Entity {
+                        handle,
+                        window_handle,
+                    } => {
+                        subscriber = handle.upgrade().map(|handle| Subscriber {
+                            handle,
+                            window_handle: window_handle.clone(),
+                        });
                     }
-                    WeakSubscriber::View(handle) => {
-                        subscriber = Some(Subscriber::View(handle.clone()));
-                    }
+
                     WeakSubscriber::Pending(_) => {}
                 },
                 _ => {}
@@ -1379,8 +1331,7 @@ impl Client {
                 sender_id,
                 type_name
             );
-            cx.foreground()
-                .spawn(async move {
+            cx.spawn_on_main(|_| async move {
                     match future.await {
                         Ok(()) => {
                             log::debug!(

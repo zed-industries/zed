@@ -8,7 +8,10 @@ use parking_lot::Mutex;
 use std::{future::Future, sync::Weak};
 
 #[derive(Clone)]
-pub struct AsyncAppContext(pub(crate) Weak<Mutex<AppContext>>);
+pub struct AsyncAppContext {
+    pub(crate) app: Weak<Mutex<AppContext>>,
+    pub(crate) executor: Executor,
+}
 
 impl Context for AsyncAppContext {
     type EntityContext<'a, 'w, T: 'static + Send + Sync> = ModelContext<'a, T>;
@@ -19,7 +22,7 @@ impl Context for AsyncAppContext {
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Self::Result<Handle<T>> {
         let app = self
-            .0
+            .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut lock = app.lock(); // Need this to compile
@@ -32,7 +35,7 @@ impl Context for AsyncAppContext {
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
     ) -> Self::Result<R> {
         let app = self
-            .0
+            .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut lock = app.lock(); // Need this to compile
@@ -43,7 +46,7 @@ impl Context for AsyncAppContext {
 impl AsyncAppContext {
     pub fn refresh(&mut self) -> Result<()> {
         let app = self
-            .0
+            .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut lock = app.lock(); // Need this to compile
@@ -51,13 +54,17 @@ impl AsyncAppContext {
         Ok(())
     }
 
-    pub fn executor(&self) -> Result<Executor> {
+    pub fn executor(&self) -> &Executor {
+        &self.executor
+    }
+
+    pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> Result<R> {
         let app = self
-            .0
+            .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let lock = app.lock(); // Need this to compile
-        Ok(lock.executor().clone())
+        let mut lock = app.lock();
+        Ok(f(&mut *lock))
     }
 
     pub fn read_window<R>(
@@ -66,7 +73,7 @@ impl AsyncAppContext {
         update: impl FnOnce(&WindowContext) -> R,
     ) -> Result<R> {
         let app = self
-            .0
+            .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut app_context = app.lock();
@@ -79,27 +86,32 @@ impl AsyncAppContext {
         update: impl FnOnce(&mut WindowContext) -> R,
     ) -> Result<R> {
         let app = self
-            .0
+            .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut app_context = app.lock();
         app_context.update_window(handle.id, update)
     }
 
-    pub fn spawn<Fut, R>(
-        &self,
-        f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static,
-    ) -> Result<Task<R>>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static) -> Task<R>
     where
         Fut: Future<Output = R> + Send + 'static,
         R: Send + 'static,
     {
-        let app = self
-            .0
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
-        let app_context = app.lock();
-        Ok(app_context.spawn(f))
+        let this = self.clone();
+        self.executor.spawn(async move { f(this).await })
+    }
+
+    pub fn spawn_on_main<Fut, R>(
+        &self,
+        f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static,
+    ) -> Task<R>
+    where
+        Fut: Future<Output = R> + 'static,
+        R: Send + 'static,
+    {
+        let this = self.clone();
+        self.executor.spawn_on_main(|| f(this))
     }
 
     pub fn run_on_main<R>(
@@ -110,7 +122,7 @@ impl AsyncAppContext {
         R: Send + 'static,
     {
         let app = self
-            .0
+            .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut app_context = app.lock();
@@ -119,7 +131,7 @@ impl AsyncAppContext {
 
     pub fn has_global<G: 'static + Send + Sync>(&self) -> Result<bool> {
         let app = self
-            .0
+            .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let lock = app.lock(); // Need this to compile
@@ -131,7 +143,7 @@ impl AsyncAppContext {
         read: impl FnOnce(&G, &AppContext) -> R,
     ) -> Result<R> {
         let app = self
-            .0
+            .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let lock = app.lock(); // Need this to compile
@@ -142,7 +154,7 @@ impl AsyncAppContext {
         &self,
         read: impl FnOnce(&G, &AppContext) -> R,
     ) -> Option<R> {
-        let app = self.0.upgrade()?;
+        let app = self.app.upgrade()?;
         let lock = app.lock(); // Need this to compile
         Some(read(lock.try_global()?, &lock))
     }
@@ -152,7 +164,7 @@ impl AsyncAppContext {
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
     ) -> Result<R> {
         let app = self
-            .0
+            .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut lock = app.lock(); // Need this to compile
