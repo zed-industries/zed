@@ -1,5 +1,5 @@
 use crate::{AppContext, PlatformDispatcher};
-use futures::channel::mpsc;
+use futures::{channel::mpsc, pin_mut};
 use smol::prelude::*;
 use std::{
     fmt::Debug,
@@ -11,6 +11,7 @@ use std::{
     time::Duration,
 };
 use util::TryFutureExt;
+use waker_fn::waker_fn;
 
 #[derive(Clone)]
 pub struct Executor {
@@ -133,8 +134,22 @@ impl Executor {
     }
 
     pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
-        // todo!("integrate with deterministic dispatcher")
-        futures::executor::block_on(future)
+        pin_mut!(future);
+        let (parker, unparker) = parking::pair();
+        let waker = waker_fn(move || {
+            unparker.unpark();
+        });
+        let mut cx = std::task::Context::from_waker(&waker);
+
+        loop {
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(result) => return result,
+                Poll::Pending => {
+                    // todo!("call tick on test dispatcher")
+                    parker.park();
+                }
+            }
+        }
     }
 
     pub async fn scoped<'scope, F>(&self, scheduler: F)
