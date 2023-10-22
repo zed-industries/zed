@@ -3,6 +3,7 @@ use language::BufferSnapshot;
 use language::ToOffset;
 
 use crate::models::LanguageModel;
+use crate::models::TruncationDirection;
 use crate::templates::base::PromptArguments;
 use crate::templates::base::PromptTemplate;
 use std::fmt::Write;
@@ -70,8 +71,9 @@ fn retrieve_context(
                     };
 
                 let truncated_start_window =
-                    model.truncate_start(&start_window, start_goal_tokens)?;
-                let truncated_end_window = model.truncate(&end_window, end_goal_tokens)?;
+                    model.truncate(&start_window, start_goal_tokens, TruncationDirection::Start)?;
+                let truncated_end_window =
+                    model.truncate(&end_window, end_goal_tokens, TruncationDirection::End)?;
                 writeln!(
                     prompt,
                     "{truncated_start_window}{selected_window}{truncated_end_window}"
@@ -89,7 +91,7 @@ fn retrieve_context(
             if let Some(max_token_count) = max_token_count {
                 if model.count_tokens(&prompt)? > max_token_count {
                     truncated = true;
-                    prompt = model.truncate(&prompt, max_token_count)?;
+                    prompt = model.truncate(&prompt, max_token_count, TruncationDirection::End)?;
                 }
             }
         }
@@ -148,7 +150,9 @@ impl PromptTemplate for FileContext {
 
             // Really dumb truncation strategy
             if let Some(max_tokens) = max_token_length {
-                prompt = args.model.truncate(&prompt, max_tokens)?;
+                prompt = args
+                    .model
+                    .truncate(&prompt, max_tokens, TruncationDirection::End)?;
             }
 
             let token_count = args.model.count_tokens(&prompt)?;

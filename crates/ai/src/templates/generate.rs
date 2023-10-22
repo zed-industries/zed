@@ -85,7 +85,11 @@ impl PromptTemplate for GenerateInlineContent {
 
         // Really dumb truncation strategy
         if let Some(max_tokens) = max_token_length {
-            prompt = args.model.truncate(&prompt, max_tokens)?;
+            prompt = args.model.truncate(
+                &prompt,
+                max_tokens,
+                crate::models::TruncationDirection::End,
+            )?;
         }
 
         let token_count = args.model.count_tokens(&prompt)?;

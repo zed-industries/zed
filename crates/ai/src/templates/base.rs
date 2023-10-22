@@ -125,6 +125,8 @@ impl PromptChain {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::models::TruncationDirection;
+
     use super::*;
 
     #[test]
@@ -141,7 +143,11 @@ pub(crate) mod tests {
                 let mut token_count = args.model.count_tokens(&content)?;
                 if let Some(max_token_length) = max_token_length {
                     if token_count > max_token_length {
-                        content = args.model.truncate(&content, max_token_length)?;
+                        content = args.model.truncate(
+                            &content,
+                            max_token_length,
+                            TruncationDirection::Start,
+                        )?;
                         token_count = max_token_length;
                     }
                 }
@@ -162,7 +168,11 @@ pub(crate) mod tests {
                 let mut token_count = args.model.count_tokens(&content)?;
                 if let Some(max_token_length) = max_token_length {
                     if token_count > max_token_length {
-                        content = args.model.truncate(&content, max_token_length)?;
+                        content = args.model.truncate(
+                            &content,
+                            max_token_length,
+                            TruncationDirection::Start,
+                        )?;
                         token_count = max_token_length;
                     }
                 }
@@ -183,19 +193,20 @@ pub(crate) mod tests {
             fn count_tokens(&self, content: &str) -> anyhow::Result<usize> {
                 anyhow::Ok(content.chars().collect::<Vec<char>>().len())
             }
-            fn truncate(&self, content: &str, length: usize) -> anyhow::Result<String> {
-                anyhow::Ok(
-                    content.chars().collect::<Vec<char>>()[..length]
+            fn truncate(
+                &self,
+                content: &str,
+                length: usize,
+                direction: TruncationDirection,
+            ) -> anyhow::Result<String> {
+                anyhow::Ok(match direction {
+                    TruncationDirection::End => content.chars().collect::<Vec<char>>()[..length]
                         .into_iter()
                         .collect::<String>(),
-                )
-            }
-            fn truncate_start(&self, content: &str, length: usize) -> anyhow::Result<String> {
-                anyhow::Ok(
-                    content.chars().collect::<Vec<char>>()[length..]
+                    TruncationDirection::Start => content.chars().collect::<Vec<char>>()[length..]
                         .into_iter()
                         .collect::<String>(),
-                )
+                })
             }
             fn capacity(&self) -> anyhow::Result<usize> {
                 anyhow::Ok(self.capacity)
