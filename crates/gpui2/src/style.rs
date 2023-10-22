@@ -182,7 +182,7 @@ impl TextStyle {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct HighlightStyle {
     pub color: Option<Hsla>,
     pub font_weight: Option<FontWeight>,
@@ -324,7 +324,7 @@ impl Default for Style {
     }
 }
 
-#[derive(Refineable, Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Refineable, Copy, Clone, Default, Debug, PartialEq, Eq)]
 #[refineable(debug)]
 pub struct UnderlineStyle {
     pub thickness: Pixels,

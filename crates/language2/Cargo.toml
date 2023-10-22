@@ -1,0 +1,86 @@
+[package]
+name = "language2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/language2.rs"
+doctest = false
+
+[features]
+test-support = [
+    "rand",
+    "client2/test-support",
+    "collections/test-support",
+    "lsp/test-support",
+    "text/test-support",
+    "tree-sitter-rust",
+    "tree-sitter-typescript",
+    "settings/test-support",
+    "util/test-support",
+]
+
+[dependencies]
+clock = { path = "../clock" }
+collections = { path = "../collections" }
+fuzzy = { path = "../fuzzy" }
+fs = { path = "../fs" }
+git = { path = "../git" }
+gpui2 = { path = "../gpui2" }
+lsp = { path = "../lsp" }
+rpc = { path = "../rpc" }
+settings2 = { path = "../settings2" }
+sum_tree = { path = "../sum_tree" }
+text = { path = "../text" }
+# theme = { path = "../theme" }
+util = { path = "../util" }
+
+anyhow.workspace = true
+async-broadcast = "0.4"
+async-trait.workspace = true
+futures.workspace = true
+globset.workspace = true
+lazy_static.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+postage.workspace = true
+regex.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_json.workspace = true
+similar = "1.3"
+smallvec.workspace = true
+smol.workspace = true
+tree-sitter.workspace = true
+unicase = "2.6"
+
+rand = { workspace = true, optional = true }
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+
+[dev-dependencies]
+client2 = { path = "../client2", features = ["test-support"] }
+collections = { path = "../collections", features = ["test-support"] }
+gpui2 = { path = "../gpui2", features = ["test-support"] }
+lsp = { path = "../lsp", features = ["test-support"] }
+text = { path = "../text", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
+ctor.workspace = true
+env_logger.workspace = true
+indoc.workspace = true
+rand.workspace = true
+unindent.workspace = true
+
+tree-sitter-embedded-template.workspace = true
+tree-sitter-html.workspace = true
+tree-sitter-json.workspace = true
+tree-sitter-markdown.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-typescript.workspace = true
+tree-sitter-ruby.workspace = true
+tree-sitter-elixir.workspace = true
+tree-sitter-heex.workspace = true

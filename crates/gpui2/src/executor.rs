@@ -152,6 +152,32 @@ impl Executor {
         }
     }
 
+    pub fn block_with_timeout<F, R>(
+        &self,
+        duration: Duration,
+        future: F,
+    ) -> Result<R, impl Future<Output = R>>
+    where
+        F: Future<Output = R> + Send + Sync + 'static,
+    {
+        let mut future = Box::pin(future);
+        let timeout = {
+            let future = &mut future;
+            async {
+                let timer = async {
+                    self.timer(duration).await;
+                    Err(())
+                };
+                let future = async move { Ok(future.await) };
+                timer.race(future).await
+            }
+        };
+        match self.block(timeout) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(future),
+        }
+    }
+
     pub async fn scoped<'scope, F>(&self, scheduler: F)
     where
         F: FnOnce(&mut Scope<'scope>),
@@ -167,9 +193,13 @@ impl Executor {
         }
     }
 
-    pub fn timer(&self, duration: Duration) -> smol::Timer {
-        // todo!("integrate with deterministic dispatcher")
-        smol::Timer::after(duration)
+    pub fn timer(&self, duration: Duration) -> Task<()> {
+        let (runnable, task) = async_task::spawn(async move {}, {
+            let dispatcher = self.dispatcher.clone();
+            move |runnable| dispatcher.dispatch_after(duration, runnable)
+        });
+        runnable.schedule();
+        Task::Spawned(task)
     }
 
     pub fn is_main_thread(&self) -> bool {

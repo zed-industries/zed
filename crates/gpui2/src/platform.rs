@@ -16,6 +16,7 @@ use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
+use std::time::Duration;
 use std::{
     any::Any,
     fmt::{self, Debug, Display},
@@ -157,8 +158,9 @@ pub(crate) trait PlatformWindow {
 
 pub trait PlatformDispatcher: Send + Sync {
     fn is_main_thread(&self) -> bool;
-    fn dispatch(&self, task: Runnable);
-    fn dispatch_on_main_thread(&self, task: Runnable);
+    fn dispatch(&self, runnable: Runnable);
+    fn dispatch_on_main_thread(&self, runnable: Runnable);
+    fn dispatch_after(&self, duration: Duration, runnable: Runnable);
 }
 
 pub trait PlatformTextSystem: Send + Sync {

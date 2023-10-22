@@ -22,6 +22,8 @@ fn generate_dispatch_bindings() {
         .allowlist_var("DISPATCH_QUEUE_PRIORITY_DEFAULT")
         .allowlist_function("dispatch_get_global_queue")
         .allowlist_function("dispatch_async_f")
+        .allowlist_function("dispatch_after_f")
+        .allowlist_function("dispatch_time")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .layout_tests(false)
         .generate()

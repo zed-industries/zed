@@ -9,7 +9,10 @@ use objc::{
     runtime::{BOOL, YES},
     sel, sel_impl,
 };
-use std::ffi::c_void;
+use std::{
+    ffi::c_void,
+    time::{Duration, SystemTime},
+};
 
 include!(concat!(env!("OUT_DIR"), "/dispatch_sys.rs"));
 
@@ -39,6 +42,26 @@ impl PlatformDispatcher for MacDispatcher {
         unsafe {
             dispatch_async_f(
                 dispatch_get_main_queue(),
+                runnable.into_raw() as *mut c_void,
+                Some(trampoline),
+            );
+        }
+    }
+
+    fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
+        let now = SystemTime::now();
+        let after_duration = now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64
+            + duration.as_nanos() as u64;
+        unsafe {
+            let queue =
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT.try_into().unwrap(), 0);
+            let when = dispatch_time(0, after_duration as i64);
+            dispatch_after_f(
+                when,
+                queue,
                 runnable.into_raw() as *mut c_void,
                 Some(trampoline),
             );

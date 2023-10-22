@@ -43,6 +43,7 @@ members = [
     "crates/install_cli",
     "crates/journal",
     "crates/language",
+    "crates/language2",
     "crates/language_selector",
     "crates/language_tools",
     "crates/live_kit_client",

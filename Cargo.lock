@@ -4161,6 +4161,60 @@ dependencies = [
 ]
 
 [[package]]
+name = "language2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-broadcast",
+ "async-trait",
+ "client2",
+ "clock",
+ "collections",
+ "ctor",
+ "env_logger 0.9.3",
+ "fs",
+ "futures 0.3.28",
+ "fuzzy",
+ "git",
+ "globset",
+ "gpui2",
+ "indoc",
+ "lazy_static",
+ "log",
+ "lsp",
+ "parking_lot 0.11.2",
+ "postage",
+ "rand 0.8.5",
+ "regex",
+ "rpc",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings",
+ "settings2",
+ "similar",
+ "smallvec",
+ "smol",
+ "sum_tree",
+ "text",
+ "tree-sitter",
+ "tree-sitter-elixir",
+ "tree-sitter-embedded-template",
+ "tree-sitter-heex",
+ "tree-sitter-html",
+ "tree-sitter-json 0.20.0",
+ "tree-sitter-markdown",
+ "tree-sitter-python",
+ "tree-sitter-ruby",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "unicase",
+ "unindent",
+ "util",
+]
+
+[[package]]
 name = "language_selector"
 version = "0.1.0"
 dependencies = [

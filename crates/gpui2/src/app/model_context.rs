@@ -2,9 +2,13 @@ use crate::{
     AppContext, AsyncAppContext, Context, Effect, EntityId, EventEmitter, Handle, Reference,
     Subscription, Task, WeakHandle,
 };
+use derive_more::{Deref, DerefMut};
 use std::{future::Future, marker::PhantomData};
 
+#[derive(Deref, DerefMut)]
 pub struct ModelContext<'a, T> {
+    #[deref]
+    #[deref_mut]
     app: Reference<'a, AppContext>,
     entity_type: PhantomData<T>,
     entity_id: EntityId,
