@@ -84,6 +84,7 @@ setTimeout(() => {
         ZED_SERVER_URL: 'http://localhost:8080',
         ZED_ADMIN_API_TOKEN: 'secret',
         ZED_WINDOW_SIZE: `${instanceWidth},${instanceHeight}`,
+        PATH: process.env.PATH,
         RUST_LOG,
       }
     })
