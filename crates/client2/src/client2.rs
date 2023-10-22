@@ -15,7 +15,7 @@ use futures::{
 };
 use gpui2::{
     serde_json, AnyHandle, AnyWeakHandle, AnyWindowHandle, AppContext, AsyncAppContext, Handle,
-    SemanticVersion, Task, ViewContext,
+    SemanticVersion, Task, ViewContext, WeakHandle,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -575,7 +575,7 @@ impl Client {
     #[track_caller]
     pub fn add_message_handler<M, E, H, F>(
         self: &Arc<Self>,
-        entity: Handle<E>,
+        entity: WeakHandle<E>,
         handler: H,
     ) -> Subscription
     where
@@ -589,7 +589,7 @@ impl Client {
         let mut state = self.state.write();
         state
             .models_by_message_type
-            .insert(message_type_id, entity.downgrade().into());
+            .insert(message_type_id, entity.into());
 
         let prev_handler = state.message_handlers.insert(
             message_type_id,
@@ -617,7 +617,7 @@ impl Client {
 
     pub fn add_request_handler<M, E, H, F>(
         self: &Arc<Self>,
-        model: Handle<E>,
+        model: WeakHandle<E>,
         handler: H,
     ) -> Subscription
     where
