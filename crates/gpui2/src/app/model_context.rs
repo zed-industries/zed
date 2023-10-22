@@ -1,8 +1,8 @@
 use crate::{
-    AppContext, Context, Effect, EntityId, EventEmitter, Executor, Handle, Reference, Subscription,
-    WeakHandle,
+    AppContext, AsyncAppContext, Context, Effect, EntityId, EventEmitter, Handle, Reference,
+    Subscription, Task, WeakHandle,
 };
-use std::marker::PhantomData;
+use std::{future::Future, marker::PhantomData};
 
 pub struct ModelContext<'a, T> {
     app: Reference<'a, AppContext>,
@@ -111,6 +111,18 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         let result = f(global.as_mut(), self);
         self.app.push_global(global);
         result
+    }
+
+    pub fn spawn<Fut, R>(
+        &self,
+        f: impl FnOnce(WeakHandle<T>, AsyncAppContext) -> Fut + Send + 'static,
+    ) -> Task<R>
+    where
+        Fut: Future<Output = R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let this = self.handle();
+        self.app.spawn(|cx| f(this, cx))
     }
 }
 
