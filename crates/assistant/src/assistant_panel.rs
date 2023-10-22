@@ -6,8 +6,11 @@ use crate::{
     SavedMessage,
 };
 
-use ai::providers::open_ai::{
-    stream_completion, OpenAICompletionProvider, OpenAIRequest, RequestMessage, OPENAI_API_URL,
+use ai::{
+    completion::CompletionRequest,
+    providers::open_ai::{
+        stream_completion, OpenAICompletionProvider, OpenAIRequest, RequestMessage, OPENAI_API_URL,
+    },
 };
 
 use ai::prompts::repository_context::PromptCodeSnippet;
@@ -745,13 +748,14 @@ impl AssistantPanel {
                 content: prompt,
             });
 
-            let request = OpenAIRequest {
+            let request = Box::new(OpenAIRequest {
                 model: model.full_name().into(),
                 messages,
                 stream: true,
                 stop: vec!["|END|>".to_string()],
                 temperature,
-            };
+            });
+
             codegen.update(&mut cx, |codegen, cx| codegen.start(request, cx));
             anyhow::Ok(())
         })
@@ -1735,7 +1739,7 @@ impl Conversation {
                 return Default::default();
             };
 
-            let request = OpenAIRequest {
+            let request: Box<dyn CompletionRequest> = Box::new(OpenAIRequest {
                 model: self.model.full_name().to_string(),
                 messages: self
                     .messages(cx)
@@ -1745,7 +1749,7 @@ impl Conversation {
                 stream: true,
                 stop: vec![],
                 temperature: 1.0,
-            };
+            });
 
             let stream = stream_completion(api_key, cx.background().clone(), request);
             let assistant_message = self
@@ -2025,13 +2029,13 @@ impl Conversation {
                             "Summarize the conversation into a short title without punctuation"
                                 .into(),
                     }));
-                let request = OpenAIRequest {
+                let request: Box<dyn CompletionRequest> = Box::new(OpenAIRequest {
                     model: self.model.full_name().to_string(),
                     messages: messages.collect(),
                     stream: true,
                     stop: vec![],
                     temperature: 1.0,
-                };
+                });
 
                 let stream = stream_completion(api_key, cx.background().clone(), request);
                 self.pending_summary = cx.spawn(|this, mut cx| {

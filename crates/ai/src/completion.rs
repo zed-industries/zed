@@ -1,11 +1,13 @@
 use anyhow::Result;
 use futures::{future::BoxFuture, stream::BoxStream};
 
-use crate::providers::open_ai::completion::OpenAIRequest;
+pub trait CompletionRequest: Send + Sync {
+    fn data(&self) -> serde_json::Result<String>;
+}
 
 pub trait CompletionProvider {
     fn complete(
         &self,
-        prompt: OpenAIRequest,
+        prompt: Box<dyn CompletionRequest>,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
 }
