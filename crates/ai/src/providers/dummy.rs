@@ -3,9 +3,41 @@ use std::time::Instant;
 use crate::{
     completion::CompletionRequest,
     embedding::{Embedding, EmbeddingProvider},
+    models::{LanguageModel, TruncationDirection},
 };
 use async_trait::async_trait;
 use serde::Serialize;
+
+pub struct DummyLanguageModel {}
+
+impl LanguageModel for DummyLanguageModel {
+    fn name(&self) -> String {
+        "dummy".to_string()
+    }
+    fn capacity(&self) -> anyhow::Result<usize> {
+        anyhow::Ok(1000)
+    }
+    fn truncate(
+        &self,
+        content: &str,
+        length: usize,
+        direction: crate::models::TruncationDirection,
+    ) -> anyhow::Result<String> {
+        let truncated = match direction {
+            TruncationDirection::End => content.chars().collect::<Vec<char>>()[..length]
+                .iter()
+                .collect::<String>(),
+            TruncationDirection::Start => content.chars().collect::<Vec<char>>()[..length]
+                .iter()
+                .collect::<String>(),
+        };
+
+        anyhow::Ok(truncated)
+    }
+    fn count_tokens(&self, content: &str) -> anyhow::Result<usize> {
+        anyhow::Ok(content.chars().collect::<Vec<char>>().len())
+    }
+}
 
 #[derive(Serialize)]
 pub struct DummyCompletionRequest {
@@ -22,6 +54,9 @@ pub struct DummyEmbeddingProvider {}
 
 #[async_trait]
 impl EmbeddingProvider for DummyEmbeddingProvider {
+    fn base_model(&self) -> Box<dyn LanguageModel> {
+        Box::new(DummyLanguageModel {})
+    }
     fn is_authenticated(&self) -> bool {
         true
     }

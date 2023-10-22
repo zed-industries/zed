@@ -4,8 +4,11 @@ use crate::{
     semantic_index_settings::SemanticIndexSettings,
     FileToEmbed, JobHandle, SearchResult, SemanticIndex, EMBEDDING_QUEUE_FLUSH_TIMEOUT,
 };
-use ai::embedding::{Embedding, EmbeddingProvider};
-use ai::providers::dummy::DummyEmbeddingProvider;
+use ai::providers::dummy::{DummyEmbeddingProvider, DummyLanguageModel};
+use ai::{
+    embedding::{Embedding, EmbeddingProvider},
+    models::LanguageModel,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{executor::Deterministic, Task, TestAppContext};
@@ -1282,6 +1285,9 @@ impl FakeEmbeddingProvider {
 
 #[async_trait]
 impl EmbeddingProvider for FakeEmbeddingProvider {
+    fn base_model(&self) -> Box<dyn LanguageModel> {
+        Box::new(DummyLanguageModel {})
+    }
     fn is_authenticated(&self) -> bool {
         true
     }

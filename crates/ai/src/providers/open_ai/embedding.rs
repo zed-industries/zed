@@ -19,6 +19,8 @@ use tiktoken_rs::{cl100k_base, CoreBPE};
 use util::http::{HttpClient, Request};
 
 use crate::embedding::{Embedding, EmbeddingProvider};
+use crate::models::LanguageModel;
+use crate::providers::open_ai::OpenAILanguageModel;
 
 lazy_static! {
     static ref OPENAI_API_KEY: Option<String> = env::var("OPENAI_API_KEY").ok();
@@ -27,6 +29,7 @@ lazy_static! {
 
 #[derive(Clone)]
 pub struct OpenAIEmbeddingProvider {
+    model: OpenAILanguageModel,
     pub client: Arc<dyn HttpClient>,
     pub executor: Arc<Background>,
     rate_limit_count_rx: watch::Receiver<Option<Instant>>,
@@ -65,7 +68,10 @@ impl OpenAIEmbeddingProvider {
         let (rate_limit_count_tx, rate_limit_count_rx) = watch::channel_with(None);
         let rate_limit_count_tx = Arc::new(Mutex::new(rate_limit_count_tx));
 
+        let model = OpenAILanguageModel::load("text-embedding-ada-002");
+
         OpenAIEmbeddingProvider {
+            model,
             client,
             executor,
             rate_limit_count_rx,
@@ -131,6 +137,10 @@ impl OpenAIEmbeddingProvider {
 
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbeddingProvider {
+    fn base_model(&self) -> Box<dyn LanguageModel> {
+        let model: Box<dyn LanguageModel> = Box::new(self.model.clone());
+        model
+    }
     fn is_authenticated(&self) -> bool {
         OPENAI_API_KEY.as_ref().is_some()
     }

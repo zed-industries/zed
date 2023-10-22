@@ -5,6 +5,8 @@ use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::ToSql;
 use std::time::Instant;
 
+use crate::models::LanguageModel;
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Embedding(pub Vec<f32>);
 
@@ -66,6 +68,7 @@ impl Embedding {
 
 #[async_trait]
 pub trait EmbeddingProvider: Sync + Send {
+    fn base_model(&self) -> Box<dyn LanguageModel>;
     fn is_authenticated(&self) -> bool;
     async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>>;
     fn max_tokens_per_batch(&self) -> usize;
