@@ -23,6 +23,10 @@ impl LanguageModel for DummyLanguageModel {
         length: usize,
         direction: crate::models::TruncationDirection,
     ) -> anyhow::Result<String> {
+        if content.len() < length {
+            return anyhow::Ok(content.to_string());
+        }
+
         let truncated = match direction {
             TruncationDirection::End => content.chars().collect::<Vec<char>>()[..length]
                 .iter()
@@ -72,12 +76,5 @@ impl EmbeddingProvider for DummyEmbeddingProvider {
 
     fn max_tokens_per_batch(&self) -> usize {
         8190
-    }
-
-    fn truncate(&self, span: &str) -> (String, usize) {
-        let truncated = span.chars().collect::<Vec<char>>()[..8190]
-            .iter()
-            .collect::<String>();
-        (truncated, 8190)
     }
 }

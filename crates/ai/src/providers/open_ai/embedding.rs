@@ -61,8 +61,6 @@ struct OpenAIEmbeddingUsage {
     total_tokens: usize,
 }
 
-const OPENAI_INPUT_LIMIT: usize = 8190;
-
 impl OpenAIEmbeddingProvider {
     pub fn new(client: Arc<dyn HttpClient>, executor: Arc<Background>) -> Self {
         let (rate_limit_count_tx, rate_limit_count_rx) = watch::channel_with(None);
@@ -151,20 +149,20 @@ impl EmbeddingProvider for OpenAIEmbeddingProvider {
     fn rate_limit_expiration(&self) -> Option<Instant> {
         *self.rate_limit_count_rx.borrow()
     }
-    fn truncate(&self, span: &str) -> (String, usize) {
-        let mut tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span);
-        let output = if tokens.len() > OPENAI_INPUT_LIMIT {
-            tokens.truncate(OPENAI_INPUT_LIMIT);
-            OPENAI_BPE_TOKENIZER
-                .decode(tokens.clone())
-                .ok()
-                .unwrap_or_else(|| span.to_string())
-        } else {
-            span.to_string()
-        };
+    // fn truncate(&self, span: &str) -> (String, usize) {
+    //     let mut tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span);
+    //     let output = if tokens.len() > OPENAI_INPUT_LIMIT {
+    //         tokens.truncate(OPENAI_INPUT_LIMIT);
+    //         OPENAI_BPE_TOKENIZER
+    //             .decode(tokens.clone())
+    //             .ok()
+    //             .unwrap_or_else(|| span.to_string())
+    //     } else {
+    //         span.to_string()
+    //     };
 
-        (output, tokens.len())
-    }
+    //     (output, tokens.len())
+    // }
 
     async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
         const BACKOFF_SECONDS: [usize; 4] = [3, 5, 15, 45];

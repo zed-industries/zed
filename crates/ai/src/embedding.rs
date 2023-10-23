@@ -72,7 +72,6 @@ pub trait EmbeddingProvider: Sync + Send {
     fn is_authenticated(&self) -> bool;
     async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>>;
     fn max_tokens_per_batch(&self) -> usize;
-    fn truncate(&self, span: &str) -> (String, usize);
     fn rate_limit_expiration(&self) -> Option<Instant>;
 }
 

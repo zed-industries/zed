@@ -1291,12 +1291,8 @@ impl EmbeddingProvider for FakeEmbeddingProvider {
     fn is_authenticated(&self) -> bool {
         true
     }
-    fn truncate(&self, span: &str) -> (String, usize) {
-        (span.to_string(), 1)
-    }
-
     fn max_tokens_per_batch(&self) -> usize {
-        200
+        1000
     }
 
     fn rate_limit_expiration(&self) -> Option<Instant> {
@@ -1306,7 +1302,8 @@ impl EmbeddingProvider for FakeEmbeddingProvider {
     async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
         self.embedding_count
             .fetch_add(spans.len(), atomic::Ordering::SeqCst);
-        Ok(spans.iter().map(|span| self.embed_sync(span)).collect())
+
+        anyhow::Ok(spans.iter().map(|span| self.embed_sync(span)).collect())
     }
 }
 
