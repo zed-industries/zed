@@ -16,6 +16,8 @@ use std::{
     sync::Arc,
 };
 
+const DRAG_THRESHOLD: f64 = 2.;
+
 pub trait StatelessInteractive: Element {
     fn stateless_interactivity(&mut self) -> &mut StatelessInteraction<Self::ViewState>;
 
@@ -531,6 +533,7 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
                 if let Some(mouse_down) = mouse_down {
                     if let Some(drag_listener) = drag_listener {
                         let active_state = element_state.active_state.clone();
+
                         cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
                             if cx.active_drag.is_some() {
                                 if phase == DispatchPhase::Capture {
@@ -538,6 +541,8 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
                                 }
                             } else if phase == DispatchPhase::Bubble
                                 && bounds.contains_point(&event.position)
+                                && (event.position - mouse_down.position).magnitude()
+                                    > DRAG_THRESHOLD
                             {
                                 let cursor_offset = event.position - bounds.origin;
                                 let any_drag = drag_listener(view_state, cursor_offset, cx);

@@ -7,9 +7,7 @@ use std::{
     ops::{Add, Div, Mul, MulAssign, Sub},
 };
 
-#[derive(
-    Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash,
-)]
+#[derive(Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash)]
 #[refineable(debug)]
 #[repr(C)]
 pub struct Point<T: Default + Clone + Debug> {
@@ -40,6 +38,10 @@ impl Point<Pixels> {
             x: self.x.scale(factor),
             y: self.y.scale(factor),
         }
+    }
+
+    pub fn magnitude(&self) -> f64 {
+        ((self.x.0.powi(2) + self.y.0.powi(2)) as f64).sqrt()
     }
 }
 
