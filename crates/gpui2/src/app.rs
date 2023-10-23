@@ -9,11 +9,11 @@ use refineable::Refineable;
 use smallvec::SmallVec;
 
 use crate::{
-    current_platform, image_cache::ImageCache, Action, AppMetadata, AssetSource, ClipboardItem,
-    Context, DispatchPhase, DisplayId, Executor, FocusEvent, FocusHandle, FocusId, KeyBinding,
-    Keymap, LayoutId, MainThread, MainThreadOnly, Platform, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window,
-    WindowContext, WindowHandle, WindowId,
+    current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AppMetadata, AssetSource,
+    ClipboardItem, Context, DispatchPhase, DisplayId, Executor, FocusEvent, FocusHandle, FocusId,
+    KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly, Pixels, Platform, Point,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
+    TextSystem, View, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -93,6 +93,7 @@ impl App {
                 quit_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
+                active_drag: None,
             })
         }))
     }
@@ -171,6 +172,7 @@ pub struct AppContext {
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
     pending_updates: usize,
+    pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
     pub(crate) executor: Executor,
     pub(crate) svg_renderer: SvgRenderer,
@@ -764,6 +766,13 @@ pub(crate) enum Effect {
     NotifyGlobalObservers {
         global_type: TypeId,
     },
+}
+
+pub(crate) struct AnyDrag {
+    pub drag_handle_view: AnyView,
+    pub cursor_offset: Point<Pixels>,
+    pub state: AnyBox,
+    pub state_type: TypeId,
 }
 
 #[cfg(test)]

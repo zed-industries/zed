@@ -24,7 +24,6 @@ pub struct Pane<S: 'static + Send + Sync> {
 impl<S: 'static + Send + Sync> Pane<S> {
     pub fn new(id: impl Into<ElementId>, size: Size<Length>) -> Self {
         // Fill is only here for debugging purposes, remove before release
-        let system_color = SystemColor::new();
 
         Self {
             id: id.into(),

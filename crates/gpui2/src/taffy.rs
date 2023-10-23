@@ -125,11 +125,11 @@ impl TaffyLayoutEngine {
         // }
         // println!("");
 
-        let started_at = std::time::Instant::now();
+        // let started_at = std::time::Instant::now();
         self.taffy
             .compute_layout(id.into(), available_space.into())
             .expect(EXPECT_MESSAGE);
-        println!("compute_layout took {:?}", started_at.elapsed());
+        // println!("compute_layout took {:?}", started_at.elapsed());
     }
 
     pub fn layout_bounds(&mut self, id: LayoutId) -> Bounds<Pixels> {

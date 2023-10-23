@@ -159,13 +159,12 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
     }
 
     fn render_row(row: BufferRow, cx: &WindowContext) -> impl Element<ViewState = S> {
-        let system_color = SystemColor::new();
         let color = ThemeColor::new(cx);
 
         let line_background = if row.current {
             color.editor_active_line
         } else {
-            system_color.transparent
+            color.transparent
         };
 
         let line_number_color = if row.current {

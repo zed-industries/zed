@@ -94,8 +94,6 @@ impl<S: 'static + Send + Sync> ListHeader<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
-        let system_color = SystemColor::new();
-        let color = ThemeColor::new(cx);
 
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = self.toggleable.is_toggled();
@@ -373,7 +371,6 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
-        let system_color = SystemColor::new();
         let color = ThemeColor::new(cx);
         let settings = user_settings(cx);
 

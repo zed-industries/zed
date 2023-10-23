@@ -18,7 +18,7 @@ impl<S: 'static + Send + Sync> PlayerStack<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let system_color = SystemColor::new();
+        let color = ThemeColor::new(cx);
         let player = self.player_with_call_status.get_player();
         self.player_with_call_status.get_call_status();
 
@@ -54,7 +54,7 @@ impl<S: 'static + Send + Sync> PlayerStack<S> {
                     .pl_1()
                     .rounded_lg()
                     .bg(if followers.is_none() {
-                        system_color.transparent
+                        color.transparent
                     } else {
                         player.selection_color(cx)
                     })

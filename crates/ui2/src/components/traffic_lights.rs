@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::SystemColor;
 
 #[derive(Clone, Copy)]
 enum TrafficLightColor {
@@ -28,12 +27,11 @@ impl<S: 'static + Send + Sync> TrafficLight<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
-        let system_color = SystemColor::new();
 
         let fill = match (self.window_has_focus, self.color) {
-            (true, TrafficLightColor::Red) => system_color.mac_os_traffic_light_red,
-            (true, TrafficLightColor::Yellow) => system_color.mac_os_traffic_light_yellow,
-            (true, TrafficLightColor::Green) => system_color.mac_os_traffic_light_green,
+            (true, TrafficLightColor::Red) => color.mac_os_traffic_light_red,
+            (true, TrafficLightColor::Yellow) => color.mac_os_traffic_light_yellow,
+            (true, TrafficLightColor::Green) => color.mac_os_traffic_light_green,
             (false, _) => color.filled_element,
         };
 
