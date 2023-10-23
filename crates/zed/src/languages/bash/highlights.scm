@@ -3,6 +3,7 @@
   (raw_string)
   (heredoc_body)
   (heredoc_start)
+  (ansi_c_string)
 ] @string
 
 (command_name) @function
