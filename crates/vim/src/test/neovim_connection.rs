@@ -110,7 +110,12 @@ impl NeovimConnection {
     // Sends a keystroke to the neovim process.
     #[cfg(feature = "neovim")]
     pub async fn send_keystroke(&mut self, keystroke_text: &str) {
-        let keystroke = Keystroke::parse(keystroke_text).unwrap();
+        let mut keystroke = Keystroke::parse(keystroke_text).unwrap();
+
+        if keystroke.key == "<" {
+            keystroke.key = "lt".to_string()
+        }
+
         let special = keystroke.shift
             || keystroke.ctrl
             || keystroke.alt

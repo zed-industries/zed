@@ -34,8 +34,6 @@ pub enum ExemptionFeatures {
     AroundSentenceStartingBetweenIncludesWrongWhitespace,
     // Non empty selection with text objects in visual mode
     NonEmptyVisualTextObjects,
-    // Neovim freezes up for some reason with angle brackets
-    AngleBracketsFreezeNeovim,
     // Sentence Doesn't backtrack when its at the end of the file
     SentenceAfterPunctuationAtEndOfFile,
 }

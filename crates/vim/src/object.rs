@@ -816,10 +816,6 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for (start, end) in SURROUNDING_OBJECTS {
-            if start == &'<' && !ExemptionFeatures::AngleBracketsFreezeNeovim.supported() {
-                continue;
-            }
-
             let marked_string = SURROUNDING_MARKER_STRING
                 .replace('`', &start.to_string())
                 .replace('\'', &end.to_string());
@@ -999,9 +995,6 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for (start, end) in SURROUNDING_OBJECTS {
-            if start == &'<' && !ExemptionFeatures::AngleBracketsFreezeNeovim.supported() {
-                continue;
-            }
             let marked_string = SURROUNDING_MARKER_STRING
                 .replace('`', &start.to_string())
                 .replace('\'', &end.to_string());
