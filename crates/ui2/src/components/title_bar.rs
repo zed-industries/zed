@@ -89,7 +89,6 @@ impl TitleBar {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let color = ThemeColor::new(cx);
-        let color = ThemeColor::new(cx);
         let settings = user_settings(cx);
 
         // let has_focus = cx.window_is_active();

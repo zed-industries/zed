@@ -36,7 +36,6 @@ impl<S: 'static + Send + Sync> Breadcrumb<S> {
         cx: &mut ViewContext<S>,
     ) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
-        let color = ThemeColor::new(cx);
 
         let symbols_len = self.symbols.len();
 
