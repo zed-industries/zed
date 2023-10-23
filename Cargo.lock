@@ -3130,6 +3130,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fuzzy2"
+version = "0.1.0"
+dependencies = [
+ "gpui2",
+ "util",
+]
+
+[[package]]
 name = "fxhash"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4174,14 +4182,14 @@ dependencies = [
  "env_logger 0.9.3",
  "fs",
  "futures 0.3.28",
- "fuzzy",
+ "fuzzy2",
  "git",
  "globset",
  "gpui2",
  "indoc",
  "lazy_static",
  "log",
- "lsp",
+ "lsp2",
  "parking_lot 0.11.2",
  "postage",
  "rand 0.8.5",
@@ -4198,6 +4206,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "text",
+ "theme2",
  "tree-sitter",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
@@ -4490,6 +4499,29 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "url",
+]
+
+[[package]]
+name = "lsp2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-pipe",
+ "collections",
+ "ctor",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "gpui2",
+ "log",
+ "lsp-types",
+ "parking_lot 0.11.2",
+ "postage",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "smol",
+ "unindent",
+ "util",
 ]
 
 [[package]]
@@ -8339,6 +8371,23 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
+ "toml 0.5.11",
+ "util",
+]
+
+[[package]]
+name = "theme2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fs",
+ "gpui2",
+ "indexmap 1.9.3",
+ "parking_lot 0.11.2",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
  "toml 0.5.11",
  "util",
 ]

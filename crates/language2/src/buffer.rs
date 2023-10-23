@@ -17,7 +17,7 @@ use anyhow::{anyhow, Result};
 pub use clock::ReplicaId;
 use futures::FutureExt as _;
 use gpui2::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task};
-use lsp::LanguageServerId;
+use lsp2::LanguageServerId;
 use parking_lot::Mutex;
 use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
@@ -40,6 +40,7 @@ use std::{
 use sum_tree::TreeMap;
 use text::operation_queue::OperationQueue;
 pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, *};
+use theme2::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 use util::{RangeExt, TryFutureExt as _};
@@ -47,7 +48,7 @@ use util::{RangeExt, TryFutureExt as _};
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
 
-pub use lsp::DiagnosticSeverity;
+pub use lsp2::DiagnosticSeverity;
 
 pub struct Buffer {
     text: TextBuffer,
@@ -148,14 +149,14 @@ pub struct Completion {
     pub new_text: String,
     pub label: CodeLabel,
     pub server_id: LanguageServerId,
-    pub lsp_completion: lsp::CompletionItem,
+    pub lsp_completion: lsp2::CompletionItem,
 }
 
 #[derive(Clone, Debug)]
 pub struct CodeAction {
     pub server_id: LanguageServerId,
     pub range: Range<Anchor>,
-    pub lsp_action: lsp::CodeAction,
+    pub lsp_action: lsp2::CodeAction,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3000,14 +3001,14 @@ impl IndentSize {
 impl Completion {
     pub fn sort_key(&self) -> (usize, &str) {
         let kind_key = match self.lsp_completion.kind {
-            Some(lsp::CompletionItemKind::VARIABLE) => 0,
+            Some(lsp2::CompletionItemKind::VARIABLE) => 0,
             _ => 1,
         };
         (kind_key, &self.label.text[self.label.filter_range.clone()])
     }
 
     pub fn is_snippet(&self) -> bool {
-        self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
+        self.lsp_completion.insert_text_format == Some(lsp2::InsertTextFormat::SNIPPET)
     }
 }
 

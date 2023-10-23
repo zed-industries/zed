@@ -1,6 +1,6 @@
 use crate::Diagnostic;
 use collections::HashMap;
-use lsp::LanguageServerId;
+use lsp2::LanguageServerId;
 use std::{
     cmp::{Ordering, Reverse},
     iter,
@@ -37,14 +37,14 @@ pub struct Summary {
 
 impl<T> DiagnosticEntry<T> {
     // Used to provide diagnostic context to lsp codeAction request
-    pub fn to_lsp_diagnostic_stub(&self) -> lsp::Diagnostic {
+    pub fn to_lsp_diagnostic_stub(&self) -> lsp2::Diagnostic {
         let code = self
             .diagnostic
             .code
             .clone()
-            .map(lsp::NumberOrString::String);
+            .map(lsp2::NumberOrString::String);
 
-        lsp::Diagnostic {
+        lsp2::Diagnostic {
             code,
             severity: Some(self.diagnostic.severity),
             ..Default::default()

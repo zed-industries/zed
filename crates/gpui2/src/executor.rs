@@ -202,6 +202,20 @@ impl Executor {
         Task::Spawned(task)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn start_waiting(&self) {
+        todo!("start_waiting")
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn simulate_random_delay(&self) {
+        todo!("simulate_random_delay")
+    }
+
+    pub fn num_cpus(&self) -> usize {
+        num_cpus::get()
+    }
+
     pub fn is_main_thread(&self) -> bool {
         self.dispatcher.is_main_thread()
     }
