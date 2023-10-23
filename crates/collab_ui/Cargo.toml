@@ -75,4 +75,5 @@ settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 
+pretty_assertions.workspace = true
 tree-sitter-markdown.workspace = true

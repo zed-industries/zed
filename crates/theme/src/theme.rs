@@ -639,14 +639,25 @@ pub struct ChatPanel {
     pub input_editor: FieldEditor,
     pub avatar: AvatarStyle,
     pub avatar_container: ContainerStyle,
-    pub message: ChatMessage,
-    pub mention_highlight: HighlightStyle,
-    pub self_mention_background: Color,
-    pub continuation_message: ChatMessage,
+    pub rich_text: RichTextStyle,
+    pub message_sender: ContainedText,
+    pub message_timestamp: ContainedText,
+    pub message: Interactive<ContainerStyle>,
+    pub continuation_message: Interactive<ContainerStyle>,
+    pub pending_message: Interactive<ContainerStyle>,
     pub last_message_bottom_spacing: f32,
-    pub pending_message: ChatMessage,
     pub sign_in_prompt: Interactive<TextStyle>,
     pub icon_button: Interactive<IconButton>,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct RichTextStyle {
+    pub text: TextStyle,
+    pub mention_highlight: HighlightStyle,
+    pub mention_background: Option<Color>,
+    pub self_mention_highlight: HighlightStyle,
+    pub self_mention_background: Option<Color>,
+    pub code_background: Option<Color>,
 }
 
 #[derive(Deserialize, Default, JsonSchema)]
@@ -665,15 +676,6 @@ pub struct NotificationPanel {
     pub read_text: ContainedText,
     pub timestamp: ContainedText,
     pub button: Interactive<ContainedText>,
-}
-
-#[derive(Deserialize, Default, JsonSchema)]
-pub struct ChatMessage {
-    #[serde(flatten)]
-    pub container: Interactive<ContainerStyle>,
-    pub body: TextStyle,
-    pub sender: ContainedText,
-    pub timestamp: ContainedText,
 }
 
 #[derive(Deserialize, Default, JsonSchema)]

@@ -1566,6 +1566,7 @@ dependencies = [
  "notifications",
  "picker",
  "postage",
+ "pretty_assertions",
  "project",
  "recent_projects",
  "rich_text",

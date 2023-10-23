@@ -179,7 +179,7 @@ impl MessageEditor {
                 editor.clear_highlights::<Self>(cx);
                 editor.highlight_text::<Self>(
                     anchor_ranges,
-                    theme::current(cx).chat_panel.mention_highlight,
+                    theme::current(cx).chat_panel.rich_text.mention_highlight,
                     cx,
                 )
             });

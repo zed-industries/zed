@@ -3,19 +3,33 @@ use std::{ops::Range, sync::Arc};
 use anyhow::bail;
 use futures::FutureExt;
 use gpui::{
-    color::Color,
     elements::Text,
-    fonts::{HighlightStyle, TextStyle, Underline, Weight},
+    fonts::{HighlightStyle, Underline, Weight},
     platform::{CursorStyle, MouseButton},
     AnyElement, CursorRegion, Element, MouseRegion, ViewContext,
 };
 use language::{HighlightId, Language, LanguageRegistry};
-use theme::SyntaxTheme;
+use theme::{RichTextStyle, SyntaxTheme};
+use util::RangeExt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Highlight {
     Id(HighlightId),
     Highlight(HighlightStyle),
+    Mention,
+    SelfMention,
+}
+
+impl From<HighlightStyle> for Highlight {
+    fn from(style: HighlightStyle) -> Self {
+        Self::Highlight(style)
+    }
+}
+
+impl From<HighlightId> for Highlight {
+    fn from(style: HighlightId) -> Self {
+        Self::Id(style)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -26,25 +40,32 @@ pub struct RichText {
     pub regions: Vec<RenderedRegion>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum BackgroundKind {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackgroundKind {
     Code,
+    /// A mention background for non-self user.
     Mention,
+    SelfMention,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedRegion {
-    background_kind: Option<BackgroundKind>,
-    link_url: Option<String>,
+    pub background_kind: Option<BackgroundKind>,
+    pub link_url: Option<String>,
+}
+
+/// Allows one to specify extra links to the rendered markdown, which can be used
+/// for e.g. mentions.
+pub struct Mention {
+    pub range: Range<usize>,
+    pub is_self_mention: bool,
 }
 
 impl RichText {
     pub fn element<V: 'static>(
         &self,
         syntax: Arc<SyntaxTheme>,
-        style: TextStyle,
-        code_span_background_color: Color,
-        self_mention_span_background_color: Color,
+        style: RichTextStyle,
         cx: &mut ViewContext<V>,
     ) -> AnyElement<V> {
         let mut region_id = 0;
@@ -53,7 +74,7 @@ impl RichText {
         let regions = self.regions.clone();
 
         enum Markdown {}
-        Text::new(self.text.clone(), style.clone())
+        Text::new(self.text.clone(), style.text.clone())
             .with_highlights(
                 self.highlights
                     .iter()
@@ -61,6 +82,8 @@ impl RichText {
                         let style = match highlight {
                             Highlight::Id(id) => id.style(&syntax)?,
                             Highlight::Highlight(style) => style.clone(),
+                            Highlight::Mention => style.mention_highlight,
+                            Highlight::SelfMention => style.self_mention_highlight,
                         };
                         Some((range.clone(), style))
                     })
@@ -83,21 +106,24 @@ impl RichText {
                 }
                 if let Some(region_kind) = &region.background_kind {
                     let background = match region_kind {
-                        BackgroundKind::Code => code_span_background_color,
-                        BackgroundKind::Mention => self_mention_span_background_color,
+                        BackgroundKind::Code => style.code_background,
+                        BackgroundKind::Mention => style.mention_background,
+                        BackgroundKind::SelfMention => style.self_mention_background,
+                    };
+                    if background.is_some() {
+                        cx.scene().push_quad(gpui::Quad {
+                            bounds,
+                            background,
+                            border: Default::default(),
+                            corner_radii: (2.0).into(),
+                        });
                     }
-                    .into();
-                    cx.scene().push_quad(gpui::Quad {
-                        bounds,
-                        background,
-                        border: Default::default(),
-                        corner_radii: (2.0).into(),
-                    });
                 }
             })
             .with_soft_wrap(true)
             .into_any()
     }
+
     pub fn add_mention(
         &mut self,
         range: Range<usize>,
@@ -126,6 +152,7 @@ impl RichText {
 
 pub fn render_markdown_mut(
     block: &str,
+    mut mentions: &[Mention],
     language_registry: &Arc<LanguageRegistry>,
     language: Option<&Arc<Language>>,
     data: &mut RichText,
@@ -138,19 +165,40 @@ pub fn render_markdown_mut(
     let mut current_language = None;
     let mut list_stack = Vec::new();
 
-    // Smart Punctuation is disabled as that messes with offsets within the message.
-    let mut options = Options::all();
-    options.remove(Options::ENABLE_SMART_PUNCTUATION);
-
-    for event in Parser::new_ext(&block, options) {
+    let options = Options::all();
+    for (event, source_range) in Parser::new_ext(&block, options).into_offset_iter() {
         let prev_len = data.text.len();
         match event {
             Event::Text(t) => {
                 if let Some(language) = &current_language {
                     render_code(&mut data.text, &mut data.highlights, t.as_ref(), language);
                 } else {
-                    data.text.push_str(t.as_ref());
+                    if let Some(mention) = mentions.first() {
+                        if source_range.contains_inclusive(&mention.range) {
+                            mentions = &mentions[1..];
+                            let range = (prev_len + mention.range.start - source_range.start)
+                                ..(prev_len + mention.range.end - source_range.start);
+                            data.highlights.push((
+                                range.clone(),
+                                if mention.is_self_mention {
+                                    Highlight::SelfMention
+                                } else {
+                                    Highlight::Mention
+                                },
+                            ));
+                            data.region_ranges.push(range);
+                            data.regions.push(RenderedRegion {
+                                background_kind: Some(if mention.is_self_mention {
+                                    BackgroundKind::SelfMention
+                                } else {
+                                    BackgroundKind::Mention
+                                }),
+                                link_url: None,
+                            });
+                        }
+                    }
 
+                    data.text.push_str(t.as_ref());
                     let mut style = HighlightStyle::default();
                     if bold_depth > 0 {
                         style.weight = Some(Weight::BOLD);
@@ -269,6 +317,7 @@ pub fn render_markdown_mut(
 
 pub fn render_markdown(
     block: String,
+    mentions: &[Mention],
     language_registry: &Arc<LanguageRegistry>,
     language: Option<&Arc<Language>>,
 ) -> RichText {
@@ -279,7 +328,7 @@ pub fn render_markdown(
         regions: Default::default(),
     };
 
-    render_markdown_mut(&block, language_registry, language, &mut data);
+    render_markdown_mut(&block, mentions, language_registry, language, &mut data);
 
     data.text = data.text.trim().to_string();
 

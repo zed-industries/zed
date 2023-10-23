@@ -382,20 +382,7 @@ impl ChatPanel {
         let is_pending = message.is_pending();
         let theme = theme::current(cx);
         let text = self.markdown_data.entry(message.id).or_insert_with(|| {
-            let mut markdown =
-                rich_text::render_markdown(message.body.clone(), &self.languages, None);
-            let self_client_id = self.client.id();
-            for (mention_range, user_id) in message.mentions {
-                let is_current_user = self_client_id == user_id;
-                markdown
-                    .add_mention(
-                        mention_range,
-                        is_current_user,
-                        theme.chat_panel.mention_highlight.clone(),
-                    )
-                    .log_err();
-            }
-            markdown
+            Self::render_markdown_with_mentions(&self.languages, self.client.id(), &message)
         });
 
         let now = OffsetDateTime::now_utc();
@@ -419,15 +406,13 @@ impl ChatPanel {
 
         enum MessageBackgroundHighlight {}
         MouseEventHandler::new::<MessageBackgroundHighlight, _>(ix, cx, |state, cx| {
-            let container = style.container.style_for(state);
+            let container = style.style_for(state);
             if is_continuation {
                 Flex::row()
                     .with_child(
                         text.element(
                             theme.editor.syntax.clone(),
-                            style.body.clone(),
-                            theme.editor.document_highlight_read_background,
-                            theme.chat_panel.self_mention_background,
+                            theme.chat_panel.rich_text.clone(),
                             cx,
                         )
                         .flex(1., true),
@@ -455,10 +440,10 @@ impl ChatPanel {
                                     .with_child(
                                         Label::new(
                                             message.sender.github_login.clone(),
-                                            style.sender.text.clone(),
+                                            theme.chat_panel.message_sender.text.clone(),
                                         )
                                         .contained()
-                                        .with_style(style.sender.container),
+                                        .with_style(theme.chat_panel.message_sender.container),
                                     )
                                     .with_child(
                                         Label::new(
@@ -467,10 +452,10 @@ impl ChatPanel {
                                                 now,
                                                 self.local_timezone,
                                             ),
-                                            style.timestamp.text.clone(),
+                                            theme.chat_panel.message_timestamp.text.clone(),
                                         )
                                         .contained()
-                                        .with_style(style.timestamp.container),
+                                        .with_style(theme.chat_panel.message_timestamp.container),
                                     )
                                     .align_children_center()
                                     .flex(1., true),
@@ -483,9 +468,7 @@ impl ChatPanel {
                             .with_child(
                                 text.element(
                                     theme.editor.syntax.clone(),
-                                    style.body.clone(),
-                                    theme.editor.document_highlight_read_background,
-                                    theme.chat_panel.self_mention_background,
+                                    theme.chat_panel.rich_text.clone(),
                                     cx,
                                 )
                                 .flex(1., true),
@@ -504,6 +487,23 @@ impl ChatPanel {
             }
         })
         .into_any()
+    }
+
+    fn render_markdown_with_mentions(
+        language_registry: &Arc<LanguageRegistry>,
+        current_user_id: u64,
+        message: &channel::ChannelMessage,
+    ) -> RichText {
+        let mentions = message
+            .mentions
+            .iter()
+            .map(|(range, user_id)| rich_text::Mention {
+                range: range.clone(),
+                is_self_mention: *user_id == current_user_id,
+            })
+            .collect::<Vec<_>>();
+
+        rich_text::render_markdown(message.body.clone(), &mentions, language_registry, None)
     }
 
     fn render_input_box(&self, theme: &Arc<Theme>, cx: &AppContext) -> AnyElement<Self> {
@@ -878,4 +878,73 @@ fn render_icon_button<V: View>(style: &IconButton, svg_path: &'static str) -> im
         .with_height(style.button_width)
         .contained()
         .with_style(style.container)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::fonts::HighlightStyle;
+    use pretty_assertions::assert_eq;
+    use rich_text::{BackgroundKind, Highlight, RenderedRegion};
+    use util::test::marked_text_ranges;
+
+    #[gpui::test]
+    fn test_render_markdown_with_mentions() {
+        let language_registry = Arc::new(LanguageRegistry::test());
+        let (body, ranges) = marked_text_ranges("*hi*, «@abc», let's **call** «@fgh»", false);
+        let message = channel::ChannelMessage {
+            id: ChannelMessageId::Saved(0),
+            body,
+            timestamp: OffsetDateTime::now_utc(),
+            sender: Arc::new(client::User {
+                github_login: "fgh".into(),
+                avatar: None,
+                id: 103,
+            }),
+            nonce: 5,
+            mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
+        };
+
+        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+
+        // Note that the "'" was replaced with ’ due to smart punctuation.
+        let (body, ranges) = marked_text_ranges("«hi», «@abc», let’s «call» «@fgh»", false);
+        assert_eq!(message.text, body);
+        assert_eq!(
+            message.highlights,
+            vec![
+                (
+                    ranges[0].clone(),
+                    HighlightStyle {
+                        italic: Some(true),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+                (ranges[1].clone(), Highlight::Mention),
+                (
+                    ranges[2].clone(),
+                    HighlightStyle {
+                        weight: Some(gpui::fonts::Weight::BOLD),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+                (ranges[3].clone(), Highlight::SelfMention)
+            ]
+        );
+        assert_eq!(
+            message.regions,
+            vec![
+                RenderedRegion {
+                    background_kind: Some(BackgroundKind::Mention),
+                    link_url: None
+                },
+                RenderedRegion {
+                    background_kind: Some(BackgroundKind::SelfMention),
+                    link_url: None
+                },
+            ]
+        );
+    }
 }
