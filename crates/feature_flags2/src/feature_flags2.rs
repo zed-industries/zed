@@ -51,13 +51,13 @@ pub trait FeatureFlagAppExt {
 
 impl FeatureFlagAppExt for AppContext {
     fn update_flags(&mut self, staff: bool, flags: Vec<String>) {
-        let feature_flags = self.default_global::<FeatureFlags>();
+        let feature_flags = self.default_global_mut::<FeatureFlags>();
         feature_flags.staff = staff;
         feature_flags.flags = flags;
     }
 
     fn set_staff(&mut self, staff: bool) {
-        let feature_flags = self.default_global::<FeatureFlags>();
+        let feature_flags = self.default_global_mut::<FeatureFlags>();
         feature_flags.staff = staff;
     }
 

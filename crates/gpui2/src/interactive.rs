@@ -603,7 +603,7 @@ pub struct GroupBounds(HashMap<SharedString, SmallVec<[Bounds<Pixels>; 1]>>);
 
 impl GroupBounds {
     pub fn get(name: &SharedString, cx: &mut AppContext) -> Option<Bounds<Pixels>> {
-        cx.default_global::<Self>()
+        cx.default_global_mut::<Self>()
             .0
             .get(name)
             .and_then(|bounds_stack| bounds_stack.last())
@@ -611,7 +611,7 @@ impl GroupBounds {
     }
 
     pub fn push(name: SharedString, bounds: Bounds<Pixels>, cx: &mut AppContext) {
-        cx.default_global::<Self>()
+        cx.default_global_mut::<Self>()
             .0
             .entry(name)
             .or_default()
@@ -619,7 +619,7 @@ impl GroupBounds {
     }
 
     pub fn pop(name: &SharedString, cx: &mut AppContext) {
-        cx.default_global::<GroupBounds>()
+        cx.default_global_mut::<Self>()
             .0
             .get_mut(name)
             .unwrap()

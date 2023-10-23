@@ -4,7 +4,7 @@ mod components;
 mod element_ext;
 mod elements;
 pub mod prelude;
-mod settings;
+pub mod settings;
 mod static_data;
 mod theme;
 

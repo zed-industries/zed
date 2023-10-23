@@ -56,6 +56,9 @@ fn main() {
         let selector =
             story_selector.unwrap_or(StorySelector::Component(ComponentStory::Workspace));
 
+        cx.set_global(theme.clone());
+        ui::settings::init(cx);
+
         let window = cx.open_window(
             WindowOptions {
                 bounds: WindowBounds::Fixed(Bounds {

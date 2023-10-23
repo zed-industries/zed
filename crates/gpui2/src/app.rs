@@ -510,14 +510,12 @@ impl AppContext {
             .unwrap()
     }
 
-    pub fn default_global<G: 'static + Default + Sync + Send>(&mut self) -> &mut G {
+    pub fn default_global_mut<G: 'static + Default + Sync + Send>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
-            .insert(global_type, Box::new(G::default()));
-        self.globals_by_type
-            .get_mut(&global_type)
-            .unwrap()
+            .entry(global_type)
+            .or_insert_with(|| Box::new(G::default()))
             .downcast_mut::<G>()
             .unwrap()
     }

@@ -1,8 +1,12 @@
 use std::ops::Deref;
 
-use gpui2::{rems, AbsoluteLength, WindowContext};
+use gpui2::{rems, AbsoluteLength, AppContext, WindowContext};
 
 use crate::prelude::*;
+
+pub fn init(cx: &mut AppContext) {
+    cx.set_global(FakeSettings::default());
+}
 
 /// Returns the user settings.
 pub fn user_settings(cx: &WindowContext) -> FakeSettings {
