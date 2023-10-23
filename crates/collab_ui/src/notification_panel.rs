@@ -460,6 +460,28 @@ impl NotificationPanel {
         }
     }
 
+    fn is_showing_notification(&self, notification: &Notification, cx: &AppContext) -> bool {
+        if let Notification::ChannelMessageMention { channel_id, .. } = &notification {
+            if let Some(workspace) = self.workspace.upgrade(cx) {
+                return workspace
+                    .read_with(cx, |workspace, cx| {
+                        if let Some(panel) = workspace.panel::<ChatPanel>(cx) {
+                            return panel.read_with(cx, |panel, cx| {
+                                panel.is_scrolled_to_bottom()
+                                    && panel.active_chat().map_or(false, |chat| {
+                                        chat.read(cx).channel().id == *channel_id
+                                    })
+                            });
+                        }
+                        false
+                    })
+                    .unwrap_or_default();
+            }
+        }
+
+        false
+    }
+
     fn render_sign_in_prompt(
         &self,
         theme: &Arc<Theme>,
@@ -523,6 +545,10 @@ impl NotificationPanel {
     }
 
     fn add_toast(&mut self, entry: &NotificationEntry, cx: &mut ViewContext<Self>) {
+        if self.is_showing_notification(&entry.notification, cx) {
+            return;
+        }
+
         let Some(NotificationPresenter { actor, text, .. }) = self.present_notification(entry, cx)
         else {
             return;
@@ -540,6 +566,7 @@ impl NotificationPanel {
 
         self.workspace
             .update(cx, |workspace, cx| {
+                workspace.dismiss_notification::<NotificationToast>(0, cx);
                 workspace.show_notification(0, cx, |cx| {
                     let workspace = cx.weak_handle();
                     cx.add_view(|_| NotificationToast {

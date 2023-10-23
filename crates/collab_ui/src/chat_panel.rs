@@ -54,6 +54,7 @@ pub struct ChatPanel {
     pending_serialization: Task<Option<()>>,
     subscriptions: Vec<gpui::Subscription>,
     workspace: WeakViewHandle<Workspace>,
+    is_scrolled_to_bottom: bool,
     has_focus: bool,
     markdown_data: HashMap<ChannelMessageId, RichText>,
 }
@@ -131,13 +132,14 @@ impl ChatPanel {
         });
 
         let mut message_list =
-            ListState::<Self>::new(0, Orientation::Bottom, 1000., move |this, ix, cx| {
+            ListState::<Self>::new(0, Orientation::Bottom, 10., move |this, ix, cx| {
                 this.render_message(ix, cx)
             });
-        message_list.set_scroll_handler(|visible_range, _, this, cx| {
+        message_list.set_scroll_handler(|visible_range, count, this, cx| {
             if visible_range.start < MESSAGE_LOADING_THRESHOLD {
                 this.load_more_messages(&LoadMoreMessages, cx);
             }
+            this.is_scrolled_to_bottom = visible_range.end == count;
         });
 
         cx.add_view(|cx| {
@@ -155,6 +157,7 @@ impl ChatPanel {
                 has_focus: false,
                 subscriptions: Vec::new(),
                 workspace: workspace_handle,
+                is_scrolled_to_bottom: true,
                 active: false,
                 width: None,
                 markdown_data: Default::default(),
@@ -196,6 +199,10 @@ impl ChatPanel {
 
             this
         })
+    }
+
+    pub fn is_scrolled_to_bottom(&self) -> bool {
+        self.is_scrolled_to_bottom
     }
 
     pub fn active_chat(&self) -> Option<ModelHandle<ChannelChat>> {
@@ -310,7 +317,7 @@ impl ChatPanel {
     }
 
     fn acknowledge_last_message(&mut self, cx: &mut ViewContext<'_, '_, ChatPanel>) {
-        if self.active {
+        if self.active && self.is_scrolled_to_bottom {
             if let Some((chat, _)) = &self.active_chat {
                 chat.update(cx, |chat, cx| {
                     chat.acknowledge_last_message(cx);

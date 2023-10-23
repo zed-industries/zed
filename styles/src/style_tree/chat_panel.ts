@@ -2,7 +2,6 @@ import { background, border, foreground, text } from "./components"
 import { icon_button } from "../component/icon_button"
 import { useTheme, with_opacity } from "../theme"
 import { interactive } from "../element"
-import { Color } from "ayu/dist/color"
 
 export default function chat_panel(): any {
     const theme = useTheme()
