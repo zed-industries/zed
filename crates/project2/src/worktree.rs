@@ -310,7 +310,7 @@ impl Worktree {
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot {
-                    id: WorktreeId::from_usize(cx.entity_id()),
+                    id: WorktreeId::from_usize(cx.entity_id().as_u64() as usize),
                     abs_path: abs_path.clone(),
                     root_name: root_name.clone(),
                     root_char_bag: root_name.chars().map(|c| c.to_ascii_lowercase()).collect(),

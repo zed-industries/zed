@@ -16,6 +16,7 @@ use isahc::{prelude::Configurable, Request};
 use language2::LanguageRegistry;
 use log::LevelFilter;
 
+use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use settings2::{default_settings, handle_settings_file_changes, watch_config_file, SettingsStore};

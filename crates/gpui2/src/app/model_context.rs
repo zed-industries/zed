@@ -28,7 +28,13 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         self.entity_id
     }
 
-    pub fn handle(&self) -> WeakHandle<T> {
+    pub fn handle(&self) -> Handle<T> {
+        self.weak_handle()
+            .upgrade()
+            .expect("The entity must be alive if we have a model context")
+    }
+
+    pub fn weak_handle(&self) -> WeakHandle<T> {
         self.app.entities.weak_handle(self.entity_id)
     }
 
@@ -37,7 +43,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         handle: &Handle<E>,
         on_notify: impl Fn(&mut T, Handle<E>, &mut ModelContext<'_, T>) + Send + Sync + 'static,
     ) -> Subscription {
-        let this = self.handle();
+        let this = self.weak_handle();
         let handle = handle.downgrade();
         self.app.observers.insert(
             handle.entity_id,
@@ -60,7 +66,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
             + Sync
             + 'static,
     ) -> Subscription {
-        let this = self.handle();
+        let this = self.weak_handle();
         let handle = handle.downgrade();
         self.app.event_listeners.insert(
             handle.entity_id,
@@ -94,7 +100,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         handle: &Handle<E>,
         on_release: impl Fn(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + Sync + 'static,
     ) -> Subscription {
-        let this = self.handle();
+        let this = self.weak_handle();
         self.app.release_listeners.insert(
             handle.entity_id,
             Box::new(move |entity, cx| {
@@ -110,7 +116,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         &mut self,
         f: impl Fn(&mut T, &mut ModelContext<'_, T>) + Send + Sync + 'static,
     ) -> Subscription {
-        let handle = self.handle();
+        let handle = self.weak_handle();
         self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| handle.update(cx, |view, cx| f(view, cx)).is_ok()),
@@ -124,7 +130,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
     where
         Fut: 'static + Future<Output = ()> + Send,
     {
-        let handle = self.handle();
+        let handle = self.weak_handle();
         self.app.quit_observers.insert(
             (),
             Box::new(move |cx| {
@@ -165,7 +171,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         Fut: Future<Output = R> + Send + 'static,
         R: Send + 'static,
     {
-        let this = self.handle();
+        let this = self.weak_handle();
         self.app.spawn(|cx| f(this, cx))
     }
 }
