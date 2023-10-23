@@ -40,6 +40,7 @@ pub enum Motion {
     NextLineStart,
     StartOfLineDownward,
     EndOfLineDownward,
+    GoToColumn,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -119,6 +120,7 @@ actions!(
         NextLineStart,
         StartOfLineDownward,
         EndOfLineDownward,
+        GoToColumn,
     ]
 );
 impl_actions!(
@@ -215,6 +217,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, &EndOfLineDownward, cx: _| {
         motion(Motion::EndOfLineDownward, cx)
     });
+    cx.add_action(|_: &mut Workspace, &GoToColumn, cx: _| motion(Motion::GoToColumn, cx));
     cx.add_action(|_: &mut Workspace, action: &RepeatFind, cx: _| {
         repeat_motion(action.backwards, cx)
     })
@@ -292,6 +295,7 @@ impl Motion {
             | Right
             | StartOfLine { .. }
             | EndOfLineDownward
+            | GoToColumn
             | NextWordStart { .. }
             | PreviousWordStart { .. }
             | FirstNonWhitespace { .. }
@@ -317,6 +321,7 @@ impl Motion {
             | EndOfParagraph
             | StartOfLineDownward
             | EndOfLineDownward
+            | GoToColumn
             | NextWordStart { .. }
             | PreviousWordStart { .. }
             | FirstNonWhitespace { .. }
@@ -346,6 +351,7 @@ impl Motion {
             | StartOfLineDownward
             | StartOfParagraph
             | EndOfParagraph
+            | GoToColumn
             | NextWordStart { .. }
             | PreviousWordStart { .. }
             | FirstNonWhitespace { .. }
@@ -429,6 +435,7 @@ impl Motion {
             NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
             EndOfLineDownward => (next_line_end(map, point, times), SelectionGoal::None),
+            GoToColumn => (go_to_column(map, point, times), SelectionGoal::None),
         };
 
         (new_point != point || infallible).then_some((new_point, goal))
@@ -917,6 +924,11 @@ fn find_backward(
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
     let correct_line = start_of_relative_buffer_row(map, point, times as isize);
     first_non_whitespace(map, false, correct_line)
+}
+
+fn go_to_column(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
+    let correct_line = start_of_relative_buffer_row(map, point, 0);
+    right(map, correct_line, times.saturating_sub(1))
 }
 
 pub(crate) fn next_line_end(

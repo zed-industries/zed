@@ -20,6 +20,7 @@ pub enum Object {
     Quotes,
     BackQuotes,
     DoubleQuotes,
+    VerticalBars,
     Parentheses,
     SquareBrackets,
     CurlyBrackets,
@@ -40,6 +41,7 @@ actions!(
         Quotes,
         BackQuotes,
         DoubleQuotes,
+        VerticalBars,
         Parentheses,
         SquareBrackets,
         CurlyBrackets,
@@ -64,6 +66,7 @@ pub fn init(cx: &mut AppContext) {
     });
     cx.add_action(|_: &mut Workspace, _: &CurlyBrackets, cx: _| object(Object::CurlyBrackets, cx));
     cx.add_action(|_: &mut Workspace, _: &AngleBrackets, cx: _| object(Object::AngleBrackets, cx));
+    cx.add_action(|_: &mut Workspace, _: &VerticalBars, cx: _| object(Object::VerticalBars, cx));
 }
 
 fn object(object: Object, cx: &mut WindowContext) {
@@ -79,9 +82,11 @@ fn object(object: Object, cx: &mut WindowContext) {
 impl Object {
     pub fn is_multiline(self) -> bool {
         match self {
-            Object::Word { .. } | Object::Quotes | Object::BackQuotes | Object::DoubleQuotes => {
-                false
-            }
+            Object::Word { .. }
+            | Object::Quotes
+            | Object::BackQuotes
+            | Object::VerticalBars
+            | Object::DoubleQuotes => false,
             Object::Sentence
             | Object::Parentheses
             | Object::AngleBrackets
@@ -96,6 +101,7 @@ impl Object {
             Object::Quotes
             | Object::BackQuotes
             | Object::DoubleQuotes
+            | Object::VerticalBars
             | Object::Parentheses
             | Object::SquareBrackets
             | Object::CurlyBrackets
@@ -111,6 +117,7 @@ impl Object {
             | Object::Quotes
             | Object::BackQuotes
             | Object::DoubleQuotes
+            | Object::VerticalBars
             | Object::Parentheses
             | Object::SquareBrackets
             | Object::CurlyBrackets
@@ -141,6 +148,9 @@ impl Object {
             }
             Object::DoubleQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"')
+            }
+            Object::VerticalBars => {
+                surrounding_markers(map, relative_to, around, self.is_multiline(), '|', '|')
             }
             Object::Parentheses => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '(', ')')
@@ -568,7 +578,10 @@ fn surrounding_markers(
 mod test {
     use indoc::indoc;
 
-    use crate::test::{ExemptionFeatures, NeovimBackedTestContext};
+    use crate::{
+        state::Mode,
+        test::{ExemptionFeatures, NeovimBackedTestContext, VimTestContext},
+    };
 
     const WORD_LOCATIONS: &'static str = indoc! {"
         The quick ˇbrowˇnˇ•••
@@ -938,6 +951,47 @@ mod test {
                  return false
             }"})
             .await;
+    }
+
+    #[gpui::test]
+    async fn test_vertical_bars(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            indoc! {"
+            fn boop() {
+                baz(ˇ|a, b| { bar(|j, k| { })})
+            }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["c", "i", "|"]);
+        cx.assert_state(
+            indoc! {"
+            fn boop() {
+                baz(|ˇ| { bar(|j, k| { })})
+            }"
+            },
+            Mode::Insert,
+        );
+        cx.simulate_keystrokes(["escape", "1", "8", "|"]);
+        cx.assert_state(
+            indoc! {"
+            fn boop() {
+                baz(|| { bar(ˇ|j, k| { })})
+            }"
+            },
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(["v", "a", "|"]);
+        cx.assert_state(
+            indoc! {"
+            fn boop() {
+                baz(|| { bar(«|j, k| ˇ»{ })})
+            }"
+            },
+            Mode::Visual,
+        );
     }
 
     #[gpui::test]
