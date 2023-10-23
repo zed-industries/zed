@@ -21,7 +21,6 @@ impl<S: 'static + Send + Sync> ProjectPanel<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
-        let color = ThemeColor::new(cx);
 
         div()
             .id(self.id.clone())

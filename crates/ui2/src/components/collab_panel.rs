@@ -22,7 +22,6 @@ impl<S: 'static + Send + Sync> CollabPanel<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
-        let color = ThemeColor::new(cx);
 
         v_stack()
             .id(self.id.clone())
