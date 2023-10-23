@@ -9,11 +9,11 @@ use refineable::Refineable;
 use smallvec::SmallVec;
 
 use crate::{
-    current_platform, image_cache::ImageCache, Action, AppMetadata, AssetSource, Context,
-    DispatchPhase, DisplayId, Executor, FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap,
-    LayoutId, MainThread, MainThreadOnly, Platform, SharedString, SubscriberSet, Subscription,
-    SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window, WindowContext,
-    WindowHandle, WindowId,
+    current_platform, image_cache::ImageCache, Action, AppMetadata, AssetSource, ClipboardItem,
+    Context, DispatchPhase, DisplayId, Executor, FocusEvent, FocusHandle, FocusId, KeyBinding,
+    Keymap, LayoutId, MainThread, MainThreadOnly, Platform, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window,
+    WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -695,6 +695,14 @@ impl MainThread<AppContext> {
 
     pub fn activate(&self, ignoring_other_apps: bool) {
         self.platform().activate(ignoring_other_apps);
+    }
+
+    pub fn write_to_clipboard(&self, item: ClipboardItem) {
+        self.platform().write_to_clipboard(item)
+    }
+
+    pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        self.platform().read_from_clipboard()
     }
 
     pub fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {

@@ -1,6 +1,7 @@
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
+use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp::{self, PartialOrd},
     fmt,
@@ -647,7 +648,21 @@ where
 
 impl<T> Copy for Corners<T> where T: Copy + Clone + Default + Debug {}
 
-#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, Neg, PartialEq, PartialOrd)]
+#[derive(
+    Clone,
+    Copy,
+    Default,
+    Add,
+    AddAssign,
+    Sub,
+    SubAssign,
+    Div,
+    Neg,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+)]
 #[repr(transparent)]
 pub struct Pixels(pub(crate) f32);
 
@@ -683,6 +698,10 @@ impl MulAssign<f32> for Pixels {
 
 impl Pixels {
     pub const MAX: Pixels = Pixels(f32::MAX);
+
+    pub fn floor(&self) -> Self {
+        Self(self.0.floor())
+    }
 
     pub fn round(&self) -> Self {
         Self(self.0.round())
@@ -1008,7 +1027,7 @@ pub fn rems(rems: f32) -> Rems {
     Rems(rems)
 }
 
-pub fn px(pixels: f32) -> Pixels {
+pub const fn px(pixels: f32) -> Pixels {
     Pixels(pixels)
 }
 

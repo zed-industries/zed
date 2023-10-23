@@ -8375,6 +8375,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "terminal2"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "db2",
+ "dirs 4.0.0",
+ "futures 0.3.28",
+ "gpui2",
+ "itertools 0.10.5",
+ "lazy_static",
+ "libc",
+ "mio-extras",
+ "ordered-float 2.10.0",
+ "procinfo",
+ "rand 0.8.5",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "settings2",
+ "shellexpand",
+ "smallvec",
+ "smol",
+ "theme2",
+ "thiserror",
+ "util",
+]
+
+[[package]]
 name = "terminal_view"
 version = "0.1.0"
 dependencies = [

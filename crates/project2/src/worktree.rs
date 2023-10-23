@@ -1245,7 +1245,7 @@ impl LocalWorktree {
             .unbounded_send((self.snapshot(), Arc::from([]), Arc::from([])))
             .ok();
 
-        let worktree_id = cx.entity_id().as_u64();
+        let worktree_id = cx.entity_id().;
         let _maintain_remote_snapshot = cx.executor().spawn(async move {
             let mut is_first = true;
             while let Some((snapshot, entry_changes, repo_changes)) = snapshots_rx.next().await {

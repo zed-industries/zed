@@ -1653,6 +1653,12 @@ impl<'a, 'w, S: 'static> std::ops::DerefMut for ViewContext<'a, 'w, S> {
 // #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 slotmap::new_key_type! { pub struct WindowId; }
 
+impl WindowId {
+    pub fn as_u64(&self) -> u64 {
+        self.0.as_ffi()
+    }
+}
+
 #[derive(PartialEq, Eq)]
 pub struct WindowHandle<S> {
     id: WindowId,
@@ -1692,6 +1698,12 @@ impl<S: 'static> Into<AnyWindowHandle> for WindowHandle<S> {
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,
+}
+
+impl AnyWindowHandle {
+    pub fn window_id(&self) -> WindowId {
+        self.id
+    }
 }
 
 #[cfg(any(test, feature = "test"))]
