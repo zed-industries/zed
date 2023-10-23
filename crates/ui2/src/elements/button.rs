@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use gpui2::{DefiniteLength, Hsla, MouseButton, WindowContext};
+use gpui2::{div, DefiniteLength, Hsla, MouseButton, WindowContext};
 
 use crate::settings::user_settings;
 use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor};
@@ -21,6 +21,35 @@ pub enum ButtonVariant {
     Filled,
 }
 
+impl ButtonVariant {
+    pub fn bg_color(&self, cx: &mut WindowContext) -> Hsla {
+        let color = ThemeColor::new(cx);
+
+        match self {
+            ButtonVariant::Ghost => color.ghost_element,
+            ButtonVariant::Filled => color.filled_element,
+        }
+    }
+
+    pub fn bg_color_hover(&self, cx: &mut WindowContext) -> Hsla {
+        let color = ThemeColor::new(cx);
+
+        match self {
+            ButtonVariant::Ghost => color.ghost_element_hover,
+            ButtonVariant::Filled => color.filled_element_hover,
+        }
+    }
+
+    pub fn bg_color_active(&self, cx: &mut WindowContext) -> Hsla {
+        let color = ThemeColor::new(cx);
+
+        match self {
+            ButtonVariant::Ghost => color.ghost_element_active,
+            ButtonVariant::Filled => color.filled_element_active,
+        }
+    }
+}
+
 pub type ClickHandler<S> = Arc<dyn Fn(&mut S, &mut ViewContext<S>) + 'static + Send + Sync>;
 
 struct ButtonHandlers<S: 'static + Send + Sync> {
@@ -36,26 +65,26 @@ impl<S: 'static + Send + Sync> Default for ButtonHandlers<S> {
 #[derive(Element)]
 pub struct Button<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
-    label: SharedString,
-    variant: ButtonVariant,
-    state: InteractionState,
+    disabled: bool,
+    handlers: ButtonHandlers<S>,
     icon: Option<Icon>,
     icon_position: Option<IconPosition>,
+    label: SharedString,
+    variant: ButtonVariant,
     width: Option<DefiniteLength>,
-    handlers: ButtonHandlers<S>,
 }
 
 impl<S: 'static + Send + Sync> Button<S> {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
-            label: label.into(),
-            variant: Default::default(),
-            state: Default::default(),
+            disabled: false,
+            handlers: ButtonHandlers::default(),
             icon: None,
             icon_position: None,
+            label: label.into(),
+            variant: Default::default(),
             width: Default::default(),
-            handlers: ButtonHandlers::default(),
         }
     }
 
@@ -65,11 +94,6 @@ impl<S: 'static + Send + Sync> Button<S> {
 
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
         self.variant = variant;
-        self
-    }
-
-    pub fn state(mut self, state: InteractionState) -> Self {
-        self.state = state;
         self
     }
 
@@ -96,43 +120,24 @@ impl<S: 'static + Send + Sync> Button<S> {
         self
     }
 
-    fn background_color(&self, cx: &mut ViewContext<S>) -> Hsla {
-        let color = ThemeColor::new(cx);
-
-        match (self.variant, self.state) {
-            (ButtonVariant::Ghost, InteractionState::Enabled) => color.ghost_element,
-            (ButtonVariant::Ghost, InteractionState::Focused) => color.ghost_element,
-            (ButtonVariant::Ghost, InteractionState::Hovered) => color.ghost_element_hover,
-            (ButtonVariant::Ghost, InteractionState::Active) => color.ghost_element_active,
-            (ButtonVariant::Ghost, InteractionState::Disabled) => color.filled_element_disabled,
-            (ButtonVariant::Filled, InteractionState::Enabled) => color.filled_element,
-            (ButtonVariant::Filled, InteractionState::Focused) => color.filled_element,
-            (ButtonVariant::Filled, InteractionState::Hovered) => color.filled_element_hover,
-            (ButtonVariant::Filled, InteractionState::Active) => color.filled_element_active,
-            (ButtonVariant::Filled, InteractionState::Disabled) => color.filled_element_disabled,
-        }
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
     }
 
     fn label_color(&self) -> LabelColor {
-        match self.state {
-            InteractionState::Disabled => LabelColor::Disabled,
-            _ => Default::default(),
+        if self.disabled {
+            LabelColor::Disabled
+        } else {
+            self.label_color()
         }
     }
 
     fn icon_color(&self) -> IconColor {
-        match self.state {
-            InteractionState::Disabled => IconColor::Disabled,
-            _ => Default::default(),
-        }
-    }
-
-    fn border_color(&self, cx: &WindowContext) -> Hsla {
-        let color = ThemeColor::new(cx);
-
-        match self.state {
-            InteractionState::Focused => color.border_focused,
-            _ => color.border_transparent,
+        if self.disabled {
+            IconColor::Disabled
+        } else {
+            self.icon_color()
         }
     }
 
@@ -151,53 +156,47 @@ impl<S: 'static + Send + Sync> Button<S> {
         _view: &mut S,
         cx: &mut ViewContext<S>,
     ) -> impl Element<ViewState = S> {
-        let icon_color = self.icon_color();
-        let border_color = self.border_color(cx);
+        let color = ThemeColor::new(cx);
         let settings = user_settings(cx);
+        let icon_color = self.icon_color();
 
-        let mut el = h_stack()
+        let mut button = h_stack()
+            .relative()
+            .id(SharedString::from(format!("{}", self.label)))
             .p_1()
             .text_size(ui_size(cx, 1.))
             .rounded_md()
-            .border()
-            .border_color(border_color)
-            .bg(self.background_color(cx))
-            .hover(|style| {
-                let color = ThemeColor::new(cx);
-
-                style.bg(match self.variant {
-                    ButtonVariant::Ghost => color.ghost_element_hover,
-                    ButtonVariant::Filled => color.filled_element_hover,
-                })
-            });
+            .bg(self.variant.bg_color(cx))
+            .hover(|style| style.bg(self.variant.bg_color_hover(cx)))
+            .active(|style| style.bg(self.variant.bg_color_active(cx)));
 
         match (self.icon, self.icon_position) {
             (Some(_), Some(IconPosition::Left)) => {
-                el = el
+                button = button
                     .gap_1()
                     .child(self.render_label())
                     .children(self.render_icon(icon_color))
             }
             (Some(_), Some(IconPosition::Right)) => {
-                el = el
+                button = button
                     .gap_1()
                     .children(self.render_icon(icon_color))
                     .child(self.render_label())
             }
-            (_, _) => el = el.child(self.render_label()),
+            (_, _) => button = button.child(self.render_label()),
         }
 
         if let Some(width) = self.width {
-            el = el.w(width).justify_center();
+            button = button.w(width).justify_center();
         }
 
         if let Some(click_handler) = self.handlers.click.clone() {
-            el = el.on_mouse_down(MouseButton::Left, move |state, event, cx| {
+            button = button.on_mouse_down(MouseButton::Left, move |state, event, cx| {
                 click_handler(state, cx);
             });
         }
 
-        el
+        button
     }
 }
 
