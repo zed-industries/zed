@@ -354,7 +354,7 @@ where
     F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
-    fn stateless_interactivity(&mut self) -> &mut StatelessInteraction<V> {
+    fn stateless_interaction(&mut self) -> &mut StatelessInteraction<V> {
         self.interaction.as_stateless_mut()
     }
 }

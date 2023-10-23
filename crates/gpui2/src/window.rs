@@ -3,11 +3,11 @@ use crate::{
     BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext,
     DisplayId, Edges, Effect, Element, EntityId, EventEmitter, FocusEvent, FontId, GlobalElementId,
     GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher,
-    Keystroke, LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path,
-    Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow,
-    SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle,
-    WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    Keystroke, LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite,
+    Quad, Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
+    SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task,
+    Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -925,6 +925,12 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     }
                 }
 
+                if self.app.propagate_event
+                    && any_mouse_event.downcast_ref::<MouseUpEvent>().is_some()
+                {
+                    self.active_drag = None;
+                }
+
                 // Just in case any handlers added new handlers, which is weird, but possible.
                 handlers.extend(
                     self.window
@@ -1625,16 +1631,6 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
                 handler(view, event, phase, cx);
             })
         });
-    }
-
-    pub(crate) fn start_drag(&mut self, drag: AnyDrag) {
-        self.app.active_drag = Some(drag);
-        self.notify();
-    }
-
-    pub(crate) fn end_drag(&mut self) {
-        self.app.active_drag = None;
-        self.notify();
     }
 }
 

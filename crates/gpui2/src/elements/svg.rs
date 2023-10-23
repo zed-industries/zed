@@ -130,8 +130,8 @@ where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
-    fn stateless_interactivity(&mut self) -> &mut StatelessInteraction<V> {
-        self.base.stateless_interactivity()
+    fn stateless_interaction(&mut self) -> &mut StatelessInteraction<V> {
+        self.base.stateless_interaction()
     }
 }
 

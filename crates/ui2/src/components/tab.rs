@@ -17,7 +17,7 @@ pub struct Tab<S: 'static + Send + Sync + Clone> {
     close_side: IconSide,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct TabDragState {
     title: String,
 }
@@ -126,6 +126,9 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
                 Drag::new(drag_state.clone(), |view, cx| div().w_8().h_4().bg(red()))
             })
             .drag_over::<TabDragState>(|d| d.bg(black()))
+            .on_drop(|_view, state: TabDragState, cx| {
+                dbg!(state);
+            })
             .px_2()
             .py_0p5()
             .flex()
