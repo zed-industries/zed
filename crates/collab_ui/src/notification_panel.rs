@@ -232,92 +232,100 @@ impl NotificationPanel {
             MouseEventHandler::new::<NotificationEntry, _>(ix, cx, |_, cx| {
                 let container = message_style.container;
 
-                Flex::column()
+                Flex::row()
+                    .with_children(actor.map(|actor| {
+                        render_avatar(actor.avatar.clone(), &style.avatar, style.avatar_container)
+                    }))
                     .with_child(
-                        Flex::row()
-                            .with_children(actor.map(|actor| {
-                                render_avatar(
-                                    actor.avatar.clone(),
-                                    &style.avatar,
-                                    style.avatar_container,
-                                )
-                            }))
+                        Flex::column()
+                            .with_child(Text::new(text, message_style.text.clone()))
                             .with_child(
-                                Label::new(
-                                    format_timestamp(timestamp, now, self.local_timezone),
-                                    style.timestamp.text.clone(),
-                                )
-                                .contained()
-                                .with_style(style.timestamp.container)
-                                .flex_float(),
+                                Flex::row()
+                                    .with_child(
+                                        Label::new(
+                                            format_timestamp(timestamp, now, self.local_timezone),
+                                            style.timestamp.text.clone(),
+                                        )
+                                        .contained()
+                                        .with_style(style.timestamp.container),
+                                    )
+                                    .with_children(if let Some(is_accepted) = response {
+                                        Some(
+                                            Label::new(
+                                                if is_accepted {
+                                                    "You accepted"
+                                                } else {
+                                                    "You declined"
+                                                },
+                                                style.read_text.text.clone(),
+                                            )
+                                            .flex_float()
+                                            .into_any(),
+                                        )
+                                    } else if needs_response {
+                                        Some(
+                                            Flex::row()
+                                                .with_children([
+                                                    MouseEventHandler::new::<Decline, _>(
+                                                        ix,
+                                                        cx,
+                                                        |state, _| {
+                                                            let button =
+                                                                style.button.style_for(state);
+                                                            Label::new(
+                                                                "Decline",
+                                                                button.text.clone(),
+                                                            )
+                                                            .contained()
+                                                            .with_style(button.container)
+                                                        },
+                                                    )
+                                                    .with_cursor_style(CursorStyle::PointingHand)
+                                                    .on_click(MouseButton::Left, {
+                                                        let notification = notification.clone();
+                                                        move |_, view, cx| {
+                                                            view.respond_to_notification(
+                                                                notification.clone(),
+                                                                false,
+                                                                cx,
+                                                            );
+                                                        }
+                                                    }),
+                                                    MouseEventHandler::new::<Accept, _>(
+                                                        ix,
+                                                        cx,
+                                                        |state, _| {
+                                                            let button =
+                                                                style.button.style_for(state);
+                                                            Label::new(
+                                                                "Accept",
+                                                                button.text.clone(),
+                                                            )
+                                                            .contained()
+                                                            .with_style(button.container)
+                                                        },
+                                                    )
+                                                    .with_cursor_style(CursorStyle::PointingHand)
+                                                    .on_click(MouseButton::Left, {
+                                                        let notification = notification.clone();
+                                                        move |_, view, cx| {
+                                                            view.respond_to_notification(
+                                                                notification.clone(),
+                                                                true,
+                                                                cx,
+                                                            );
+                                                        }
+                                                    }),
+                                                ])
+                                                .flex_float()
+                                                .into_any(),
+                                        )
+                                    } else {
+                                        None
+                                    }),
                             )
-                            .align_children_center(),
+                            .flex(1.0, true),
                     )
-                    .with_child(Text::new(text, message_style.text.clone()))
-                    .with_children(if let Some(is_accepted) = response {
-                        Some(
-                            Label::new(
-                                if is_accepted {
-                                    "You Accepted"
-                                } else {
-                                    "You Declined"
-                                },
-                                style.read_text.text.clone(),
-                            )
-                            .into_any(),
-                        )
-                    } else if needs_response {
-                        Some(
-                            Flex::row()
-                                .with_children([
-                                    MouseEventHandler::new::<Decline, _>(ix, cx, |state, _| {
-                                        let button = style.button.style_for(state);
-                                        Label::new("Decline", button.text.clone())
-                                            .contained()
-                                            .with_style(button.container)
-                                    })
-                                    .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_click(
-                                        MouseButton::Left,
-                                        {
-                                            let notification = notification.clone();
-                                            move |_, view, cx| {
-                                                view.respond_to_notification(
-                                                    notification.clone(),
-                                                    false,
-                                                    cx,
-                                                );
-                                            }
-                                        },
-                                    ),
-                                    MouseEventHandler::new::<Accept, _>(ix, cx, |state, _| {
-                                        let button = style.button.style_for(state);
-                                        Label::new("Accept", button.text.clone())
-                                            .contained()
-                                            .with_style(button.container)
-                                    })
-                                    .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_click(
-                                        MouseButton::Left,
-                                        {
-                                            let notification = notification.clone();
-                                            move |_, view, cx| {
-                                                view.respond_to_notification(
-                                                    notification.clone(),
-                                                    true,
-                                                    cx,
-                                                );
-                                            }
-                                        },
-                                    ),
-                                ])
-                                .aligned()
-                                .right()
-                                .into_any(),
-                        )
-                    } else {
-                        None
-                    })
                     .contained()
                     .with_style(container)
                     .into_any()
@@ -394,7 +402,7 @@ impl NotificationPanel {
                 Some(NotificationPresenter {
                     icon: "icons/conversations.svg",
                     text: format!(
-                        "{} mentioned you in the #{} channel:\n{}",
+                        "{} mentioned you in #{}:\n{}",
                         sender.github_login, channel.name, message.body,
                     ),
                     needs_response: false,
