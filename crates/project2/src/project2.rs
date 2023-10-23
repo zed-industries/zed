@@ -26,7 +26,8 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui2::{
-    AnyHandle, AppContext, AsyncAppContext, EventEmitter, Handle, ModelContext, Task, WeakHandle,
+    AnyHandle, AppContext, AsyncAppContext, EventEmitter, Executor, Handle, ModelContext, Task,
+    WeakHandle,
 };
 use itertools::Itertools;
 use language2::{
@@ -648,6 +649,7 @@ impl Project {
                 _subscriptions: vec![
                     cx.observe_global::<SettingsStore, _>(Self::on_settings_changed),
                     cx.on_release(Self::release),
+                    cx.on_app_quit(Self::shutdown_language_servers),
                 ],
                 _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(cx),
@@ -733,7 +735,10 @@ impl Project {
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
                 client_subscriptions: Default::default(),
-                _subscriptions: vec![cx.on_release(Self::release)],
+                _subscriptions: vec![
+                    cx.on_release(Self::release),
+                    cx.on_app_quit(Self::shutdown_language_servers),
+                ],
                 client: client.clone(),
                 client_state: Some(ProjectClientState::Remote {
                     sharing_has_stopped: false,
@@ -813,6 +818,24 @@ impl Project {
                 self.disconnected_from_host_internal(cx);
             }
             _ => {}
+        }
+    }
+
+    fn shutdown_language_servers(&mut self) -> impl Future<Output = ()> {
+        let shutdown_futures = self
+            .language_servers
+            .drain()
+            .map(|(_, server_state)| async {
+                use LanguageServerState::*;
+                match server_state {
+                    Running { server, .. } => server.shutdown()?.await,
+                    Starting(task) => task.await?.shutdown()?.await,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        async move {
+            futures::future::join_all(shutdown_futures).await;
         }
     }
 
@@ -2948,7 +2971,7 @@ impl Project {
                     let this = this;
                     let adapter = adapter.clone();
                     adapter.process_diagnostics(&mut params);
-                    if let Some(this) = this.upgrade(&cx) {
+                    if let Some(this) = this.upgrade() {
                         this.update(&mut cx, |this, cx| {
                             this.update_diagnostics(
                                 server_id,
@@ -2996,7 +3019,7 @@ impl Project {
         language_server
             .on_request::<lsp2::request::WorkDoneProgressCreate, _, _>(
                 move |params, mut cx| async move {
-                    if let Some(this) = this.upgrade(&cx) {
+                    if let Some(this) = this.upgrade() {
                         this.update(&mut cx, |this, _| {
                             if let Some(status) = this.language_server_statuses.get_mut(&server_id)
                             {
@@ -3013,9 +3036,7 @@ impl Project {
         language_server
             .on_request::<lsp2::request::RegisterCapability, _, _>({
                 move |params, mut cx| async move {
-                    let this = this
-                        .upgrade(&cx)
-                        .ok_or_else(|| anyhow!("project dropped"))?;
+                    let this = this.upgrade().ok_or_else(|| anyhow!("project dropped"))?;
                     for reg in params.registrations {
                         if reg.method == "workspace/didChangeWatchedFiles" {
                             if let Some(options) = reg.register_options {
@@ -3043,9 +3064,7 @@ impl Project {
         language_server
             .on_request::<lsp2::request::InlayHintRefreshRequest, _, _>({
                 move |(), mut cx| async move {
-                    let this = this
-                        .upgrade(&cx)
-                        .ok_or_else(|| anyhow!("project dropped"))?;
+                    let this = this.upgrade().ok_or_else(|| anyhow!("project dropped"))?;
                     this.update(&mut cx, |project, cx| {
                         cx.emit(Event::RefreshInlayHints);
                         project.remote_id().map(|project_id| {
@@ -3063,7 +3082,7 @@ impl Project {
 
         language_server
             .on_notification::<lsp2::notification::Progress, _>(move |params, mut cx| {
-                if let Some(this) = this.upgrade(&cx) {
+                if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
                         this.on_lsp_progress(
                             params,
@@ -3694,7 +3713,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<lsp2::ApplyWorkspaceEditResponse> {
         let this = this
-            .upgrade(&cx)
+            .upgrade()
             .ok_or_else(|| anyhow!("project project closed"))?;
         let language_server = this
             .read_with(&cx, |this, _| this.language_server_for_id(server_id))
@@ -4823,7 +4842,7 @@ impl Project {
                             None
                         };
                         Ok(transaction)
-                    })
+                    })?
                 } else {
                     Ok(None)
                 }
@@ -5659,11 +5678,12 @@ impl Project {
             .detach();
         result_rx
     }
+
     /// Pick paths that might potentially contain a match of a given search query.
     async fn background_search(
         unnamed_buffers: Vec<Handle<Buffer>>,
         opened_buffers: HashMap<Arc<Path>, (Handle<Buffer>, BufferSnapshot)>,
-        background: Arc<Background>,
+        executor: Executor,
         fs: Arc<dyn Fs>,
         workers: usize,
         query: SearchQuery,
@@ -5694,7 +5714,7 @@ impl Project {
                 .await
                 .log_err();
         }
-        background
+        executor
             .scoped(|scope| {
                 for worker_ix in 0..workers {
                     let worker_start_ix = worker_ix * paths_per_worker;
@@ -8104,7 +8124,7 @@ impl Project {
     fn edits_from_lsp(
         &mut self,
         buffer: &Handle<Buffer>,
-        lsp2_edits: impl 'static + Send + IntoIterator<Item = lsp2::TextEdit>,
+        lsp_edits: impl 'static + Send + IntoIterator<Item = lsp2::TextEdit>,
         server_id: LanguageServerId,
         version: Option<i32>,
         cx: &mut ModelContext<Self>,
@@ -8696,32 +8716,6 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
 
 impl EventEmitter for Project {
     type Event = Event;
-}
-
-impl Entity for Project {
-    fn app_will_quit(
-        &mut self,
-        _: &mut AppContext,
-    ) -> Option<std::pin::Pin<Box<dyn 'static + Future<Output = ()>>>> {
-        let shutdown_futures = self
-            .language_servers
-            .drain()
-            .map(|(_, server_state)| async {
-                use LanguageServerState::*;
-                match server_state {
-                    Running { server, .. } => server.shutdown()?.await,
-                    Starting(task) => task.await?.shutdown()?.await,
-                }
-            })
-            .collect::<Vec<_>>();
-
-        Some(
-            async move {
-                futures::future::join_all(shutdown_futures).await;
-            }
-            .boxed(),
-        )
-    }
 }
 
 impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {

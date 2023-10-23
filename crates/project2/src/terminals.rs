@@ -1,5 +1,5 @@
 use crate::Project;
-use gpui::{AnyWindowHandle, ModelContext, ModelHandle, WeakModelHandle};
+use gpui2::{AnyWindowHandle, Handle, ModelContext, WeakHandle};
 use std::path::{Path, PathBuf};
 use terminal::{
     terminal_settings::{self, TerminalSettings, VenvSettingsContent},
@@ -10,7 +10,7 @@ use terminal::{
 use std::os::unix::ffi::OsStrExt;
 
 pub struct Terminals {
-    pub(crate) local_handles: Vec<WeakModelHandle<terminal::Terminal>>,
+    pub(crate) local_handles: Vec<WeakHandle<terminal::Terminal>>,
 }
 
 impl Project {
@@ -19,13 +19,13 @@ impl Project {
         working_directory: Option<PathBuf>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
-    ) -> anyhow::Result<ModelHandle<Terminal>> {
+    ) -> anyhow::Result<Handle<Terminal>> {
         if self.is_remote() {
             return Err(anyhow::anyhow!(
                 "creating terminals as a guest is not supported yet"
             ));
         } else {
-            let settings = settings::get::<TerminalSettings>(cx);
+            let settings = settings2::get::<TerminalSettings>(cx);
             let python_settings = settings.detect_venv.clone();
             let shell = settings.shell.clone();
 
@@ -103,7 +103,7 @@ impl Project {
     fn activate_python_virtual_environment(
         &mut self,
         activate_script: Option<PathBuf>,
-        terminal_handle: &ModelHandle<Terminal>,
+        terminal_handle: &Handle<Terminal>,
         cx: &mut ModelContext<Project>,
     ) {
         if let Some(activate_script) = activate_script {
