@@ -1,7 +1,7 @@
 use crate::{
-    point, px, Action, AppContext, BorrowWindow, Bounds, DispatchContext, DispatchPhase, Element,
-    ElementId, FocusHandle, KeyMatch, Keystroke, Modifiers, Overflow, Pixels, Point, SharedString,
-    Size, Style, StyleRefinement, ViewContext,
+    point, px, view, Action, AnyBox, AnyDrag, AppContext, BorrowWindow, Bounds, DispatchContext,
+    DispatchPhase, Element, ElementId, FocusHandle, KeyMatch, Keystroke, Modifiers, Overflow,
+    Pixels, Point, SharedString, Size, Style, StyleRefinement, ViewContext,
 };
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -11,18 +11,21 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     fmt::Debug,
+    marker::PhantomData,
     ops::Deref,
     sync::Arc,
 };
 
+const DRAG_THRESHOLD: f64 = 2.;
+
 pub trait StatelessInteractive: Element {
-    fn stateless_interactivity(&mut self) -> &mut StatelessInteraction<Self::ViewState>;
+    fn stateless_interaction(&mut self) -> &mut StatelessInteraction<Self::ViewState>;
 
     fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
     {
-        self.stateless_interactivity().hover_style = f(StyleRefinement::default());
+        self.stateless_interaction().hover_style = f(StyleRefinement::default());
         self
     }
 
@@ -34,7 +37,7 @@ pub trait StatelessInteractive: Element {
     where
         Self: Sized,
     {
-        self.stateless_interactivity().group_hover_style = Some(GroupStyle {
+        self.stateless_interaction().group_hover_style = Some(GroupStyle {
             group: group_name.into(),
             style: f(StyleRefinement::default()),
         });
@@ -52,7 +55,7 @@ pub trait StatelessInteractive: Element {
     where
         Self: Sized,
     {
-        self.stateless_interactivity()
+        self.stateless_interaction()
             .mouse_down_listeners
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
@@ -76,7 +79,7 @@ pub trait StatelessInteractive: Element {
     where
         Self: Sized,
     {
-        self.stateless_interactivity()
+        self.stateless_interaction()
             .mouse_up_listeners
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
@@ -100,7 +103,7 @@ pub trait StatelessInteractive: Element {
     where
         Self: Sized,
     {
-        self.stateless_interactivity()
+        self.stateless_interaction()
             .mouse_down_listeners
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
@@ -124,7 +127,7 @@ pub trait StatelessInteractive: Element {
     where
         Self: Sized,
     {
-        self.stateless_interactivity()
+        self.stateless_interaction()
             .mouse_up_listeners
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
@@ -147,7 +150,7 @@ pub trait StatelessInteractive: Element {
     where
         Self: Sized,
     {
-        self.stateless_interactivity()
+        self.stateless_interaction()
             .mouse_move_listeners
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
@@ -167,7 +170,7 @@ pub trait StatelessInteractive: Element {
     where
         Self: Sized,
     {
-        self.stateless_interactivity()
+        self.stateless_interaction()
             .scroll_wheel_listeners
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
@@ -183,7 +186,7 @@ pub trait StatelessInteractive: Element {
         C: TryInto<DispatchContext>,
         C::Error: Debug,
     {
-        self.stateless_interactivity().dispatch_context =
+        self.stateless_interaction().dispatch_context =
             context.try_into().expect("invalid dispatch context");
         self
     }
@@ -198,7 +201,7 @@ pub trait StatelessInteractive: Element {
     where
         Self: Sized,
     {
-        self.stateless_interactivity().key_listeners.push((
+        self.stateless_interaction().key_listeners.push((
             TypeId::of::<A>(),
             Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
@@ -223,7 +226,7 @@ pub trait StatelessInteractive: Element {
     where
         Self: Sized,
     {
-        self.stateless_interactivity().key_listeners.push((
+        self.stateless_interaction().key_listeners.push((
             TypeId::of::<KeyDownEvent>(),
             Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
@@ -244,7 +247,7 @@ pub trait StatelessInteractive: Element {
     where
         Self: Sized,
     {
-        self.stateless_interactivity().key_listeners.push((
+        self.stateless_interaction().key_listeners.push((
             TypeId::of::<KeyUpEvent>(),
             Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
@@ -254,16 +257,63 @@ pub trait StatelessInteractive: Element {
         ));
         self
     }
+
+    fn drag_over<S: 'static>(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.stateless_interaction()
+            .drag_over_styles
+            .push((TypeId::of::<S>(), f(StyleRefinement::default())));
+        self
+    }
+
+    fn group_drag_over<S: 'static>(
+        mut self,
+        group_name: impl Into<SharedString>,
+        f: impl FnOnce(StyleRefinement) -> StyleRefinement,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.stateless_interaction().group_drag_over_styles.push((
+            TypeId::of::<S>(),
+            GroupStyle {
+                group: group_name.into(),
+                style: f(StyleRefinement::default()),
+            },
+        ));
+        self
+    }
+
+    fn on_drop<S: 'static>(
+        mut self,
+        listener: impl Fn(&mut Self::ViewState, S, &mut ViewContext<Self::ViewState>)
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.stateless_interaction().drop_listeners.push((
+            TypeId::of::<S>(),
+            Arc::new(move |view, drag_state, cx| {
+                listener(view, *drag_state.downcast().unwrap(), cx);
+            }),
+        ));
+        self
+    }
 }
 
 pub trait StatefulInteractive: StatelessInteractive {
-    fn stateful_interactivity(&mut self) -> &mut StatefulInteraction<Self::ViewState>;
+    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<Self::ViewState>;
 
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
     {
-        self.stateful_interactivity().active_style = f(StyleRefinement::default());
+        self.stateful_interaction().active_style = f(StyleRefinement::default());
         self
     }
 
@@ -275,7 +325,7 @@ pub trait StatefulInteractive: StatelessInteractive {
     where
         Self: Sized,
     {
-        self.stateful_interactivity().group_active_style = Some(GroupStyle {
+        self.stateful_interaction().group_active_style = Some(GroupStyle {
             group: group_name.into(),
             style: f(StyleRefinement::default()),
         });
@@ -284,7 +334,7 @@ pub trait StatefulInteractive: StatelessInteractive {
 
     fn on_click(
         mut self,
-        handler: impl Fn(&mut Self::ViewState, &MouseClickEvent, &mut ViewContext<Self::ViewState>)
+        listener: impl Fn(&mut Self::ViewState, &ClickEvent, &mut ViewContext<Self::ViewState>)
             + Send
             + Sync
             + 'static,
@@ -292,9 +342,47 @@ pub trait StatefulInteractive: StatelessInteractive {
     where
         Self: Sized,
     {
-        self.stateful_interactivity()
-            .mouse_click_listeners
-            .push(Arc::new(move |view, event, cx| handler(view, event, cx)));
+        self.stateful_interaction()
+            .click_listeners
+            .push(Arc::new(move |view, event, cx| listener(view, event, cx)));
+        self
+    }
+
+    fn on_drag<S, R, E>(
+        mut self,
+        listener: impl Fn(
+                &mut Self::ViewState,
+                &mut ViewContext<Self::ViewState>,
+            ) -> Drag<S, R, Self::ViewState, E>
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+        S: 'static + Send + Sync,
+        R: 'static + Fn(&mut Self::ViewState, &mut ViewContext<Self::ViewState>) -> E + Send + Sync,
+        E: Element<ViewState = Self::ViewState>,
+    {
+        debug_assert!(
+            self.stateful_interaction().drag_listener.is_none(),
+            "calling on_drag more than once on the same element is not supported"
+        );
+        self.stateful_interaction().drag_listener =
+            Some(Arc::new(move |view_state, cursor_offset, cx| {
+                let drag = listener(view_state, cx);
+                let view_handle = cx.handle().upgrade().unwrap();
+                let drag_handle_view = view(view_handle, move |view_state, cx| {
+                    (drag.render_drag_handle)(view_state, cx)
+                })
+                .into_any();
+                AnyDrag {
+                    drag_handle_view,
+                    cursor_offset,
+                    state: Box::new(drag.state),
+                    state_type: TypeId::of::<S>(),
+                }
+            }));
         self
     }
 }
@@ -359,6 +447,26 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
             style.refine(&stateless.hover_style);
         }
 
+        if let Some(drag) = cx.active_drag.take() {
+            for (state_type, group_drag_style) in &self.as_stateless().group_drag_over_styles {
+                if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
+                    if *state_type == drag.state_type
+                        && group_bounds.contains_point(&mouse_position)
+                    {
+                        style.refine(&group_drag_style.style);
+                    }
+                }
+            }
+
+            for (state_type, drag_over_style) in &self.as_stateless().drag_over_styles {
+                if *state_type == drag.state_type && bounds.contains_point(&mouse_position) {
+                    style.refine(drag_over_style);
+                }
+            }
+
+            cx.active_drag = Some(drag);
+        }
+
         if let Some(stateful) = self.as_stateful() {
             let active_state = element_state.active_state.lock();
             if active_state.group {
@@ -411,38 +519,104 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
             .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
 
         if let Some(group_bounds) = hover_group_bounds {
-            paint_hover_listener(group_bounds, cx);
+            let hovered = group_bounds.contains_point(&cx.mouse_position());
+            cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
+                if phase == DispatchPhase::Capture {
+                    if group_bounds.contains_point(&event.position) != hovered {
+                        cx.notify();
+                    }
+                }
+            });
         }
 
-        if stateless.hover_style.is_some() {
-            paint_hover_listener(bounds, cx);
+        if stateless.hover_style.is_some()
+            || (cx.active_drag.is_some() && !stateless.drag_over_styles.is_empty())
+        {
+            let hovered = bounds.contains_point(&cx.mouse_position());
+            cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
+                if phase == DispatchPhase::Capture {
+                    if bounds.contains_point(&event.position) != hovered {
+                        cx.notify();
+                    }
+                }
+            });
+        }
+
+        if cx.active_drag.is_some() {
+            let drop_listeners = stateless.drop_listeners.clone();
+            cx.on_mouse_event(move |view, event: &MouseUpEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                    if let Some(drag_state_type) =
+                        cx.active_drag.as_ref().map(|drag| drag.state_type)
+                    {
+                        for (drop_state_type, listener) in &drop_listeners {
+                            if *drop_state_type == drag_state_type {
+                                let drag = cx
+                                    .active_drag
+                                    .take()
+                                    .expect("checked for type drag state type above");
+                                listener(view, drag.state, cx);
+                                cx.notify();
+                                cx.stop_propagation();
+                            }
+                        }
+                    }
+                }
+            });
         }
 
         if let Some(stateful) = self.as_stateful() {
-            let click_listeners = stateful.mouse_click_listeners.clone();
+            let click_listeners = stateful.click_listeners.clone();
+            let drag_listener = stateful.drag_listener.clone();
 
-            let pending_click = element_state.pending_click.clone();
-            let mouse_down = pending_click.lock().clone();
-            if let Some(mouse_down) = mouse_down {
-                cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
-                    if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                        let mouse_click = MouseClickEvent {
-                            down: mouse_down.clone(),
-                            up: event.clone(),
-                        };
-                        for listener in &click_listeners {
-                            listener(state, &mouse_click, cx);
+            if !click_listeners.is_empty() || drag_listener.is_some() {
+                let pending_mouse_down = element_state.pending_mouse_down.clone();
+                let mouse_down = pending_mouse_down.lock().clone();
+                if let Some(mouse_down) = mouse_down {
+                    if let Some(drag_listener) = drag_listener {
+                        let active_state = element_state.active_state.clone();
+
+                        cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
+                            if cx.active_drag.is_some() {
+                                if phase == DispatchPhase::Capture {
+                                    cx.notify();
+                                }
+                            } else if phase == DispatchPhase::Bubble
+                                && bounds.contains_point(&event.position)
+                                && (event.position - mouse_down.position).magnitude()
+                                    > DRAG_THRESHOLD
+                            {
+                                *active_state.lock() = ActiveState::default();
+                                let cursor_offset = event.position - bounds.origin;
+                                let drag = drag_listener(view_state, cursor_offset, cx);
+                                cx.active_drag = Some(drag);
+                                cx.notify();
+                                cx.stop_propagation();
+                            }
+                        });
+                    }
+
+                    cx.on_mouse_event(move |view_state, event: &MouseUpEvent, phase, cx| {
+                        if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position)
+                        {
+                            let mouse_click = ClickEvent {
+                                down: mouse_down.clone(),
+                                up: event.clone(),
+                            };
+                            for listener in &click_listeners {
+                                listener(view_state, &mouse_click, cx);
+                            }
                         }
-                    }
-
-                    *pending_click.lock() = None;
-                });
-            } else {
-                cx.on_mouse_event(move |_state, event: &MouseDownEvent, phase, _cx| {
-                    if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                        *pending_click.lock() = Some(event.clone());
-                    }
-                });
+                        *pending_mouse_down.lock() = None;
+                    });
+                } else {
+                    cx.on_mouse_event(move |_state, event: &MouseDownEvent, phase, _cx| {
+                        if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position)
+                        {
+                            *pending_mouse_down.lock() = Some(event.clone());
+                        }
+                    });
+                }
             }
 
             let active_state = element_state.active_state.clone();
@@ -487,12 +661,12 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
 
                         if overflow.x == Overflow::Scroll {
                             scroll_offset.x =
-                                (scroll_offset.x - delta.x).clamp(px(0.), scroll_max.width);
+                                (scroll_offset.x + delta.x).clamp(-scroll_max.width, px(0.));
                         }
 
                         if overflow.y == Overflow::Scroll {
                             scroll_offset.y =
-                                (scroll_offset.y - delta.y).clamp(px(0.), scroll_max.height);
+                                (scroll_offset.y + delta.y).clamp(-scroll_max.height, px(0.));
                         }
 
                         if *scroll_offset != old_scroll_offset {
@@ -506,29 +680,16 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
     }
 }
 
-fn paint_hover_listener<V>(bounds: Bounds<Pixels>, cx: &mut ViewContext<V>)
-where
-    V: 'static + Send + Sync,
-{
-    let hovered = bounds.contains_point(&cx.mouse_position());
-    cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
-        if phase == DispatchPhase::Capture {
-            if bounds.contains_point(&event.position) != hovered {
-                cx.notify();
-            }
-        }
-    });
-}
-
 #[derive(Deref, DerefMut)]
 pub struct StatefulInteraction<V: 'static + Send + Sync> {
     pub id: ElementId,
     #[deref]
     #[deref_mut]
     stateless: StatelessInteraction<V>,
-    pub mouse_click_listeners: SmallVec<[MouseClickListener<V>; 2]>,
-    pub active_style: StyleRefinement,
-    pub group_active_style: Option<GroupStyle>,
+    click_listeners: SmallVec<[ClickListener<V>; 2]>,
+    active_style: StyleRefinement,
+    group_active_style: Option<GroupStyle>,
+    drag_listener: Option<DragListener<V>>,
 }
 
 impl<V> ElementInteraction<V> for StatefulInteraction<V>
@@ -560,12 +721,15 @@ where
         Self {
             id,
             stateless: StatelessInteraction::default(),
-            mouse_click_listeners: SmallVec::new(),
+            click_listeners: SmallVec::new(),
+            drag_listener: None,
             active_style: StyleRefinement::default(),
             group_active_style: None,
         }
     }
 }
+
+type DropListener<V> = dyn Fn(&mut V, AnyBox, &mut ViewContext<V>) + Send + Sync;
 
 pub struct StatelessInteraction<V> {
     pub dispatch_context: DispatchContext,
@@ -576,6 +740,9 @@ pub struct StatelessInteraction<V> {
     pub key_listeners: SmallVec<[(TypeId, KeyListener<V>); 32]>,
     pub hover_style: StyleRefinement,
     pub group_hover_style: Option<GroupStyle>,
+    drag_over_styles: SmallVec<[(TypeId, StyleRefinement); 2]>,
+    group_drag_over_styles: SmallVec<[(TypeId, GroupStyle); 2]>,
+    drop_listeners: SmallVec<[(TypeId, Arc<DropListener<V>>); 2]>,
 }
 
 impl<V> StatelessInteraction<V>
@@ -586,7 +753,8 @@ where
         StatefulInteraction {
             id: id.into(),
             stateless: self,
-            mouse_click_listeners: SmallVec::new(),
+            click_listeners: SmallVec::new(),
+            drag_listener: None,
             active_style: StyleRefinement::default(),
             group_active_style: None,
         }
@@ -642,7 +810,7 @@ impl ActiveState {
 #[derive(Default)]
 pub struct InteractiveElementState {
     active_state: Arc<Mutex<ActiveState>>,
-    pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
+    pending_mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
     scroll_offset: Option<Arc<Mutex<Point<Pixels>>>>,
 }
 
@@ -665,6 +833,9 @@ impl<V> Default for StatelessInteraction<V> {
             key_listeners: SmallVec::new(),
             hover_style: StyleRefinement::default(),
             group_hover_style: None,
+            drag_over_styles: SmallVec::new(),
+            group_drag_over_styles: SmallVec::new(),
+            drop_listeners: SmallVec::new(),
         }
     }
 }
@@ -740,9 +911,37 @@ pub struct MouseUpEvent {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct MouseClickEvent {
+pub struct ClickEvent {
     pub down: MouseDownEvent,
     pub up: MouseUpEvent,
+}
+
+pub struct Drag<S, R, V, E>
+where
+    S: 'static + Send + Sync,
+    R: Fn(&mut V, &mut ViewContext<V>) -> E,
+    V: 'static + Send + Sync,
+    E: Element<ViewState = V>,
+{
+    pub state: S,
+    pub render_drag_handle: R,
+    view_type: PhantomData<V>,
+}
+
+impl<S, R, V, E> Drag<S, R, V, E>
+where
+    S: 'static + Send + Sync,
+    R: Fn(&mut V, &mut ViewContext<V>) -> E + Send + Sync,
+    V: 'static + Send + Sync,
+    E: Element<ViewState = V>,
+{
+    pub fn new(state: S, render_drag_handle: R) -> Self {
+        Drag {
+            state,
+            render_drag_handle,
+            view_type: PhantomData,
+        }
+    }
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
@@ -919,8 +1118,6 @@ pub type MouseUpListener<V> = Arc<
         + Sync
         + 'static,
 >;
-pub type MouseClickListener<V> =
-    Arc<dyn Fn(&mut V, &MouseClickEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
 
 pub type MouseMoveListener<V> = Arc<
     dyn Fn(&mut V, &MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
@@ -935,6 +1132,12 @@ pub type ScrollWheelListener<V> = Arc<
         + Sync
         + 'static,
 >;
+
+pub type ClickListener<V> =
+    Arc<dyn Fn(&mut V, &ClickEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
+
+pub(crate) type DragListener<V> =
+    Arc<dyn Fn(&mut V, Point<Pixels>, &mut ViewContext<V>) -> AnyDrag + Send + Sync + 'static>;
 
 pub type KeyListener<V> = Arc<
     dyn Fn(

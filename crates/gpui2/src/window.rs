@@ -1,13 +1,13 @@
 use crate::{
-    px, size, Action, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
+    px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext,
     DisplayId, Edges, Effect, Element, EntityId, EventEmitter, FocusEvent, FontId, GlobalElementId,
     GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher,
-    Keystroke, LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path,
-    Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow,
-    SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle,
-    WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    Keystroke, LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite,
+    Quad, Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
+    SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task,
+    Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -159,7 +159,7 @@ pub struct Window {
     key_matchers: HashMap<GlobalElementId, KeyMatcher>,
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
-    scroll_offset_stack: Vec<Point<Pixels>>,
+    element_offset_stack: Vec<Point<Pixels>>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyListener)>>,
     key_dispatch_stack: Vec<KeyDispatchStackFrame>,
     freeze_key_dispatch_stack: bool,
@@ -177,7 +177,7 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(
+    pub(crate) fn new(
         handle: AnyWindowHandle,
         options: WindowOptions,
         cx: &mut MainThread<AppContext>,
@@ -234,7 +234,7 @@ impl Window {
             key_matchers: HashMap::default(),
             z_index_stack: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
-            scroll_offset_stack: Vec::new(),
+            element_offset_stack: Vec::new(),
             mouse_listeners: HashMap::default(),
             key_dispatch_stack: Vec::new(),
             freeze_key_dispatch_stack: false,
@@ -469,7 +469,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .layout_engine
             .layout_bounds(layout_id)
             .map(Into::into);
-        bounds.origin -= self.scroll_offset();
+        bounds.origin += self.element_offset();
         bounds
     }
 
@@ -805,14 +805,22 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
             let mut root_view = cx.window.root_view.take().unwrap();
 
-            if let Some(element_id) = root_view.id() {
-                cx.with_element_state(element_id, |element_state, cx| {
-                    let element_state = draw_with_element_state(&mut root_view, element_state, cx);
-                    ((), element_state)
+            cx.stack(0, |cx| {
+                let available_space = cx.window.content_size.map(Into::into);
+                draw_any_view(&mut root_view, available_space, cx);
+            });
+
+            if let Some(mut active_drag) = cx.active_drag.take() {
+                cx.stack(1, |cx| {
+                    let offset = cx.mouse_position() - active_drag.cursor_offset;
+                    cx.with_element_offset(Some(offset), |cx| {
+                        let available_space =
+                            size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                        draw_any_view(&mut active_drag.drag_handle_view, available_space, cx);
+                        cx.active_drag = Some(active_drag);
+                    });
                 });
-            } else {
-                draw_with_element_state(&mut root_view, None, cx);
-            };
+            }
 
             cx.window.root_view = Some(root_view);
             let scene = cx.window.scene_builder.build();
@@ -827,20 +835,21 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .detach();
         });
 
-        fn draw_with_element_state(
-            root_view: &mut AnyView,
-            element_state: Option<AnyBox>,
+        fn draw_any_view(
+            view: &mut AnyView,
+            available_space: Size<AvailableSpace>,
             cx: &mut ViewContext<()>,
-        ) -> AnyBox {
-            let mut element_state = root_view.initialize(&mut (), element_state, cx);
-            let layout_id = root_view.layout(&mut (), &mut element_state, cx);
-            let available_space = cx.window.content_size.map(Into::into);
-            cx.window
-                .layout_engine
-                .compute_layout(layout_id, available_space);
-            let bounds = cx.window.layout_engine.layout_bounds(layout_id);
-            root_view.paint(bounds, &mut (), &mut element_state, cx);
-            element_state
+        ) {
+            cx.with_optional_element_state(view.id(), |element_state, cx| {
+                let mut element_state = view.initialize(&mut (), element_state, cx);
+                let layout_id = view.layout(&mut (), &mut element_state, cx);
+                cx.window
+                    .layout_engine
+                    .compute_layout(layout_id, available_space);
+                let bounds = cx.window.layout_engine.layout_bounds(layout_id);
+                view.paint(bounds, &mut (), &mut element_state, cx);
+                ((), element_state)
+            });
         }
     }
 
@@ -914,6 +923,12 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                             break;
                         }
                     }
+                }
+
+                if self.app.propagate_event
+                    && any_mouse_event.downcast_ref::<MouseUpEvent>().is_some()
+                {
+                    self.active_drag = None;
                 }
 
                 // Just in case any handlers added new handlers, which is weird, but possible.
@@ -1206,7 +1221,7 @@ pub trait BorrowWindow: BorrowAppContext {
         result
     }
 
-    fn with_scroll_offset<R>(
+    fn with_element_offset<R>(
         &mut self,
         offset: Option<Point<Pixels>>,
         f: impl FnOnce(&mut Self) -> R,
@@ -1215,16 +1230,16 @@ pub trait BorrowWindow: BorrowAppContext {
             return f(self);
         };
 
-        let offset = self.scroll_offset() + offset;
-        self.window_mut().scroll_offset_stack.push(offset);
+        let offset = self.element_offset() + offset;
+        self.window_mut().element_offset_stack.push(offset);
         let result = f(self);
-        self.window_mut().scroll_offset_stack.pop();
+        self.window_mut().element_offset_stack.pop();
         result
     }
 
-    fn scroll_offset(&self) -> Point<Pixels> {
+    fn element_offset(&self) -> Point<Pixels> {
         self.window()
-            .scroll_offset_stack
+            .element_offset_stack
             .last()
             .copied()
             .unwrap_or_default()
@@ -1261,6 +1276,18 @@ pub trait BorrowWindow: BorrowAppContext {
                 result
             }
         })
+    }
+
+    fn with_optional_element_state<S: 'static + Send + Sync, R>(
+        &mut self,
+        element_id: Option<ElementId>,
+        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
+    ) -> R {
+        if let Some(element_id) = element_id {
+            self.with_element_state(element_id, f)
+        } else {
+            f(None, self).0
+        }
     }
 
     fn content_mask(&self) -> ContentMask<Pixels> {

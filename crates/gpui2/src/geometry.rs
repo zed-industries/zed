@@ -39,6 +39,10 @@ impl Point<Pixels> {
             y: self.y.scale(factor),
         }
     }
+
+    pub fn magnitude(&self) -> f64 {
+        ((self.x.0.powi(2) + self.y.0.powi(2)) as f64).sqrt()
+    }
 }
 
 impl<T, Rhs> Mul<Rhs> for Point<T>

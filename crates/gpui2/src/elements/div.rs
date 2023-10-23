@@ -298,7 +298,7 @@ where
                     style.apply_text_style(cx, |cx| {
                         style.apply_overflow(bounds, cx, |cx| {
                             let scroll_offset = element_state.interactive.scroll_offset();
-                            cx.with_scroll_offset(scroll_offset, |cx| {
+                            cx.with_element_offset(scroll_offset, |cx| {
                                 for child in &mut this.children {
                                     child.paint(view_state, cx);
                                 }
@@ -354,7 +354,7 @@ where
     F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
-    fn stateless_interactivity(&mut self) -> &mut StatelessInteraction<V> {
+    fn stateless_interaction(&mut self) -> &mut StatelessInteraction<V> {
         self.interaction.as_stateless_mut()
     }
 }
@@ -364,7 +364,7 @@ where
     F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
-    fn stateful_interactivity(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
+    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
         &mut self.interaction
     }
 }
