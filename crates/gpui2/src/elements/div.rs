@@ -9,7 +9,7 @@ use refineable::Refineable;
 use smallvec::SmallVec;
 
 pub struct Div<
-    V: 'static + Send + Sync,
+    V,
     I: ElementInteraction<V> = StatelessInteraction<V>,
     F: ElementFocus<V> = FocusDisabled,
 > {
@@ -20,10 +20,7 @@ pub struct Div<
     base_style: StyleRefinement,
 }
 
-pub fn div<V>() -> Div<V, StatelessInteraction<V>, FocusDisabled>
-where
-    V: 'static + Send + Sync,
-{
+pub fn div<V>() -> Div<V, StatelessInteraction<V>, FocusDisabled> {
     Div {
         interaction: StatelessInteraction::default(),
         focus: FocusDisabled,

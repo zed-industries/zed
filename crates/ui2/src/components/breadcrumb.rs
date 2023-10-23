@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::path::PathBuf;
 
-use gpui2::Div;
+use gpui2::{AppContext, Div};
 
 use crate::prelude::*;
 use crate::{h_stack, HighlightedText};
@@ -9,32 +9,24 @@ use crate::{h_stack, HighlightedText};
 #[derive(Clone)]
 pub struct Symbol(pub Vec<HighlightedText>);
 
-#[derive(Element)]
-pub struct Breadcrumb<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+#[derive(IntoAnyElement)]
+pub struct Breadcrumb<'a> {
     path: PathBuf,
     symbols: Vec<Symbol>,
+    cx: &'a AppContext,
 }
 
-impl<S: 'static + Send + Sync> Breadcrumb<S> {
-    pub fn new(path: PathBuf, symbols: Vec<Symbol>) -> Self {
-        Self {
-            state_type: PhantomData,
-            path,
-            symbols,
-        }
+impl Breadcrumb {
+    pub fn new(path: PathBuf, symbols: Vec<Symbol>, cx: &'a AppContext) -> Self {
+        Self { path, symbols, cx }
     }
 
-    fn render_separator(&self, cx: &WindowContext) -> Div<S> {
+    fn render_separator<V>(&self, cx: &WindowContext) -> impl IntoAnyElement<V> {
         let color = ThemeColor::new(cx);
         div().child(" › ").text_color(color.text_muted)
     }
 
-    fn render(
-        &mut self,
-        view_state: &mut S,
-        cx: &mut ViewContext<S>,
-    ) -> impl Element<ViewState = S> {
+    fn render<V>(mut self) -> impl IntoAnyElement<V> {
         let color = ThemeColor::new(cx);
 
         let symbols_len = self.symbols.len();

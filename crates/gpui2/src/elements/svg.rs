@@ -7,7 +7,6 @@ use crate::{
 use util::ResultExt;
 
 pub struct Svg<
-    V: 'static + Send + Sync,
     I: ElementInteraction<V> = StatelessInteraction<V>,
     F: ElementFocus<V> = FocusDisabled,
 > {
@@ -52,7 +51,6 @@ where
 
 impl<V, I, F> IntoAnyElement<V> for Svg<V, I, F>
 where
-    V: 'static + Send + Sync,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {

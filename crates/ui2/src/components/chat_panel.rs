@@ -5,13 +5,13 @@ use chrono::NaiveDateTime;
 use crate::prelude::*;
 use crate::{Icon, IconButton, Input, Label, LabelColor};
 
-#[derive(Element)]
-pub struct ChatPanel<S: 'static + Send + Sync> {
+#[derive(IntoAnyElement)]
+pub struct ChatPanel {
     element_id: ElementId,
-    messages: Vec<ChatMessage<S>>,
+    messages: Vec<ChatMessage>,
 }
 
-impl<S: 'static + Send + Sync> ChatPanel<S> {
+impl ChatPanel {
     pub fn new(element_id: impl Into<ElementId>) -> Self {
         Self {
             element_id: element_id.into(),
@@ -24,9 +24,9 @@ impl<S: 'static + Send + Sync> ChatPanel<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<S: 'static + Send + Sync>(self) -> impl IntoAnyElement<S> {
         div()
-            .id(self.element_id.clone())
+            .id(self.element_id)
             .flex()
             .flex_col()
             .justify_between()
@@ -62,7 +62,7 @@ impl<S: 'static + Send + Sync> ChatPanel<S> {
                             .flex_col()
                             .gap_3()
                             .overflow_y_scroll()
-                            .children(self.messages.drain(..)),
+                            .children(self.messages),
                     )
                     // Composer
                     .child(div().flex().my_2().child(Input::new("Message #design"))),
@@ -70,39 +70,30 @@ impl<S: 'static + Send + Sync> ChatPanel<S> {
     }
 }
 
-#[derive(Element)]
-pub struct ChatMessage<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+#[derive(IntoAnyElement)]
+pub struct ChatMessage {
     author: String,
     text: String,
     sent_at: NaiveDateTime,
 }
 
-impl<S: 'static + Send + Sync> ChatMessage<S> {
+impl ChatMessage {
     pub fn new(author: String, text: String, sent_at: NaiveDateTime) -> Self {
         Self {
-            state_type: PhantomData,
             author,
             text,
             sent_at,
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<S: 'static + Send + Sync>(mut self) -> impl Element<ViewState = S> {
         div()
             .flex()
             .flex_col()
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(Label::new(self.author.clone()))
-                    .child(
-                        Label::new(self.sent_at.format("%m/%d/%Y").to_string())
-                            .color(LabelColor::Muted),
-                    ),
-            )
-            .child(div().child(Label::new(self.text.clone())))
+            .child(div().flex().gap_2().child(Label::new(self.author)).child(
+                Label::new(self.sent_at.format("%m/%d/%Y").to_string()).color(LabelColor::Muted),
+            ))
+            .child(div().child(Label::new(self.text)))
     }
 }
 

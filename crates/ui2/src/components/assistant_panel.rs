@@ -1,22 +1,17 @@
-use std::marker::PhantomData;
-
-use gpui2::{rems, AbsoluteLength};
-
 use crate::prelude::*;
 use crate::{Icon, IconButton, Label, Panel, PanelSide};
+use gpui2::{rems, AbsoluteLength, IntoAnyElement};
 
-#[derive(Element)]
-pub struct AssistantPanel<S: 'static + Send + Sync> {
+#[derive(IntoAnyElement)]
+pub struct AssistantPanel {
     id: ElementId,
-    state_type: PhantomData<S>,
     current_side: PanelSide,
 }
 
-impl<S: 'static + Send + Sync> AssistantPanel<S> {
+impl AssistantPanel {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
-            state_type: PhantomData,
             current_side: PanelSide::default(),
         }
     }
@@ -26,54 +21,54 @@ impl<S: 'static + Send + Sync> AssistantPanel<S> {
         self
     }
 
-    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+    fn render<S: 'static + Send + Sync>(mut self) -> impl IntoAnyElement<S> {
+        // let color = ThemeColor::new(cx);
 
-        Panel::new(self.id.clone(), cx)
-            .children(vec![div()
-                .flex()
-                .flex_col()
-                .h_full()
-                .px_2()
-                .gap_2()
-                // Header
-                .child(
-                    div()
-                        .flex()
-                        .justify_between()
-                        .gap_2()
-                        .child(
-                            div()
-                                .flex()
-                                .child(IconButton::new(Icon::Menu))
-                                .child(Label::new("New Conversation")),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_px()
-                                .child(IconButton::new(Icon::SplitMessage))
-                                .child(IconButton::new(Icon::Quote))
-                                .child(IconButton::new(Icon::MagicWand))
-                                .child(IconButton::new(Icon::Plus))
-                                .child(IconButton::new(Icon::Maximize)),
-                        ),
-                )
-                // Chat Body
-                .child(
-                    div()
-                        .id("chat-body")
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
-                        .overflow_y_scroll()
-                        .child(Label::new("Is this thing on?")),
-                )
-                .into_any()])
-            .side(self.current_side)
-            .width(AbsoluteLength::Rems(rems(32.)))
+        // Panel::new(self.id, cx)
+        //     .children(vec![div()
+        //         .flex()
+        //         .flex_col()
+        //         .h_full()
+        //         .px_2()
+        //         .gap_2()
+        //         // Header
+        //         .child(
+        //             div()
+        //                 .flex()
+        //                 .justify_between()
+        //                 .gap_2()
+        //                 .child(
+        //                     div()
+        //                         .flex()
+        //                         .child(IconButton::new(Icon::Menu))
+        //                         .child(Label::new("New Conversation")),
+        //                 )
+        //                 .child(
+        //                     div()
+        //                         .flex()
+        //                         .items_center()
+        //                         .gap_px()
+        //                         .child(IconButton::new(Icon::SplitMessage))
+        //                         .child(IconButton::new(Icon::Quote))
+        //                         .child(IconButton::new(Icon::MagicWand))
+        //                         .child(IconButton::new(Icon::Plus))
+        //                         .child(IconButton::new(Icon::Maximize)),
+        //                 ),
+        //         )
+        //         // Chat Body
+        //         .child(
+        //             div()
+        //                 .id("chat-body")
+        //                 .w_full()
+        //                 .flex()
+        //                 .flex_col()
+        //                 .gap_3()
+        //                 .overflow_y_scroll()
+        //                 .child(Label::new("Is this thing on?")),
+        //         )
+        //         .into_any()])
+        //     .side(self.current_side)
+        //     .width(AbsoluteLength::Rems(rems(32.)))
     }
 }
 
@@ -82,30 +77,24 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
+    use gpui2::AppContext;
+
     use crate::Story;
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct AssistantPanelStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(IntoAnyElement)]
+    pub struct AssistantPanelStory<'a>(&'a AppContext);
 
-    impl<S: 'static + Send + Sync> AssistantPanelStory<S> {
+    impl<'a> AssistantPanelStory<'a> {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
-            Story::container(cx)
-                .child(Story::title_for::<_, AssistantPanel<S>>(cx))
-                .child(Story::label(cx, "Default"))
+        fn render<S: 'static + Send + Sync>(self) -> impl IntoAnyElement<S> {
+            Story::container(self.cx)
+                .child(Story::title_for::<_, AssistantPanel<S>>(self.cx))
+                .child(Story::label(self.cx, "Default"))
                 .child(AssistantPanel::new("assistant-panel"))
         }
     }

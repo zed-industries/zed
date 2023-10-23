@@ -387,7 +387,7 @@ pub trait StatefulInteractive: StatelessInteractive {
     }
 }
 
-pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
+pub trait ElementInteraction<V> {
     fn as_stateless(&self) -> &StatelessInteraction<V>;
     fn as_stateless_mut(&mut self) -> &mut StatelessInteraction<V>;
     fn as_stateful(&self) -> Option<&StatefulInteraction<V>>;
@@ -681,7 +681,7 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
 }
 
 #[derive(Deref, DerefMut)]
-pub struct StatefulInteraction<V: 'static + Send + Sync> {
+pub struct StatefulInteraction<V> {
     pub id: ElementId,
     #[deref]
     #[deref_mut]
@@ -692,10 +692,7 @@ pub struct StatefulInteraction<V: 'static + Send + Sync> {
     drag_listener: Option<DragListener<V>>,
 }
 
-impl<V> ElementInteraction<V> for StatefulInteraction<V>
-where
-    V: 'static + Send + Sync,
-{
+impl<V> ElementInteraction<V> for StatefulInteraction<V> {
     fn as_stateful(&self) -> Option<&StatefulInteraction<V>> {
         Some(self)
     }
@@ -713,10 +710,7 @@ where
     }
 }
 
-impl<V> From<ElementId> for StatefulInteraction<V>
-where
-    V: 'static + Send + Sync,
-{
+impl<V> From<ElementId> for StatefulInteraction<V> {
     fn from(id: ElementId) -> Self {
         Self {
             id,
@@ -745,10 +739,7 @@ pub struct StatelessInteraction<V> {
     drop_listeners: SmallVec<[(TypeId, Arc<DropListener<V>>); 2]>,
 }
 
-impl<V> StatelessInteraction<V>
-where
-    V: 'static + Send + Sync,
-{
+impl<V> StatelessInteraction<V> {
     pub fn into_stateful(self, id: impl Into<ElementId>) -> StatefulInteraction<V> {
         StatefulInteraction {
             id: id.into(),
@@ -840,10 +831,7 @@ impl<V> Default for StatelessInteraction<V> {
     }
 }
 
-impl<V> ElementInteraction<V> for StatelessInteraction<V>
-where
-    V: 'static + Send + Sync,
-{
+impl<V> ElementInteraction<V> for StatelessInteraction<V> {
     fn as_stateful(&self) -> Option<&StatefulInteraction<V>> {
         None
     }

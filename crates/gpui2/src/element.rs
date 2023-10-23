@@ -3,7 +3,7 @@ use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::mem;
 
-pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
+pub trait Element: IntoAnyElement<Self::ViewState> {
     type ViewState: 'static + Send + Sync;
     type ElementState: 'static + Send + Sync;
 
@@ -98,7 +98,7 @@ impl<E: Element> RenderedElement<E> {
 
 impl<E> ElementObject<E::ViewState> for RenderedElement<E>
 where
-    E: Element,
+    E: 'static + Element + Send + Sync,
 {
     fn initialize(&mut self, view_state: &mut E::ViewState, cx: &mut ViewContext<E::ViewState>) {
         let frame_state = if let Some(id) = self.element.id() {
@@ -174,7 +174,7 @@ where
 pub struct AnyElement<V>(Box<dyn ElementObject<V>>);
 
 impl<V: 'static + Send + Sync> AnyElement<V> {
-    pub fn new<E: Element<ViewState = V>>(element: E) -> Self {
+    pub fn new<E: 'static + Send + Sync + Element<ViewState = V>>(element: E) -> Self {
         AnyElement(Box::new(RenderedElement::new(element)))
     }
 
