@@ -9,6 +9,10 @@
 //!
 //! Expect some inconsistencies from component to component as we work out the best way to build these components.
 //!
+//! ## Getting Started
+//!
+//! - [ThemeColor](crate::color::ThemeColor) is your one stop shop for all colors in the UI.
+//!
 //! ## Design Philosophy
 //!
 //! Work in Progress!
@@ -16,6 +20,7 @@
 
 #![allow(dead_code, unused_variables)]
 
+mod color;
 mod components;
 mod element_ext;
 mod elements;
