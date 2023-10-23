@@ -146,7 +146,11 @@ impl<S: 'static + Send + Sync> Button<S> {
         self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    pub fn render(
+        &mut self,
+        _view: &mut S,
+        cx: &mut ViewContext<S>,
+    ) -> impl Element<ViewState = S> {
         let icon_color = self.icon_color();
         let border_color = self.border_color(cx);
         let settings = user_settings(cx);

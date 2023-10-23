@@ -173,6 +173,7 @@ fn generate_custom_value_setter(
     method
 }
 
+/// Returns a vec of (Property name, has 'auto' suffix, tokens for accessing the property, documentation)
 fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>, &'static str)> {
     vec![
         (
@@ -188,24 +189,32 @@ fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>, &'static str)> 
             vec![quote! {size.width}, quote! {size.height}],
             "Sets the width and height of the element."
         ),
+        // TODO: These don't use the same size ramp as the others
+        // see https://tailwindcss.com/docs/max-width
         (
             "min_w",
             true,
             vec![quote! { min_size.width }],
             "Sets the minimum width of the element. [Docs](https://tailwindcss.com/docs/min-width)",
         ),
+        // TODO: These don't use the same size ramp as the others
+        // see https://tailwindcss.com/docs/max-width
         (
             "min_h",
             true,
             vec![quote! { min_size.height }],
             "Sets the minimum height of the element. [Docs](https://tailwindcss.com/docs/min-height)",
         ),
+        // TODO: These don't use the same size ramp as the others
+        // see https://tailwindcss.com/docs/max-width
         (
             "max_w",
             true,
             vec![quote! { max_size.width }],
             "Sets the maximum width of the element. [Docs](https://tailwindcss.com/docs/max-width)",
         ),
+        // TODO: These don't use the same size ramp as the others
+        // see https://tailwindcss.com/docs/max-width
         (
             "max_h",
             true,
@@ -336,6 +345,7 @@ fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>, &'static str)> 
     ]
 }
 
+/// Returns a vec of (Suffix size, tokens that correspond to this size, documentation)
 fn box_suffixes() -> Vec<(&'static str, TokenStream2, &'static str)> {
     vec![
         ("0", quote! { px(0.) }, "0px"),

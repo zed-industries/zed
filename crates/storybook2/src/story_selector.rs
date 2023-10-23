@@ -65,6 +65,7 @@ pub enum ComponentStory {
     ChatPanel,
     CollabPanel,
     CommandPalette,
+    Copilot,
     ContextMenu,
     Facepile,
     Keybinding,
@@ -168,6 +169,10 @@ impl ComponentStory {
             .into_any(),
             Self::TrafficLights => view(cx.entity(|cx| ()), |_, _| {
                 ui::TrafficLightsStory::new().into_any()
+            })
+            .into_any(),
+            Self::Copilot => view(cx.entity(|cx| ()), |_, _| {
+                ui::CopilotModalStory::new().into_any()
             })
             .into_any(),
             Self::Workspace => ui::WorkspaceStory::view(cx).into_any(),

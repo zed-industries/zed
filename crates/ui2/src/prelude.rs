@@ -110,7 +110,7 @@ pub struct ThemeColor {
     /// The background color of an elevated surface, like a modal, tooltip or toast.
     pub elevated_surface: Hsla,
     pub surface: Hsla,
-    /// Window background color
+    /// Window background color of the base app
     pub background: Hsla,
     /// Default background for elements like filled buttons,
     /// text fields, checkboxes, radio buttons, etc.
@@ -149,6 +149,7 @@ pub struct ThemeColor {
     pub title_bar: Hsla,
     pub toolbar: Hsla,
     pub tab_bar: Hsla,
+    /// The background of the editor
     pub editor: Hsla,
     pub editor_subheader: Hsla,
     pub editor_active_line: Hsla,
