@@ -21,7 +21,6 @@ use gpui::{
 };
 use std::{rc::Rc, sync::Arc};
 use theme::AvatarStyle;
-use time::{OffsetDateTime, UtcOffset};
 use util::ResultExt;
 use workspace::AppState;
 
@@ -159,31 +158,6 @@ fn render_avatar<T: 'static>(
         .contained()
         .with_style(container)
         .into_any()
-}
-
-fn format_timestamp(
-    mut timestamp: OffsetDateTime,
-    mut now: OffsetDateTime,
-    local_timezone: UtcOffset,
-) -> String {
-    timestamp = timestamp.to_offset(local_timezone);
-    now = now.to_offset(local_timezone);
-
-    let today = now.date();
-    let date = timestamp.date();
-    let mut hour = timestamp.hour();
-    let mut part = "am";
-    if hour > 12 {
-        hour -= 12;
-        part = "pm";
-    }
-    if date == today {
-        format!("{:02}:{:02}{}", hour, timestamp.minute(), part)
-    } else if date.next_day() == Some(today) {
-        format!("yesterday at {:02}:{:02}{}", hour, timestamp.minute(), part)
-    } else {
-        format!("{:02}/{}/{}", date.month() as u32, date.day(), date.year())
-    }
 }
 
 fn is_channels_feature_enabled(cx: &gpui::WindowContext<'_>) -> bool {

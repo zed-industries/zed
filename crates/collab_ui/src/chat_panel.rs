@@ -1,6 +1,5 @@
 use crate::{
-    channel_view::ChannelView, format_timestamp, is_channels_feature_enabled, render_avatar,
-    ChatPanelSettings,
+    channel_view::ChannelView, is_channels_feature_enabled, render_avatar, ChatPanelSettings,
 };
 use anyhow::Result;
 use call::ActiveCall;
@@ -871,6 +870,31 @@ impl Panel for ChatPanel {
 
     fn is_focus_event(event: &Self::Event) -> bool {
         matches!(event, Event::Focus)
+    }
+}
+
+fn format_timestamp(
+    mut timestamp: OffsetDateTime,
+    mut now: OffsetDateTime,
+    local_timezone: UtcOffset,
+) -> String {
+    timestamp = timestamp.to_offset(local_timezone);
+    now = now.to_offset(local_timezone);
+
+    let today = now.date();
+    let date = timestamp.date();
+    let mut hour = timestamp.hour();
+    let mut part = "am";
+    if hour > 12 {
+        hour -= 12;
+        part = "pm";
+    }
+    if date == today {
+        format!("{:02}:{:02}{}", hour, timestamp.minute(), part)
+    } else if date.next_day() == Some(today) {
+        format!("yesterday at {:02}:{:02}{}", hour, timestamp.minute(), part)
+    } else {
+        format!("{:02}/{}/{}", date.month() as u32, date.day(), date.year())
     }
 }
 

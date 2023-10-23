@@ -1,4 +1,4 @@
-use crate::{chat_panel::ChatPanel, format_timestamp, render_avatar, NotificationPanelSettings};
+use crate::{chat_panel::ChatPanel, render_avatar, NotificationPanelSettings};
 use anyhow::Result;
 use channel::ChannelStore;
 use client::{Client, Notification, User, UserStore};
@@ -846,5 +846,31 @@ impl View for NotificationToast {
 impl workspace::notifications::Notification for NotificationToast {
     fn should_dismiss_notification_on_event(&self, event: &<Self as Entity>::Event) -> bool {
         matches!(event, ToastEvent::Dismiss)
+    }
+}
+
+fn format_timestamp(
+    mut timestamp: OffsetDateTime,
+    mut now: OffsetDateTime,
+    local_timezone: UtcOffset,
+) -> String {
+    timestamp = timestamp.to_offset(local_timezone);
+    now = now.to_offset(local_timezone);
+
+    let today = now.date();
+    let date = timestamp.date();
+    if date == today {
+        let difference = now - timestamp;
+        if difference >= Duration::from_secs(3600) {
+            format!("{}h", difference.whole_seconds() / 3600)
+        } else if difference >= Duration::from_secs(60) {
+            format!("{}m", difference.whole_seconds() / 60)
+        } else {
+            "just now".to_string()
+        }
+    } else if date.next_day() == Some(today) {
+        format!("yesterday")
+    } else {
+        format!("{:02}/{}/{}", date.month() as u32, date.day(), date.year())
     }
 }
