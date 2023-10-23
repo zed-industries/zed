@@ -19,8 +19,8 @@ use gpui::{
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
-    BracketPairConfig, BundledFormatter, FakeLspAdapter, LanguageConfig, LanguageConfigOverride,
-    LanguageRegistry, Override, Point,
+    BracketPairConfig, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageRegistry,
+    Override, Point,
 };
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -851,7 +851,7 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
 
     let view = cx
         .add_window(|cx| {
-            let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx);
+            let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcde\nαβγδε", cx);
             build_editor(buffer.clone(), cx)
         })
         .root(cx);
@@ -869,7 +869,7 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
             true,
             cx,
         );
-        assert_eq!(view.display_text(cx), "ⓐⓑ⋯ⓔ\nab⋯e\nαβ⋯ε\n");
+        assert_eq!(view.display_text(cx), "ⓐⓑ⋯ⓔ\nab⋯e\nαβ⋯ε");
 
         view.move_right(&MoveRight, cx);
         assert_eq!(
@@ -888,6 +888,11 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
         );
 
         view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(1, "ab⋯e".len())]
+        );
+        view.move_left(&MoveLeft, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[empty_range(1, "ab⋯".len())]
@@ -929,17 +934,18 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
             view.selections.display_ranges(cx),
             &[empty_range(1, "ab⋯e".len())]
         );
+        view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(2, "αβ⋯ε".len())]
+        );
         view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ⋯ⓔ".len())]
+            &[empty_range(1, "ab⋯e".len())]
         );
-        view.move_left(&MoveLeft, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ⋯".len())]
-        );
-        view.move_left(&MoveLeft, cx);
+
+        view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[empty_range(0, "ⓐⓑ".len())]
@@ -948,6 +954,11 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             &[empty_range(0, "ⓐ".len())]
+        );
+        view.move_left(&MoveLeft, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(0, "".len())]
         );
     });
 }
@@ -5084,6 +5095,9 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         LanguageConfig {
             name: "Rust".into(),
             path_suffixes: vec!["rs".to_string()],
+            // Enable Prettier formatting for the same buffer, and ensure
+            // LSP is called instead of Prettier.
+            prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5094,12 +5108,6 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
                 document_formatting_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
             },
-            // Enable Prettier formatting for the same buffer, and ensure
-            // LSP is called instead of Prettier.
-            enabled_formatters: vec![BundledFormatter::Prettier {
-                parser_name: Some("test_parser"),
-                plugin_names: Vec::new(),
-            }],
             ..Default::default()
         }))
         .await;
@@ -7838,6 +7846,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         LanguageConfig {
             name: "Rust".into(),
             path_suffixes: vec!["rs".to_string()],
+            prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -7846,10 +7855,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     let test_plugin = "test_plugin";
     let _ = language
         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-            enabled_formatters: vec![BundledFormatter::Prettier {
-                parser_name: Some("test_parser"),
-                plugin_names: vec![test_plugin],
-            }],
+            prettier_plugins: vec![test_plugin],
             ..Default::default()
         }))
         .await;

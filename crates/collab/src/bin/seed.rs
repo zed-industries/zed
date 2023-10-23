@@ -71,7 +71,6 @@ async fn main() {
                     db::NewUserParams {
                         github_login: github_user.login,
                         github_user_id: github_user.id,
-                        invite_count: 5,
                     },
                 )
                 .await

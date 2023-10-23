@@ -7,6 +7,7 @@ use language::Point;
 pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     vim.stop_recording();
     vim.update_active_editor(cx, |editor, cx| {
+        let text_layout_details = editor.text_layout_details(cx);
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let mut original_columns: HashMap<_, _> = Default::default();
@@ -14,7 +15,7 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                 s.move_with(|map, selection| {
                     let original_head = selection.head();
                     original_columns.insert(selection.id, original_head.column());
-                    motion.expand_selection(map, selection, times, true);
+                    motion.expand_selection(map, selection, times, true, &text_layout_details);
 
                     // Motion::NextWordStart on an empty line should delete it.
                     if let Motion::NextWordStart {

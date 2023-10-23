@@ -1,9 +1,10 @@
+use std::time::Instant;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use ordered_float::OrderedFloat;
 use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::ToSql;
-use std::time::Instant;
 
 use crate::models::LanguageModel;
 

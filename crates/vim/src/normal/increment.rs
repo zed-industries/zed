@@ -255,8 +255,18 @@ mod test {
             4
             5"})
             .await;
-        cx.simulate_shared_keystrokes(["shift-g", "ctrl-v", "g", "g", "g", "ctrl-x"])
+
+        cx.simulate_shared_keystrokes(["shift-g", "ctrl-v", "g", "g"])
             .await;
+        cx.assert_shared_state(indoc! {"
+            «1ˇ»
+            «2ˇ»
+            «3ˇ»  2
+            «4ˇ»
+            «5ˇ»"})
+            .await;
+
+        cx.simulate_shared_keystrokes(["g", "ctrl-x"]).await;
         cx.assert_shared_state(indoc! {"
             ˇ0
             0

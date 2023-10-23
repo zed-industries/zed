@@ -53,6 +53,7 @@ language_selector = { path = "../language_selector" }
 lsp = { path = "../lsp" }
 language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
+notifications = { path = "../notifications" }
 assistant = { path = "../assistant" }
 outline = { path = "../outline" }
 plugin_runtime = { path = "../plugin_runtime",optional = true }

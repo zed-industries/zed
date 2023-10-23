@@ -81,6 +81,8 @@ id_type!(SignupId);
 id_type!(UserId);
 id_type!(ChannelBufferCollaboratorId);
 id_type!(FlagId);
+id_type!(NotificationId);
+id_type!(NotificationKindId);
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default)]
 #[sea_orm(rs_type = "String", db_type = "String(None)")]

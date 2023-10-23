@@ -469,6 +469,7 @@ fn main() {
             .join("embeddings_db");
 
         let languages = languages.clone();
+
         let fs = fs.clone();
         cx.spawn(|mut cx| async move {
             let semantic_index = SemanticIndex::new(
