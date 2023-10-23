@@ -8,7 +8,7 @@ use std::{
 };
 
 #[derive(
-    Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash, Neg,
+    Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash,
 )]
 #[refineable(debug)]
 #[repr(C)]

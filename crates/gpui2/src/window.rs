@@ -469,7 +469,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .layout_engine
             .layout_bounds(layout_id)
             .map(Into::into);
-        bounds.origin -= self.element_offset();
+        bounds.origin += self.element_offset();
         bounds
     }
 
@@ -812,7 +812,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
             if let Some(mut active_drag) = cx.active_drag.take() {
                 cx.stack(1, |cx| {
-                    let mouse_position = -cx.mouse_position();
+                    let mouse_position = cx.mouse_position();
                     cx.with_element_offset(Some(mouse_position), |cx| {
                         let available_space =
                             size(AvailableSpace::MinContent, AvailableSpace::MinContent);

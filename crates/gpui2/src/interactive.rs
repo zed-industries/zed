@@ -548,12 +548,12 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
 
                         if overflow.x == Overflow::Scroll {
                             scroll_offset.x =
-                                (scroll_offset.x - delta.x).clamp(px(0.), scroll_max.width);
+                                (scroll_offset.x + delta.x).clamp(-scroll_max.width, px(0.));
                         }
 
                         if overflow.y == Overflow::Scroll {
                             scroll_offset.y =
-                                (scroll_offset.y - delta.y).clamp(px(0.), scroll_max.height);
+                                (scroll_offset.y + delta.y).clamp(-scroll_max.height, px(0.));
                         }
 
                         if *scroll_offset != old_scroll_offset {
