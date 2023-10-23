@@ -17,6 +17,7 @@ pub struct Tab<S: 'static + Send + Sync + Clone> {
     close_side: IconSide,
 }
 
+#[derive(Clone)]
 struct TabDragState {
     title: String,
 }
@@ -115,14 +116,15 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
             ),
         };
 
+        let drag_state = TabDragState {
+            title: self.title.clone(),
+        };
+
         div()
             .id(self.id.clone())
-            // .on_drag(|_view, _cx| Drag {
-            //     element: div().w_8().h_4().bg(black()),
-            //     state: TabDragState {
-            //         title: self.title.clone(),
-            //     },
-            // })
+            .on_drag(move |_view, _cx| {
+                Drag::new(drag_state.clone(), |view, cx| div().w_8().h_4().bg(red()))
+            })
             .px_2()
             .py_0p5()
             .flex()
@@ -158,7 +160,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
     }
 }
 
-use gpui2::{black, ElementId};
+use gpui2::{red, Drag, ElementId};
 #[cfg(feature = "stories")]
 pub use stories::*;
 

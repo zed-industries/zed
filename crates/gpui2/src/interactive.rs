@@ -464,10 +464,17 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
                 let mouse_down = pending_mouse_down.lock().clone();
                 if let Some(mouse_down) = mouse_down {
                     if let Some(drag_listener) = drag_listener {
-                        cx.on_mouse_event(move |view_state, _: &MouseMoveEvent, phase, cx| {
-                            if phase == DispatchPhase::Bubble {
+                        cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
+                            if cx.active_drag.is_some() {
+                                if phase == DispatchPhase::Capture {
+                                    cx.notify();
+                                }
+                            } else if phase == DispatchPhase::Bubble
+                                && bounds.contains_point(&event.position)
+                            {
                                 let any_drag = drag_listener(view_state, cx);
                                 cx.start_drag(any_drag);
+                                cx.stop_propagation();
                             }
                         });
                     }
@@ -484,7 +491,9 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
                             }
                         }
 
-                        cx.end_drag();
+                        if cx.active_drag.is_some() {
+                            cx.end_drag();
+                        }
                         *pending_mouse_down.lock() = None;
                     });
                 } else {

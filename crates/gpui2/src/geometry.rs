@@ -7,7 +7,9 @@ use std::{
     ops::{Add, Div, Mul, MulAssign, Sub},
 };
 
-#[derive(Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(
+    Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash, Neg,
+)]
 #[refineable(debug)]
 #[repr(C)]
 pub struct Point<T: Default + Clone + Debug> {

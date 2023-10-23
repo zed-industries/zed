@@ -1,9 +1,9 @@
 use crate::{
-    point, AnyElement, BorrowWindow, Bounds, Element, ElementFocus, ElementId,
-    ElementInteraction, FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable,
-    GlobalElementId, GroupBounds, InteractiveElementState, IntoAnyElement, LayoutId, Overflow,
-    ParentElement, Pixels, Point, SharedString, StatefulInteraction, StatefulInteractive,
-    StatelessInteraction, StatelessInteractive, Style, StyleRefinement, Styled, ViewContext,
+    point, AnyElement, BorrowWindow, Bounds, Element, ElementFocus, ElementId, ElementInteraction,
+    FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable, GlobalElementId,
+    GroupBounds, InteractiveElementState, IntoAnyElement, LayoutId, Overflow, ParentElement,
+    Pixels, Point, SharedString, StatefulInteraction, StatefulInteractive, StatelessInteraction,
+    StatelessInteractive, Style, StyleRefinement, Styled, ViewContext,
 };
 use refineable::Refineable;
 use smallvec::SmallVec;
@@ -298,7 +298,7 @@ where
                     style.apply_text_style(cx, |cx| {
                         style.apply_overflow(bounds, cx, |cx| {
                             let scroll_offset = element_state.interactive.scroll_offset();
-                            cx.with_scroll_offset(scroll_offset, |cx| {
+                            cx.with_element_offset(scroll_offset, |cx| {
                                 for child in &mut this.children {
                                     child.paint(view_state, cx);
                                 }
