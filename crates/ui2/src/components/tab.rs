@@ -125,6 +125,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
             .on_drag(move |_view, _cx| {
                 Drag::new(drag_state.clone(), |view, cx| div().w_8().h_4().bg(red()))
             })
+            .drag_over::<TabDragState>(|d| d.bg(black()))
             .px_2()
             .py_0p5()
             .flex()
@@ -160,7 +161,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
     }
 }
 
-use gpui2::{red, Drag, ElementId};
+use gpui2::{black, red, Drag, ElementId};
 #[cfg(feature = "stories")]
 pub use stories::*;
 
