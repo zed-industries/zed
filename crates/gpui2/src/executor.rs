@@ -152,14 +152,11 @@ impl Executor {
         }
     }
 
-    pub fn block_with_timeout<F, R>(
+    pub fn block_with_timeout<R>(
         &self,
         duration: Duration,
-        future: F,
-    ) -> Result<R, impl Future<Output = R>>
-    where
-        F: Future<Output = R> + Send + Sync + 'static,
-    {
+        future: impl Future<Output = R>,
+    ) -> Result<R, impl Future<Output = R>> {
         let mut future = Box::pin(future);
         let timeout = {
             let future = &mut future;

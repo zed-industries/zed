@@ -832,7 +832,8 @@ impl Buffer {
                         if parse_again {
                             this.reparse(cx);
                         }
-                    });
+                    })
+                    .ok();
                 })
                 .detach();
             }
@@ -876,7 +877,8 @@ impl Buffer {
                         let indent_sizes = indent_sizes.await;
                         this.update(&mut cx, |this, cx| {
                             this.apply_autoindents(indent_sizes, cx);
-                        });
+                        })
+                        .ok();
                     }));
                 }
             }

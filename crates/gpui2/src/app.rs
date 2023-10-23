@@ -17,13 +17,14 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
-use futures::Future;
+use futures::{future::BoxFuture, Future};
 use parking_lot::{Mutex, RwLock};
 use slotmap::SlotMap;
 use std::{
     any::{type_name, Any, TypeId},
     mem,
     sync::{atomic::Ordering::SeqCst, Arc, Weak},
+    time::Duration,
 };
 use util::http::{self, HttpClient};
 
@@ -89,6 +90,7 @@ impl App {
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
+                quit_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
             })
@@ -155,11 +157,12 @@ impl App {
     }
 }
 
+type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
+type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
 type Handler = Box<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>;
 type Listener = Box<dyn Fn(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>;
+type QuitHandler = Box<dyn Fn(&mut AppContext) -> BoxFuture<'static, ()> + Send + Sync + 'static>;
 type ReleaseListener = Box<dyn Fn(&mut dyn Any, &mut AppContext) + Send + Sync + 'static>;
-type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
-type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
 
 pub struct AppContext {
     this: Weak<Mutex<AppContext>>,
@@ -188,11 +191,33 @@ pub struct AppContext {
     pub(crate) event_listeners: SubscriberSet<EntityId, Listener>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Listener>,
+    pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
 }
 
 impl AppContext {
+    pub fn quit(&mut self) {
+        let mut futures = Vec::new();
+
+        self.quit_observers.clone().retain(&(), |observer| {
+            futures.push(observer(self));
+            true
+        });
+
+        self.windows.clear();
+        self.flush_effects();
+
+        let futures = futures::future::join_all(futures);
+        if self
+            .executor
+            .block_with_timeout(Duration::from_millis(100), futures)
+            .is_err()
+        {
+            log::error!("timed out waiting on app_will_quit");
+        }
+    }
+
     pub fn app_metadata(&self) -> AppMetadata {
         self.app_metadata.clone()
     }

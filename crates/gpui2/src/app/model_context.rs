@@ -3,6 +3,7 @@ use crate::{
     Subscription, Task, WeakHandle,
 };
 use derive_more::{Deref, DerefMut};
+use futures::FutureExt;
 use std::{future::Future, marker::PhantomData};
 
 #[derive(Deref, DerefMut)]
@@ -80,6 +81,28 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
                 on_release(this, cx);
+            }),
+        )
+    }
+
+    pub fn on_app_quit<Fut>(
+        &mut self,
+        on_quit: impl Fn(&mut T, &mut AppContext) -> Fut + Send + Sync + 'static,
+    ) -> Subscription
+    where
+        Fut: 'static + Future<Output = ()> + Send,
+    {
+        let handle = self.handle();
+        self.app.quit_observers.insert(
+            (),
+            Box::new(move |cx| {
+                let future = handle.update(cx, |entity, cx| on_quit(entity, cx)).ok();
+                async move {
+                    if let Some(future) = future {
+                        future.await;
+                    }
+                }
+                .boxed()
             }),
         )
     }

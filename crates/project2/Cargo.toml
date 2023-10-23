@@ -1,0 +1,84 @@
+[package]
+name = "project2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/project2.rs"
+doctest = false
+
+[features]
+test-support = [
+    "client2/test-support",
+    "db2/test-support",
+    "language2/test-support",
+    "settings2/test-support",
+    "text/test-support",
+    "prettier/test-support",
+]
+
+[dependencies]
+text = { path = "../text" }
+copilot = { path = "../copilot" }
+client2 = { path = "../client2" }
+clock = { path = "../clock" }
+collections = { path = "../collections" }
+db2 = { path = "../db2" }
+fs = { path = "../fs" }
+fsevent = { path = "../fsevent" }
+fuzzy2 = { path = "../fuzzy2" }
+git = { path = "../git" }
+gpui2 = { path = "../gpui2" }
+language2 = { path = "../language2" }
+lsp2 = { path = "../lsp2" }
+node_runtime = { path = "../node_runtime" }
+prettier = { path = "../prettier" }
+rpc = { path = "../rpc" }
+settings2 = { path = "../settings2" }
+sum_tree = { path = "../sum_tree" }
+terminal = { path = "../terminal" }
+util = { path = "../util" }
+
+aho-corasick = "1.1"
+anyhow.workspace = true
+async-trait.workspace = true
+backtrace = "0.3"
+futures.workspace = true
+globset.workspace = true
+ignore = "0.4"
+lazy_static.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+postage.workspace = true
+rand.workspace = true
+regex.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+similar = "1.3"
+smol.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+itertools = "0.10"
+
+[dev-dependencies]
+ctor.workspace = true
+env_logger.workspace = true
+pretty_assertions.workspace = true
+client2 = { path = "../client2", features = ["test-support"] }
+collections = { path = "../collections", features = ["test-support"] }
+db2 = { path = "../db2", features = ["test-support"] }
+fs = { path = "../fs",  features = ["test-support"] }
+gpui2 = { path = "../gpui2", features = ["test-support"] }
+language2 = { path = "../language2", features = ["test-support"] }
+lsp2 = { path = "../lsp2", features = ["test-support"] }
+settings2 = { path = "../settings2", features = ["test-support"] }
+prettier = { path = "../prettier", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
+rpc = { path = "../rpc", features = ["test-support"] }
+git2.workspace = true
+tempdir.workspace = true
+unindent.workspace = true
