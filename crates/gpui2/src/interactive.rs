@@ -1,7 +1,7 @@
 use crate::{
-    point, px, Action, AppContext, BorrowWindow, Bounds, DispatchContext, DispatchPhase, Element,
-    ElementId, FocusHandle, KeyMatch, Keystroke, Modifiers, Overflow, Pixels, Point, SharedString,
-    Size, Style, StyleRefinement, ViewContext,
+    point, px, view, Action, AnyDrag, AppContext, BorrowWindow, Bounds, DispatchContext,
+    DispatchPhase, Element, ElementId, FocusHandle, KeyMatch, Keystroke, Modifiers, Overflow,
+    Pixels, Point, SharedString, Size, Style, StyleRefinement, ViewContext,
 };
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -11,6 +11,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     fmt::Debug,
+    marker::PhantomData,
     ops::Deref,
     sync::Arc,
 };
@@ -257,13 +258,13 @@ pub trait StatelessInteractive: Element {
 }
 
 pub trait StatefulInteractive: StatelessInteractive {
-    fn stateful_interactivity(&mut self) -> &mut StatefulInteraction<Self::ViewState>;
+    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<Self::ViewState>;
 
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
     {
-        self.stateful_interactivity().active_style = f(StyleRefinement::default());
+        self.stateful_interaction().active_style = f(StyleRefinement::default());
         self
     }
 
@@ -275,7 +276,7 @@ pub trait StatefulInteractive: StatelessInteractive {
     where
         Self: Sized,
     {
-        self.stateful_interactivity().group_active_style = Some(GroupStyle {
+        self.stateful_interaction().group_active_style = Some(GroupStyle {
             group: group_name.into(),
             style: f(StyleRefinement::default()),
         });
@@ -284,7 +285,7 @@ pub trait StatefulInteractive: StatelessInteractive {
 
     fn on_click(
         mut self,
-        handler: impl Fn(&mut Self::ViewState, &MouseClickEvent, &mut ViewContext<Self::ViewState>)
+        listener: impl Fn(&mut Self::ViewState, &ClickEvent, &mut ViewContext<Self::ViewState>)
             + Send
             + Sync
             + 'static,
@@ -292,9 +293,45 @@ pub trait StatefulInteractive: StatelessInteractive {
     where
         Self: Sized,
     {
-        self.stateful_interactivity()
-            .mouse_click_listeners
-            .push(Arc::new(move |view, event, cx| handler(view, event, cx)));
+        self.stateful_interaction()
+            .click_listeners
+            .push(Arc::new(move |view, event, cx| listener(view, event, cx)));
+        self
+    }
+
+    fn on_drag<S, R, E>(
+        mut self,
+        listener: impl Fn(
+                &mut Self::ViewState,
+                &mut ViewContext<Self::ViewState>,
+            ) -> Drag<S, R, Self::ViewState, E>
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+        S: 'static + Send + Sync,
+        R: 'static + Fn(&mut Self::ViewState, &mut ViewContext<Self::ViewState>) -> E + Send + Sync,
+        E: Element<ViewState = Self::ViewState>,
+    {
+        debug_assert!(
+            self.stateful_interaction().drag_listener.is_none(),
+            "calling on_drag more than once on the same element is not supported"
+        );
+        self.stateful_interaction().drag_listener = Some(Arc::new(move |view_state, cx| {
+            let drag = listener(view_state, cx);
+            let view_handle = cx.handle().upgrade().unwrap();
+            let drag_handle_view = view(view_handle, move |view_state, cx| {
+                (drag.render_drag_handle)(view_state, cx)
+            })
+            .into_any();
+            AnyDrag {
+                drag_handle_view,
+                state: Box::new(drag.state),
+                state_type: TypeId::of::<S>(),
+            }
+        }));
         self
     }
 }
@@ -419,30 +456,45 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
         }
 
         if let Some(stateful) = self.as_stateful() {
-            let click_listeners = stateful.mouse_click_listeners.clone();
+            let click_listeners = stateful.click_listeners.clone();
+            let drag_listener = stateful.drag_listener.clone();
 
-            let pending_click = element_state.pending_click.clone();
-            let mouse_down = pending_click.lock().clone();
-            if let Some(mouse_down) = mouse_down {
-                cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
-                    if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                        let mouse_click = MouseClickEvent {
-                            down: mouse_down.clone(),
-                            up: event.clone(),
-                        };
-                        for listener in &click_listeners {
-                            listener(state, &mouse_click, cx);
+            if !click_listeners.is_empty() || drag_listener.is_some() {
+                let pending_mouse_down = element_state.pending_mouse_down.clone();
+                let mouse_down = pending_mouse_down.lock().clone();
+                if let Some(mouse_down) = mouse_down {
+                    if let Some(drag_listener) = drag_listener {
+                        cx.on_mouse_event(move |view_state, _: &MouseMoveEvent, phase, cx| {
+                            if phase == DispatchPhase::Bubble {
+                                let any_drag = drag_listener(view_state, cx);
+                                cx.start_drag(any_drag);
+                            }
+                        });
+                    }
+
+                    cx.on_mouse_event(move |view_state, event: &MouseUpEvent, phase, cx| {
+                        if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position)
+                        {
+                            let mouse_click = ClickEvent {
+                                down: mouse_down.clone(),
+                                up: event.clone(),
+                            };
+                            for listener in &click_listeners {
+                                listener(view_state, &mouse_click, cx);
+                            }
                         }
-                    }
 
-                    *pending_click.lock() = None;
-                });
-            } else {
-                cx.on_mouse_event(move |_state, event: &MouseDownEvent, phase, _cx| {
-                    if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                        *pending_click.lock() = Some(event.clone());
-                    }
-                });
+                        cx.end_drag();
+                        *pending_mouse_down.lock() = None;
+                    });
+                } else {
+                    cx.on_mouse_event(move |_state, event: &MouseDownEvent, phase, _cx| {
+                        if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position)
+                        {
+                            *pending_mouse_down.lock() = Some(event.clone());
+                        }
+                    });
+                }
             }
 
             let active_state = element_state.active_state.clone();
@@ -526,7 +578,8 @@ pub struct StatefulInteraction<V: 'static + Send + Sync> {
     #[deref]
     #[deref_mut]
     stateless: StatelessInteraction<V>,
-    pub mouse_click_listeners: SmallVec<[MouseClickListener<V>; 2]>,
+    pub click_listeners: SmallVec<[ClickListener<V>; 2]>,
+    pub(crate) drag_listener: Option<DragListener<V>>,
     pub active_style: StyleRefinement,
     pub group_active_style: Option<GroupStyle>,
 }
@@ -560,7 +613,8 @@ where
         Self {
             id,
             stateless: StatelessInteraction::default(),
-            mouse_click_listeners: SmallVec::new(),
+            click_listeners: SmallVec::new(),
+            drag_listener: None,
             active_style: StyleRefinement::default(),
             group_active_style: None,
         }
@@ -586,7 +640,8 @@ where
         StatefulInteraction {
             id: id.into(),
             stateless: self,
-            mouse_click_listeners: SmallVec::new(),
+            click_listeners: SmallVec::new(),
+            drag_listener: None,
             active_style: StyleRefinement::default(),
             group_active_style: None,
         }
@@ -642,7 +697,7 @@ impl ActiveState {
 #[derive(Default)]
 pub struct InteractiveElementState {
     active_state: Arc<Mutex<ActiveState>>,
-    pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
+    pending_mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
     scroll_offset: Option<Arc<Mutex<Point<Pixels>>>>,
 }
 
@@ -740,9 +795,37 @@ pub struct MouseUpEvent {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct MouseClickEvent {
+pub struct ClickEvent {
     pub down: MouseDownEvent,
     pub up: MouseUpEvent,
+}
+
+pub struct Drag<S, R, V, E>
+where
+    S: 'static + Send + Sync,
+    R: Fn(&mut V, &mut ViewContext<V>) -> E,
+    V: 'static + Send + Sync,
+    E: Element<ViewState = V>,
+{
+    pub state: S,
+    pub render_drag_handle: R,
+    view_type: PhantomData<V>,
+}
+
+impl<S, R, V, E> Drag<S, R, V, E>
+where
+    S: 'static + Send + Sync,
+    R: Fn(&mut V, &mut ViewContext<V>) -> E + Send + Sync,
+    V: 'static + Send + Sync,
+    E: Element<ViewState = V>,
+{
+    pub fn new(state: S, render_drag_handle: R) -> Self {
+        Drag {
+            state,
+            render_drag_handle,
+            view_type: PhantomData,
+        }
+    }
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
@@ -919,8 +1002,6 @@ pub type MouseUpListener<V> = Arc<
         + Sync
         + 'static,
 >;
-pub type MouseClickListener<V> =
-    Arc<dyn Fn(&mut V, &MouseClickEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
 
 pub type MouseMoveListener<V> = Arc<
     dyn Fn(&mut V, &MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
@@ -935,6 +1016,12 @@ pub type ScrollWheelListener<V> = Arc<
         + Sync
         + 'static,
 >;
+
+pub type ClickListener<V> =
+    Arc<dyn Fn(&mut V, &ClickEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
+
+pub(crate) type DragListener<V> =
+    Arc<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyDrag + Send + Sync + 'static>;
 
 pub type KeyListener<V> = Arc<
     dyn Fn(

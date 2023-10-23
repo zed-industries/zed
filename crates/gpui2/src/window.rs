@@ -1,5 +1,5 @@
 use crate::{
-    px, size, Action, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
+    px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext,
     DisplayId, Edges, Effect, Element, EntityId, EventEmitter, FocusEvent, FontId, GlobalElementId,
     GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher,
@@ -1604,6 +1604,14 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
                 handler(view, event, phase, cx);
             })
         });
+    }
+
+    pub(crate) fn start_drag(&mut self, drag: AnyDrag) {
+        self.app.active_drag = Some(drag);
+    }
+
+    pub(crate) fn end_drag(&mut self) {
+        self.app.active_drag = None;
     }
 }
 

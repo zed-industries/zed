@@ -201,7 +201,7 @@ impl InputEvent {
                     _ => return None,
                 };
 
-                window_height.map(|window_height| {
+                dbg!(window_height.map(|window_height| {
                     Self::MouseMoved(MouseMoveEvent {
                         pressed_button: Some(pressed_button),
                         position: point(
@@ -210,7 +210,7 @@ impl InputEvent {
                         ),
                         modifiers: read_modifiers(native_event),
                     })
-                })
+                }))
             }
             NSEventType::NSMouseMoved => window_height.map(|window_height| {
                 Self::MouseMoved(MouseMoveEvent {

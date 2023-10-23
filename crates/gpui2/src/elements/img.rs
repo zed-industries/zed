@@ -166,8 +166,8 @@ where
     V: 'static + Send + Sync,
     F: ElementFocus<V>,
 {
-    fn stateful_interactivity(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
-        self.base.stateful_interactivity()
+    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
+        self.base.stateful_interaction()
     }
 }
 

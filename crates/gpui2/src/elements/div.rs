@@ -1,9 +1,9 @@
 use crate::{
-    point, AnyElement, BorrowWindow, Bounds, Element, ElementFocus, ElementId, ElementInteraction,
-    FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable, GlobalElementId,
-    GroupBounds, InteractiveElementState, IntoAnyElement, LayoutId, Overflow, ParentElement,
-    Pixels, Point, SharedString, StatefulInteraction, StatefulInteractive, StatelessInteraction,
-    StatelessInteractive, Style, StyleRefinement, Styled, ViewContext,
+    point, AnyElement, BorrowWindow, Bounds, Element, ElementFocus, ElementId,
+    ElementInteraction, FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable,
+    GlobalElementId, GroupBounds, InteractiveElementState, IntoAnyElement, LayoutId, Overflow,
+    ParentElement, Pixels, Point, SharedString, StatefulInteraction, StatefulInteractive,
+    StatelessInteraction, StatelessInteractive, Style, StyleRefinement, Styled, ViewContext,
 };
 use refineable::Refineable;
 use smallvec::SmallVec;
@@ -364,7 +364,7 @@ where
     F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
-    fn stateful_interactivity(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
+    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
         &mut self.interaction
     }
 }
