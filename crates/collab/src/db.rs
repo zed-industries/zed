@@ -13,6 +13,7 @@ use anyhow::anyhow;
 use collections::{BTreeMap, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
+use queries::channels::ChannelGraph;
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use rpc::{
     proto::{self},
@@ -20,7 +21,7 @@ use rpc::{
 };
 use sea_orm::{
     entity::prelude::*,
-    sea_query::{Alias, Expr, OnConflict, Query},
+    sea_query::{Alias, Expr, OnConflict},
     ActiveValue, Condition, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr,
     FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect, Statement,
     TransactionTrait,
@@ -47,14 +48,14 @@ pub use ids::*;
 pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
 
-use self::queries::channels::ChannelGraph;
-
 pub struct Database {
     options: ConnectOptions,
     pool: DatabaseConnection,
     rooms: DashMap<RoomId, Arc<Mutex<()>>>,
     rng: Mutex<StdRng>,
     executor: Executor,
+    notification_kinds_by_id: HashMap<NotificationKindId, &'static str>,
+    notification_kinds_by_name: HashMap<String, NotificationKindId>,
     #[cfg(test)]
     runtime: Option<tokio::runtime::Runtime>,
 }
@@ -69,6 +70,8 @@ impl Database {
             pool: sea_orm::Database::connect(options).await?,
             rooms: DashMap::with_capacity(16384),
             rng: Mutex::new(StdRng::seed_from_u64(0)),
+            notification_kinds_by_id: HashMap::default(),
+            notification_kinds_by_name: HashMap::default(),
             executor,
             #[cfg(test)]
             runtime: None,
@@ -119,6 +122,11 @@ impl Database {
         }
 
         Ok(new_migrations)
+    }
+
+    pub async fn initialize_static_data(&mut self) -> Result<()> {
+        self.initialize_notification_kinds().await?;
+        Ok(())
     }
 
     pub async fn transaction<F, Fut, T>(&self, f: F) -> Result<T>
@@ -361,18 +369,9 @@ impl<T> RoomGuard<T> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Contact {
-    Accepted {
-        user_id: UserId,
-        should_notify: bool,
-        busy: bool,
-    },
-    Outgoing {
-        user_id: UserId,
-    },
-    Incoming {
-        user_id: UserId,
-        should_notify: bool,
-    },
+    Accepted { user_id: UserId, busy: bool },
+    Outgoing { user_id: UserId },
+    Incoming { user_id: UserId },
 }
 
 impl Contact {
@@ -383,6 +382,15 @@ impl Contact {
             Contact::Incoming { user_id, .. } => *user_id,
         }
     }
+}
+
+pub type NotificationBatch = Vec<(UserId, proto::Notification)>;
+
+pub struct CreatedChannelMessage {
+    pub message_id: MessageId,
+    pub participant_connection_ids: Vec<ConnectionId>,
+    pub channel_members: Vec<UserId>,
+    pub notifications: NotificationBatch,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, FromQueryResult, Serialize, Deserialize)]
@@ -417,7 +425,6 @@ pub struct WaitlistSummary {
 pub struct NewUserParams {
     pub github_login: String,
     pub github_user_id: i32,
-    pub invite_count: i32,
 }
 
 #[derive(Debug)]

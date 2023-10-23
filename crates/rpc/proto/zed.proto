@@ -157,23 +157,30 @@ message Envelope {
         UpdateChannelBufferCollaborators update_channel_buffer_collaborators = 130;
         RejoinChannelBuffers rejoin_channel_buffers = 131;
         RejoinChannelBuffersResponse rejoin_channel_buffers_response = 132;
-        AckBufferOperation ack_buffer_operation = 145;
+        AckBufferOperation ack_buffer_operation = 133;
 
-        JoinChannelChat join_channel_chat = 133;
-        JoinChannelChatResponse join_channel_chat_response = 134;
-        LeaveChannelChat leave_channel_chat = 135;
-        SendChannelMessage send_channel_message = 136;
-        SendChannelMessageResponse send_channel_message_response = 137;
-        ChannelMessageSent channel_message_sent = 138;
-        GetChannelMessages get_channel_messages = 139;
-        GetChannelMessagesResponse get_channel_messages_response = 140;
-        RemoveChannelMessage remove_channel_message = 141;
-        AckChannelMessage ack_channel_message = 146;
+        JoinChannelChat join_channel_chat = 134;
+        JoinChannelChatResponse join_channel_chat_response = 135;
+        LeaveChannelChat leave_channel_chat = 136;
+        SendChannelMessage send_channel_message = 137;
+        SendChannelMessageResponse send_channel_message_response = 138;
+        ChannelMessageSent channel_message_sent = 139;
+        GetChannelMessages get_channel_messages = 140;
+        GetChannelMessagesResponse get_channel_messages_response = 141;
+        RemoveChannelMessage remove_channel_message = 142;
+        AckChannelMessage ack_channel_message = 143;
+        GetChannelMessagesById get_channel_messages_by_id = 144;
 
-        LinkChannel link_channel = 142;
-        UnlinkChannel unlink_channel = 143;
-        MoveChannel move_channel = 144;
-        SetChannelVisibility set_channel_visibility = 147; // current max: 147
+        LinkChannel link_channel = 145;
+        UnlinkChannel unlink_channel = 146;
+        MoveChannel move_channel = 147;
+        SetChannelVisibility set_channel_visibility = 148;
+
+        AddNotification add_notification = 149;
+        GetNotifications get_notifications = 150;
+        GetNotificationsResponse get_notifications_response = 151;
+        DeleteNotification delete_notification = 152;
+        MarkNotificationRead mark_notification_read = 153; // Current max
     }
 }
 
@@ -1094,6 +1101,7 @@ message SendChannelMessage {
     uint64 channel_id = 1;
     string body = 2;
     Nonce nonce = 3;
+    repeated ChatMention mentions = 4;
 }
 
 message RemoveChannelMessage {
@@ -1125,6 +1133,10 @@ message GetChannelMessagesResponse {
     bool done = 2;
 }
 
+message GetChannelMessagesById {
+    repeated uint64 message_ids = 1;
+}
+
 message LinkChannel {
     uint64 channel_id = 1;
     uint64 to = 2;
@@ -1151,6 +1163,12 @@ message ChannelMessage {
     uint64 timestamp = 3;
     uint64 sender_id = 4;
     Nonce nonce = 5;
+    repeated ChatMention mentions = 6;
+}
+
+message ChatMention {
+    Range range = 1;
+    uint64 user_id = 2;
 }
 
 message RejoinChannelBuffers {
@@ -1242,7 +1260,6 @@ message ShowContacts {}
 
 message IncomingContactRequest {
     uint64 requester_id = 1;
-    bool should_notify = 2;
 }
 
 message UpdateDiagnostics {
@@ -1574,7 +1591,6 @@ message Contact {
     uint64 user_id = 1;
     bool online = 2;
     bool busy = 3;
-    bool should_notify = 4;
 }
 
 message WorktreeMetadata {
@@ -1588,4 +1604,35 @@ message UpdateDiffBase {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     optional string diff_base = 3;
+}
+
+message GetNotifications {
+    optional uint64 before_id = 1;
+}
+
+message AddNotification {
+    Notification notification = 1;
+}
+
+message GetNotificationsResponse {
+    repeated Notification notifications = 1;
+    bool done = 2;
+}
+
+message DeleteNotification {
+    uint64 notification_id = 1;
+}
+
+message MarkNotificationRead {
+    uint64 notification_id = 1;
+}
+
+message Notification {
+    uint64 id = 1;
+    uint64 timestamp = 2;
+    string kind = 3;
+    optional uint64 entity_id = 4;
+    string content = 5;
+    bool is_read = 6;
+    optional bool response = 7;
 }

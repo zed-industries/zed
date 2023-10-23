@@ -10,7 +10,10 @@ use parking_lot::Mutex;
 use rpc::proto::ChannelEdge;
 use sea_orm::ConnectionTrait;
 use sqlx::migrate::MigrateDatabase;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicI32, Ordering::SeqCst},
+    Arc,
+};
 
 const TEST_RELEASE_CHANNEL: &'static str = "test";
 
@@ -31,7 +34,7 @@ impl TestDb {
         let mut db = runtime.block_on(async {
             let mut options = ConnectOptions::new(url);
             options.max_connections(5);
-            let db = Database::new(options, Executor::Deterministic(background))
+            let mut db = Database::new(options, Executor::Deterministic(background))
                 .await
                 .unwrap();
             let sql = include_str!(concat!(
@@ -45,6 +48,7 @@ impl TestDb {
                 ))
                 .await
                 .unwrap();
+            db.initialize_notification_kinds().await.unwrap();
             db
         });
 
@@ -79,11 +83,12 @@ impl TestDb {
             options
                 .max_connections(5)
                 .idle_timeout(Duration::from_secs(0));
-            let db = Database::new(options, Executor::Deterministic(background))
+            let mut db = Database::new(options, Executor::Deterministic(background))
                 .await
                 .unwrap();
             let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
             db.migrate(Path::new(migrations_path), false).await.unwrap();
+            db.initialize_notification_kinds().await.unwrap();
             db
         });
 
@@ -171,4 +176,20 @@ fn graph(channels: &[(ChannelId, &'static str)], edges: &[(ChannelId, ChannelId)
     }
 
     graph
+}
+
+static GITHUB_USER_ID: AtomicI32 = AtomicI32::new(5);
+
+async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
+    db.create_user(
+        email,
+        false,
+        NewUserParams {
+            github_login: email[0..email.find("@").unwrap()].to_string(),
+            github_user_id: GITHUB_USER_ID.fetch_add(1, SeqCst),
+        },
+    )
+    .await
+    .unwrap()
+    .user_id
 }

@@ -192,7 +192,7 @@ CREATE INDEX "index_followers_on_room_id" ON "followers" ("room_id");
 CREATE TABLE "channels" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "name" VARCHAR NOT NULL,
-    "created_at" TIMESTAMP NOT NULL DEFAULT now,
+    "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "visibility" VARCHAR NOT NULL
 );
 
@@ -214,7 +214,15 @@ CREATE TABLE IF NOT EXISTS "channel_messages" (
     "nonce" BLOB NOT NULL
 );
 CREATE INDEX "index_channel_messages_on_channel_id" ON "channel_messages" ("channel_id");
-CREATE UNIQUE INDEX "index_channel_messages_on_nonce" ON "channel_messages" ("nonce");
+CREATE UNIQUE INDEX "index_channel_messages_on_sender_id_nonce" ON "channel_messages" ("sender_id", "nonce");
+
+CREATE TABLE "channel_message_mentions" (
+    "message_id" INTEGER NOT NULL REFERENCES channel_messages (id) ON DELETE CASCADE,
+    "start_offset" INTEGER NOT NULL,
+    "end_offset" INTEGER NOT NULL,
+    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    PRIMARY KEY(message_id, start_offset)
+);
 
 CREATE TABLE "channel_paths" (
     "id_path" TEXT NOT NULL PRIMARY KEY,
@@ -314,3 +322,26 @@ CREATE TABLE IF NOT EXISTS "observed_channel_messages" (
 );
 
 CREATE UNIQUE INDEX "index_observed_channel_messages_user_and_channel_id" ON "observed_channel_messages" ("user_id", "channel_id");
+
+CREATE TABLE "notification_kinds" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "name" VARCHAR NOT NULL
+);
+
+CREATE UNIQUE INDEX "index_notification_kinds_on_name" ON "notification_kinds" ("name");
+
+CREATE TABLE "notifications" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "created_at" TIMESTAMP NOT NULL default CURRENT_TIMESTAMP,
+    "recipient_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "kind" INTEGER NOT NULL REFERENCES notification_kinds (id),
+    "entity_id" INTEGER,
+    "content" TEXT,
+    "is_read" BOOLEAN NOT NULL DEFAULT FALSE,
+    "response" BOOLEAN
+);
+
+CREATE INDEX
+    "index_notifications_on_recipient_id_is_read_kind_entity_id"
+    ON "notifications"
+    ("recipient_id", "is_read", "kind", "entity_id");

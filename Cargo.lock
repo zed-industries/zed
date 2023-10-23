@@ -1504,6 +1504,7 @@ dependencies = [
  "lsp",
  "nanoid",
  "node_runtime",
+ "notifications",
  "parking_lot 0.11.2",
  "pretty_assertions",
  "project",
@@ -1559,13 +1560,17 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "lazy_static",
  "log",
  "menu",
+ "notifications",
  "picker",
  "postage",
+ "pretty_assertions",
  "project",
  "recent_projects",
  "rich_text",
+ "rpc",
  "schemars",
  "serde",
  "serde_derive",
@@ -1573,6 +1578,7 @@ dependencies = [
  "theme",
  "theme_selector",
  "time",
+ "tree-sitter-markdown",
  "util",
  "vcs_menu",
  "workspace",
@@ -4731,6 +4737,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "notifications"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "channel",
+ "client",
+ "clock",
+ "collections",
+ "db",
+ "feature_flags",
+ "gpui",
+ "rpc",
+ "settings",
+ "sum_tree",
+ "text",
+ "time",
+ "util",
+]
+
+[[package]]
 name = "ntapi"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6404,8 +6430,10 @@ dependencies = [
  "rsa 0.4.0",
  "serde",
  "serde_derive",
+ "serde_json",
  "smol",
  "smol-timeout",
+ "strum",
  "tempdir",
  "tracing",
  "util",
@@ -6625,6 +6653,12 @@ dependencies = [
  "ring",
  "untrusted",
 ]
+
+[[package]]
+name = "rustversion"
+version = "1.0.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ffc183a10b4478d04cbbbfc96d0873219d962dd5accaff2ffbd4ceb7df837f4"
 
 [[package]]
 name = "rustybuzz"
@@ -7700,6 +7734,22 @@ name = "strum"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "290d54ea6f91c969195bdbcd7442c8c2a2ba87da8bf60a7ee86a235d4bc1e125"
+dependencies = [
+ "strum_macros",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad8d03b598d3d0fff69bf533ee3ef19b8eeb342729596df84bcc7e1f96ec4059"
+dependencies = [
+ "heck 0.4.1",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn 2.0.37",
+]
 
 [[package]]
 name = "subtle"
@@ -10098,6 +10148,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "notifications",
  "num_cpus",
  "outline",
  "parking_lot 0.11.2",

@@ -30,7 +30,7 @@ struct StateInner<V> {
     orientation: Orientation,
     overdraw: f32,
     #[allow(clippy::type_complexity)]
-    scroll_handler: Option<Box<dyn FnMut(Range<usize>, &mut V, &mut ViewContext<V>)>>,
+    scroll_handler: Option<Box<dyn FnMut(Range<usize>, usize, &mut V, &mut ViewContext<V>)>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -378,6 +378,10 @@ impl<V: 'static> ListState<V> {
             .extend((0..element_count).map(|_| ListItem::Unrendered), &());
     }
 
+    pub fn item_count(&self) -> usize {
+        self.0.borrow().items.summary().count
+    }
+
     pub fn splice(&self, old_range: Range<usize>, count: usize) {
         let state = &mut *self.0.borrow_mut();
 
@@ -416,7 +420,7 @@ impl<V: 'static> ListState<V> {
 
     pub fn set_scroll_handler(
         &mut self,
-        handler: impl FnMut(Range<usize>, &mut V, &mut ViewContext<V>) + 'static,
+        handler: impl FnMut(Range<usize>, usize, &mut V, &mut ViewContext<V>) + 'static,
     ) {
         self.0.borrow_mut().scroll_handler = Some(Box::new(handler))
     }
@@ -529,7 +533,12 @@ impl<V: 'static> StateInner<V> {
 
         if self.scroll_handler.is_some() {
             let visible_range = self.visible_range(height, scroll_top);
-            self.scroll_handler.as_mut().unwrap()(visible_range, view, cx);
+            self.scroll_handler.as_mut().unwrap()(
+                visible_range,
+                self.items.summary().count,
+                view,
+                cx,
+            );
         }
 
         cx.notify();

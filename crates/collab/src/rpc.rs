@@ -3,8 +3,8 @@ mod connection_pool;
 use crate::{
     auth,
     db::{
-        self, BufferId, ChannelId, ChannelVisibility, ChannelsForUser, Database, MessageId,
-        ProjectId, RoomId, ServerId, User, UserId,
+        self, BufferId, ChannelId, ChannelVisibility, ChannelsForUser, CreatedChannelMessage,
+        Database, MessageId, NotificationId, ProjectId, RoomId, ServerId, User, UserId,
     },
     executor::Executor,
     AppState, Result,
@@ -70,6 +70,7 @@ pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
+const NOTIFICATION_COUNT_PER_PAGE: usize = 50;
 
 lazy_static! {
     static ref METRIC_CONNECTIONS: IntGauge =
@@ -270,6 +271,9 @@ impl Server {
             .add_request_handler(send_channel_message)
             .add_request_handler(remove_channel_message)
             .add_request_handler(get_channel_messages)
+            .add_request_handler(get_channel_messages_by_id)
+            .add_request_handler(get_notifications)
+            .add_request_handler(mark_notification_as_read)
             .add_request_handler(link_channel)
             .add_request_handler(unlink_channel)
             .add_request_handler(move_channel)
@@ -389,7 +393,7 @@ impl Server {
                             let contacts = app_state.db.get_contacts(user_id).await.trace_err();
                             if let Some((busy, contacts)) = busy.zip(contacts) {
                                 let pool = pool.lock();
-                                let updated_contact = contact_for_user(user_id, false, busy, &pool);
+                                let updated_contact = contact_for_user(user_id, busy, &pool);
                                 for contact in contacts {
                                     if let db::Contact::Accepted {
                                         user_id: contact_user_id,
@@ -583,7 +587,7 @@ impl Server {
             let (contacts, channels_for_user, channel_invites) = future::try_join3(
                 this.app_state.db.get_contacts(user_id),
                 this.app_state.db.get_channels_for_user(user_id),
-                this.app_state.db.get_channel_invites_for_user(user_id)
+                this.app_state.db.get_channel_invites_for_user(user_id),
             ).await?;
 
             {
@@ -689,7 +693,7 @@ impl Server {
         if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await? {
             if let Some(code) = &user.invite_code {
                 let pool = self.connection_pool.lock();
-                let invitee_contact = contact_for_user(invitee_id, true, false, &pool);
+                let invitee_contact = contact_for_user(invitee_id, false, &pool);
                 for connection_id in pool.user_connection_ids(inviter_id) {
                     self.peer.send(
                         connection_id,
@@ -2063,7 +2067,7 @@ async fn request_contact(
         return Err(anyhow!("cannot add yourself as a contact"))?;
     }
 
-    session
+    let notifications = session
         .db()
         .await
         .send_contact_request(requester_id, responder_id)
@@ -2086,15 +2090,13 @@ async fn request_contact(
         .incoming_requests
         .push(proto::IncomingContactRequest {
             requester_id: requester_id.to_proto(),
-            should_notify: true,
         });
-    for connection_id in session
-        .connection_pool()
-        .await
-        .user_connection_ids(responder_id)
-    {
+    let connection_pool = session.connection_pool().await;
+    for connection_id in connection_pool.user_connection_ids(responder_id) {
         session.peer.send(connection_id, update.clone())?;
     }
+
+    send_notifications(&*connection_pool, &session.peer, notifications);
 
     response.send(proto::Ack {})?;
     Ok(())
@@ -2114,7 +2116,8 @@ async fn respond_to_contact_request(
     } else {
         let accept = request.response == proto::ContactRequestResponse::Accept as i32;
 
-        db.respond_to_contact_request(responder_id, requester_id, accept)
+        let notifications = db
+            .respond_to_contact_request(responder_id, requester_id, accept)
             .await?;
         let requester_busy = db.is_user_busy(requester_id).await?;
         let responder_busy = db.is_user_busy(responder_id).await?;
@@ -2125,7 +2128,7 @@ async fn respond_to_contact_request(
         if accept {
             update
                 .contacts
-                .push(contact_for_user(requester_id, false, requester_busy, &pool));
+                .push(contact_for_user(requester_id, requester_busy, &pool));
         }
         update
             .remove_incoming_requests
@@ -2139,14 +2142,17 @@ async fn respond_to_contact_request(
         if accept {
             update
                 .contacts
-                .push(contact_for_user(responder_id, true, responder_busy, &pool));
+                .push(contact_for_user(responder_id, responder_busy, &pool));
         }
         update
             .remove_outgoing_requests
             .push(responder_id.to_proto());
+
         for connection_id in pool.user_connection_ids(requester_id) {
             session.peer.send(connection_id, update.clone())?;
         }
+
+        send_notifications(&*pool, &session.peer, notifications);
     }
 
     response.send(proto::Ack {})?;
@@ -2161,7 +2167,8 @@ async fn remove_contact(
     let requester_id = session.user_id;
     let responder_id = UserId::from_proto(request.user_id);
     let db = session.db().await;
-    let contact_accepted = db.remove_contact(requester_id, responder_id).await?;
+    let (contact_accepted, deleted_notification_id) =
+        db.remove_contact(requester_id, responder_id).await?;
 
     let pool = session.connection_pool().await;
     // Update outgoing contact requests of requester
@@ -2188,6 +2195,14 @@ async fn remove_contact(
     }
     for connection_id in pool.user_connection_ids(responder_id) {
         session.peer.send(connection_id, update.clone())?;
+        if let Some(notification_id) = deleted_notification_id {
+            session.peer.send(
+                connection_id,
+                proto::DeleteNotification {
+                    notification_id: notification_id.to_proto(),
+                },
+            )?;
+        }
     }
 
     response.send(proto::Ack {})?;
@@ -2282,13 +2297,14 @@ async fn invite_channel_member(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
     let invitee_id = UserId::from_proto(request.user_id);
-    db.invite_channel_member(
-        channel_id,
-        invitee_id,
-        session.user_id,
-        request.role().into(),
-    )
-    .await?;
+    let notifications = db
+        .invite_channel_member(
+            channel_id,
+            invitee_id,
+            session.user_id,
+            request.role().into(),
+        )
+        .await?;
 
     let channel = db.get_channel(channel_id, session.user_id).await?;
 
@@ -2298,13 +2314,13 @@ async fn invite_channel_member(
         visibility: channel.visibility.into(),
         name: channel.name,
     });
-    for connection_id in session
-        .connection_pool()
-        .await
-        .user_connection_ids(invitee_id)
-    {
+
+    let pool = session.connection_pool().await;
+    for connection_id in pool.user_connection_ids(invitee_id) {
         session.peer.send(connection_id, update.clone())?;
     }
+
+    send_notifications(&*pool, &session.peer, notifications);
 
     response.send(proto::Ack {})?;
     Ok(())
@@ -2319,7 +2335,8 @@ async fn remove_channel_member(
     let channel_id = ChannelId::from_proto(request.channel_id);
     let member_id = UserId::from_proto(request.user_id);
 
-    db.remove_channel_member(channel_id, member_id, session.user_id)
+    let removed_notification_id = db
+        .remove_channel_member(channel_id, member_id, session.user_id)
         .await?;
 
     let mut update = proto::UpdateChannels::default();
@@ -2330,7 +2347,18 @@ async fn remove_channel_member(
         .await
         .user_connection_ids(member_id)
     {
-        session.peer.send(connection_id, update.clone())?;
+        session.peer.send(connection_id, update.clone()).trace_err();
+        if let Some(notification_id) = removed_notification_id {
+            session
+                .peer
+                .send(
+                    connection_id,
+                    proto::DeleteNotification {
+                        notification_id: notification_id.to_proto(),
+                    },
+                )
+                .trace_err();
+        }
     }
 
     response.send(proto::Ack {})?;
@@ -2592,7 +2620,8 @@ async fn respond_to_channel_invite(
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
-    db.respond_to_channel_invite(channel_id, session.user_id, request.accept)
+    let notifications = db
+        .respond_to_channel_invite(channel_id, session.user_id, request.accept)
         .await?;
 
     if request.accept {
@@ -2604,6 +2633,12 @@ async fn respond_to_channel_invite(
             .push(channel_id.to_proto());
         session.peer.send(session.connection_id, update)?;
     }
+
+    send_notifications(
+        &*session.connection_pool().await,
+        &session.peer,
+        notifications,
+    );
     response.send(proto::Ack {})?;
 
     Ok(())
@@ -2891,6 +2926,29 @@ fn channel_buffer_updated<T: EnvelopedMessage>(
     });
 }
 
+fn send_notifications(
+    connection_pool: &ConnectionPool,
+    peer: &Peer,
+    notifications: db::NotificationBatch,
+) {
+    for (user_id, notification) in notifications {
+        for connection_id in connection_pool.user_connection_ids(user_id) {
+            if let Err(error) = peer.send(
+                connection_id,
+                proto::AddNotification {
+                    notification: Some(notification.clone()),
+                },
+            ) {
+                tracing::error!(
+                    "failed to send notification to {:?} {}",
+                    connection_id,
+                    error
+                );
+            }
+        }
+    }
+}
+
 async fn send_channel_message(
     request: proto::SendChannelMessage,
     response: Response<proto::SendChannelMessage>,
@@ -2905,19 +2963,27 @@ async fn send_channel_message(
         return Err(anyhow!("message can't be blank"))?;
     }
 
+    // TODO: adjust mentions if body is trimmed
+
     let timestamp = OffsetDateTime::now_utc();
     let nonce = request
         .nonce
         .ok_or_else(|| anyhow!("nonce can't be blank"))?;
 
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let (message_id, connection_ids, non_participants) = session
+    let CreatedChannelMessage {
+        message_id,
+        participant_connection_ids,
+        channel_members,
+        notifications,
+    } = session
         .db()
         .await
         .create_channel_message(
             channel_id,
             session.user_id,
             &body,
+            &request.mentions,
             timestamp,
             nonce.clone().into(),
         )
@@ -2926,18 +2992,23 @@ async fn send_channel_message(
         sender_id: session.user_id.to_proto(),
         id: message_id.to_proto(),
         body,
+        mentions: request.mentions,
         timestamp: timestamp.unix_timestamp() as u64,
         nonce: Some(nonce),
     };
-    broadcast(Some(session.connection_id), connection_ids, |connection| {
-        session.peer.send(
-            connection,
-            proto::ChannelMessageSent {
-                channel_id: channel_id.to_proto(),
-                message: Some(message.clone()),
-            },
-        )
-    });
+    broadcast(
+        Some(session.connection_id),
+        participant_connection_ids,
+        |connection| {
+            session.peer.send(
+                connection,
+                proto::ChannelMessageSent {
+                    channel_id: channel_id.to_proto(),
+                    message: Some(message.clone()),
+                },
+            )
+        },
+    );
     response.send(proto::SendChannelMessageResponse {
         message: Some(message),
     })?;
@@ -2945,7 +3016,7 @@ async fn send_channel_message(
     let pool = &*session.connection_pool().await;
     broadcast(
         None,
-        non_participants
+        channel_members
             .iter()
             .flat_map(|user_id| pool.user_connection_ids(*user_id)),
         |peer_id| {
@@ -2961,6 +3032,7 @@ async fn send_channel_message(
             )
         },
     );
+    send_notifications(pool, &session.peer, notifications);
 
     Ok(())
 }
@@ -2990,11 +3062,16 @@ async fn acknowledge_channel_message(
 ) -> Result<()> {
     let channel_id = ChannelId::from_proto(request.channel_id);
     let message_id = MessageId::from_proto(request.message_id);
-    session
+    let notifications = session
         .db()
         .await
         .observe_channel_message(channel_id, session.user_id, message_id)
         .await?;
+    send_notifications(
+        &*session.connection_pool().await,
+        &session.peer,
+        notifications,
+    );
     Ok(())
 }
 
@@ -3066,6 +3143,72 @@ async fn get_channel_messages(
         done: messages.len() < MESSAGE_COUNT_PER_PAGE,
         messages,
     })?;
+    Ok(())
+}
+
+async fn get_channel_messages_by_id(
+    request: proto::GetChannelMessagesById,
+    response: Response<proto::GetChannelMessagesById>,
+    session: Session,
+) -> Result<()> {
+    let message_ids = request
+        .message_ids
+        .iter()
+        .map(|id| MessageId::from_proto(*id))
+        .collect::<Vec<_>>();
+    let messages = session
+        .db()
+        .await
+        .get_channel_messages_by_id(session.user_id, &message_ids)
+        .await?;
+    response.send(proto::GetChannelMessagesResponse {
+        done: messages.len() < MESSAGE_COUNT_PER_PAGE,
+        messages,
+    })?;
+    Ok(())
+}
+
+async fn get_notifications(
+    request: proto::GetNotifications,
+    response: Response<proto::GetNotifications>,
+    session: Session,
+) -> Result<()> {
+    let notifications = session
+        .db()
+        .await
+        .get_notifications(
+            session.user_id,
+            NOTIFICATION_COUNT_PER_PAGE,
+            request
+                .before_id
+                .map(|id| db::NotificationId::from_proto(id)),
+        )
+        .await?;
+    response.send(proto::GetNotificationsResponse {
+        done: notifications.len() < NOTIFICATION_COUNT_PER_PAGE,
+        notifications,
+    })?;
+    Ok(())
+}
+
+async fn mark_notification_as_read(
+    request: proto::MarkNotificationRead,
+    response: Response<proto::MarkNotificationRead>,
+    session: Session,
+) -> Result<()> {
+    let database = &session.db().await;
+    let notifications = database
+        .mark_notification_as_read_by_id(
+            session.user_id,
+            NotificationId::from_proto(request.notification_id),
+        )
+        .await?;
+    send_notifications(
+        &*session.connection_pool().await,
+        &session.peer,
+        notifications,
+    );
+    response.send(proto::Ack {})?;
     Ok(())
 }
 
@@ -3197,42 +3340,28 @@ fn build_initial_contacts_update(
 
     for contact in contacts {
         match contact {
-            db::Contact::Accepted {
-                user_id,
-                should_notify,
-                busy,
-            } => {
-                update
-                    .contacts
-                    .push(contact_for_user(user_id, should_notify, busy, &pool));
+            db::Contact::Accepted { user_id, busy } => {
+                update.contacts.push(contact_for_user(user_id, busy, &pool));
             }
             db::Contact::Outgoing { user_id } => update.outgoing_requests.push(user_id.to_proto()),
-            db::Contact::Incoming {
-                user_id,
-                should_notify,
-            } => update
-                .incoming_requests
-                .push(proto::IncomingContactRequest {
-                    requester_id: user_id.to_proto(),
-                    should_notify,
-                }),
+            db::Contact::Incoming { user_id } => {
+                update
+                    .incoming_requests
+                    .push(proto::IncomingContactRequest {
+                        requester_id: user_id.to_proto(),
+                    })
+            }
         }
     }
 
     update
 }
 
-fn contact_for_user(
-    user_id: UserId,
-    should_notify: bool,
-    busy: bool,
-    pool: &ConnectionPool,
-) -> proto::Contact {
+fn contact_for_user(user_id: UserId, busy: bool, pool: &ConnectionPool) -> proto::Contact {
     proto::Contact {
         user_id: user_id.to_proto(),
         online: pool.is_user_online(user_id),
         busy,
-        should_notify,
     }
 }
 
@@ -3293,7 +3422,7 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
     let busy = db.is_user_busy(user_id).await?;
 
     let pool = session.connection_pool().await;
-    let updated_contact = contact_for_user(user_id, false, busy, &pool);
+    let updated_contact = contact_for_user(user_id, busy, &pool);
     for contact in contacts {
         if let db::Contact::Accepted {
             user_id: contact_user_id,
