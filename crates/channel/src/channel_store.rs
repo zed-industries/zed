@@ -1,6 +1,6 @@
 mod channel_index;
 
-use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat};
+use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat, ChannelMessage};
 use anyhow::{anyhow, Result};
 use channel_index::ChannelIndex;
 use client::{Client, Subscription, User, UserId, UserStore};
@@ -157,9 +157,6 @@ impl ChannelStore {
                         this.update(&mut cx, |this, cx| this.handle_disconnect(true, cx));
                     }
                 }
-                if status.is_connected() {
-                } else {
-                }
             }
             Some(())
         });
@@ -245,6 +242,12 @@ impl ChannelStore {
         self.channel_index.by_id().values().nth(ix)
     }
 
+    pub fn has_channel_invitation(&self, channel_id: ChannelId) -> bool {
+        self.channel_invitations
+            .iter()
+            .any(|channel| channel.id == channel_id)
+    }
+
     pub fn channel_invitations(&self) -> &[Arc<Channel>] {
         &self.channel_invitations
     }
@@ -276,6 +279,33 @@ impl ChannelStore {
             |channel, cx| ChannelBuffer::new(channel, client, user_store, channel_store, cx),
             cx,
         )
+    }
+
+    pub fn fetch_channel_messages(
+        &self,
+        message_ids: Vec<u64>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<ChannelMessage>>> {
+        let request = if message_ids.is_empty() {
+            None
+        } else {
+            Some(
+                self.client
+                    .request(proto::GetChannelMessagesById { message_ids }),
+            )
+        };
+        cx.spawn_weak(|this, mut cx| async move {
+            if let Some(request) = request {
+                let response = request.await?;
+                let this = this
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("channel store dropped"))?;
+                let user_store = this.read_with(&cx, |this, _| this.user_store.clone());
+                ChannelMessage::from_proto_vec(response.messages, &user_store, &mut cx).await
+            } else {
+                Ok(Vec::new())
+            }
+        })
     }
 
     pub fn has_channel_buffer_changed(&self, channel_id: ChannelId) -> Option<bool> {
@@ -689,14 +719,15 @@ impl ChannelStore {
         &mut self,
         channel_id: ChannelId,
         accept: bool,
-    ) -> impl Future<Output = Result<()>> {
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
         let client = self.client.clone();
-        async move {
+        cx.background().spawn(async move {
             client
                 .request(proto::RespondToChannelInvite { channel_id, accept })
                 .await?;
             Ok(())
-        }
+        })
     }
 
     pub fn get_channel_member_details(
@@ -764,6 +795,11 @@ impl ChannelStore {
     }
 
     fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        self.channel_index.clear();
+        self.channel_invitations.clear();
+        self.channel_participants.clear();
+        self.channel_index.clear();
+        self.outgoing_invites.clear();
         self.disconnect_channel_buffers_task.take();
 
         for chat in self.opened_chats.values() {
@@ -873,11 +909,6 @@ impl ChannelStore {
     }
 
     fn handle_disconnect(&mut self, wait_for_reconnect: bool, cx: &mut ModelContext<Self>) {
-        self.channel_index.clear();
-        self.channel_invitations.clear();
-        self.channel_participants.clear();
-        self.channel_index.clear();
-        self.outgoing_invites.clear();
         cx.notify();
 
         self.disconnect_channel_buffers_task.get_or_insert_with(|| {

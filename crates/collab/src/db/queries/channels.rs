@@ -349,11 +349,11 @@ impl Database {
         &self,
         channel_id: ChannelId,
         invitee_id: UserId,
-        admin_id: UserId,
+        inviter_id: UserId,
         role: ChannelRole,
-    ) -> Result<Channel> {
+    ) -> Result<InviteMemberResult> {
         self.transaction(move |tx| async move {
-            self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
+            self.check_user_is_channel_admin(channel_id, inviter_id, &*tx)
                 .await?;
 
             channel_member::ActiveModel {
@@ -371,11 +371,31 @@ impl Database {
                 .await?
                 .unwrap();
 
-            Ok(Channel {
+            let channel = Channel {
                 id: channel.id,
                 visibility: channel.visibility,
                 name: channel.name,
                 role,
+            };
+
+            let notifications = self
+                .create_notification(
+                    invitee_id,
+                    rpc::Notification::ChannelInvitation {
+                        channel_id: channel_id.to_proto(),
+                        channel_name: channel.name.clone(),
+                        inviter_id: inviter_id.to_proto(),
+                    },
+                    true,
+                    &*tx,
+                )
+                .await?
+                .into_iter()
+                .collect();
+
+            Ok(InviteMemberResult {
+                channel,
+                notifications,
             })
         })
         .await
@@ -445,9 +465,9 @@ impl Database {
         channel_id: ChannelId,
         user_id: UserId,
         accept: bool,
-    ) -> Result<Option<MembershipUpdated>> {
+    ) -> Result<RespondToChannelInvite> {
         self.transaction(move |tx| async move {
-            if accept {
+            let membership_update = if accept {
                 let rows_affected = channel_member::Entity::update_many()
                     .set(channel_member::ActiveModel {
                         accepted: ActiveValue::Set(accept),
@@ -467,26 +487,45 @@ impl Database {
                     Err(anyhow!("no such invitation"))?;
                 }
 
-                return Ok(Some(
+                Some(
                     self.calculate_membership_updated(channel_id, user_id, &*tx)
                         .await?,
-                ));
-            }
+                )
+            } else {
+                let rows_affected = channel_member::Entity::delete_many()
+                    .filter(
+                        channel_member::Column::ChannelId
+                            .eq(channel_id)
+                            .and(channel_member::Column::UserId.eq(user_id))
+                            .and(channel_member::Column::Accepted.eq(false)),
+                    )
+                    .exec(&*tx)
+                    .await?
+                    .rows_affected;
+                if rows_affected == 0 {
+                    Err(anyhow!("no such invitation"))?;
+                }
 
-            let rows_affected = channel_member::ActiveModel {
-                channel_id: ActiveValue::Unchanged(channel_id),
-                user_id: ActiveValue::Unchanged(user_id),
-                ..Default::default()
-            }
-            .delete(&*tx)
-            .await?
-            .rows_affected;
+                None
+            };
 
-            if rows_affected == 0 {
-                Err(anyhow!("no such invitation"))?;
-            }
-
-            Ok(None)
+            Ok(RespondToChannelInvite {
+                membership_update,
+                notifications: self
+                    .mark_notification_as_read_with_response(
+                        user_id,
+                        &rpc::Notification::ChannelInvitation {
+                            channel_id: channel_id.to_proto(),
+                            channel_name: Default::default(),
+                            inviter_id: Default::default(),
+                        },
+                        accept,
+                        &*tx,
+                    )
+                    .await?
+                    .into_iter()
+                    .collect(),
+            })
         })
         .await
     }
@@ -550,7 +589,7 @@ impl Database {
         channel_id: ChannelId,
         member_id: UserId,
         admin_id: UserId,
-    ) -> Result<MembershipUpdated> {
+    ) -> Result<RemoveChannelMemberResult> {
         self.transaction(|tx| async move {
             self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
                 .await?;
@@ -568,9 +607,22 @@ impl Database {
                 Err(anyhow!("no such member"))?;
             }
 
-            Ok(self
-                .calculate_membership_updated(channel_id, member_id, &*tx)
-                .await?)
+            Ok(RemoveChannelMemberResult {
+                membership_update: self
+                    .calculate_membership_updated(channel_id, member_id, &*tx)
+                    .await?,
+                notification_id: self
+                    .remove_notification(
+                        member_id,
+                        rpc::Notification::ChannelInvitation {
+                            channel_id: channel_id.to_proto(),
+                            channel_name: Default::default(),
+                            inviter_id: Default::default(),
+                        },
+                        &*tx,
+                    )
+                    .await?,
+            })
         })
         .await
     }
@@ -911,6 +963,47 @@ impl Database {
         .await
     }
 
+    pub async fn get_channel_participant_details(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+    ) -> Result<Vec<proto::ChannelMember>> {
+        let (role, members) = self
+            .transaction(move |tx| async move {
+                let role = self
+                    .check_user_is_channel_participant(channel_id, user_id, &*tx)
+                    .await?;
+                Ok((
+                    role,
+                    self.get_channel_participant_details_internal(channel_id, &*tx)
+                        .await?,
+                ))
+            })
+            .await?;
+
+        if role == ChannelRole::Admin {
+            Ok(members
+                .into_iter()
+                .map(|channel_member| channel_member.to_proto())
+                .collect())
+        } else {
+            return Ok(members
+                .into_iter()
+                .filter_map(|member| {
+                    if member.kind == proto::channel_member::Kind::Invitee {
+                        return None;
+                    }
+                    Some(ChannelMember {
+                        role: member.role,
+                        user_id: member.user_id,
+                        kind: proto::channel_member::Kind::Member,
+                    })
+                })
+                .map(|channel_member| channel_member.to_proto())
+                .collect());
+        }
+    }
+
     async fn get_channel_participant_details_internal(
         &self,
         channel_id: ChannelId,
@@ -1003,28 +1096,6 @@ impl Database {
             .collect())
     }
 
-    pub async fn get_channel_participant_details(
-        &self,
-        channel_id: ChannelId,
-        admin_id: UserId,
-    ) -> Result<Vec<proto::ChannelMember>> {
-        let members = self
-            .transaction(move |tx| async move {
-                self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
-                    .await?;
-
-                Ok(self
-                    .get_channel_participant_details_internal(channel_id, &*tx)
-                    .await?)
-            })
-            .await?;
-
-        Ok(members
-            .into_iter()
-            .map(|channel_member| channel_member.to_proto())
-            .collect())
-    }
-
     pub async fn get_channel_participants(
         &self,
         channel_id: ChannelId,
@@ -1062,9 +1133,10 @@ impl Database {
         channel_id: ChannelId,
         user_id: UserId,
         tx: &DatabaseTransaction,
-    ) -> Result<()> {
-        match self.channel_role_for_user(channel_id, user_id, tx).await? {
-            Some(ChannelRole::Admin) | Some(ChannelRole::Member) => Ok(()),
+    ) -> Result<ChannelRole> {
+        let channel_role = self.channel_role_for_user(channel_id, user_id, tx).await?;
+        match channel_role {
+            Some(ChannelRole::Admin) | Some(ChannelRole::Member) => Ok(channel_role.unwrap()),
             Some(ChannelRole::Banned) | Some(ChannelRole::Guest) | None => Err(anyhow!(
                 "user is not a channel member or channel does not exist"
             ))?,

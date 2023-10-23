@@ -6,6 +6,7 @@ mod channel_message_tests;
 mod channel_tests;
 mod following_tests;
 mod integration_tests;
+mod notification_tests;
 mod random_channel_buffer_tests;
 mod random_project_collaboration_tests;
 mod randomized_test_helpers;

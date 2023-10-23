@@ -1,4 +1,6 @@
-use crate::{channel_view::ChannelView, ChatPanelSettings};
+use crate::{
+    channel_view::ChannelView, is_channels_feature_enabled, render_avatar, ChatPanelSettings,
+};
 use anyhow::Result;
 use call::ActiveCall;
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
@@ -6,18 +8,18 @@ use client::Client;
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
-use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
 use gpui::{
     actions,
     elements::*,
     platform::{CursorStyle, MouseButton},
     serde_json,
     views::{ItemType, Select, SelectStyle},
-    AnyViewHandle, AppContext, AsyncAppContext, Entity, ImageData, ModelHandle, Subscription, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelHandle, Subscription, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::{language_settings::SoftWrap, LanguageRegistry};
+use language::LanguageRegistry;
 use menu::Confirm;
+use message_editor::MessageEditor;
 use project::Fs;
 use rich_text::RichText;
 use serde::{Deserialize, Serialize};
@@ -31,6 +33,8 @@ use workspace::{
     Workspace,
 };
 
+mod message_editor;
+
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 const CHAT_PANEL_KEY: &'static str = "ChatPanel";
 
@@ -40,7 +44,7 @@ pub struct ChatPanel {
     languages: Arc<LanguageRegistry>,
     active_chat: Option<(ModelHandle<ChannelChat>, Subscription)>,
     message_list: ListState<ChatPanel>,
-    input_editor: ViewHandle<Editor>,
+    input_editor: ViewHandle<MessageEditor>,
     channel_select: ViewHandle<Select>,
     local_timezone: UtcOffset,
     fs: Arc<dyn Fs>,
@@ -49,6 +53,7 @@ pub struct ChatPanel {
     pending_serialization: Task<Option<()>>,
     subscriptions: Vec<gpui::Subscription>,
     workspace: WeakViewHandle<Workspace>,
+    is_scrolled_to_bottom: bool,
     has_focus: bool,
     markdown_data: HashMap<ChannelMessageId, RichText>,
 }
@@ -85,13 +90,18 @@ impl ChatPanel {
         let languages = workspace.app_state().languages.clone();
 
         let input_editor = cx.add_view(|cx| {
-            let mut editor = Editor::auto_height(
-                4,
-                Some(Arc::new(|theme| theme.chat_panel.input_editor.clone())),
+            MessageEditor::new(
+                languages.clone(),
+                channel_store.clone(),
+                cx.add_view(|cx| {
+                    Editor::auto_height(
+                        4,
+                        Some(Arc::new(|theme| theme.chat_panel.input_editor.clone())),
+                        cx,
+                    )
+                }),
                 cx,
-            );
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-            editor
+            )
         });
 
         let workspace_handle = workspace.weak_handle();
@@ -121,13 +131,14 @@ impl ChatPanel {
         });
 
         let mut message_list =
-            ListState::<Self>::new(0, Orientation::Bottom, 1000., move |this, ix, cx| {
+            ListState::<Self>::new(0, Orientation::Bottom, 10., move |this, ix, cx| {
                 this.render_message(ix, cx)
             });
-        message_list.set_scroll_handler(|visible_range, this, cx| {
+        message_list.set_scroll_handler(|visible_range, count, this, cx| {
             if visible_range.start < MESSAGE_LOADING_THRESHOLD {
                 this.load_more_messages(&LoadMoreMessages, cx);
             }
+            this.is_scrolled_to_bottom = visible_range.end == count;
         });
 
         cx.add_view(|cx| {
@@ -136,7 +147,6 @@ impl ChatPanel {
                 client,
                 channel_store,
                 languages,
-
                 active_chat: Default::default(),
                 pending_serialization: Task::ready(None),
                 message_list,
@@ -146,6 +156,7 @@ impl ChatPanel {
                 has_focus: false,
                 subscriptions: Vec::new(),
                 workspace: workspace_handle,
+                is_scrolled_to_bottom: true,
                 active: false,
                 width: None,
                 markdown_data: Default::default(),
@@ -179,33 +190,18 @@ impl ChatPanel {
                     .channel_at(selected_ix)
                     .map(|e| e.id);
                 if let Some(selected_channel_id) = selected_channel_id {
-                    this.select_channel(selected_channel_id, cx)
+                    this.select_channel(selected_channel_id, None, cx)
                         .detach_and_log_err(cx);
                 }
             })
             .detach();
 
-            let markdown = this.languages.language_for_name("Markdown");
-            cx.spawn(|this, mut cx| async move {
-                let markdown = markdown.await?;
-
-                this.update(&mut cx, |this, cx| {
-                    this.input_editor.update(cx, |editor, cx| {
-                        editor.buffer().update(cx, |multi_buffer, cx| {
-                            multi_buffer
-                                .as_singleton()
-                                .unwrap()
-                                .update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx))
-                        })
-                    })
-                })?;
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-
             this
         })
+    }
+
+    pub fn is_scrolled_to_bottom(&self) -> bool {
+        self.is_scrolled_to_bottom
     }
 
     pub fn active_chat(&self) -> Option<ModelHandle<ChannelChat>> {
@@ -267,24 +263,22 @@ impl ChatPanel {
 
     fn set_active_chat(&mut self, chat: ModelHandle<ChannelChat>, cx: &mut ViewContext<Self>) {
         if self.active_chat.as_ref().map(|e| &e.0) != Some(&chat) {
-            let id = chat.read(cx).channel_id;
+            let channel_id = chat.read(cx).channel_id;
             {
+                self.markdown_data.clear();
                 let chat = chat.read(cx);
                 self.message_list.reset(chat.message_count());
-                let placeholder = if let Some(channel) = chat.channel(cx) {
-                    format!("Message #{}", channel.name)
-                } else {
-                    "Message Channel".to_string()
-                };
-                self.input_editor.update(cx, move |editor, cx| {
-                    editor.set_placeholder_text(placeholder, cx);
+
+                let channel_name = chat.channel(cx).map(|channel| channel.name.clone());
+                self.input_editor.update(cx, |editor, cx| {
+                    editor.set_channel(channel_id, channel_name, cx);
                 });
-            }
+            };
             let subscription = cx.subscribe(&chat, Self::channel_did_change);
             self.active_chat = Some((chat, subscription));
             self.acknowledge_last_message(cx);
             self.channel_select.update(cx, |select, cx| {
-                if let Some(ix) = self.channel_store.read(cx).index_of_channel(id) {
+                if let Some(ix) = self.channel_store.read(cx).index_of_channel(channel_id) {
                     select.set_selected_index(ix, cx);
                 }
             });
@@ -323,7 +317,7 @@ impl ChatPanel {
     }
 
     fn acknowledge_last_message(&mut self, cx: &mut ViewContext<'_, '_, ChatPanel>) {
-        if self.active {
+        if self.active && self.is_scrolled_to_bottom {
             if let Some((chat, _)) = &self.active_chat {
                 chat.update(cx, |chat, cx| {
                     chat.acknowledge_last_message(cx);
@@ -359,33 +353,48 @@ impl ChatPanel {
     }
 
     fn render_message(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let (message, is_continuation, is_last, is_admin) = {
-            let active_chat = self.active_chat.as_ref().unwrap().0.read(cx);
-            let is_admin = self
-                .channel_store
-                .read(cx)
-                .is_channel_admin(active_chat.channel_id);
-            let last_message = active_chat.message(ix.saturating_sub(1));
-            let this_message = active_chat.message(ix);
-            let is_continuation = last_message.id != this_message.id
-                && this_message.sender.id == last_message.sender.id;
+        let (message, is_continuation, is_last, is_admin) = self
+            .active_chat
+            .as_ref()
+            .unwrap()
+            .0
+            .update(cx, |active_chat, cx| {
+                let is_admin = self
+                    .channel_store
+                    .read(cx)
+                    .is_channel_admin(active_chat.channel_id);
 
-            (
-                active_chat.message(ix).clone(),
-                is_continuation,
-                active_chat.message_count() == ix + 1,
-                is_admin,
-            )
-        };
+                let last_message = active_chat.message(ix.saturating_sub(1));
+                let this_message = active_chat.message(ix).clone();
+                let is_continuation = last_message.id != this_message.id
+                    && this_message.sender.id == last_message.sender.id;
+
+                if let ChannelMessageId::Saved(id) = this_message.id {
+                    if this_message
+                        .mentions
+                        .iter()
+                        .any(|(_, user_id)| Some(*user_id) == self.client.user_id())
+                    {
+                        active_chat.acknowledge_message(id);
+                    }
+                }
+
+                (
+                    this_message,
+                    is_continuation,
+                    active_chat.message_count() == ix + 1,
+                    is_admin,
+                )
+            });
 
         let is_pending = message.is_pending();
-        let text = self
-            .markdown_data
-            .entry(message.id)
-            .or_insert_with(|| rich_text::render_markdown(message.body, &self.languages, None));
+        let theme = theme::current(cx);
+        let text = self.markdown_data.entry(message.id).or_insert_with(|| {
+            Self::render_markdown_with_mentions(&self.languages, self.client.id(), &message)
+        });
 
         let now = OffsetDateTime::now_utc();
-        let theme = theme::current(cx);
+
         let style = if is_pending {
             &theme.chat_panel.pending_message
         } else if is_continuation {
@@ -405,14 +414,13 @@ impl ChatPanel {
 
         enum MessageBackgroundHighlight {}
         MouseEventHandler::new::<MessageBackgroundHighlight, _>(ix, cx, |state, cx| {
-            let container = style.container.style_for(state);
+            let container = style.style_for(state);
             if is_continuation {
                 Flex::row()
                     .with_child(
                         text.element(
                             theme.editor.syntax.clone(),
-                            style.body.clone(),
-                            theme.editor.document_highlight_read_background,
+                            theme.chat_panel.rich_text.clone(),
                             cx,
                         )
                         .flex(1., true),
@@ -434,15 +442,16 @@ impl ChatPanel {
                                 Flex::row()
                                     .with_child(render_avatar(
                                         message.sender.avatar.clone(),
-                                        &theme,
+                                        &theme.chat_panel.avatar,
+                                        theme.chat_panel.avatar_container,
                                     ))
                                     .with_child(
                                         Label::new(
                                             message.sender.github_login.clone(),
-                                            style.sender.text.clone(),
+                                            theme.chat_panel.message_sender.text.clone(),
                                         )
                                         .contained()
-                                        .with_style(style.sender.container),
+                                        .with_style(theme.chat_panel.message_sender.container),
                                     )
                                     .with_child(
                                         Label::new(
@@ -451,10 +460,10 @@ impl ChatPanel {
                                                 now,
                                                 self.local_timezone,
                                             ),
-                                            style.timestamp.text.clone(),
+                                            theme.chat_panel.message_timestamp.text.clone(),
                                         )
                                         .contained()
-                                        .with_style(style.timestamp.container),
+                                        .with_style(theme.chat_panel.message_timestamp.container),
                                     )
                                     .align_children_center()
                                     .flex(1., true),
@@ -467,8 +476,7 @@ impl ChatPanel {
                             .with_child(
                                 text.element(
                                     theme.editor.syntax.clone(),
-                                    style.body.clone(),
-                                    theme.editor.document_highlight_read_background,
+                                    theme.chat_panel.rich_text.clone(),
                                     cx,
                                 )
                                 .flex(1., true),
@@ -487,6 +495,23 @@ impl ChatPanel {
             }
         })
         .into_any()
+    }
+
+    fn render_markdown_with_mentions(
+        language_registry: &Arc<LanguageRegistry>,
+        current_user_id: u64,
+        message: &channel::ChannelMessage,
+    ) -> RichText {
+        let mentions = message
+            .mentions
+            .iter()
+            .map(|(range, user_id)| rich_text::Mention {
+                range: range.clone(),
+                is_self_mention: *user_id == current_user_id,
+            })
+            .collect::<Vec<_>>();
+
+        rich_text::render_markdown(message.body.clone(), &mentions, language_registry, None)
     }
 
     fn render_input_box(&self, theme: &Arc<Theme>, cx: &AppContext) -> AnyElement<Self> {
@@ -614,14 +639,12 @@ impl ChatPanel {
 
     fn send(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some((chat, _)) = self.active_chat.as_ref() {
-            let body = self.input_editor.update(cx, |editor, cx| {
-                let body = editor.text(cx);
-                editor.clear(cx);
-                body
-            });
+            let message = self
+                .input_editor
+                .update(cx, |editor, cx| editor.take_message(cx));
 
             if let Some(task) = chat
-                .update(cx, |chat, cx| chat.send_message(body, cx))
+                .update(cx, |chat, cx| chat.send_message(message, cx))
                 .log_err()
             {
                 task.detach();
@@ -638,7 +661,9 @@ impl ChatPanel {
     fn load_more_messages(&mut self, _: &LoadMoreMessages, cx: &mut ViewContext<Self>) {
         if let Some((chat, _)) = self.active_chat.as_ref() {
             chat.update(cx, |channel, cx| {
-                channel.load_more_messages(cx);
+                if let Some(task) = channel.load_more_messages(cx) {
+                    task.detach();
+                }
             })
         }
     }
@@ -646,23 +671,46 @@ impl ChatPanel {
     pub fn select_channel(
         &mut self,
         selected_channel_id: u64,
+        scroll_to_message_id: Option<u64>,
         cx: &mut ViewContext<ChatPanel>,
     ) -> Task<Result<()>> {
-        if let Some((chat, _)) = &self.active_chat {
-            if chat.read(cx).channel_id == selected_channel_id {
-                return Task::ready(Ok(()));
-            }
-        }
+        let open_chat = self
+            .active_chat
+            .as_ref()
+            .and_then(|(chat, _)| {
+                (chat.read(cx).channel_id == selected_channel_id)
+                    .then(|| Task::ready(anyhow::Ok(chat.clone())))
+            })
+            .unwrap_or_else(|| {
+                self.channel_store.update(cx, |store, cx| {
+                    store.open_channel_chat(selected_channel_id, cx)
+                })
+            });
 
-        let open_chat = self.channel_store.update(cx, |store, cx| {
-            store.open_channel_chat(selected_channel_id, cx)
-        });
         cx.spawn(|this, mut cx| async move {
             let chat = open_chat.await?;
             this.update(&mut cx, |this, cx| {
-                this.markdown_data = Default::default();
-                this.set_active_chat(chat, cx);
-            })
+                this.set_active_chat(chat.clone(), cx);
+            })?;
+
+            if let Some(message_id) = scroll_to_message_id {
+                if let Some(item_ix) =
+                    ChannelChat::load_history_since_message(chat.clone(), message_id, cx.clone())
+                        .await
+                {
+                    this.update(&mut cx, |this, cx| {
+                        if this.active_chat.as_ref().map_or(false, |(c, _)| *c == chat) {
+                            this.message_list.scroll_to(ListOffset {
+                                item_ix,
+                                offset_in_item: 0.,
+                            });
+                            cx.notify();
+                        }
+                    })?;
+                }
+            }
+
+            Ok(())
         })
     }
 
@@ -683,32 +731,6 @@ impl ChatPanel {
                 .detach_and_log_err(cx);
         }
     }
-}
-
-fn render_avatar(avatar: Option<Arc<ImageData>>, theme: &Arc<Theme>) -> AnyElement<ChatPanel> {
-    let avatar_style = theme.chat_panel.avatar;
-
-    avatar
-        .map(|avatar| {
-            Image::from_data(avatar)
-                .with_style(avatar_style.image)
-                .aligned()
-                .contained()
-                .with_corner_radius(avatar_style.outer_corner_radius)
-                .constrained()
-                .with_width(avatar_style.outer_width)
-                .with_height(avatar_style.outer_width)
-                .into_any()
-        })
-        .unwrap_or_else(|| {
-            Empty::new()
-                .constrained()
-                .with_width(avatar_style.outer_width)
-                .into_any()
-        })
-        .contained()
-        .with_style(theme.chat_panel.avatar_container)
-        .into_any()
 }
 
 fn render_remove(
@@ -781,7 +803,8 @@ impl View for ChatPanel {
             *self.client.status().borrow(),
             client::Status::Connected { .. }
         ) {
-            cx.focus(&self.input_editor);
+            let editor = self.input_editor.read(cx).editor.clone();
+            cx.focus(&editor);
         }
     }
 
@@ -820,14 +843,14 @@ impl Panel for ChatPanel {
         self.active = active;
         if active {
             self.acknowledge_last_message(cx);
-            if !is_chat_feature_enabled(cx) {
+            if !is_channels_feature_enabled(cx) {
                 cx.emit(Event::Dismissed);
             }
         }
     }
 
     fn icon_path(&self, cx: &gpui::WindowContext) -> Option<&'static str> {
-        (settings::get::<ChatPanelSettings>(cx).button && is_chat_feature_enabled(cx))
+        (settings::get::<ChatPanelSettings>(cx).button && is_channels_feature_enabled(cx))
             .then(|| "icons/conversations.svg")
     }
 
@@ -850,10 +873,6 @@ impl Panel for ChatPanel {
     fn is_focus_event(event: &Self::Event) -> bool {
         matches!(event, Event::Focus)
     }
-}
-
-fn is_chat_feature_enabled(cx: &gpui::WindowContext<'_>) -> bool {
-    cx.is_staff() || cx.has_flag::<ChannelsAlpha>()
 }
 
 fn format_timestamp(
@@ -892,4 +911,73 @@ fn render_icon_button<V: View>(style: &IconButton, svg_path: &'static str) -> im
         .with_height(style.button_width)
         .contained()
         .with_style(style.container)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::fonts::HighlightStyle;
+    use pretty_assertions::assert_eq;
+    use rich_text::{BackgroundKind, Highlight, RenderedRegion};
+    use util::test::marked_text_ranges;
+
+    #[gpui::test]
+    fn test_render_markdown_with_mentions() {
+        let language_registry = Arc::new(LanguageRegistry::test());
+        let (body, ranges) = marked_text_ranges("*hi*, «@abc», let's **call** «@fgh»", false);
+        let message = channel::ChannelMessage {
+            id: ChannelMessageId::Saved(0),
+            body,
+            timestamp: OffsetDateTime::now_utc(),
+            sender: Arc::new(client::User {
+                github_login: "fgh".into(),
+                avatar: None,
+                id: 103,
+            }),
+            nonce: 5,
+            mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
+        };
+
+        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+
+        // Note that the "'" was replaced with ’ due to smart punctuation.
+        let (body, ranges) = marked_text_ranges("«hi», «@abc», let’s «call» «@fgh»", false);
+        assert_eq!(message.text, body);
+        assert_eq!(
+            message.highlights,
+            vec![
+                (
+                    ranges[0].clone(),
+                    HighlightStyle {
+                        italic: Some(true),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+                (ranges[1].clone(), Highlight::Mention),
+                (
+                    ranges[2].clone(),
+                    HighlightStyle {
+                        weight: Some(gpui::fonts::Weight::BOLD),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+                (ranges[3].clone(), Highlight::SelfMention)
+            ]
+        );
+        assert_eq!(
+            message.regions,
+            vec![
+                RenderedRegion {
+                    background_kind: Some(BackgroundKind::Mention),
+                    link_url: None
+                },
+                RenderedRegion {
+                    background_kind: Some(BackgroundKind::SelfMention),
+                    link_url: None
+                },
+            ]
+        );
+    }
 }

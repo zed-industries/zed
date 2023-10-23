@@ -1,3 +1,4 @@
+use ai::completion::OPENAI_API_URL;
 use ai::embedding::OpenAIEmbeddings;
 use anyhow::{anyhow, Result};
 use client::{self, UserStore};
@@ -17,6 +18,7 @@ use std::{cmp, env, fs};
 use util::channel::{RELEASE_CHANNEL, RELEASE_CHANNEL_NAME};
 use util::http::{self};
 use util::paths::EMBEDDINGS_DIR;
+use util::ResultExt;
 use zed::languages;
 
 #[derive(Deserialize, Clone, Serialize)]
@@ -469,12 +471,26 @@ fn main() {
             .join("embeddings_db");
 
         let languages = languages.clone();
+
+        let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
+            Some(api_key)
+        } else if let Some((_, api_key)) = cx
+            .platform()
+            .read_credentials(OPENAI_API_URL)
+            .log_err()
+            .flatten()
+        {
+            String::from_utf8(api_key).log_err()
+        } else {
+            None
+        };
+
         let fs = fs.clone();
         cx.spawn(|mut cx| async move {
             let semantic_index = SemanticIndex::new(
                 fs.clone(),
                 db_file_path,
-                Arc::new(OpenAIEmbeddings::new(http_client, cx.background())),
+                Arc::new(OpenAIEmbeddings::new(api_key, http_client, cx.background())),
                 languages.clone(),
                 cx.clone(),
             )

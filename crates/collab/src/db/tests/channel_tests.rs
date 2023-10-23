@@ -1,20 +1,17 @@
-use collections::{HashMap, HashSet};
-use rpc::{
-    proto::{self},
-    ConnectionId,
-};
+use std::sync::Arc;
 
 use crate::{
     db::{
         queries::channels::ChannelGraph,
-        tests::{graph, TEST_RELEASE_CHANNEL},
-        ChannelId, ChannelRole, Database, NewUserParams, RoomId, ServerId, UserId,
+        tests::{graph, new_test_connection, new_test_user, TEST_RELEASE_CHANNEL},
+        ChannelId, ChannelRole, Database, NewUserParams, RoomId,
     },
     test_both_dbs,
 };
-use std::sync::{
-    atomic::{AtomicI32, AtomicU32, Ordering},
-    Arc,
+use collections::{HashMap, HashSet};
+use rpc::{
+    proto::{self},
+    ConnectionId,
 };
 
 test_both_dbs!(test_channels, test_channels_postgres, test_channels_sqlite);
@@ -305,7 +302,6 @@ async fn test_channel_renames(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user1".into(),
                 github_user_id: 5,
-                invite_count: 0,
             },
         )
         .await
@@ -319,7 +315,6 @@ async fn test_channel_renames(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user2".into(),
                 github_user_id: 6,
-                invite_count: 0,
             },
         )
         .await
@@ -360,7 +355,6 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user1".into(),
                 github_user_id: 5,
-                invite_count: 0,
             },
         )
         .await
@@ -727,7 +721,6 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user1".into(),
                 github_user_id: 5,
-                invite_count: 0,
             },
         )
         .await
@@ -1121,29 +1114,4 @@ fn assert_dag(actual: ChannelGraph, expected: &[(ChannelId, Option<ChannelId>)])
     }
 
     pretty_assertions::assert_eq!(actual_map, expected_map)
-}
-
-static GITHUB_USER_ID: AtomicI32 = AtomicI32::new(5);
-
-async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
-    db.create_user(
-        email,
-        false,
-        NewUserParams {
-            github_login: email[0..email.find("@").unwrap()].to_string(),
-            github_user_id: GITHUB_USER_ID.fetch_add(1, Ordering::SeqCst),
-            invite_count: 0,
-        },
-    )
-    .await
-    .unwrap()
-    .user_id
-}
-
-static TEST_CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
-fn new_test_connection(server: ServerId) -> ConnectionId {
-    ConnectionId {
-        id: TEST_CONNECTION_ID.fetch_add(1, Ordering::SeqCst),
-        owner_id: server.0 as u32,
-    }
 }

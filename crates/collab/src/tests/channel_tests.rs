@@ -126,8 +126,8 @@ async fn test_core_channels(
     // Client B accepts the invitation.
     client_b
         .channel_store()
-        .update(cx_b, |channels, _| {
-            channels.respond_to_channel_invite(channel_a_id, true)
+        .update(cx_b, |channels, cx| {
+            channels.respond_to_channel_invite(channel_a_id, true, cx)
         })
         .await
         .unwrap();
@@ -153,7 +153,6 @@ async fn test_core_channels(
             },
         ],
     );
-    dbg!("-------");
 
     let channel_c_id = client_a
         .channel_store()
@@ -289,11 +288,17 @@ async fn test_core_channels(
     // Client B no longer has access to the channel
     assert_channels(client_b.channel_store(), cx_b, &[]);
 
-    // When disconnected, client A sees no channels.
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
     deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-    assert_channels(client_a.channel_store(), cx_a, &[]);
+
+    client_b
+        .channel_store()
+        .update(cx_b, |channel_store, cx| {
+            channel_store.rename(channel_a_id, "channel-a-renamed", cx)
+        })
+        .await
+        .unwrap();
 
     server.allow_connections();
     deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
@@ -302,7 +307,7 @@ async fn test_core_channels(
         cx_a,
         &[ExpectedChannel {
             id: channel_a_id,
-            name: "channel-a".to_string(),
+            name: "channel-a-renamed".to_string(),
             depth: 0,
             role: ChannelRole::Admin,
         }],
@@ -886,8 +891,8 @@ async fn test_lost_channel_creation(
     // Client B accepts the invite
     client_b
         .channel_store()
-        .update(cx_b, |channel_store, _| {
-            channel_store.respond_to_channel_invite(channel_id, true)
+        .update(cx_b, |channel_store, cx| {
+            channel_store.respond_to_channel_invite(channel_id, true, cx)
         })
         .await
         .unwrap();
@@ -951,16 +956,16 @@ async fn test_channel_link_notifications(
 
     client_b
         .channel_store()
-        .update(cx_b, |channel_store, _| {
-            channel_store.respond_to_channel_invite(zed_channel, true)
+        .update(cx_b, |channel_store, cx| {
+            channel_store.respond_to_channel_invite(zed_channel, true, cx)
         })
         .await
         .unwrap();
 
     client_c
         .channel_store()
-        .update(cx_c, |channel_store, _| {
-            channel_store.respond_to_channel_invite(zed_channel, true)
+        .update(cx_c, |channel_store, cx| {
+            channel_store.respond_to_channel_invite(zed_channel, true, cx)
         })
         .await
         .unwrap();
@@ -1162,16 +1167,16 @@ async fn test_channel_membership_notifications(
 
     client_b
         .channel_store()
-        .update(cx_b, |channel_store, _| {
-            channel_store.respond_to_channel_invite(zed_channel, true)
+        .update(cx_b, |channel_store, cx| {
+            channel_store.respond_to_channel_invite(zed_channel, true, cx)
         })
         .await
         .unwrap();
 
     client_b
         .channel_store()
-        .update(cx_b, |channel_store, _| {
-            channel_store.respond_to_channel_invite(vim_channel, true)
+        .update(cx_b, |channel_store, cx| {
+            channel_store.respond_to_channel_invite(vim_channel, true, cx)
         })
         .await
         .unwrap();

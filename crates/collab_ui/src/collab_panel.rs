@@ -3220,10 +3220,11 @@ impl CollabPanel {
         accept: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let respond = self.channel_store.update(cx, |store, _| {
-            store.respond_to_channel_invite(channel_id, accept)
-        });
-        cx.foreground().spawn(respond).detach();
+        self.channel_store
+            .update(cx, |store, cx| {
+                store.respond_to_channel_invite(channel_id, accept, cx)
+            })
+            .detach();
     }
 
     fn call(
@@ -3262,7 +3263,9 @@ impl CollabPanel {
                 workspace.update(cx, |workspace, cx| {
                     if let Some(panel) = workspace.focus_panel::<ChatPanel>(cx) {
                         panel.update(cx, |panel, cx| {
-                            panel.select_channel(channel_id, cx).detach_and_log_err(cx);
+                            panel
+                                .select_channel(channel_id, None, cx)
+                                .detach_and_log_err(cx);
                         });
                     }
                 });
