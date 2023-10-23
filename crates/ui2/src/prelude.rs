@@ -4,6 +4,7 @@ pub use gpui2::{
 };
 
 pub use crate::color::*;
+pub use crate::elevation::*;
 use crate::settings::user_settings;
 pub use crate::{theme, ButtonVariant, ElementExt, Theme};
 
