@@ -1019,15 +1019,12 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&G, &mut WindowContext<'_, '_>) + Send + Sync + 'static,
+        f: impl Fn(&mut WindowContext<'_, '_>) + Send + Sync + 'static,
     ) -> Subscription {
         let window_id = self.window.handle.id;
         self.global_observers.insert(
             TypeId::of::<G>(),
-            Box::new(move |global, cx| {
-                let global = global.downcast_ref::<G>().unwrap();
-                cx.update_window(window_id, |cx| f(global, cx)).is_ok()
-            }),
+            Box::new(move |cx| cx.update_window(window_id, |cx| f(cx)).is_ok()),
         )
     }
 
@@ -1128,7 +1125,7 @@ impl Context for WindowContext<'_, '_> {
         let entity = build_entity(&mut ViewContext::mutable(
             &mut *self.app,
             &mut self.window,
-            slot.id,
+            slot.entity_id,
         ));
         self.entities.insert(slot, entity)
     }
@@ -1141,7 +1138,7 @@ impl Context for WindowContext<'_, '_> {
         let mut entity = self.entities.lease(handle);
         let result = update(
             &mut *entity,
-            &mut ViewContext::mutable(&mut *self.app, &mut *self.window, handle.id),
+            &mut ViewContext::mutable(&mut *self.app, &mut *self.window, handle.entity_id),
         );
         self.entities.end_lease(entity);
         result
@@ -1352,7 +1349,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         let handle = handle.downgrade();
         let window_handle = self.window.handle;
         self.app.observers.insert(
-            handle.id,
+            handle.entity_id,
             Box::new(move |cx| {
                 cx.update_window(window_handle.id, |cx| {
                     if let Some(handle) = handle.upgrade() {
@@ -1379,7 +1376,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         let handle = handle.downgrade();
         let window_handle = self.window.handle;
         self.app.event_listeners.insert(
-            handle.id,
+            handle.entity_id,
             Box::new(move |event, cx| {
                 cx.update_window(window_handle.id, |cx| {
                     if let Some(handle) = handle.upgrade() {
@@ -1418,7 +1415,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         let this = self.handle();
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
-            handle.id,
+            handle.entity_id,
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
                 // todo!("are we okay with silently swallowing the error?")
@@ -1578,16 +1575,15 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut V, &G, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
+        f: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
     ) -> Subscription {
         let window_id = self.window.handle.id;
         let handle = self.handle();
         self.global_observers.insert(
             TypeId::of::<G>(),
-            Box::new(move |global, cx| {
-                let global = global.downcast_ref::<G>().unwrap();
+            Box::new(move |cx| {
                 cx.update_window(window_id, |cx| {
-                    handle.update(cx, |view, cx| f(view, global, cx)).is_ok()
+                    handle.update(cx, |view, cx| f(view, cx)).is_ok()
                 })
                 .unwrap_or(false)
             }),

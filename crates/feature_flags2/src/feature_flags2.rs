@@ -36,7 +36,8 @@ where
     where
         F: Fn(bool, &mut V, &mut ViewContext<V>) + Send + Sync + 'static,
     {
-        self.observe_global::<FeatureFlags>(move |v, feature_flags, cx| {
+        self.observe_global::<FeatureFlags>(move |v, cx| {
+            let feature_flags = cx.global::<FeatureFlags>();
             callback(feature_flags.has_flag(<T as FeatureFlag>::NAME), v, cx);
         })
     }

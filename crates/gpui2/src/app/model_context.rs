@@ -4,7 +4,7 @@ use crate::{
 };
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
-use std::{future::Future, marker::PhantomData};
+use std::{any::TypeId, future::Future, marker::PhantomData};
 
 #[derive(Deref, DerefMut)]
 pub struct ModelContext<'a, T> {
@@ -36,7 +36,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         let this = self.handle();
         let handle = handle.downgrade();
         self.app.observers.insert(
-            handle.id,
+            handle.entity_id,
             Box::new(move |cx| {
                 if let Some((this, handle)) = this.upgrade().zip(handle.upgrade()) {
                     this.update(cx, |this, cx| on_notify(this, handle, cx));
@@ -59,7 +59,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         let this = self.handle();
         let handle = handle.downgrade();
         self.app.event_listeners.insert(
-            handle.id,
+            handle.entity_id,
             Box::new(move |event, cx| {
                 let event = event.downcast_ref().expect("invalid event type");
                 if let Some((this, handle)) = this.upgrade().zip(handle.upgrade()) {
@@ -85,6 +85,34 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         )
     }
 
+    pub fn observe_release<E: Send + Sync + 'static>(
+        &mut self,
+        handle: &Handle<E>,
+        on_release: impl Fn(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+    ) -> Subscription {
+        let this = self.handle();
+        self.app.release_listeners.insert(
+            handle.entity_id,
+            Box::new(move |entity, cx| {
+                let entity = entity.downcast_mut().expect("invalid entity type");
+                if let Some(this) = this.upgrade() {
+                    this.update(cx, |this, cx| on_release(this, entity, cx));
+                }
+            }),
+        )
+    }
+
+    pub fn observe_global<G: 'static>(
+        &mut self,
+        f: impl Fn(&mut T, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+    ) -> Subscription {
+        let handle = self.handle();
+        self.global_observers.insert(
+            TypeId::of::<G>(),
+            Box::new(move |cx| handle.update(cx, |view, cx| f(view, cx)).is_ok()),
+        )
+    }
+
     pub fn on_app_quit<Fut>(
         &mut self,
         on_quit: impl Fn(&mut T, &mut ModelContext<T>) -> Fut + Send + Sync + 'static,
@@ -103,23 +131,6 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
                     }
                 }
                 .boxed()
-            }),
-        )
-    }
-
-    pub fn observe_release<E: Send + Sync + 'static>(
-        &mut self,
-        handle: &Handle<E>,
-        on_release: impl Fn(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + Sync + 'static,
-    ) -> Subscription {
-        let this = self.handle();
-        self.app.release_listeners.insert(
-            handle.id,
-            Box::new(move |entity, cx| {
-                let entity = entity.downcast_mut().expect("invalid entity type");
-                if let Some(this) = this.upgrade() {
-                    this.update(cx, |this, cx| on_release(this, entity, cx));
-                }
             }),
         )
     }

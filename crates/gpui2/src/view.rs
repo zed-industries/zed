@@ -58,7 +58,7 @@ impl<V: 'static + Send + Sync> Element for View<V> {
     type ElementState = AnyElement<V>;
 
     fn id(&self) -> Option<crate::ElementId> {
-        Some(ElementId::View(self.state.id))
+        Some(ElementId::View(self.state.entity_id))
     }
 
     fn initialize(
@@ -159,7 +159,7 @@ trait ViewObject: 'static + Send + Sync {
 
 impl<V: Send + Sync + 'static> ViewObject for View<V> {
     fn entity_id(&self) -> EntityId {
-        self.state.id
+        self.state.entity_id
     }
 
     fn initialize(&mut self, cx: &mut WindowContext) -> AnyBox {

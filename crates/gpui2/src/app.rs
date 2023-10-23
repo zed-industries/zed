@@ -56,7 +56,7 @@ impl App {
         );
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
-        let entities = EntityMap::new();
+        let mut entities = EntityMap::new();
         let unit_entity = entities.insert(entities.reserve(), ());
         let app_metadata = AppMetadata {
             os_name: platform.os_name(),
@@ -190,7 +190,7 @@ pub struct AppContext {
     pub(crate) observers: SubscriberSet<EntityId, Handler>,
     pub(crate) event_listeners: SubscriberSet<EntityId, Listener>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
-    pub(crate) global_observers: SubscriberSet<TypeId, Listener>,
+    pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
@@ -427,12 +427,10 @@ impl AppContext {
     }
 
     fn apply_notify_global_observers_effect(&mut self, type_id: TypeId) {
-        self.pending_global_notifications.insert(type_id);
-        let global = self.globals_by_type.remove(&type_id).unwrap();
+        self.pending_global_notifications.remove(&type_id);
         self.global_observers
             .clone()
-            .retain(&type_id, |observer| observer(global.as_ref(), self));
-        self.globals_by_type.insert(type_id, global);
+            .retain(&type_id, |observer| observer(self));
     }
 
     pub fn to_async(&self) -> AsyncAppContext {
@@ -563,12 +561,12 @@ impl AppContext {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&G, &mut Self) + Send + Sync + 'static,
+        f: impl Fn(&mut Self) + Send + Sync + 'static,
     ) -> Subscription {
         self.global_observers.insert(
             TypeId::of::<G>(),
-            Box::new(move |global, cx| {
-                f(global.downcast_ref::<G>().unwrap(), cx);
+            Box::new(move |cx| {
+                f(cx);
                 true
             }),
         )
@@ -648,7 +646,7 @@ impl Context for AppContext {
     ) -> Handle<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
-            let entity = build_entity(&mut ModelContext::mutable(cx, slot.id));
+            let entity = build_entity(&mut ModelContext::mutable(cx, slot.entity_id));
             cx.entities.insert(slot, entity)
         })
     }
@@ -660,7 +658,10 @@ impl Context for AppContext {
     ) -> R {
         self.update(|cx| {
             let mut entity = cx.entities.lease(handle);
-            let result = update(&mut entity, &mut ModelContext::mutable(cx, handle.id));
+            let result = update(
+                &mut entity,
+                &mut ModelContext::mutable(cx, handle.entity_id),
+            );
             cx.entities.end_lease(entity);
             result
         })

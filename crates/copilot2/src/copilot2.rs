@@ -5,9 +5,10 @@ use anyhow::{anyhow, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use collections::{HashMap, HashSet};
-use futures::{channel::oneshot, future::Shared, Future, FutureExt};
+use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui2::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Handle, ModelContext, Task, WeakHandle,
+    AppContext, AsyncAppContext, Context, EntityId, EventEmitter, Handle, ModelContext, Task,
+    WeakHandle,
 };
 use language2::{
     language_settings::{all_language_settings, language_settings},
@@ -134,7 +135,7 @@ struct RunningCopilotServer {
     name: LanguageServerName,
     lsp: Arc<LanguageServer>,
     sign_in_status: SignInStatus,
-    registered_buffers: HashMap<usize, RegisteredBuffer>,
+    registered_buffers: HashMap<EntityId, RegisteredBuffer>,
 }
 
 #[derive(Clone, Debug)]
@@ -190,23 +191,23 @@ impl RegisteredBuffer {
             let _ = done_tx.send((self.snapshot_version, self.snapshot.clone()));
         } else {
             let buffer = buffer.downgrade();
-            let id = buffer.id();
+            let id = buffer.entity_id();
             let prev_pending_change =
                 mem::replace(&mut self.pending_buffer_change, Task::ready(None));
-            self.pending_buffer_change = cx.spawn_weak(|copilot, mut cx| async move {
+            self.pending_buffer_change = cx.spawn(move |copilot, mut cx| async move {
                 prev_pending_change.await;
 
-                let old_version = copilot.upgrade(&cx)?.update(&mut cx, |copilot, _| {
-                    let server = copilot.server.as_authenticated().log_err()?;
-                    let buffer = server.registered_buffers.get_mut(&id)?;
-                    Some(buffer.snapshot.version.clone())
-                })?;
-                let new_snapshot = buffer
-                    .upgrade()?
-                    .read_with(&cx, |buffer, _| buffer.snapshot());
+                let old_version = copilot
+                    .update(&mut cx, |copilot, _| {
+                        let server = copilot.server.as_authenticated().log_err()?;
+                        let buffer = server.registered_buffers.get_mut(&id)?;
+                        Some(buffer.snapshot.version.clone())
+                    })
+                    .ok()??;
+                let new_snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot()).ok()?;
 
                 let content_changes = cx
-                    .background()
+                    .executor()
                     .spawn({
                         let new_snapshot = new_snapshot.clone();
                         async move {
@@ -232,28 +233,30 @@ impl RegisteredBuffer {
                     })
                     .await;
 
-                copilot.upgrade(&cx)?.update(&mut cx, |copilot, _| {
-                    let server = copilot.server.as_authenticated().log_err()?;
-                    let buffer = server.registered_buffers.get_mut(&id)?;
-                    if !content_changes.is_empty() {
-                        buffer.snapshot_version += 1;
-                        buffer.snapshot = new_snapshot;
-                        server
-                            .lsp
-                            .notify::<lsp2::notification::DidChangeTextDocument>(
-                                lsp2::DidChangeTextDocumentParams {
-                                    text_document: lsp2::VersionedTextDocumentIdentifier::new(
-                                        buffer.uri.clone(),
-                                        buffer.snapshot_version,
-                                    ),
-                                    content_changes,
-                                },
-                            )
-                            .log_err();
-                    }
-                    let _ = done_tx.send((buffer.snapshot_version, buffer.snapshot.clone()));
-                    Some(())
-                })?;
+                copilot
+                    .update(&mut cx, |copilot, _| {
+                        let server = copilot.server.as_authenticated().log_err()?;
+                        let buffer = server.registered_buffers.get_mut(&id)?;
+                        if !content_changes.is_empty() {
+                            buffer.snapshot_version += 1;
+                            buffer.snapshot = new_snapshot;
+                            server
+                                .lsp
+                                .notify::<lsp2::notification::DidChangeTextDocument>(
+                                    lsp2::DidChangeTextDocumentParams {
+                                        text_document: lsp2::VersionedTextDocumentIdentifier::new(
+                                            buffer.uri.clone(),
+                                            buffer.snapshot_version,
+                                        ),
+                                        content_changes,
+                                    },
+                                )
+                                .log_err();
+                        }
+                        let _ = done_tx.send((buffer.snapshot_version, buffer.snapshot.clone()));
+                        Some(())
+                    })
+                    .ok()?;
 
                 Some(())
             });
@@ -274,7 +277,7 @@ pub struct Copilot {
     http: Arc<dyn HttpClient>,
     node_runtime: Arc<dyn NodeRuntime>,
     server: CopilotServer,
-    buffers: HashSet<Handle<Buffer>>,
+    buffers: HashSet<WeakHandle<Buffer>>,
     server_id: LanguageServerId,
     _subscription: gpui2::Subscription,
 }
@@ -311,14 +314,14 @@ impl Copilot {
             _subscription: cx.on_app_quit(Self::shutdown_language_server),
         };
         this.enable_or_disable_copilot(cx);
-        cx.observe_global::<SettingsStore, _>(move |this, cx| this.enable_or_disable_copilot(cx))
+        cx.observe_global::<SettingsStore>(move |this, cx| this.enable_or_disable_copilot(cx))
             .detach();
         this
     }
 
     fn shutdown_language_server(
         &mut self,
-        cx: &mut ModelContext<Self>,
+        _cx: &mut ModelContext<Self>,
     ) -> impl Future<Output = ()> {
         let shutdown = match mem::replace(&mut self.server, CopilotServer::Disabled) {
             CopilotServer::Running(server) => Some(Box::pin(async move { server.lsp.shutdown() })),
@@ -339,10 +342,8 @@ impl Copilot {
         if all_language_settings(None, cx).copilot_enabled(None, None) {
             if matches!(self.server, CopilotServer::Disabled) {
                 let start_task = cx
-                    .spawn({
-                        move |this, cx| {
-                            Self::start_language_server(server_id, http, node_runtime, this, cx)
-                        }
+                    .spawn(move |this, cx| {
+                        Self::start_language_server(server_id, http, node_runtime, this, cx)
                     })
                     .shared();
                 self.server = CopilotServer::Starting { task: start_task };
@@ -381,7 +382,7 @@ impl Copilot {
         new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
         node_runtime: Arc<dyn NodeRuntime>,
-        this: Handle<Self>,
+        this: WeakHandle<Self>,
         mut cx: AsyncAppContext,
     ) -> impl Future<Output = ()> {
         async move {
@@ -446,6 +447,7 @@ impl Copilot {
                     }
                 }
             })
+            .ok();
         }
     }
 
@@ -487,7 +489,7 @@ impl Copilot {
                                                     cx.notify();
                                                 }
                                             }
-                                        });
+                                        })?;
                                         let response = lsp
                                             .request::<request::SignInConfirm>(
                                                 request::SignInConfirmParams {
@@ -513,7 +515,7 @@ impl Copilot {
                                     );
                                     Err(Arc::new(error))
                                 }
-                            })
+                            })?
                         })
                         .shared();
                     server.sign_in_status = SignInStatus::SigningIn {
@@ -525,7 +527,7 @@ impl Copilot {
                 }
             };
 
-            cx.foreground()
+            cx.executor()
                 .spawn(task.map_err(|err| anyhow!("{:?}", err)))
         } else {
             // If we're downloading, wait until download is finished
@@ -534,11 +536,12 @@ impl Copilot {
         }
     }
 
+    #[allow(dead_code)] // todo!()
     fn sign_out(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
         if let CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) = &self.server {
             let server = server.clone();
-            cx.background().spawn(async move {
+            cx.executor().spawn(async move {
                 server
                     .request::<request::SignOut>(request::SignOutParams {})
                     .await?;
@@ -568,7 +571,7 @@ impl Copilot {
 
         cx.notify();
 
-        cx.foreground().spawn(start_task)
+        cx.executor().spawn(start_task)
     }
 
     pub fn language_server(&self) -> Option<(&LanguageServerName, &Arc<LanguageServer>)> {
@@ -594,40 +597,42 @@ impl Copilot {
                 return;
             }
 
-            registered_buffers.entry(buffer.id()).or_insert_with(|| {
-                let uri: lsp2::Url = uri_for_buffer(buffer, cx);
-                let language_id = id_for_language(buffer.read(cx).language());
-                let snapshot = buffer.read(cx).snapshot();
-                server
-                    .notify::<lsp2::notification::DidOpenTextDocument>(
-                        lsp2::DidOpenTextDocumentParams {
-                            text_document: lsp2::TextDocumentItem {
-                                uri: uri.clone(),
-                                language_id: language_id.clone(),
-                                version: 0,
-                                text: snapshot.text(),
+            registered_buffers
+                .entry(buffer.entity_id())
+                .or_insert_with(|| {
+                    let uri: lsp2::Url = uri_for_buffer(buffer, cx);
+                    let language_id = id_for_language(buffer.read(cx).language());
+                    let snapshot = buffer.read(cx).snapshot();
+                    server
+                        .notify::<lsp2::notification::DidOpenTextDocument>(
+                            lsp2::DidOpenTextDocumentParams {
+                                text_document: lsp2::TextDocumentItem {
+                                    uri: uri.clone(),
+                                    language_id: language_id.clone(),
+                                    version: 0,
+                                    text: snapshot.text(),
+                                },
                             },
-                        },
-                    )
-                    .log_err();
+                        )
+                        .log_err();
 
-                RegisteredBuffer {
-                    uri,
-                    language_id,
-                    snapshot,
-                    snapshot_version: 0,
-                    pending_buffer_change: Task::ready(Some(())),
-                    _subscriptions: [
-                        cx.subscribe(buffer, |this, buffer, event, cx| {
-                            this.handle_buffer_event(buffer, event, cx).log_err();
-                        }),
-                        cx.observe_release(buffer, move |this, _buffer, _cx| {
-                            this.buffers.remove(&weak_buffer);
-                            this.unregister_buffer(&weak_buffer);
-                        }),
-                    ],
-                }
-            });
+                    RegisteredBuffer {
+                        uri,
+                        language_id,
+                        snapshot,
+                        snapshot_version: 0,
+                        pending_buffer_change: Task::ready(Some(())),
+                        _subscriptions: [
+                            cx.subscribe(buffer, |this, buffer, event, cx| {
+                                this.handle_buffer_event(buffer, event, cx).log_err();
+                            }),
+                            cx.observe_release(buffer, move |this, _buffer, _cx| {
+                                this.buffers.remove(&weak_buffer);
+                                this.unregister_buffer(&weak_buffer);
+                            }),
+                        ],
+                    }
+                });
         }
     }
 
@@ -638,7 +643,8 @@ impl Copilot {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         if let Ok(server) = self.server.as_running() {
-            if let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.id()) {
+            if let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
+            {
                 match event {
                     language2::Event::Edited => {
                         let _ = registered_buffer.report_changes(&buffer, cx);
@@ -694,7 +700,7 @@ impl Copilot {
 
     fn unregister_buffer(&mut self, buffer: &WeakHandle<Buffer>) {
         if let Ok(server) = self.server.as_running() {
-            if let Some(buffer) = server.registered_buffers.remove(&buffer.id()) {
+            if let Some(buffer) = server.registered_buffers.remove(&buffer.entity_id()) {
                 server
                     .lsp
                     .notify::<lsp2::notification::DidCloseTextDocument>(
@@ -746,7 +752,7 @@ impl Copilot {
                 .request::<request::NotifyAccepted>(request::NotifyAcceptedParams {
                     uuid: completion.uuid.clone(),
                 });
-        cx.background().spawn(async move {
+        cx.executor().spawn(async move {
             request.await?;
             Ok(())
         })
@@ -770,7 +776,7 @@ impl Copilot {
                         .map(|completion| completion.uuid.clone())
                         .collect(),
                 });
-        cx.background().spawn(async move {
+        cx.executor().spawn(async move {
             request.await?;
             Ok(())
         })
@@ -797,7 +803,10 @@ impl Copilot {
             Err(error) => return Task::ready(Err(error)),
         };
         let lsp = server.lsp.clone();
-        let registered_buffer = server.registered_buffers.get_mut(&buffer.id()).unwrap();
+        let registered_buffer = server
+            .registered_buffers
+            .get_mut(&buffer.entity_id())
+            .unwrap();
         let snapshot = registered_buffer.report_changes(buffer, cx);
         let buffer = buffer.read(cx);
         let uri = registered_buffer.uri.clone();
@@ -810,7 +819,7 @@ impl Copilot {
             .map(|file| file.path().to_path_buf())
             .unwrap_or_default();
 
-        cx.foreground().spawn(async move {
+        cx.executor().spawn(async move {
             let (version, snapshot) = snapshot.await?;
             let result = lsp
                 .request::<R>(request::GetCompletionsParams {
@@ -867,7 +876,7 @@ impl Copilot {
         lsp_status: request::SignInStatus,
         cx: &mut ModelContext<Self>,
     ) {
-        self.buffers.retain(|buffer| buffer.is_upgradable(cx));
+        self.buffers.retain(|buffer| buffer.is_upgradable());
 
         if let Ok(server) = self.server.as_running() {
             match lsp_status {
@@ -876,20 +885,20 @@ impl Copilot {
                 | request::SignInStatus::AlreadySignedIn { .. } => {
                     server.sign_in_status = SignInStatus::Authorized;
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
-                        if let Some(buffer) = buffer.upgrade(cx) {
+                        if let Some(buffer) = buffer.upgrade() {
                             self.register_buffer(&buffer, cx);
                         }
                     }
                 }
                 request::SignInStatus::NotAuthorized { .. } => {
                     server.sign_in_status = SignInStatus::Unauthorized;
-                    for buffer in self.buffers.iter().copied().collect::<Vec<_>>() {
+                    for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
                     }
                 }
                 request::SignInStatus::NotSignedIn => {
                     server.sign_in_status = SignInStatus::SignedOut;
-                    for buffer in self.buffers.iter().copied().collect::<Vec<_>>() {
+                    for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
                     }
                 }
@@ -913,7 +922,7 @@ fn uri_for_buffer(buffer: &Handle<Buffer>, cx: &AppContext) -> lsp2::Url {
     if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
         lsp2::Url::from_file_path(file.abs_path(cx)).unwrap()
     } else {
-        format!("buffer://{}", buffer.id()).parse().unwrap()
+        format!("buffer://{}", buffer.entity_id()).parse().unwrap()
     }
 }
 
