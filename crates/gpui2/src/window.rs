@@ -812,8 +812,8 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
             if let Some(mut active_drag) = cx.active_drag.take() {
                 cx.stack(1, |cx| {
-                    let mouse_position = cx.mouse_position();
-                    cx.with_element_offset(Some(mouse_position), |cx| {
+                    let offset = cx.mouse_position() - active_drag.cursor_offset;
+                    cx.with_element_offset(Some(offset), |cx| {
                         let available_space =
                             size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                         draw_any_view(&mut active_drag.drag_handle_view, available_space, cx);

@@ -319,19 +319,21 @@ pub trait StatefulInteractive: StatelessInteractive {
             self.stateful_interaction().drag_listener.is_none(),
             "calling on_drag more than once on the same element is not supported"
         );
-        self.stateful_interaction().drag_listener = Some(Arc::new(move |view_state, cx| {
-            let drag = listener(view_state, cx);
-            let view_handle = cx.handle().upgrade().unwrap();
-            let drag_handle_view = view(view_handle, move |view_state, cx| {
-                (drag.render_drag_handle)(view_state, cx)
-            })
-            .into_any();
-            AnyDrag {
-                drag_handle_view,
-                state: Box::new(drag.state),
-                state_type: TypeId::of::<S>(),
-            }
-        }));
+        self.stateful_interaction().drag_listener =
+            Some(Arc::new(move |view_state, cursor_offset, cx| {
+                let drag = listener(view_state, cx);
+                let view_handle = cx.handle().upgrade().unwrap();
+                let drag_handle_view = view(view_handle, move |view_state, cx| {
+                    (drag.render_drag_handle)(view_state, cx)
+                })
+                .into_any();
+                AnyDrag {
+                    drag_handle_view,
+                    cursor_offset,
+                    state: Box::new(drag.state),
+                    state_type: TypeId::of::<S>(),
+                }
+            }));
         self
     }
 }
@@ -472,7 +474,8 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
                             } else if phase == DispatchPhase::Bubble
                                 && bounds.contains_point(&event.position)
                             {
-                                let any_drag = drag_listener(view_state, cx);
+                                let cursor_offset = event.position - bounds.origin;
+                                let any_drag = drag_listener(view_state, cursor_offset, cx);
                                 cx.start_drag(any_drag);
                                 cx.stop_propagation();
                             }
@@ -1030,7 +1033,7 @@ pub type ClickListener<V> =
     Arc<dyn Fn(&mut V, &ClickEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
 
 pub(crate) type DragListener<V> =
-    Arc<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyDrag + Send + Sync + 'static>;
+    Arc<dyn Fn(&mut V, Point<Pixels>, &mut ViewContext<V>) -> AnyDrag + Send + Sync + 'static>;
 
 pub type KeyListener<V> = Arc<
     dyn Fn(

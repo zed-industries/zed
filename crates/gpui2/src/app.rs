@@ -11,9 +11,9 @@ use smallvec::SmallVec;
 use crate::{
     current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AppMetadata, AssetSource,
     Context, DispatchPhase, DisplayId, Executor, FocusEvent, FocusHandle, FocusId, KeyBinding,
-    Keymap, LayoutId, MainThread, MainThreadOnly, Platform, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window,
-    WindowContext, WindowHandle, WindowId,
+    Keymap, LayoutId, MainThread, MainThreadOnly, Pixels, Platform, Point, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem,
+    View, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -736,6 +736,7 @@ pub(crate) enum Effect {
 
 pub(crate) struct AnyDrag {
     pub drag_handle_view: AnyView,
+    pub cursor_offset: Point<Pixels>,
     pub state: AnyBox,
     pub state_type: TypeId,
 }
