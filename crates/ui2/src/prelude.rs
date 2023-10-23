@@ -61,10 +61,9 @@ impl GitStatus {
 
     pub fn hsla(&self, cx: &WindowContext) -> Hsla {
         let color = ThemeColor::new(cx);
-        let system_color = SystemColor::new();
 
         match self {
-            Self::None => system_color.transparent,
+            Self::None => color.transparent,
             Self::Created => color.git_created,
             Self::Modified => color.git_modified,
             Self::Deleted => color.git_deleted,
