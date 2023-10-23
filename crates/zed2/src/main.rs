@@ -109,8 +109,8 @@ fn main() {
         // handle_keymap_file_changes(user_keymap_file_rx, cx);
 
         // let client = client2::Client::new(http.clone(), cx);
-        // let mut languages = LanguageRegistry::new(login_shell_env_loaded);
-        // let copilot_language_server_id = languages.next_language_server_id();
+        let mut languages = LanguageRegistry::new(login_shell_env_loaded);
+        let copilot_language_server_id = languages.next_language_server_id();
         // languages.set_executor(cx.background().clone());
         // languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         // let languages = Arc::new(languages);
@@ -140,12 +140,12 @@ fn main() {
         // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         // vim::init(cx);
         // terminal_view::init(cx);
-        // copilot::init(
-        //     copilot_language_server_id,
-        //     http.clone(),
-        //     node_runtime.clone(),
-        //     cx,
-        // );
+        copilot2::init(
+            copilot_language_server_id,
+            http.clone(),
+            node_runtime.clone(),
+            cx,
+        );
         // assistant::init(cx);
         // component_test::init(cx);
 

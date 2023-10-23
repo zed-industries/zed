@@ -87,7 +87,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
 
     pub fn on_app_quit<Fut>(
         &mut self,
-        on_quit: impl Fn(&mut T, &mut AppContext) -> Fut + Send + Sync + 'static,
+        on_quit: impl Fn(&mut T, &mut ModelContext<T>) -> Fut + Send + Sync + 'static,
     ) -> Subscription
     where
         Fut: 'static + Future<Output = ()> + Send,

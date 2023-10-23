@@ -26,8 +26,7 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui2::{
-    AnyHandle, AppContext, AsyncAppContext, EventEmitter, Executor, Handle, ModelContext, Task,
-    WeakHandle,
+    AnyHandle, AppContext, AsyncAppContext, EventEmitter, Handle, ModelContext, Task, WeakHandle,
 };
 use itertools::Itertools;
 use language2::{
@@ -821,7 +820,10 @@ impl Project {
         }
     }
 
-    fn shutdown_language_servers(&mut self) -> impl Future<Output = ()> {
+    fn shutdown_language_servers(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+    ) -> impl Future<Output = ()> {
         let shutdown_futures = self
             .language_servers
             .drain()
@@ -5683,7 +5685,7 @@ impl Project {
     async fn background_search(
         unnamed_buffers: Vec<Handle<Buffer>>,
         opened_buffers: HashMap<Arc<Path>, (Handle<Buffer>, BufferSnapshot)>,
-        executor: Executor,
+        executor: Arc<Background>,
         fs: Arc<dyn Fs>,
         workers: usize,
         query: SearchQuery,

@@ -1780,6 +1780,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "copilot2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-tar",
+ "clock",
+ "collections",
+ "context_menu",
+ "fs",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "log",
+ "lsp2",
+ "node_runtime",
+ "rpc",
+ "serde",
+ "serde_derive",
+ "settings2",
+ "smol",
+ "theme",
+ "util",
+]
+
+[[package]]
 name = "copilot_button"
 version = "0.1.0"
 dependencies = [
@@ -10606,6 +10632,7 @@ dependencies = [
  "cli",
  "client2",
  "collections",
+ "copilot2",
  "ctor",
  "db2",
  "env_logger 0.9.3",
@@ -10620,6 +10647,7 @@ dependencies = [
  "indexmap 1.9.3",
  "install_cli",
  "isahc",
+ "language2",
  "language_tools",
  "lazy_static",
  "libc",

@@ -19,6 +19,7 @@ members = [
     "crates/component_test",
     "crates/context_menu",
     "crates/copilot",
+    "crates/copilot2",
     "crates/copilot_button",
     "crates/db",
     "crates/db2",
