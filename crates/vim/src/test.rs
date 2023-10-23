@@ -734,3 +734,27 @@ async fn test_paragraphs_dont_wrap(cx: &mut gpui::TestAppContext) {
         two"})
         .await;
 }
+
+#[gpui::test]
+async fn test_select_all_issue_2170(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state(
+        indoc! {"
+        defmodule Test do
+            def test(a, ˇ[_, _] = b), do: IO.puts('hi')
+        end
+    "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes(["g", "a"]);
+    // TODO: this would be better if it selected the [ not the space.
+    cx.assert_state(
+        indoc! {"
+        defmodule« ˇ»Test« ˇ»do
+        «    ˇ»def« ˇ»test(a,« ˇ»[_,« ˇ»_]« ˇ»=« ˇ»b),« ˇ»do:« ˇ»IO.puts('hi')
+        end
+    "},
+        Mode::Visual,
+    );
+}
