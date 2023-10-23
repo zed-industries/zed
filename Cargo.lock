@@ -5964,7 +5964,7 @@ dependencies = [
  "client2",
  "clock",
  "collections",
- "copilot",
+ "copilot2",
  "ctor",
  "db2",
  "env_logger 0.9.3",

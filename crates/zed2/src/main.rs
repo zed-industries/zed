@@ -13,6 +13,7 @@ use fs::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui2::{App, AppContext, AssetSource, AsyncAppContext, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
+use language2::LanguageRegistry;
 use log::LevelFilter;
 
 use parking_lot::Mutex;
@@ -73,7 +74,7 @@ fn main() {
     let _user_keymap_file_rx =
         watch_config_file(&app.executor(), fs.clone(), paths::KEYMAP.clone());
 
-    let _login_shell_env_loaded = if stdout_is_a_pty() {
+    let login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
     } else {
         app.executor().spawn(async {
@@ -114,7 +115,7 @@ fn main() {
         // languages.set_executor(cx.background().clone());
         // languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         // let languages = Arc::new(languages);
-        // let node_runtime = RealNodeRuntime::new(http.clone());
+        let node_runtime = RealNodeRuntime::new(http.clone());
 
         // languages::init(languages.clone(), node_runtime.clone(), cx);
         // let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));

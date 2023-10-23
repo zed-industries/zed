@@ -10,11 +10,11 @@ mod project_tests;
 #[cfg(test)]
 mod worktree_tests;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use client2::{proto, Client, Collaborator, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
-use copilot::Copilot;
+use copilot2::Copilot;
 use futures::{
     channel::{
         mpsc::{self, UnboundedReceiver},
@@ -26,7 +26,8 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui2::{
-    AnyHandle, AppContext, AsyncAppContext, EventEmitter, Handle, ModelContext, Task, WeakHandle,
+    AnyHandle, AppContext, AsyncAppContext, EventEmitter, Executor, Handle, ModelContext, Task,
+    WeakHandle,
 };
 use itertools::Itertools;
 use language2::{
@@ -195,8 +196,8 @@ impl DelayedDebounced {
         self.cancel_channel = Some(sender);
 
         let previous_task = self.task.take();
-        self.task = Some(cx.spawn(|workspace, mut cx| async move {
-            let mut timer = cx.background().timer(delay).fuse();
+        self.task = Some(cx.executor().spawn(|workspace, mut cx| async move {
+            let mut timer = cx.executor().timer(delay).fuse();
             if let Some(previous_task) = previous_task {
                 previous_task.await;
             }
@@ -206,9 +207,9 @@ impl DelayedDebounced {
                     _ = timer => {}
             }
 
-            workspace
-                .update(&mut cx, |workspace, cx| (func)(workspace, cx))
-                .await;
+            if let Ok(task) = workspace.update(&mut cx, |workspace, cx| (func)(workspace, cx)) {
+                task.await;
+            }
         }));
     }
 }
@@ -646,7 +647,7 @@ impl Project {
                 opened_buffer: watch::channel(),
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
-                    cx.observe_global::<SettingsStore, _>(Self::on_settings_changed),
+                    cx.observe_global::<SettingsStore>(Self::on_settings_changed),
                     cx.on_release(Self::release),
                     cx.on_app_quit(Self::shutdown_language_servers),
                 ],
@@ -673,7 +674,7 @@ impl Project {
                 },
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
-                current_lsp_settings: settings2::get::<ProjectSettings>(cx).lsp2.clone(),
+                current_lsp_settings: settings2::get::<ProjectSettings>(cx).lsp.clone(),
                 node: Some(node),
                 prettier_instances: HashMap::default(),
             }
@@ -696,7 +697,7 @@ impl Project {
                 project_id: remote_id,
             })
             .await?;
-        let this = cx.add_model(|cx| {
+        let this = cx.entity(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
 
             let mut worktrees = Vec::new();
@@ -775,7 +776,7 @@ impl Project {
                 },
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
-                current_lsp_settings: settings2::get::<ProjectSettings>(cx).lsp2.clone(),
+                current_lsp_settings: settings2::get::<ProjectSettings>(cx).lsp.clone(),
                 node: None,
                 prettier_instances: HashMap::default(),
             };
@@ -793,7 +794,7 @@ impl Project {
             .map(|peer| peer.user_id)
             .collect();
         user_store
-            .update(&mut cx, |user_store, cx| user_store.get_users(user_ids, cx))
+            .update(&mut cx, |user_store, cx| user_store.get_users(user_ids, cx))?
             .await?;
 
         this.update(&mut cx, |this, cx| {
@@ -914,7 +915,7 @@ impl Project {
         let mut language_servers_to_restart = Vec::new();
         let languages = self.languages.to_vec();
 
-        let new_lsp_settings = settings2::get::<ProjectSettings>(cx).lsp2.clone();
+        let new_lsp_settings = settings2::get::<ProjectSettings>(cx).lsp.clone();
         let current_lsp_settings = &self.current_lsp_settings;
         for (worktree_id, started_lsp_name) in self.language_server_ids.keys() {
             let language = languages.iter().find_map(|l| {
@@ -1153,7 +1154,7 @@ impl Project {
         } else {
             let client = self.client.clone();
             let project_id = self.remote_id().unwrap();
-            Some(cx.spawn_weak(|_, mut cx| async move {
+            Some(cx.spawn(|_, mut cx| async move {
                 let response = client
                     .request(proto::CreateProjectEntry {
                         worktree_id: project_path.worktree_id.to_proto(),
@@ -1197,7 +1198,7 @@ impl Project {
             let client = self.client.clone();
             let project_id = self.remote_id().unwrap();
 
-            Some(cx.spawn_weak(|_, mut cx| async move {
+            Some(cx.spawn(|_, mut cx| async move {
                 let response = client
                     .request(proto::CopyProjectEntry {
                         project_id,
@@ -1240,7 +1241,7 @@ impl Project {
             let client = self.client.clone();
             let project_id = self.remote_id().unwrap();
 
-            Some(cx.spawn_weak(|_, mut cx| async move {
+            Some(cx.spawn(|_, mut cx| async move {
                 let response = client
                     .request(proto::RenameProjectEntry {
                         project_id,
@@ -1258,7 +1259,7 @@ impl Project {
                             response.worktree_scan_id as usize,
                             cx,
                         )
-                    })
+                    })?
                     .await
             }))
         }
@@ -1280,7 +1281,7 @@ impl Project {
         } else {
             let client = self.client.clone();
             let project_id = self.remote_id().unwrap();
-            Some(cx.spawn_weak(|_, mut cx| async move {
+            Some(cx.spawn(|_, mut cx| async move {
                 let response = client
                     .request(proto::DeleteProjectEntry {
                         project_id,
@@ -1317,7 +1318,7 @@ impl Project {
                 project_id: self.remote_id().unwrap(),
                 entry_id: entry_id.to_proto(),
             });
-            Some(cx.spawn_weak(|_, mut cx| async move {
+            Some(cx.spawn(|_, mut cx| async move {
                 let response = request.await?;
                 if let Some(worktree) = worktree.upgrade() {
                     worktree
@@ -1341,7 +1342,7 @@ impl Project {
         self.client_subscriptions.push(
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&cx.handle(), &mut cx.to_async()),
+                .set_model(&cx.handle().upgrade(), &mut cx.to_async()),
         );
 
         for open_buffer in self.opened_buffers.values_mut() {
@@ -1382,7 +1383,7 @@ impl Project {
         let store = cx.global::<SettingsStore>();
         for worktree in self.worktrees(cx) {
             let worktree_id = worktree.read(cx).id().to_proto();
-            for (path, content) in store.local_settings(worktree.id()) {
+            for (path, content) in store.local_settings(worktree.entity_id().as_u64() as usize) {
                 self.client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
@@ -1506,7 +1507,7 @@ impl Project {
         message_id: u32,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
             for worktree in &self.worktrees {
                 store
                     .clear_local_settings(worktree.handle_id(), cx)
@@ -2432,7 +2433,7 @@ impl Project {
                                 Duration::from_secs(1);
 
                             let task = cx.spawn_weak(|this, mut cx| async move {
-                                cx.background().timer(DISK_BASED_DIAGNOSTICS_DEBOUNCE).await;
+                                cx.executor().timer(DISK_BASED_DIAGNOSTICS_DEBOUNCE).await;
                                 if let Some(this) = this.upgrade(&cx) {
                                     this.update(&mut cx, |this, cx| {
                                         this.disk_based_diagnostics_finished(
@@ -2786,7 +2787,7 @@ impl Project {
         };
 
         let project_settings = settings2::get::<ProjectSettings>(cx);
-        let lsp = project_settings.lsp2.get(&adapter.name.0);
+        let lsp = project_settings.lsp.get(&adapter.name.0);
         let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
 
         let mut initialization_options = adapter.initialization_options.clone();
@@ -3429,7 +3430,7 @@ impl Project {
             });
 
             const PROCESS_TIMEOUT: Duration = Duration::from_secs(5);
-            let mut timeout = cx.background().timer(PROCESS_TIMEOUT).fuse();
+            let mut timeout = cx.executor().timer(PROCESS_TIMEOUT).fuse();
 
             let mut errored = false;
             if let Some(mut process) = process {
@@ -4013,7 +4014,7 @@ impl Project {
                         project_id,
                         buffer_ids: remote_buffers
                             .iter()
-                            .map(|buffer| buffer.read_with(&cx, |buffer, _| buffer.remote_id()))
+                            .map(|buffer| buffer.update(&mut cx, |buffer, _| buffer.remote_id()))
                             .collect(),
                     })
                     .await?
@@ -4022,13 +4023,13 @@ impl Project {
                 project_transaction = this
                     .update(&mut cx, |this, cx| {
                         this.deserialize_project_transaction(response, push_to_history, cx)
-                    })
+                    })?
                     .await?;
             }
 
             for buffer in local_buffers {
                 let transaction = buffer
-                    .update(&mut cx, |buffer, cx| buffer.reload(cx))
+                    .update(&mut cx, |buffer, cx| buffer.reload(cx))?
                     .await?;
                 buffer.update(&mut cx, |buffer, cx| {
                     if let Some(transaction) = transaction {
@@ -4091,9 +4092,9 @@ impl Project {
 
                 let mut project_transaction = ProjectTransaction::default();
                 for (buffer, buffer_abs_path, language_server) in &buffers_with_paths_and_servers {
-                    let settings = buffer.read_with(&cx, |buffer, cx| {
+                    let settings = buffer.update(&mut cx, |buffer, cx| {
                         language_settings(buffer.language(), buffer.file(), cx).clone()
-                    });
+                    })?;
 
                     let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
                     let ensure_final_newline = settings.ensure_final_newline_on_save;
@@ -4105,7 +4106,7 @@ impl Project {
                     let trailing_whitespace_diff = if remove_trailing_whitespace {
                         Some(
                             buffer
-                                .read_with(&cx, |b, cx| b.remove_trailing_whitespace(cx))
+                                .update(&mut cx, |b, cx| b.remove_trailing_whitespace(cx))?
                                 .await,
                         )
                     } else {
@@ -4182,13 +4183,13 @@ impl Project {
                             if let Some(prettier_task) = this
                                 .update(&mut cx, |project, cx| {
                                     project.prettier_instance_for_buffer(buffer, cx)
-                                }).await {
+                                })?.await {
                                     match prettier_task.await
                                     {
                                         Ok(prettier) => {
-                                            let buffer_path = buffer.read_with(&cx, |buffer, cx| {
+                                            let buffer_path = buffer.update(&mut cx, |buffer, cx| {
                                                 File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
-                                            });
+                                            })?;
                                             format_operation = Some(FormatOperation::Prettier(
                                                 prettier
                                                     .format(buffer, buffer_path, &cx)
@@ -4225,7 +4226,7 @@ impl Project {
                                     match prettier_task.await
                                     {
                                         Ok(prettier) => {
-                                            let buffer_path = buffer.read_with(&cx, |buffer, cx| {
+                                            let buffer_path = buffer.update(&mut cx, |buffer, cx| {
                                                 File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
                                             });
                                             format_operation = Some(FormatOperation::Prettier(
@@ -4298,8 +4299,10 @@ impl Project {
                             trigger: trigger as i32,
                             buffer_ids: buffers
                                 .iter()
-                                .map(|buffer| buffer.read_with(&cx, |buffer, _| buffer.remote_id()))
-                                .collect(),
+                                .map(|buffer| {
+                                    buffer.update(&mut cx, |buffer, _| buffer.remote_id())
+                                })
+                                .collect::<Result<_>>()?,
                         })
                         .await?
                         .transaction
@@ -4307,7 +4310,7 @@ impl Project {
                     project_transaction = this
                         .update(&mut cx, |this, cx| {
                             this.deserialize_project_transaction(response, push_to_history, cx)
-                        })
+                        })?
                         .await?;
                 }
                 Ok(project_transaction)
@@ -4316,7 +4319,7 @@ impl Project {
     }
 
     async fn format_via_lsp(
-        this: &Handle<Self>,
+        this: &WeakHandle<Self>,
         buffer: &Handle<Buffer>,
         abs_path: &Path,
         language_server: &Arc<LanguageServer>,
@@ -4341,7 +4344,7 @@ impl Project {
                 .await?
         } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
             let buffer_start = lsp2::Position::new(0, 0);
-            let buffer_end = buffer.read_with(cx, |b, _| point_to_lsp(b.max_point_utf16()));
+            let buffer_end = buffer.update(&mut cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
 
             language_server
                 .request::<lsp2::request::RangeFormatting>(lsp2::DocumentRangeFormattingParams {
@@ -4358,7 +4361,7 @@ impl Project {
         if let Some(lsp_edits) = lsp_edits {
             this.update(cx, |this, cx| {
                 this.edits_from_lsp(buffer, lsp_edits, language_server.server_id(), None, cx)
-            })
+            })?
             .await
         } else {
             Ok(Vec::new())
@@ -4372,7 +4375,7 @@ impl Project {
         arguments: &[String],
         cx: &mut AsyncAppContext,
     ) -> Result<Option<Diff>> {
-        let working_dir_path = buffer.read_with(cx, |buffer, cx| {
+        let working_dir_path = buffer.update(&mut cx, |buffer, cx| {
             let file = File::from_dyn(buffer.file())?;
             let worktree = file.worktree.read(cx).as_local()?;
             let mut worktree_path = worktree.abs_path().to_path_buf();
@@ -4397,7 +4400,7 @@ impl Project {
                 .stdin
                 .as_mut()
                 .ok_or_else(|| anyhow!("failed to acquire stdin"))?;
-            let text = buffer.read_with(cx, |buffer, _| buffer.as_rope().clone());
+            let text = buffer.update(&mut cx, |buffer, _| buffer.as_rope().clone());
             for chunk in text.chunks() {
                 stdin.write_all(chunk.as_bytes()).await?;
             }
@@ -4797,7 +4800,7 @@ impl Project {
                     .unwrap_or(false);
                 let additional_text_edits = if can_resolve {
                     lang_server
-                        .request::<lsp2::request::ResolveCompletionItem>(completion.lsp2_completion)
+                        .request::<lsp2::request::ResolveCompletionItem>(completion.lsp_completion)
                         .await?
                         .additional_text_edits
                 } else {
@@ -4925,8 +4928,8 @@ impl Project {
                     .and_then(|d| d.get_mut("range"))
                 {
                     *lsp_range = serde_json::to_value(&range_to_lsp(range)).unwrap();
-                    action.lsp2_action = lang_server
-                        .request::<lsp2::request::CodeActionResolveRequest>(action.lsp2_action)
+                    action.lsp_action = lang_server
+                        .request::<lsp2::request::CodeActionResolveRequest>(action.lsp_action)
                         .await?;
                 } else {
                     let actions = this
@@ -5537,7 +5540,7 @@ impl Project {
             })
             .collect::<Vec<_>>();
 
-        let background = cx.background().clone();
+        let background = cx.executor().clone();
         let path_count: usize = snapshots.iter().map(|s| s.visible_file_count()).sum();
         if path_count == 0 {
             let (_, rx) = smol::channel::bounded(1024);
@@ -5560,11 +5563,11 @@ impl Project {
                 }
             })
             .collect();
-        cx.background()
+        cx.executor()
             .spawn(Self::background_search(
                 unnamed_files,
                 opened_buffers,
-                cx.background().clone(),
+                cx.executor().clone(),
                 self.fs.clone(),
                 workers,
                 query.clone(),
@@ -5575,9 +5578,9 @@ impl Project {
             .detach();
 
         let (buffers, buffers_rx) = Self::sort_candidates_and_open_buffers(matching_paths_rx, cx);
-        let background = cx.background().clone();
+        let background = cx.executor().clone();
         let (result_tx, result_rx) = smol::channel::bounded(1024);
-        cx.background()
+        cx.executor()
             .spawn(async move {
                 let Ok(buffers) = buffers.await else {
                     return;
@@ -5685,7 +5688,7 @@ impl Project {
     async fn background_search(
         unnamed_buffers: Vec<Handle<Buffer>>,
         opened_buffers: HashMap<Arc<Path>, (Handle<Buffer>, BufferSnapshot)>,
-        executor: Arc<Background>,
+        executor: Executor,
         fs: Arc<dyn Fs>,
         workers: usize,
         query: SearchQuery,
@@ -6459,7 +6462,7 @@ impl Project {
                 })
                 .collect::<Vec<_>>();
 
-            cx.background()
+            cx.executor()
                 .spawn(async move {
                     for task_result in future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_task)| {
                         async move {
@@ -6599,7 +6602,7 @@ impl Project {
                 this.disconnected_from_host(cx);
             }
             Ok(())
-        })
+        })?
     }
 
     async fn handle_add_collaborator(
@@ -6673,7 +6676,7 @@ impl Project {
             });
             cx.notify();
             Ok(())
-        })
+        })?
     }
 
     async fn handle_remove_collaborator(
@@ -6702,7 +6705,7 @@ impl Project {
             cx.emit(Event::CollaboratorLeft(peer_id));
             cx.notify();
             Ok(())
-        })
+        })?
     }
 
     async fn handle_update_project(
@@ -6717,7 +6720,7 @@ impl Project {
                 this.set_worktrees_from_proto(envelope.payload.worktrees, cx)?;
             }
             Ok(())
-        })
+        })?
     }
 
     async fn handle_update_worktree(
@@ -6735,7 +6738,7 @@ impl Project {
                 });
             }
             Ok(())
-        })
+        })?
     }
 
     async fn handle_update_worktree_settings(
@@ -6759,7 +6762,7 @@ impl Project {
                 });
             }
             Ok(())
-        })
+        })?
     }
 
     async fn handle_create_project_entry(
@@ -6773,13 +6776,13 @@ impl Project {
             this.worktree_for_id(worktree_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
         })?;
-        let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id());
+        let worktree_scan_id = worktree.update(&mut cx, |worktree, _| worktree.scan_id());
         let entry = worktree
             .update(&mut cx, |worktree, cx| {
                 let worktree = worktree.as_local_mut().unwrap();
                 let path = PathBuf::from(envelope.payload.path);
                 worktree.create_entry(path, envelope.payload.is_directory, cx)
-            })
+            })?
             .await?;
         Ok(proto::ProjectEntryResponse {
             entry: Some((&entry).into()),
@@ -6794,11 +6797,11 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let worktree = this.read_with(&cx, |this, cx| {
+        let worktree = this.update(&mut cx, |this, cx| {
             this.worktree_for_entry(entry_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
-        })?;
-        let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id());
+        })??;
+        let worktree_scan_id = worktree.update(&mut cx, |worktree, _| worktree.scan_id())?;
         let entry = worktree
             .update(&mut cx, |worktree, cx| {
                 let new_path = PathBuf::from(envelope.payload.new_path);
@@ -6807,7 +6810,7 @@ impl Project {
                     .unwrap()
                     .rename_entry(entry_id, new_path, cx)
                     .ok_or_else(|| anyhow!("invalid entry"))
-            })?
+            })??
             .await?;
         Ok(proto::ProjectEntryResponse {
             entry: Some((&entry).into()),
@@ -6822,11 +6825,11 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let worktree = this.read_with(&cx, |this, cx| {
+        let worktree = this.update(&mut cx, |this, cx| {
             this.worktree_for_entry(entry_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
-        })?;
-        let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id());
+        })??;
+        let worktree_scan_id = worktree.update(&mut cx, |worktree, _| worktree.scan_id())?;
         let entry = worktree
             .update(&mut cx, |worktree, cx| {
                 let new_path = PathBuf::from(envelope.payload.new_path);
@@ -6835,7 +6838,7 @@ impl Project {
                     .unwrap()
                     .copy_entry(entry_id, new_path, cx)
                     .ok_or_else(|| anyhow!("invalid entry"))
-            })?
+            })??
             .await?;
         Ok(proto::ProjectEntryResponse {
             entry: Some((&entry).into()),
@@ -6853,10 +6856,10 @@ impl Project {
 
         this.update(&mut cx, |_, cx| cx.emit(Event::DeletedEntry(entry_id)));
 
-        let worktree = this.read_with(&cx, |this, cx| {
+        let worktree = this.update(&mut cx, |this, cx| {
             this.worktree_for_entry(entry_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
-        })?;
+        })??;
         let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id());
         worktree
             .update(&mut cx, |worktree, cx| {
@@ -6881,7 +6884,7 @@ impl Project {
     ) -> Result<proto::ExpandProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this
-            .read_with(&cx, |this, cx| this.worktree_for_entry(entry_id, cx))
+            .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
             .ok_or_else(|| anyhow!("invalid request"))?;
         worktree
             .update(&mut cx, |worktree, cx| {
@@ -6890,7 +6893,7 @@ impl Project {
                     .unwrap()
                     .expand_entry(entry_id, cx)
                     .ok_or_else(|| anyhow!("invalid entry"))
-            })?
+            })??
             .await?;
         let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id()) as u64;
         Ok(proto::ExpandProjectEntryResponse { worktree_scan_id })
@@ -6923,7 +6926,7 @@ impl Project {
                 }
             }
             Ok(())
-        })
+        })?
     }
 
     async fn handle_start_language_server(
@@ -7005,7 +7008,7 @@ impl Project {
             }
 
             Ok(())
-        })
+        })?
     }
 
     async fn handle_update_buffer(
@@ -7041,7 +7044,7 @@ impl Project {
                 }
             }
             Ok(proto::Ack {})
-        })
+        })?
     }
 
     async fn handle_create_buffer_for_peer(
@@ -7101,7 +7104,7 @@ impl Project {
             }
 
             Ok(())
-        })
+        })?
     }
 
     async fn handle_update_diff_base(
@@ -7127,7 +7130,7 @@ impl Project {
                 buffer.update(cx, |buffer, cx| buffer.set_diff_base(diff_base, cx));
             }
             Ok(())
-        })
+        })?
     }
 
     async fn handle_update_buffer_file(
@@ -7162,7 +7165,7 @@ impl Project {
                 this.detect_language_for_buffer(&buffer, cx);
             }
             Ok(())
-        })
+        })?
     }
 
     async fn handle_save_buffer(
@@ -7180,17 +7183,17 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
             anyhow::Ok((project_id, buffer))
-        })?;
+        })??;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&envelope.payload.version))
-            })
+            })?
             .await?;
-        let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id());
+        let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
 
-        this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))
+        this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))?
             .await?;
-        Ok(buffer.read_with(&cx, |buffer, _| proto::BufferSaved {
+        Ok(buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id,
             version: serialize_version(buffer.saved_version()),
@@ -7198,7 +7201,7 @@ impl Project {
             fingerprint: language2::proto::serialize_fingerprint(
                 buffer.saved_version_fingerprint(),
             ),
-        }))
+        })?)
     }
 
     async fn handle_reload_buffers(
@@ -7219,12 +7222,12 @@ impl Project {
                 );
             }
             Ok::<_, anyhow::Error>(this.reload_buffers(buffers, false, cx))
-        })?;
+        })??;
 
         let project_transaction = reload.await?;
         let project_transaction = this.update(&mut cx, |this, cx| {
             this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
-        });
+        })?;
         Ok(proto::ReloadBuffersResponse {
             transaction: Some(project_transaction),
         })
@@ -7298,7 +7301,7 @@ impl Project {
                         })
                         .log_err();
 
-                    cx.background()
+                    cx.executor()
                         .spawn(
                             async move {
                                 let operations = operations.await;
@@ -7917,7 +7920,7 @@ impl Project {
             // Any incomplete buffers have open requests waiting. Request that the host sends
             // creates these buffers for us again to unblock any waiting futures.
             for id in incomplete_buffer_ids {
-                cx.background()
+                cx.executor()
                     .spawn(client.request(proto::OpenBufferById { project_id, id }))
                     .detach();
             }
@@ -8082,7 +8085,7 @@ impl Project {
                 });
             }
             Ok(())
-        })
+        })?
     }
 
     async fn handle_buffer_reloaded(
@@ -8116,7 +8119,7 @@ impl Project {
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
                     buffer.did_reload(version, fingerprint, line_ending, mtime, cx);
-                });
+                })?;
             }
             Ok(())
         })
@@ -8132,7 +8135,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx);
-        cx.background().spawn(async move {
+        cx.executor().spawn(async move {
             let snapshot = snapshot?;
             let mut lsp_edits = lsp_edits
                 .into_iter()
@@ -8375,9 +8378,9 @@ impl Project {
                 return Task::ready(None);
             };
             cx.spawn(|this, mut cx| async move {
-                let fs = this.update(&mut cx, |project, _| Arc::clone(&project.fs));
+                let fs = this.update(&mut cx, |project, _| Arc::clone(&project.fs))?;
                 let prettier_dir = match cx
-                    .background()
+                    .executor()
                     .spawn(Prettier::locate(
                         worktree_path.zip(buffer_path).map(
                             |(worktree_root_path, starting_path)| LocateStart {
@@ -8535,7 +8538,7 @@ impl Project {
             .cloned();
 
         let fs = Arc::clone(&self.fs);
-        cx.background()
+        cx.executor()
             .spawn(async move {
                 let prettier_wrapper_path = default_prettier_dir.join(PRETTIER_SERVER_FILE);
                 // method creates parent directory if it doesn't exist
@@ -8583,15 +8586,15 @@ fn subscribe_for_copilot_events(
     cx.subscribe(
         copilot,
         |project, copilot, copilot_event, cx| match copilot_event {
-            copilot::Event::CopilotLanguageServerStarted => {
+            copilot2::Event::CopilotLanguageServerStarted => {
                 match copilot.read(cx).language_server() {
                     Some((name, copilot_server)) => {
                         // Another event wants to re-add the server that was already added and subscribed to, avoid doing it again.
-                        if !copilot_server.has_notification_handler::<copilot::request::LogMessage>() {
+                        if !copilot_server.has_notification_handler::<copilot2::request::LogMessage>() {
                             let new_server_id = copilot_server.server_id();
                             let weak_project = cx.weak_handle();
                             let copilot_log_subscription = copilot_server
-                                .on_notification::<copilot::request::LogMessage, _>(
+                                .on_notification::<copilot2::request::LogMessage, _>(
                                     move |params, mut cx| {
                                         if let Some(project) = weak_project.upgrade(&mut cx) {
                                             project.update(&mut cx, |_, cx| {

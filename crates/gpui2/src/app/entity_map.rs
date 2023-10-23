@@ -4,7 +4,7 @@ use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{SecondaryMap, SlotMap};
 use std::{
-    any::{Any, TypeId},
+    any::{type_name, Any, TypeId},
     fmt::{self, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -16,6 +16,12 @@ use std::{
 };
 
 slotmap::new_key_type! { pub struct EntityId; }
+
+impl EntityId {
+    pub fn as_u64(self) -> u64 {
+        self.0.as_ffi()
+    }
+}
 
 impl Display for EntityId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -234,6 +240,20 @@ where
     }
 }
 
+impl Hash for AnyHandle {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.entity_id.hash(state);
+    }
+}
+
+impl PartialEq for AnyHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.entity_id == other.entity_id
+    }
+}
+
+impl Eq for AnyHandle {}
+
 #[derive(Deref, DerefMut)]
 pub struct Handle<T: Send + Sync> {
     #[deref]
@@ -283,6 +303,31 @@ impl<T: Send + Sync> Clone for Handle<T> {
         }
     }
 }
+
+impl<T: 'static + Send + Sync> std::fmt::Debug for Handle<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Handle {{ entity_id: {:?}, entity_type: {:?} }}",
+            self.any_handle.entity_id,
+            type_name::<T>()
+        )
+    }
+}
+
+impl<T: Send + Sync + 'static> Hash for Handle<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.any_handle.hash(state);
+    }
+}
+
+impl<T: Send + Sync + 'static> PartialEq for Handle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.any_handle == other.any_handle
+    }
+}
+
+impl<T: Send + Sync + 'static> Eq for Handle<T> {}
 
 #[derive(Clone)]
 pub struct AnyWeakHandle {

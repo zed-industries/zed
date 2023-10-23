@@ -24,6 +24,10 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         }
     }
 
+    pub fn entity_id(&self) -> EntityId {
+        self.entity_id
+    }
+
     pub fn handle(&self) -> WeakHandle<T> {
         self.app.entities.weak_handle(self.entity_id)
     }
