@@ -587,7 +587,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_rename_project_entry);
         client.add_model_request_handler(Self::handle_copy_project_entry);
         client.add_model_request_handler(Self::handle_delete_project_entry);
-        client.    m.,add_model_request_handler(Self::handle_expand_project_entry);
+        client.add_model_request_handler(Self::handle_expand_project_entry);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
@@ -8414,8 +8414,8 @@ impl Project {
                 let task_prettier_dir = prettier_dir.clone();
                 let new_prettier_task = cx
                     .spawn(|mut cx| async move {
-                        let new_server_id =
-                            this.update(&mut cx, |this, _| this.languages.next_language_server_id())?;
+                        let new_server_id = this
+                            .update(&mut cx, |this, _| this.languages.next_language_server_id())?;
                         let prettier = Prettier::start(
                             worktree_id.map(|id| id.to_usize()),
                             new_server_id,
@@ -8428,9 +8428,7 @@ impl Project {
                         .map_err(Arc::new)?;
                         log::info!("Started prettier in {:?}", prettier.prettier_dir());
 
-                        if let Some(prettier_server) =
-                            prettier.server()
-                        {
+                        if let Some(prettier_server) = prettier.server() {
                             this.update(&mut cx, |project, cx| {
                                 let name = if prettier.is_default() {
                                     LanguageServerName(Arc::from("prettier (default)"))
