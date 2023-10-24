@@ -40,11 +40,11 @@ impl<S: 'static + Send + Sync + Clone> Terminal<S> {
                                 .items_center()
                                 .gap_px()
                                 .child(
-                                    IconButton::new(Icon::ArrowLeft).state(
+                                    IconButton::new(Icon::ArrowLeft, "arrow_left").state(
                                         InteractionState::Enabled.if_enabled(can_navigate_back),
                                     ),
                                 )
-                                .child(IconButton::new(Icon::ArrowRight).state(
+                                .child(IconButton::new(Icon::ArrowRight, "arrow_right").state(
                                     InteractionState::Enabled.if_enabled(can_navigate_forward),
                                 )),
                         ),

@@ -51,11 +51,11 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
                             .items_center()
                             .gap_px()
                             .child(
-                                IconButton::new(Icon::ArrowLeft)
+                                IconButton::new(Icon::ArrowLeft, "arrow_left")
                                     .state(InteractionState::Enabled.if_enabled(can_navigate_back)),
                             )
                             .child(
-                                IconButton::new(Icon::ArrowRight).state(
+                                IconButton::new(Icon::ArrowRight, "arrow_right").state(
                                     InteractionState::Enabled.if_enabled(can_navigate_forward),
                                 ),
                             ),
@@ -83,8 +83,8 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(IconButton::new(Icon::Plus))
-                            .child(IconButton::new(Icon::Split)),
+                            .child(IconButton::new(Icon::Plus, "plus"))
+                            .child(IconButton::new(Icon::Split, "split")),
                     ),
             )
     }

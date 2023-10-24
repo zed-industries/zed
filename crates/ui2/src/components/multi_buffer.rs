@@ -34,7 +34,7 @@ impl<S: 'static + Send + Sync + Clone> MultiBuffer<S> {
                             .p_4()
                             .bg(color.editor_subheader)
                             .child(Label::new("main.rs"))
-                            .child(IconButton::new(Icon::ArrowUpRight)),
+                            .child(IconButton::new(Icon::ArrowUpRight, "arrow_up_right")),
                     )
                     .child(buffer)
             }))

@@ -113,7 +113,7 @@ impl StatusBar {
             .items_center()
             .gap_1()
             .child(
-                IconButton::<Workspace>::new(Icon::FileTree)
+                IconButton::<Workspace>::new(Icon::FileTree, "project_panel")
                     .when(workspace.is_project_panel_open(), |this| {
                         this.color(IconColor::Accent)
                     })
@@ -122,7 +122,7 @@ impl StatusBar {
                     }),
             )
             .child(
-                IconButton::<Workspace>::new(Icon::Hash)
+                IconButton::<Workspace>::new(Icon::Hash, "collab_panel")
                     .when(workspace.is_collab_panel_open(), |this| {
                         this.color(IconColor::Accent)
                     })
@@ -131,7 +131,7 @@ impl StatusBar {
                     }),
             )
             .child(ToolDivider::new())
-            .child(IconButton::new(Icon::XCircle))
+            .child(IconButton::new(Icon::XCircle, "diagnostics"))
     }
 
     fn right_tools(
@@ -164,11 +164,11 @@ impl StatusBar {
                     .items_center()
                     .gap_1()
                     .child(
-                        IconButton::new(Icon::Copilot)
+                        IconButton::new(Icon::Copilot, "copilot")
                             .on_click(|_, _| println!("Copilot clicked.")),
                     )
                     .child(
-                        IconButton::new(Icon::Envelope)
+                        IconButton::new(Icon::Envelope, "envelope")
                             .on_click(|_, _| println!("Send Feedback clicked.")),
                     ),
             )
@@ -179,7 +179,7 @@ impl StatusBar {
                     .items_center()
                     .gap_1()
                     .child(
-                        IconButton::<Workspace>::new(Icon::Terminal)
+                        IconButton::<Workspace>::new(Icon::Terminal, "terminal")
                             .when(workspace.is_terminal_open(), |this| {
                                 this.color(IconColor::Accent)
                             })
@@ -188,7 +188,7 @@ impl StatusBar {
                             }),
                     )
                     .child(
-                        IconButton::<Workspace>::new(Icon::MessageBubbles)
+                        IconButton::<Workspace>::new(Icon::MessageBubbles, "chat_panel")
                             .when(workspace.is_chat_panel_open(), |this| {
                                 this.color(IconColor::Accent)
                             })
@@ -197,7 +197,7 @@ impl StatusBar {
                             }),
                     )
                     .child(
-                        IconButton::<Workspace>::new(Icon::Ai)
+                        IconButton::<Workspace>::new(Icon::Ai, "assistant_panel")
                             .when(workspace.is_assistant_panel_open(), |this| {
                                 this.color(IconColor::Accent)
                             })

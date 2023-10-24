@@ -61,15 +61,15 @@ impl EditorPane {
                 Toolbar::new()
                     .left_item(Breadcrumb::new(self.path.clone(), self.symbols.clone()))
                     .right_items(vec![
-                        IconButton::new(Icon::InlayHint),
-                        IconButton::<Self>::new(Icon::MagnifyingGlass)
+                        IconButton::new(Icon::InlayHint, "toggle_inlay_hints"),
+                        IconButton::<Self>::new(Icon::MagnifyingGlass, "buffer_search")
                             .when(self.is_buffer_search_open, |this| {
                                 this.color(IconColor::Accent)
                             })
                             .on_click(|editor, cx| {
                                 editor.toggle_buffer_search(cx);
                             }),
-                        IconButton::new(Icon::MagicWand),
+                        IconButton::new(Icon::MagicWand, "inline_assist"),
                     ]),
             )
             .children(Some(self.buffer_search.clone()).filter(|_| self.is_buffer_search_open))

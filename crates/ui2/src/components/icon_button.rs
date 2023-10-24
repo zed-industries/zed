@@ -19,6 +19,7 @@ impl<S: 'static + Send + Sync> Default for IconButtonHandlers<S> {
 #[derive(Element)]
 pub struct IconButton<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
+    id: ElementId,
     icon: Icon,
     color: IconColor,
     variant: ButtonVariant,
@@ -27,9 +28,10 @@ pub struct IconButton<S: 'static + Send + Sync> {
 }
 
 impl<S: 'static + Send + Sync> IconButton<S> {
-    pub fn new(icon: Icon) -> Self {
+    pub fn new(icon: Icon, id: impl Into<ElementId>) -> Self {
         Self {
             state_type: PhantomData,
+            id: id.into(),
             icon,
             color: IconColor::default(),
             variant: ButtonVariant::default(),
@@ -88,8 +90,7 @@ impl<S: 'static + Send + Sync> IconButton<S> {
         };
 
         let mut button = h_stack()
-            // TODO: We probably need a more robust method for differentiating `IconButton`s from one another.
-            .id(SharedString::from(format!("{:?}", self.icon)))
+            .id(self.id.clone())
             .justify_center()
             .rounded_md()
             .py(ui_size(cx, 0.25))
