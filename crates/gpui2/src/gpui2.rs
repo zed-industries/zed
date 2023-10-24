@@ -56,7 +56,7 @@ pub use window::*;
 use derive_more::{Deref, DerefMut};
 use std::{
     any::{Any, TypeId},
-    borrow::Borrow,
+    borrow::{Borrow, BorrowMut},
     mem,
     ops::{Deref, DerefMut},
     sync::Arc,
@@ -141,20 +141,29 @@ impl<C: Context> Context for MainThread<C> {
 }
 
 pub trait BorrowAppContext {
-    fn app_mut(&mut self) -> &mut AppContext;
+    fn with_text_style<F, R>(&mut self, style: TextStyleRefinement, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R;
 
+    fn set_global<T: Send + Sync + 'static>(&mut self, global: T);
+}
+
+impl<C> BorrowAppContext for C
+where
+    C: BorrowMut<AppContext>,
+{
     fn with_text_style<F, R>(&mut self, style: TextStyleRefinement, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.app_mut().push_text_style(style);
+        self.borrow_mut().push_text_style(style);
         let result = f(self);
-        self.app_mut().pop_text_style();
+        self.borrow_mut().pop_text_style();
         result
     }
 
     fn set_global<T: Send + Sync + 'static>(&mut self, global: T) {
-        self.app_mut().set_global(global)
+        self.borrow_mut().set_global(global)
     }
 }
 

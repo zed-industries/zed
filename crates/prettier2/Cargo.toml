@@ -1,0 +1,34 @@
+[package]
+name = "prettier2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/prettier2.rs"
+doctest = false
+
+[features]
+test-support = []
+
+[dependencies]
+client2 = { path = "../client2" }
+collections = { path = "../collections"}
+language2 = { path = "../language2" }
+gpui2 = { path = "../gpui2" }
+fs = { path = "../fs" }
+lsp2 = { path = "../lsp2" }
+node_runtime = { path = "../node_runtime"}
+util = { path = "../util" }
+
+log.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+language2 = { path = "../language2", features = ["test-support"] }
+gpui2 = { path = "../gpui2", features = ["test-support"] }
+fs = { path = "../fs",  features = ["test-support"] }

@@ -5816,6 +5816,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "prettier2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "log",
+ "lsp2",
+ "node_runtime",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "util",
+]
+
+[[package]]
 name = "pretty_assertions"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

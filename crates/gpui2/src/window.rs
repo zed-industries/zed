@@ -1,13 +1,13 @@
 use crate::{
-    px, size, Action, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
-    BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext,
-    DisplayId, Edges, Effect, Element, EntityId, EventEmitter, FocusEvent, FontId, GlobalElementId,
-    GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher,
-    Keystroke, LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent,
-    MouseUpEvent, Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite,
-    Quad, Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
-    SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task,
-    Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    px, size, Action, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, Bounds,
+    BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect, Element,
+    EntityId, EventEmitter, FocusEvent, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData,
+    InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId, MainThread,
+    MainThreadOnly, MonochromeSprite, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle, WindowOptions,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -17,7 +17,7 @@ use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
-    borrow::Cow,
+    borrow::{Borrow, BorrowMut, Cow},
     fmt::Debug,
     future::Future,
     marker::PhantomData,
@@ -1122,12 +1122,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 }
 
-impl<'a, 'w> MainThread<WindowContext<'a, 'w>> {
-    fn platform(&self) -> &dyn Platform {
-        self.platform.borrow_on_main_thread()
-    }
-}
-
 impl Context for WindowContext<'_, '_> {
     type EntityContext<'a, 'w, T: 'static + Send + Sync> = ViewContext<'a, 'w, T>;
     type Result<T> = T;
@@ -1174,15 +1168,30 @@ impl<'a, 'w> std::ops::DerefMut for WindowContext<'a, 'w> {
     }
 }
 
-impl BorrowAppContext for WindowContext<'_, '_> {
-    fn app_mut(&mut self) -> &mut AppContext {
-        &mut *self.app
+impl<'a, 'w> Borrow<AppContext> for WindowContext<'a, 'w> {
+    fn borrow(&self) -> &AppContext {
+        &self.app
     }
 }
 
-pub trait BorrowWindow: BorrowAppContext {
-    fn window(&self) -> &Window;
-    fn window_mut(&mut self) -> &mut Window;
+impl<'a, 'w> BorrowMut<AppContext> for WindowContext<'a, 'w> {
+    fn borrow_mut(&mut self) -> &mut AppContext {
+        &mut self.app
+    }
+}
+
+pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
+    fn app_mut(&mut self) -> &mut AppContext {
+        self.borrow_mut()
+    }
+
+    fn window(&self) -> &Window {
+        self.borrow()
+    }
+
+    fn window_mut(&mut self) -> &mut Window {
+        self.borrow_mut()
+    }
 
     fn with_element_id<R>(
         &mut self,
@@ -1205,7 +1214,8 @@ pub trait BorrowWindow: BorrowAppContext {
         }
 
         let result = f(global_id, self);
-        self.window_mut().element_id_stack.pop();
+        let window: &mut Window = self.borrow_mut();
+        window.element_id_stack.pop();
         result
     }
 
@@ -1308,34 +1318,46 @@ pub trait BorrowWindow: BorrowAppContext {
     }
 }
 
-impl BorrowWindow for WindowContext<'_, '_> {
-    fn window(&self) -> &Window {
-        &*self.window
-    }
-
-    fn window_mut(&mut self) -> &mut Window {
-        &mut *self.window
+impl Borrow<Window> for WindowContext<'_, '_> {
+    fn borrow(&self) -> &Window {
+        &self.window
     }
 }
 
-pub struct ViewContext<'a, 'w, S> {
+impl BorrowMut<Window> for WindowContext<'_, '_> {
+    fn borrow_mut(&mut self) -> &mut Window {
+        &mut self.window
+    }
+}
+
+impl<T> BorrowWindow for T where T: BorrowMut<AppContext> + BorrowMut<Window> {}
+
+pub struct ViewContext<'a, 'w, V> {
     window_cx: WindowContext<'a, 'w>,
-    entity_type: PhantomData<S>,
+    entity_type: PhantomData<V>,
     entity_id: EntityId,
 }
 
-impl<S> BorrowAppContext for ViewContext<'_, '_, S> {
-    fn app_mut(&mut self) -> &mut AppContext {
+impl<V> Borrow<AppContext> for ViewContext<'_, '_, V> {
+    fn borrow(&self) -> &AppContext {
+        &*self.window_cx.app
+    }
+}
+
+impl<V> BorrowMut<AppContext> for ViewContext<'_, '_, V> {
+    fn borrow_mut(&mut self) -> &mut AppContext {
         &mut *self.window_cx.app
     }
 }
 
-impl<S> BorrowWindow for ViewContext<'_, '_, S> {
-    fn window(&self) -> &Window {
-        &self.window_cx.window
+impl<V> Borrow<Window> for ViewContext<'_, '_, V> {
+    fn borrow(&self) -> &Window {
+        &*self.window_cx.window
     }
+}
 
-    fn window_mut(&mut self) -> &mut Window {
+impl<V> BorrowMut<Window> for ViewContext<'_, '_, V> {
+    fn borrow_mut(&mut self) -> &mut Window {
         &mut *self.window_cx.window
     }
 }

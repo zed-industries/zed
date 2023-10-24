@@ -196,7 +196,7 @@ impl DelayedDebounced {
         self.cancel_channel = Some(sender);
 
         let previous_task = self.task.take();
-        self.task = Some(cx.executor().spawn(|workspace, mut cx| async move {
+        self.task = Some(cx.spawn(|project, mut cx| async move {
             let mut timer = cx.executor().timer(delay).fuse();
             if let Some(previous_task) = previous_task {
                 previous_task.await;
@@ -207,7 +207,7 @@ impl DelayedDebounced {
                     _ = timer => {}
             }
 
-            if let Ok(task) = workspace.update(&mut cx, |workspace, cx| (func)(workspace, cx)) {
+            if let Ok(task) = project.update(&mut cx, |project, cx| (func)(project, cx)) {
                 task.await;
             }
         }));
@@ -8113,7 +8113,7 @@ impl Project {
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
                     buffer.did_reload(version, fingerprint, line_ending, mtime, cx);
-                })?;
+                });
             }
             Ok(())
         })?

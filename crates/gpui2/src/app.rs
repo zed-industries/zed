@@ -22,6 +22,7 @@ use parking_lot::{Mutex, RwLock};
 use slotmap::SlotMap;
 use std::{
     any::{type_name, Any, TypeId},
+    borrow::Borrow,
     mem,
     sync::{atomic::Ordering::SeqCst, Arc, Weak},
     time::Duration,
@@ -670,29 +671,12 @@ impl Context for AppContext {
     }
 }
 
-impl MainThread<AppContext> {
-    fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
-        self.0.update(|cx| {
-            update(unsafe {
-                std::mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx)
-            })
-        })
-    }
-
-    pub(crate) fn update_window<R>(
-        &mut self,
-        id: WindowId,
-        update: impl FnOnce(&mut MainThread<WindowContext>) -> R,
-    ) -> Result<R> {
-        self.0.update_window(id, |cx| {
-            update(unsafe {
-                std::mem::transmute::<&mut WindowContext, &mut MainThread<WindowContext>>(cx)
-            })
-        })
-    }
-
+impl<C> MainThread<C>
+where
+    C: Borrow<AppContext>,
+{
     pub(crate) fn platform(&self) -> &dyn Platform {
-        self.platform.borrow_on_main_thread()
+        self.0.borrow().platform.borrow_on_main_thread()
     }
 
     pub fn activate(&self, ignoring_other_apps: bool) {
@@ -721,6 +705,28 @@ impl MainThread<AppContext> {
 
     pub fn open_url(&self, url: &str) {
         self.platform().open_url(url);
+    }
+}
+
+impl MainThread<AppContext> {
+    fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
+        self.0.update(|cx| {
+            update(unsafe {
+                std::mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx)
+            })
+        })
+    }
+
+    pub(crate) fn update_window<R>(
+        &mut self,
+        id: WindowId,
+        update: impl FnOnce(&mut MainThread<WindowContext>) -> R,
+    ) -> Result<R> {
+        self.0.update_window(id, |cx| {
+            update(unsafe {
+                std::mem::transmute::<&mut WindowContext, &mut MainThread<WindowContext>>(cx)
+            })
+        })
     }
 
     pub fn open_window<S: 'static + Send + Sync>(
