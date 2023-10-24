@@ -60,7 +60,7 @@ impl<S: 'static + Send + Sync> Modal<S> {
                     .border_b()
                     .border_color(color.border)
                     .child(div().children(self.title.clone().map(|t| Label::new(t))))
-                    .child(IconButton::new(Icon::Close)),
+                    .child(IconButton::new("close", Icon::Close)),
             )
             .child(v_stack().p_1().children(self.children.drain(..)))
             .when(

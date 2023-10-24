@@ -32,7 +32,7 @@ impl BufferSearch {
 
         h_stack().bg(color.toolbar).p_2().child(
             h_stack().child(Input::new("Search")).child(
-                IconButton::<Self>::new(Icon::Replace)
+                IconButton::<Self>::new("replace", Icon::Replace)
                     .when(self.is_replace_open, |this| this.color(IconColor::Accent))
                     .on_click(|buffer_search, cx| {
                         buffer_search.toggle_replace(cx);

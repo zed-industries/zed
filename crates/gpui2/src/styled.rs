@@ -137,6 +137,8 @@ pub trait Styled {
         self
     }
 
+    /// Sets the element to align flex items to the start of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-items#start)
     fn items_start(mut self) -> Self
     where
         Self: Sized,
@@ -145,6 +147,8 @@ pub trait Styled {
         self
     }
 
+    /// Sets the element to align flex items to the end of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-items#end)
     fn items_end(mut self) -> Self
     where
         Self: Sized,
@@ -153,6 +157,8 @@ pub trait Styled {
         self
     }
 
+    /// Sets the element to align flex items along the center of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-items#center)
     fn items_center(mut self) -> Self
     where
         Self: Sized,
@@ -161,6 +167,9 @@ pub trait Styled {
         self
     }
 
+    /// Sets the element to justify flex items along the container's main axis
+    /// such that there is an equal amount of space between each item.
+    /// [Docs](https://tailwindcss.com/docs/justify-content#space-between)
     fn justify_between(mut self) -> Self
     where
         Self: Sized,
@@ -169,6 +178,8 @@ pub trait Styled {
         self
     }
 
+    /// Sets the element to justify flex items along the center of the container's main axis.
+    /// [Docs](https://tailwindcss.com/docs/justify-content#center)
     fn justify_center(mut self) -> Self
     where
         Self: Sized,
@@ -177,6 +188,8 @@ pub trait Styled {
         self
     }
 
+    /// Sets the element to justify flex items against the start of the container's main axis.
+    /// [Docs](https://tailwindcss.com/docs/justify-content#start)
     fn justify_start(mut self) -> Self
     where
         Self: Sized,
@@ -185,6 +198,8 @@ pub trait Styled {
         self
     }
 
+    /// Sets the element to justify flex items against the end of the container's main axis.
+    /// [Docs](https://tailwindcss.com/docs/justify-content#end)
     fn justify_end(mut self) -> Self
     where
         Self: Sized,
@@ -193,6 +208,9 @@ pub trait Styled {
         self
     }
 
+    /// Sets the element to justify items along the container's main axis such
+    /// that there is an equal amount of space on each side of each item.
+    /// [Docs](https://tailwindcss.com/docs/justify-content#space-around)
     fn justify_around(mut self) -> Self
     where
         Self: Sized,
@@ -201,6 +219,7 @@ pub trait Styled {
         self
     }
 
+    /// Sets the background color of the element.
     fn bg<F>(mut self, fill: F) -> Self
     where
         F: Into<Fill>,
@@ -210,6 +229,7 @@ pub trait Styled {
         self
     }
 
+    /// Sets the border color of the element.
     fn border_color<C>(mut self, border_color: C) -> Self
     where
         C: Into<Hsla>,
@@ -219,6 +239,8 @@ pub trait Styled {
         self
     }
 
+    /// Sets the box shadow of the element.
+    /// [Docs](https://tailwindcss.com/docs/box-shadow)
     fn shadow(mut self) -> Self
     where
         Self: Sized,
@@ -240,6 +262,8 @@ pub trait Styled {
         self
     }
 
+    /// Clears the box shadow of the element.
+    /// [Docs](https://tailwindcss.com/docs/box-shadow)
     fn shadow_none(mut self) -> Self
     where
         Self: Sized,
@@ -248,6 +272,8 @@ pub trait Styled {
         self
     }
 
+    /// Sets the box shadow of the element.
+    /// [Docs](https://tailwindcss.com/docs/box-shadow)
     fn shadow_sm(mut self) -> Self
     where
         Self: Sized,
@@ -261,6 +287,8 @@ pub trait Styled {
         self
     }
 
+    /// Sets the box shadow of the element.
+    /// [Docs](https://tailwindcss.com/docs/box-shadow)
     fn shadow_md(mut self) -> Self
     where
         Self: Sized,
@@ -282,6 +310,8 @@ pub trait Styled {
         self
     }
 
+    /// Sets the box shadow of the element.
+    /// [Docs](https://tailwindcss.com/docs/box-shadow)
     fn shadow_lg(mut self) -> Self
     where
         Self: Sized,
@@ -303,6 +333,8 @@ pub trait Styled {
         self
     }
 
+    /// Sets the box shadow of the element.
+    /// [Docs](https://tailwindcss.com/docs/box-shadow)
     fn shadow_xl(mut self) -> Self
     where
         Self: Sized,
@@ -324,6 +356,8 @@ pub trait Styled {
         self
     }
 
+    /// Sets the box shadow of the element.
+    /// [Docs](https://tailwindcss.com/docs/box-shadow)
     fn shadow_2xl(mut self) -> Self
     where
         Self: Sized,

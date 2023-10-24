@@ -14,7 +14,7 @@ impl Story {
             .flex_col()
             .pt_2()
             .px_4()
-            .font("Zed Mono Extended")
+            .font("Zed Mono")
             .bg(color.background)
     }
 
