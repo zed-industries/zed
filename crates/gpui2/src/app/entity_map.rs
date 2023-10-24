@@ -86,8 +86,8 @@ impl EntityMap {
             .insert(lease.handle.entity_id, lease.entity.take().unwrap());
     }
 
-    pub fn read<T>(&self, handle: &Handle<T>) -> &T {
-        (handle.downcast_entity)(&self.entities[handle.entity_id])
+    pub fn read<T: 'static>(&self, handle: &Handle<T>) -> &T {
+        self.entities[handle.entity_id].downcast_ref().unwrap()
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, AnyBox)> {
@@ -105,17 +105,17 @@ pub struct Lease<'a, T> {
     entity_type: PhantomData<T>,
 }
 
-impl<'a, T> core::ops::Deref for Lease<'a, T> {
+impl<'a, T: 'static> core::ops::Deref for Lease<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        (self.handle.downcast_entity)(self.entity.as_ref().unwrap())
+        self.entity.as_ref().unwrap().downcast_ref().unwrap()
     }
 }
 
-impl<'a, T> core::ops::DerefMut for Lease<'a, T> {
+impl<'a, T: 'static> core::ops::DerefMut for Lease<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        (self.handle.downcast_entity_mut)(self.entity.as_mut().unwrap())
+        self.entity.as_mut().unwrap().downcast_mut().unwrap()
     }
 }
 
@@ -163,8 +163,6 @@ impl AnyHandle {
             Some(Handle {
                 any_handle: self.clone(),
                 entity_type: PhantomData,
-                downcast_entity: |any| any.downcast_ref().unwrap(),
-                downcast_entity_mut: |any| any.downcast_mut().unwrap(),
             })
         } else {
             None
@@ -238,8 +236,6 @@ pub struct Handle<T> {
     #[deref_mut]
     any_handle: AnyHandle,
     entity_type: PhantomData<T>,
-    downcast_entity: fn(&dyn Any) -> &T,
-    downcast_entity_mut: fn(&mut dyn Any) -> &mut T,
 }
 
 unsafe impl<T> Send for Handle<T> {}
@@ -253,8 +249,6 @@ impl<T: 'static> Handle<T> {
         Self {
             any_handle: AnyHandle::new(id, TypeId::of::<T>(), entity_map),
             entity_type: PhantomData,
-            downcast_entity: |any| any.downcast_ref().unwrap(),
-            downcast_entity_mut: |any| any.downcast_mut().unwrap(),
         }
     }
 
@@ -262,8 +256,6 @@ impl<T: 'static> Handle<T> {
         WeakHandle {
             any_handle: self.any_handle.downgrade(),
             entity_type: self.entity_type,
-            downcast_entity: self.downcast_entity,
-            downcast_entity_mut: self.downcast_entity_mut,
         }
     }
 
@@ -293,8 +285,6 @@ impl<T> Clone for Handle<T> {
         Self {
             any_handle: self.any_handle.clone(),
             entity_type: self.entity_type,
-            downcast_entity: self.downcast_entity,
-            downcast_entity_mut: self.downcast_entity_mut,
         }
     }
 }
@@ -386,8 +376,6 @@ pub struct WeakHandle<T> {
     #[deref_mut]
     any_handle: AnyWeakHandle,
     entity_type: PhantomData<T>,
-    downcast_entity: fn(&dyn Any) -> &T,
-    pub(crate) downcast_entity_mut: fn(&mut dyn Any) -> &mut T,
 }
 
 unsafe impl<T> Send for WeakHandle<T> {}
@@ -398,8 +386,6 @@ impl<T> Clone for WeakHandle<T> {
         Self {
             any_handle: self.any_handle.clone(),
             entity_type: self.entity_type,
-            downcast_entity: self.downcast_entity,
-            downcast_entity_mut: self.downcast_entity_mut,
         }
     }
 }
@@ -409,8 +395,6 @@ impl<T: 'static> WeakHandle<T> {
         Some(Handle {
             any_handle: self.any_handle.upgrade()?,
             entity_type: self.entity_type,
-            downcast_entity: self.downcast_entity,
-            downcast_entity_mut: self.downcast_entity_mut,
         })
     }
 
