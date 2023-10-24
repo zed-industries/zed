@@ -13,6 +13,7 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     ops::Deref,
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -1048,6 +1049,19 @@ impl Deref for MouseExitEvent {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub enum FileDropEvent {
+    #[default]
+    End,
+    Pending {
+        position: Point<Pixels>,
+    },
+    Submit {
+        position: Point<Pixels>,
+        paths: Vec<PathBuf>,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub enum InputEvent {
     KeyDown(KeyDownEvent),
@@ -1058,6 +1072,7 @@ pub enum InputEvent {
     MouseMoved(MouseMoveEvent),
     MouseExited(MouseExitEvent),
     ScrollWheel(ScrollWheelEvent),
+    FileDrop(FileDropEvent),
 }
 
 impl InputEvent {
@@ -1071,6 +1086,10 @@ impl InputEvent {
             InputEvent::MouseMoved(event) => Some(event.position),
             InputEvent::MouseExited(event) => Some(event.position),
             InputEvent::ScrollWheel(event) => Some(event.position),
+            InputEvent::FileDrop(FileDropEvent::End) => None,
+            InputEvent::FileDrop(
+                FileDropEvent::Pending { position } | FileDropEvent::Submit { position, .. },
+            ) => Some(*position),
         }
     }
 
@@ -1084,6 +1103,7 @@ impl InputEvent {
             InputEvent::MouseMoved(event) => Some(event),
             InputEvent::MouseExited(event) => Some(event),
             InputEvent::ScrollWheel(event) => Some(event),
+            InputEvent::FileDrop(event) => Some(event),
         }
     }
 
@@ -1097,6 +1117,7 @@ impl InputEvent {
             InputEvent::MouseMoved(_) => None,
             InputEvent::MouseExited(_) => None,
             InputEvent::ScrollWheel(_) => None,
+            InputEvent::FileDrop(_) => None,
         }
     }
 }
