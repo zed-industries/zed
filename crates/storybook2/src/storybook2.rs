@@ -54,7 +54,7 @@ fn main() {
 
     let asset_source = Arc::new(Assets);
     gpui3::App::production(asset_source).run(move |cx| {
-        load_embedded_fonts(cx);
+        load_embedded_fonts(cx).unwrap();
 
         let selector =
             story_selector.unwrap_or(StorySelector::Component(ComponentStory::Workspace));
@@ -114,16 +114,16 @@ impl StoryWrapper {
     }
 }
 
-fn load_embedded_fonts(cx: &AppContext) {
-    let font_paths = Assets.list(&"fonts".into()).unwrap();
+fn load_embedded_fonts(cx: &AppContext) -> gpui3::Result<()> {
+    let font_paths = Assets.list(&"fonts".into())?;
     let mut embedded_fonts = Vec::new();
     for font_path in &font_paths {
         if font_path.ends_with(".ttf") {
             let font_path = &*font_path;
-            let font_bytes = Assets.load(font_path).unwrap().to_vec();
+            let font_bytes = Assets.load(font_path)?.to_vec();
             embedded_fonts.push(Arc::from(font_bytes));
         }
     }
 
-    cx.text_system().add_fonts(&embedded_fonts).unwrap();
+    cx.text_system().add_fonts(&embedded_fonts)
 }
