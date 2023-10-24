@@ -458,6 +458,7 @@ pub struct CreateChannelResult {
 pub struct SetChannelVisibilityResult {
     pub participants_to_update: HashMap<UserId, ChannelsForUser>,
     pub participants_to_remove: HashSet<UserId>,
+    pub channels_to_remove: Vec<ChannelId>,
 }
 
 #[derive(Debug)]

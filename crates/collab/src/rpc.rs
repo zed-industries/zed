@@ -2366,6 +2366,7 @@ async fn set_channel_visibility(
     let SetChannelVisibilityResult {
         participants_to_update,
         participants_to_remove,
+        channels_to_remove,
     } = db
         .set_channel_visibility(channel_id, visibility, session.user_id)
         .await?;
@@ -2379,10 +2380,7 @@ async fn set_channel_visibility(
     }
     for user_id in participants_to_remove {
         let update = proto::UpdateChannels {
-            // for public participants  we only need to remove the current channel
-            // (not descendants)
-            // because they can still see any public descendants
-            delete_channels: vec![channel_id.to_proto()],
+            delete_channels: channels_to_remove.iter().map(|id| id.to_proto()).collect(),
             ..Default::default()
         };
         for connection_id in connection_pool.user_connection_ids(user_id) {
@@ -2645,7 +2643,7 @@ async fn join_channel_internal(
         leave_room_for_session(&session).await?;
         let db = session.db().await;
 
-        let (joined_room, accept_invite_result, role) = db
+        let (joined_room, membership_updated, role) = db
             .join_channel(
                 channel_id,
                 session.user_id,
@@ -2691,10 +2689,10 @@ async fn join_channel_internal(
         })?;
 
         let connection_pool = session.connection_pool().await;
-        if let Some(accept_invite_result) = accept_invite_result {
+        if let Some(membership_updated) = membership_updated {
             notify_membership_updated(
                 &connection_pool,
-                accept_invite_result,
+                membership_updated,
                 session.user_id,
                 &session.peer,
             );

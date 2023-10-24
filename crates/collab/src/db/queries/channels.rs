@@ -244,9 +244,30 @@ impl Database {
                 .into_iter()
                 .collect();
 
+            let mut channels_to_remove: Vec<ChannelId> = vec![];
             let mut participants_to_remove: HashSet<UserId> = HashSet::default();
             match visibility {
                 ChannelVisibility::Members => {
+                    let all_descendents: Vec<ChannelId> = self
+                        .get_channel_descendants(vec![channel_id], &*tx)
+                        .await?
+                        .into_iter()
+                        .map(|edge| ChannelId::from_proto(edge.channel_id))
+                        .collect();
+
+                    channels_to_remove = channel::Entity::find()
+                        .filter(
+                            channel::Column::Id
+                                .is_in(all_descendents)
+                                .and(channel::Column::Visibility.eq(ChannelVisibility::Public)),
+                        )
+                        .all(&*tx)
+                        .await?
+                        .into_iter()
+                        .map(|channel| channel.id)
+                        .collect();
+
+                    channels_to_remove.push(channel_id);
                     for member in previous_members {
                         if member.role.can_only_see_public_descendants() {
                             participants_to_remove.insert(member.user_id);
@@ -271,6 +292,7 @@ impl Database {
             Ok(SetChannelVisibilityResult {
                 participants_to_update,
                 participants_to_remove,
+                channels_to_remove,
             })
         })
         .await
@@ -694,13 +716,9 @@ impl Database {
             .all(&*tx)
             .await?;
 
-        dbg!((user_id, &channel_memberships));
-
         let mut edges = self
             .get_channel_descendants(channel_memberships.iter().map(|m| m.channel_id), &*tx)
             .await?;
-
-        dbg!((user_id, &edges));
 
         let mut role_for_channel: HashMap<ChannelId, (ChannelRole, bool)> = HashMap::default();
 
@@ -709,8 +727,6 @@ impl Database {
                 parent_channel_id.is_none() || membership.channel_id == parent_channel_id.unwrap();
             role_for_channel.insert(membership.channel_id, (membership.role, included));
         }
-
-        dbg!((&role_for_channel, parent_channel_id));
 
         for ChannelEdge {
             parent_id,
@@ -739,7 +755,6 @@ impl Database {
                 );
             }
         }
-        dbg!((&role_for_channel, parent_channel_id));
 
         let mut channels: Vec<Channel> = Vec::new();
         let mut channels_to_remove: HashSet<u64> = HashSet::default();
@@ -757,7 +772,6 @@ impl Database {
                 || role == ChannelRole::Banned
                 || role == ChannelRole::Guest && channel.visibility != ChannelVisibility::Public
             {
-                dbg!("remove", channel.id);
                 channels_to_remove.insert(channel.id.0 as u64);
                 continue;
             }
@@ -865,8 +879,6 @@ impl Database {
             .get_channel_participant_details_internal(new_parent, &*tx)
             .await?;
 
-        dbg!(&members);
-
         for member in members.iter() {
             if !member.role.can_see_all_descendants() {
                 continue;
@@ -896,8 +908,6 @@ impl Database {
             self.get_channel_participant_details_internal(public_parent, &*tx)
                 .await?
         };
-
-        dbg!(&public_members);
 
         for member in public_members {
             if !member.role.can_only_see_public_descendants() {
@@ -1665,8 +1675,6 @@ impl Database {
                 .await?
                 .into_iter()
                 .collect();
-
-            dbg!(&participants_to_update);
 
             let mut moved_channels: HashSet<ChannelId> = HashSet::default();
             moved_channels.insert(channel_id);
