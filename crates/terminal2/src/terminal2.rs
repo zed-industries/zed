@@ -385,7 +385,7 @@ impl TerminalBuilder {
             shell_pid,
             foreground_process_info: None,
             breadcrumb_text: String::new(),
-            scroll_px: 0.,
+            scroll_px: px(0.),
             last_mouse_position: None,
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
@@ -540,7 +540,7 @@ pub struct Terminal {
     shell_pid: u32,
     shell_fd: u32,
     pub foreground_process_info: Option<LocalProcessInfo>,
-    scroll_px: f32,
+    scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
     cmd_pressed: bool,
@@ -1100,7 +1100,7 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_drag(&mut self, e: MouseMoveEvent, origin: Point<Pixels>) {
+    pub fn mouse_drag(&mut self, e: MouseMoveEvent, origin: Point<Pixels>, region: Bounds<Pixels>) {
         let position = e.position - origin;
         self.last_mouse_position = Some(position);
 
@@ -1113,12 +1113,13 @@ impl Terminal {
 
             // Doesn't make sense to scroll the alt screen
             if !self.last_content.mode.contains(TermMode::ALT_SCREEN) {
-                let scroll_delta = match self.drag_line_delta(e) {
+                let scroll_delta = match self.drag_line_delta(e, region) {
                     Some(value) => value,
                     None => return,
                 };
 
-                let scroll_lines = (scroll_delta / self.last_content.size.line_height) as i32;
+                let scroll_lines =
+                    (scroll_delta / self.last_content.size.line_height).as_isize() as i32;
 
                 self.events
                     .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
@@ -1126,14 +1127,14 @@ impl Terminal {
         }
     }
 
-    fn drag_line_delta(&mut self, e: MouseMoveEvent, region: Bounds<Pixels>) -> Option<f32> {
+    fn drag_line_delta(&mut self, e: MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
         //TODO: Why do these need to be doubled? Probably the same problem that the IME has
         let top = region.origin.y + (self.last_content.size.line_height * 2.);
         let bottom = region.lower_left().y - (self.last_content.size.line_height * 2.);
         let scroll_delta = if e.position.y < top {
-            (top - e.position.y).powf(1.1)
+            (top - e.position.y).pow(1.1)
         } else if e.position.y > bottom {
-            -((e.position.y - bottom).powf(1.1))
+            -((e.position.y - bottom).pow(1.1))
         } else {
             return None; //Nothing to do
         };
@@ -1141,21 +1142,21 @@ impl Terminal {
     }
 
     pub fn mouse_down(&mut self, e: &MouseDownEvent, origin: Point<Pixels>) {
-        let position = e.position.sub(origin);
+        let position = e.position - origin;
         let point = grid_point(
             position,
             self.last_content.size,
             self.last_content.display_offset,
         );
 
-        if self.mouse_mode(e.shift) {
+        if self.mouse_mode(e.modifiers.shift) {
             if let Some(bytes) =
                 mouse_button_report(point, e.button, e.modifiers, true, self.last_content.mode)
             {
                 self.pty_tx.notify(bytes);
             }
         } else if e.button == MouseButton::Left {
-            let position = e.position.sub(origin);
+            let position = e.position - origin;
             let point = grid_point(
                 position,
                 self.last_content.size,
@@ -1187,12 +1188,12 @@ impl Terminal {
         &mut self,
         e: &MouseUpEvent,
         origin: Point<Pixels>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut MainThread<ModelContext<Self>>,
     ) {
         let setting = settings2::get::<TerminalSettings>(cx);
 
-        let position = e.position.sub(origin);
-        if self.mouse_mode(e.shift) {
+        let position = e.position - origin;
+        if self.mouse_mode(e.modifiers.shift) {
             let point = grid_point(
                 position,
                 self.last_content.size,
@@ -1213,7 +1214,7 @@ impl Terminal {
             if self.selection_phase == SelectionPhase::Ended {
                 let mouse_cell_index = content_index_for_mouse(position, &self.last_content.size);
                 if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
-                    cx.platform().open_url(link.uri());
+                    cx.open_url(link.uri());
                 } else if self.cmd_pressed {
                     self.events
                         .push_back(InternalEvent::FindHyperlink(position, true));
@@ -1226,13 +1227,13 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll_wheel(&mut self, e: MouseScrollWheel, origin: Point<Pixels>) {
+    pub fn scroll_wheel(&mut self, e: ScrollWheelEvent, origin: Point<Pixels>) {
         let mouse_mode = self.mouse_mode(e.shift);
 
         if let Some(scroll_lines) = self.determine_scroll_lines(&e, mouse_mode) {
             if mouse_mode {
                 let point = grid_point(
-                    e.position.sub(origin),
+                    e.position - origin,
                     self.last_content.size,
                     self.last_content.display_offset,
                 );
@@ -1265,22 +1266,22 @@ impl Terminal {
         self.word_from_position(self.last_mouse_position);
     }
 
-    fn determine_scroll_lines(&mut self, e: &MouseScrollWheel, mouse_mode: bool) -> Option<i32> {
+    fn determine_scroll_lines(&mut self, e: &ScrollWheelEvent, mouse_mode: bool) -> Option<i32> {
         let scroll_multiplier = if mouse_mode { 1. } else { SCROLL_MULTIPLIER };
         let line_height = self.last_content.size.line_height;
-        match e.phase {
+        match e.touch_phase {
             /* Reset scroll state on started */
-            Some(TouchPhase::Started) => {
-                self.scroll_px = 0.;
+            TouchPhase::Started => {
+                self.scroll_px = px(0.);
                 None
             }
             /* Calculate the appropriate scroll lines */
-            Some(gpui2::TouchPhase::Moved) => {
-                let old_offset = (self.scroll_px / line_height) as i32;
+            TouchPhase::Moved => {
+                let old_offset = (self.scroll_px / line_height).as_isize() as i32;
 
-                self.scroll_px += e.delta.pixel_delta(line_height).y() * scroll_multiplier;
+                self.scroll_px += e.delta.pixel_delta(line_height).y * scroll_multiplier;
 
-                let new_offset = (self.scroll_px / line_height) as i32;
+                let new_offset = (self.scroll_px / line_height).as_isize() as i32;
 
                 // Whenever we hit the edges, reset our stored scroll to 0
                 // so we can respond to changes in direction quickly
@@ -1288,11 +1289,7 @@ impl Terminal {
 
                 Some(new_offset - old_offset)
             }
-            /* Fall back to delta / line_height */
-            None => Some(
-                ((e.delta.pixel_delta(line_height).y() * scroll_multiplier) / line_height) as i32,
-            ),
-            _ => None,
+            TouchPhase::Ended => None,
         }
     }
 
@@ -1406,10 +1403,10 @@ fn content_index_for_mouse(pos: Point<Pixels>, size: &TerminalSize) -> usize {
 #[cfg(test)]
 mod tests {
     use alacritty_terminal::{
-        index::{AlacColumn, Line, Point as AlacPoint},
+        index::{Column, Line, Point as AlacPoint},
         term::cell::Cell,
     };
-    use gpui2::{geometry::vecto::vec2f, size, Pixels};
+    use gpui2::{point, size, Pixels};
     use rand::{distributions::Alphanumeric, rngs::ThreadRng, thread_rng, Rng};
 
     use crate::{content_index_for_mouse, IndexedCell, TerminalContent, TerminalSize};
@@ -1444,9 +1441,9 @@ mod tests {
                     let row_offset = rng.gen_range(0..PRECISION) as f32 / PRECISION as f32;
                     let col_offset = rng.gen_range(0..PRECISION) as f32 / PRECISION as f32;
 
-                    let mouse_pos = vec2f(
-                        col as f32 * cell_size + col_offset,
-                        row as f32 * cell_size + row_offset,
+                    let mouse_pos = point(
+                        Pixels::from(col as f32 * cell_size + col_offset),
+                        Pixels::from(row as f32 * cell_size + row_offset),
                     );
 
                     let content_index = content_index_for_mouse(mouse_pos, &content.size);
@@ -1473,11 +1470,19 @@ mod tests {
         let content = convert_cells_to_content(size, &cells);
 
         assert_eq!(
-            content.cells[content_index_for_mouse(vec2f(-10., -10.), &content.size)].c,
+            content.cells[content_index_for_mouse(
+                point(Pixels::from(-10.), Pixels::from(-10.)),
+                &content.size
+            )]
+            .c,
             cells[0][0]
         );
         assert_eq!(
-            content.cells[content_index_for_mouse(vec2f(1000., 1000.), &content.size)].c,
+            content.cells[content_index_for_mouse(
+                point(Pixels::from(1000.), Pixels::from(1000.)),
+                &content.size
+            )]
+            .c,
             cells[9][9]
         );
     }
