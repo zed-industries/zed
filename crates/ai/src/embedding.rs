@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use gpui::executor::Background;
-use gpui::{serde_json, ViewContext};
+use gpui::{serde_json, AppContext};
 use isahc::http::StatusCode;
 use isahc::prelude::Configurable;
 use isahc::{AsyncBody, Response};
@@ -89,7 +89,6 @@ impl Embedding {
 
 #[derive(Clone)]
 pub struct OpenAIEmbeddings {
-    pub api_key: Option<String>,
     pub client: Arc<dyn HttpClient>,
     pub executor: Arc<Background>,
     rate_limit_count_rx: watch::Receiver<Option<Instant>>,
@@ -123,8 +122,12 @@ struct OpenAIEmbeddingUsage {
 
 #[async_trait]
 pub trait EmbeddingProvider: Sync + Send {
-    fn is_authenticated(&self) -> bool;
-    async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>>;
+    fn retrieve_credentials(&self, cx: &AppContext) -> Option<String>;
+    async fn embed_batch(
+        &self,
+        spans: Vec<String>,
+        api_key: Option<String>,
+    ) -> Result<Vec<Embedding>>;
     fn max_tokens_per_batch(&self) -> usize;
     fn truncate(&self, span: &str) -> (String, usize);
     fn rate_limit_expiration(&self) -> Option<Instant>;
@@ -134,13 +137,17 @@ pub struct DummyEmbeddings {}
 
 #[async_trait]
 impl EmbeddingProvider for DummyEmbeddings {
-    fn is_authenticated(&self) -> bool {
-        true
+    fn retrieve_credentials(&self, _cx: &AppContext) -> Option<String> {
+        Some("Dummy API KEY".to_string())
     }
     fn rate_limit_expiration(&self) -> Option<Instant> {
         None
     }
-    async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
+    async fn embed_batch(
+        &self,
+        spans: Vec<String>,
+        _api_key: Option<String>,
+    ) -> Result<Vec<Embedding>> {
         // 1024 is the OpenAI Embeddings size for ada models.
         // the model we will likely be starting with.
         let dummy_vec = Embedding::from(vec![0.32 as f32; 1536]);
@@ -169,36 +176,11 @@ impl EmbeddingProvider for DummyEmbeddings {
 const OPENAI_INPUT_LIMIT: usize = 8190;
 
 impl OpenAIEmbeddings {
-    pub fn authenticate(&mut self, cx: &mut ViewContext<Self>) {
-        if self.api_key.is_none() {
-            let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
-                Some(api_key)
-            } else if let Some((_, api_key)) = cx
-                .platform()
-                .read_credentials(OPENAI_API_URL)
-                .log_err()
-                .flatten()
-            {
-                String::from_utf8(api_key).log_err()
-            } else {
-                None
-            };
-
-            if let Some(api_key) = api_key {
-                self.api_key = Some(api_key);
-            }
-        }
-    }
-    pub fn new(
-        api_key: Option<String>,
-        client: Arc<dyn HttpClient>,
-        executor: Arc<Background>,
-    ) -> Self {
+    pub fn new(client: Arc<dyn HttpClient>, executor: Arc<Background>) -> Self {
         let (rate_limit_count_tx, rate_limit_count_rx) = watch::channel_with(None);
         let rate_limit_count_tx = Arc::new(Mutex::new(rate_limit_count_tx));
 
         OpenAIEmbeddings {
-            api_key,
             client,
             executor,
             rate_limit_count_rx,
@@ -264,8 +246,19 @@ impl OpenAIEmbeddings {
 
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbeddings {
-    fn is_authenticated(&self) -> bool {
-        self.api_key.is_some()
+    fn retrieve_credentials(&self, cx: &AppContext) -> Option<String> {
+        if let Ok(api_key) = env::var("OPENAI_API_KEY") {
+            Some(api_key)
+        } else if let Some((_, api_key)) = cx
+            .platform()
+            .read_credentials(OPENAI_API_URL)
+            .log_err()
+            .flatten()
+        {
+            String::from_utf8(api_key).log_err()
+        } else {
+            None
+        }
     }
 
     fn max_tokens_per_batch(&self) -> usize {
@@ -290,11 +283,15 @@ impl EmbeddingProvider for OpenAIEmbeddings {
         (output, tokens.len())
     }
 
-    async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
+    async fn embed_batch(
+        &self,
+        spans: Vec<String>,
+        api_key: Option<String>,
+    ) -> Result<Vec<Embedding>> {
         const BACKOFF_SECONDS: [usize; 4] = [3, 5, 15, 45];
         const MAX_RETRIES: usize = 4;
 
-        let Some(api_key) = self.api_key.clone() else {
+        let Some(api_key) = api_key else {
             return Err(anyhow!("no open ai key provided"));
         };
 

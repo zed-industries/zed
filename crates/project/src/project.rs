@@ -8489,6 +8489,18 @@ impl Project {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    fn install_default_formatters(
+        &self,
+        _worktree: Option<WorktreeId>,
+        _new_language: &Language,
+        _language_settings: &LanguageSettings,
+        _cx: &mut ModelContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        return Task::ready(Ok(()));
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
     fn install_default_formatters(
         &self,
         worktree: Option<WorktreeId>,

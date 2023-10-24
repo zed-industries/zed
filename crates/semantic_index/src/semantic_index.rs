@@ -7,10 +7,7 @@ pub mod semantic_index_settings;
 mod semantic_index_tests;
 
 use crate::semantic_index_settings::SemanticIndexSettings;
-use ai::{
-    completion::OPENAI_API_URL,
-    embedding::{Embedding, EmbeddingProvider, OpenAIEmbeddings},
-};
+use ai::embedding::{Embedding, EmbeddingProvider, OpenAIEmbeddings};
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use db::VectorDatabase;
@@ -58,19 +55,6 @@ pub fn init(
         .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
         .join("embeddings_db");
 
-    let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
-        Some(api_key)
-    } else if let Some((_, api_key)) = cx
-        .platform()
-        .read_credentials(OPENAI_API_URL)
-        .log_err()
-        .flatten()
-    {
-        String::from_utf8(api_key).log_err()
-    } else {
-        None
-    };
-
     cx.subscribe_global::<WorkspaceCreated, _>({
         move |event, cx| {
             let Some(semantic_index) = SemanticIndex::global(cx) else {
@@ -104,7 +88,7 @@ pub fn init(
         let semantic_index = SemanticIndex::new(
             fs,
             db_file_path,
-            Arc::new(OpenAIEmbeddings::new(api_key, http_client, cx.background())),
+            Arc::new(OpenAIEmbeddings::new(http_client, cx.background())),
             language_registry,
             cx.clone(),
         )
@@ -139,6 +123,8 @@ pub struct SemanticIndex {
     _embedding_task: Task<()>,
     _parsing_files_tasks: Vec<Task<()>>,
     projects: HashMap<WeakModelHandle<Project>, ProjectState>,
+    api_key: Option<String>,
+    embedding_queue: Arc<Mutex<EmbeddingQueue>>,
 }
 
 struct ProjectState {
@@ -284,7 +270,7 @@ pub struct SearchResult {
 }
 
 impl SemanticIndex {
-    pub fn global(cx: &AppContext) -> Option<ModelHandle<SemanticIndex>> {
+    pub fn global(cx: &mut AppContext) -> Option<ModelHandle<SemanticIndex>> {
         if cx.has_global::<ModelHandle<Self>>() {
             Some(cx.global::<ModelHandle<SemanticIndex>>().clone())
         } else {
@@ -292,12 +278,26 @@ impl SemanticIndex {
         }
     }
 
+    pub fn authenticate(&mut self, cx: &AppContext) {
+        if self.api_key.is_none() {
+            self.api_key = self.embedding_provider.retrieve_credentials(cx);
+
+            self.embedding_queue
+                .lock()
+                .set_api_key(self.api_key.clone());
+        }
+    }
+
+    pub fn is_authenticated(&self) -> bool {
+        self.api_key.is_some()
+    }
+
     pub fn enabled(cx: &AppContext) -> bool {
         settings::get::<SemanticIndexSettings>(cx).enabled
     }
 
     pub fn status(&self, project: &ModelHandle<Project>) -> SemanticIndexStatus {
-        if !self.embedding_provider.is_authenticated() {
+        if !self.is_authenticated() {
             return SemanticIndexStatus::NotAuthenticated;
         }
 
@@ -339,7 +339,7 @@ impl SemanticIndex {
         Ok(cx.add_model(|cx| {
             let t0 = Instant::now();
             let embedding_queue =
-                EmbeddingQueue::new(embedding_provider.clone(), cx.background().clone());
+                EmbeddingQueue::new(embedding_provider.clone(), cx.background().clone(), None);
             let _embedding_task = cx.background().spawn({
                 let embedded_files = embedding_queue.finished_files();
                 let db = db.clone();
@@ -404,6 +404,8 @@ impl SemanticIndex {
                 _embedding_task,
                 _parsing_files_tasks,
                 projects: Default::default(),
+                api_key: None,
+                embedding_queue
             }
         }))
     }
@@ -718,12 +720,13 @@ impl SemanticIndex {
 
         let index = self.index_project(project.clone(), cx);
         let embedding_provider = self.embedding_provider.clone();
+        let api_key = self.api_key.clone();
 
         cx.spawn(|this, mut cx| async move {
             index.await?;
             let t0 = Instant::now();
             let query = embedding_provider
-                .embed_batch(vec![query])
+                .embed_batch(vec![query], api_key)
                 .await?
                 .pop()
                 .ok_or_else(|| anyhow!("could not embed query"))?;
@@ -941,6 +944,7 @@ impl SemanticIndex {
         let fs = self.fs.clone();
         let db_path = self.db.path().clone();
         let background = cx.background().clone();
+        let api_key = self.api_key.clone();
         cx.background().spawn(async move {
             let db = VectorDatabase::new(fs, db_path.clone(), background).await?;
             let mut results = Vec::<SearchResult>::new();
@@ -955,10 +959,15 @@ impl SemanticIndex {
                     .parse_file_with_template(None, &snapshot.text(), language)
                     .log_err()
                     .unwrap_or_default();
-                if Self::embed_spans(&mut spans, embedding_provider.as_ref(), &db)
-                    .await
-                    .log_err()
-                    .is_some()
+                if Self::embed_spans(
+                    &mut spans,
+                    embedding_provider.as_ref(),
+                    &db,
+                    api_key.clone(),
+                )
+                .await
+                .log_err()
+                .is_some()
                 {
                     for span in spans {
                         let similarity = span.embedding.unwrap().similarity(&query);
@@ -998,8 +1007,11 @@ impl SemanticIndex {
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        if !self.embedding_provider.is_authenticated() {
-            return Task::ready(Err(anyhow!("user is not authenticated")));
+        if self.api_key.is_none() {
+            self.authenticate(cx);
+            if self.api_key.is_none() {
+                return Task::ready(Err(anyhow!("user is not authenticated")));
+            }
         }
 
         if !self.projects.contains_key(&project.downgrade()) {
@@ -1180,6 +1192,7 @@ impl SemanticIndex {
         spans: &mut [Span],
         embedding_provider: &dyn EmbeddingProvider,
         db: &VectorDatabase,
+        api_key: Option<String>,
     ) -> Result<()> {
         let mut batch = Vec::new();
         let mut batch_tokens = 0;
@@ -1202,7 +1215,7 @@ impl SemanticIndex {
 
             if batch_tokens + span.token_count > embedding_provider.max_tokens_per_batch() {
                 let batch_embeddings = embedding_provider
-                    .embed_batch(mem::take(&mut batch))
+                    .embed_batch(mem::take(&mut batch), api_key.clone())
                     .await?;
                 embeddings.extend(batch_embeddings);
                 batch_tokens = 0;
@@ -1214,7 +1227,7 @@ impl SemanticIndex {
 
         if !batch.is_empty() {
             let batch_embeddings = embedding_provider
-                .embed_batch(mem::take(&mut batch))
+                .embed_batch(mem::take(&mut batch), api_key)
                 .await?;
 
             embeddings.extend(batch_embeddings);
