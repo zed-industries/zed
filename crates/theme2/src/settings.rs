@@ -1,6 +1,6 @@
 use crate::{Theme, ThemeRegistry};
 use anyhow::Result;
-use gpui2::{FontFeatures, SharedString, Font, AppContext, Pixels, px, FontWeight, FontStyle};
+use gpui2::{px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels};
 use schemars::{
     gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
@@ -15,21 +15,21 @@ use util::ResultExt as _;
 const MIN_FONT_SIZE: Pixels = px(6.0);
 const MIN_LINE_HEIGHT: f32 = 1.0;
 
-#[derive(Clone, JsonSchema)]
+#[derive(Clone)]
 pub struct ThemeSettings {
     pub buffer_font: Font,
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
-    #[serde(skip)]
     pub theme: Arc<Theme>,
 }
 
-pub struct AdjustedBufferFontSize(pub f32);
+#[derive(Default)]
+pub struct AdjustedBufferFontSize(Option<Pixels>);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
     #[serde(default)]
-    pub buffer_font_family: Option<SharedString>,
+    pub buffer_font_family: Option<String>,
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
     #[serde(default)]
@@ -37,7 +37,7 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     pub buffer_font_features: Option<FontFeatures>,
     #[serde(default)]
-    pub theme: Option<SharedString>,
+    pub theme: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
@@ -60,13 +60,12 @@ impl BufferLineHeight {
 }
 
 impl ThemeSettings {
-    pub fn buffer_font_size(&self, cx: &AppContext) -> f32 {
-        if cx.has_global::<AdjustedBufferFontSize>() {
-            cx.global::<AdjustedBufferFontSize>().0
-        } else {
-            self.buffer_font_size
-        }
-        .max(MIN_FONT_SIZE)
+    pub fn buffer_font_size(&self, cx: &mut AppContext) -> Pixels {
+        let font_size = *cx
+            .default_global_mut::<AdjustedBufferFontSize>()
+            .0
+            .get_or_insert(self.buffer_font_size.into());
+        font_size.max(MIN_FONT_SIZE)
     }
 
     pub fn line_height(&self) -> f32 {
@@ -74,33 +73,32 @@ impl ThemeSettings {
     }
 }
 
-pub fn adjusted_font_size(size: f32, cx: &AppContext) -> f32 {
-    if let Some(adjusted_size) = cx.try_global::<AdjustedBufferFontSize>() {
+pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
+    if let Some(adjusted_size) = cx.default_global_mut::<AdjustedBufferFontSize>().0 {
         let buffer_font_size = settings2::get::<ThemeSettings>(cx).buffer_font_size;
         let delta = adjusted_size - buffer_font_size;
         size + delta
     } else {
         size
-    }.max(MIN_FONT_SIZE)
+    }
+    .max(MIN_FONT_SIZE)
 }
 
 pub fn adjust_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
-    if !cx.has_global::<AdjustedBufferFontSize>() {
-        let buffer_font_size = settings2::get::<ThemeSettings>(cx).buffer_font_size;
-        cx.set_global(AdjustedBufferFontSize(buffer_font_size));
-    }
-    let mut delta = cx.global_mut::<AdjustedBufferFontSize>();
-    f(&mut delta.0);
-    delta.0 = delta
+    let buffer_font_size = settings2::get::<ThemeSettings>(cx).buffer_font_size;
+    let adjusted_size = cx
+        .default_global_mut::<AdjustedBufferFontSize>()
         .0
-        .max(MIN_FONT_SIZE - settings2::get::<ThemeSettings>(cx).buffer_font_size);
-    cx.refresh_windows();
+        .get_or_insert(buffer_font_size);
+    f(adjusted_size);
+    *adjusted_size = (*adjusted_size).max(MIN_FONT_SIZE - buffer_font_size);
+    cx.refresh();
 }
 
 pub fn reset_font_size(cx: &mut AppContext) {
     if cx.has_global::<AdjustedBufferFontSize>() {
-        cx.remove_global::<AdjustedBufferFontSize>();
-        cx.refresh_windows();
+        cx.global_mut::<AdjustedBufferFontSize>().0 = None;
+        cx.refresh();
     }
 }
 
@@ -118,43 +116,31 @@ impl settings2::Setting for ThemeSettings {
 
         let mut this = Self {
             buffer_font: Font {
-                family: defaults.buffer_font_family.clone().unwrap(),
+                family: defaults.buffer_font_family.clone().unwrap().into(),
                 features: defaults.buffer_font_features.clone().unwrap(),
                 weight: FontWeight::default(),
                 style: FontStyle::default(),
             },
-            buffer_font_size: defaults.buffer_font_size.unwrap(),
+            buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
-            theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
+            theme: themes.get(defaults.theme.as_ref().unwrap().clone()).unwrap(),
         };
 
         for value in user_values.into_iter().copied().cloned() {
-            let font_cache = cx.font_cache();
-            let mut family_changed = false;
             if let Some(value) = value.buffer_font_family {
-                this.buffer_font_family_name = value;
-                family_changed = true;
+                this.buffer_font.family = value.into();
             }
             if let Some(value) = value.buffer_font_features {
-                this.buffer_font_features = value;
-                family_changed = true;
-            }
-            if family_changed {
-                if let Some(id) = font_cache
-                    .load_family(&[&this.buffer_font_family_name], &this.buffer_font_features)
-                    .log_err()
-                {
-                    this.buffer_font_family = id;
-                }
+                this.buffer_font.features = value;
             }
 
             if let Some(value) = &value.theme {
-                if let Some(theme) = themes.get(value).log_err() {
+                if let Some(theme) = themes.get(value.clone()).log_err() {
                     this.theme = theme;
                 }
             }
 
-            merge(&mut this.buffer_font_size, value.buffer_font_size);
+            merge(&mut this.buffer_font_size, value.buffer_font_size.map(Into::into));
             merge(&mut this.buffer_line_height, value.buffer_line_height);
         }
 

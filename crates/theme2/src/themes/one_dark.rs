@@ -1,9 +1,13 @@
 use gpui2::rgba;
 
-use crate::{PlayerTheme, SyntaxTheme, Theme};
+use crate::{PlayerTheme, SyntaxTheme, Theme, ThemeMetadata};
 
 pub fn one_dark() -> Theme {
     Theme {
+        metadata: ThemeMetadata {
+            name: "One Dark".into(),
+            is_light: false,
+        },
         transparent: rgba(0x00000000).into(),
         mac_os_traffic_light_red: rgba(0xec695eff).into(),
         mac_os_traffic_light_yellow: rgba(0xf4bf4eff).into(),
@@ -36,6 +40,7 @@ pub fn one_dark() -> Theme {
             string: rgba(0xa1c181ff).into(),
             function: rgba(0x73ade9ff).into(),
             keyword: rgba(0xb477cfff).into(),
+            highlights: Vec::new(),
         },
         status_bar: rgba(0x3b414dff).into(),
         title_bar: rgba(0x3b414dff).into(),

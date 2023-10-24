@@ -765,7 +765,7 @@ impl LanguageRegistry {
         let mut state = self.state.write();
         state.theme = Some(theme.clone());
         for language in &state.languages {
-            language.set_theme(&theme.editor.syntax);
+            language.set_theme(&theme.syntax);
         }
     }
 
@@ -1066,7 +1066,7 @@ impl LanguageRegistryState {
 
     fn add(&mut self, language: Arc<Language>) {
         if let Some(theme) = self.theme.as_ref() {
-            language.set_theme(&theme.editor.syntax);
+            language.set_theme(&theme.syntax);
         }
         self.languages.push(language);
         self.version += 1;

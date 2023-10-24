@@ -5,7 +5,7 @@ mod themes;
 pub use registry::*;
 pub use settings::*;
 
-use gpui2::{Hsla, SharedString};
+use gpui2::{HighlightStyle, Hsla, SharedString};
 use std::sync::Arc;
 
 pub struct Theme {
@@ -78,12 +78,13 @@ pub struct Theme {
     pub player: [PlayerTheme; 8],
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct SyntaxTheme {
     pub comment: Hsla,
     pub string: Hsla,
     pub function: Hsla,
     pub keyword: Hsla,
+    pub highlights: Vec<(String, HighlightStyle)>,
 }
 
 #[derive(Clone, Copy)]
@@ -93,7 +94,6 @@ pub struct PlayerTheme {
 }
 
 pub struct ThemeMetadata {
-    pub id: usize,
     pub name: SharedString,
     pub is_light: bool,
 }
