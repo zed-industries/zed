@@ -37,20 +37,18 @@ impl<S: 'static + Send + Sync> CollabPanel<S> {
                             List::new(static_collab_panel_current_call())
                                 .header(
                                     ListHeader::new("CRDB")
-                                        .set_left_icon(Icon::Hash.into())
-                                        .set_toggle(ToggleState::Toggled),
+                                        .left_icon(Icon::Hash.into())
+                                        .toggle(ToggleState::Toggled),
                                 )
-                                .set_toggle(ToggleState::Toggled),
+                                .toggle(ToggleState::Toggled),
                         ),
                     )
                     .child(
                         v_stack().id("channels").py_1().child(
                             List::new(static_collab_panel_channels())
-                                .header(
-                                    ListHeader::new("CHANNELS").set_toggle(ToggleState::Toggled),
-                                )
+                                .header(ListHeader::new("CHANNELS").toggle(ToggleState::Toggled))
                                 .empty_message("No channels yet. Add a channel to get started.")
-                                .set_toggle(ToggleState::Toggled),
+                                .toggle(ToggleState::Toggled),
                         ),
                     )
                     .child(
@@ -58,9 +56,9 @@ impl<S: 'static + Send + Sync> CollabPanel<S> {
                             List::new(static_collab_panel_current_call())
                                 .header(
                                     ListHeader::new("CONTACTS – ONLINE")
-                                        .set_toggle(ToggleState::Toggled),
+                                        .toggle(ToggleState::Toggled),
                                 )
-                                .set_toggle(ToggleState::Toggled),
+                                .toggle(ToggleState::Toggled),
                         ),
                     )
                     .child(
@@ -68,9 +66,9 @@ impl<S: 'static + Send + Sync> CollabPanel<S> {
                             List::new(static_collab_panel_current_call())
                                 .header(
                                     ListHeader::new("CONTACTS – OFFLINE")
-                                        .set_toggle(ToggleState::NotToggled),
+                                        .toggle(ToggleState::NotToggled),
                                 )
-                                .set_toggle(ToggleState::NotToggled),
+                                .toggle(ToggleState::NotToggled),
                         ),
                     ),
             )

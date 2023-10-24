@@ -39,17 +39,17 @@ impl<S: 'static + Send + Sync> ListHeader<S> {
         }
     }
 
-    pub fn set_toggle(mut self, toggle: ToggleState) -> Self {
+    pub fn toggle(mut self, toggle: ToggleState) -> Self {
         self.toggleable = toggle.into();
         self
     }
 
-    pub fn set_toggleable(mut self, toggleable: Toggleable) -> Self {
+    pub fn toggleable(mut self, toggleable: Toggleable) -> Self {
         self.toggleable = toggleable;
         self
     }
 
-    pub fn set_left_icon(mut self, left_icon: Option<Icon>) -> Self {
+    pub fn left_icon(mut self, left_icon: Option<Icon>) -> Self {
         self.left_icon = left_icon;
         self
     }
@@ -283,46 +283,48 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
             overflow: OverflowStyle::Hidden,
         }
     }
-    pub fn set_variant(mut self, variant: ListItemVariant) -> Self {
+
+    pub fn variant(mut self, variant: ListItemVariant) -> Self {
         self.variant = variant;
         self
     }
-    pub fn set_indent_level(mut self, indent_level: u32) -> Self {
+
+    pub fn indent_level(mut self, indent_level: u32) -> Self {
         self.indent_level = indent_level;
         self
     }
 
-    pub fn set_toggle(mut self, toggle: ToggleState) -> Self {
+    pub fn toggle(mut self, toggle: ToggleState) -> Self {
         self.toggle = Some(toggle);
         self
     }
 
-    pub fn set_left_content(mut self, left_content: LeftContent) -> Self {
+    pub fn left_content(mut self, left_content: LeftContent) -> Self {
         self.left_content = Some(left_content);
         self
     }
 
-    pub fn set_left_icon(mut self, left_icon: Icon) -> Self {
+    pub fn left_icon(mut self, left_icon: Icon) -> Self {
         self.left_content = Some(LeftContent::Icon(left_icon));
         self
     }
 
-    pub fn set_left_avatar(mut self, left_avatar: impl Into<SharedString>) -> Self {
+    pub fn left_avatar(mut self, left_avatar: impl Into<SharedString>) -> Self {
         self.left_content = Some(LeftContent::Avatar(left_avatar.into()));
         self
     }
 
-    pub fn set_state(mut self, state: InteractionState) -> Self {
+    pub fn state(mut self, state: InteractionState) -> Self {
         self.state = state;
         self
     }
 
-    pub fn set_size(mut self, size: ListEntrySize) -> Self {
+    pub fn size(mut self, size: ListEntrySize) -> Self {
         self.size = size;
         self
     }
 
-    pub fn set_disclosure_control_style(
+    pub fn disclosure_control_style(
         mut self,
         disclosure_control_style: DisclosureControlVisibility,
     ) -> Self {
@@ -572,7 +574,7 @@ impl<S: 'static + Send + Sync> List<S> {
         self
     }
 
-    pub fn set_toggle(mut self, toggle: ToggleState) -> Self {
+    pub fn toggle(mut self, toggle: ToggleState) -> Self {
         self.toggleable = toggle.into();
         self
     }
@@ -595,7 +597,7 @@ impl<S: 'static + Send + Sync> List<S> {
             .children(
                 self.header
                     .take()
-                    .map(|header| header.set_toggleable(self.toggleable)),
+                    .map(|header| header.toggleable(self.toggleable)),
             )
             .child(list_content)
     }

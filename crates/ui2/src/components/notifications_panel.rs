@@ -36,14 +36,14 @@ impl<S: 'static + Send + Sync> NotificationsPanel<S> {
                     .overflow_y_scroll()
                     .child(
                         List::new(static_new_notification_items())
-                            .header(ListHeader::new("NEW").set_toggle(ToggleState::Toggled))
-                            .set_toggle(ToggleState::Toggled),
+                            .header(ListHeader::new("NEW").toggle(ToggleState::Toggled))
+                            .toggle(ToggleState::Toggled),
                     )
                     .child(
                         List::new(static_read_notification_items())
-                            .header(ListHeader::new("EARLIER").set_toggle(ToggleState::Toggled))
+                            .header(ListHeader::new("EARLIER").toggle(ToggleState::Toggled))
                             .empty_message("No new notifications")
-                            .set_toggle(ToggleState::Toggled),
+                            .toggle(ToggleState::Toggled),
                     ),
             )
     }

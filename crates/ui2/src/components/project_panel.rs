@@ -38,15 +38,15 @@ impl<S: 'static + Send + Sync> ProjectPanel<S> {
                     .overflow_y_scroll()
                     .child(
                         List::new(static_project_panel_single_items())
-                            .header(ListHeader::new("FILES").set_toggle(ToggleState::Toggled))
+                            .header(ListHeader::new("FILES").toggle(ToggleState::Toggled))
                             .empty_message("No files in directory")
-                            .set_toggle(ToggleState::Toggled),
+                            .toggle(ToggleState::Toggled),
                     )
                     .child(
                         List::new(static_project_panel_project_items())
-                            .header(ListHeader::new("PROJECT").set_toggle(ToggleState::Toggled))
+                            .header(ListHeader::new("PROJECT").toggle(ToggleState::Toggled))
                             .empty_message("No folders in directory")
-                            .set_toggle(ToggleState::Toggled),
+                            .toggle(ToggleState::Toggled),
                     ),
             )
             .child(

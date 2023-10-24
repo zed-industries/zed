@@ -11,9 +11,9 @@ impl<S: 'static + Send + Sync> ContextMenuItem<S> {
     fn to_list_item(self) -> ListItem<S> {
         match self {
             ContextMenuItem::Header(label) => ListSubHeader::new(label).into(),
-            ContextMenuItem::Entry(label) => ListEntry::new(label)
-                .set_variant(ListItemVariant::Inset)
-                .into(),
+            ContextMenuItem::Entry(label) => {
+                ListEntry::new(label).variant(ListItemVariant::Inset).into()
+            }
             ContextMenuItem::Separator => ListSeparator::new().into(),
         }
     }
@@ -57,7 +57,7 @@ impl<S: 'static + Send + Sync> ContextMenu<S> {
                         .map(ContextMenuItem::to_list_item)
                         .collect(),
                 )
-                .set_toggle(ToggleState::Toggled),
+                .toggle(ToggleState::Toggled),
             )
     }
 }
