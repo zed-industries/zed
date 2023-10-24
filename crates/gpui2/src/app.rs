@@ -178,7 +178,7 @@ pub struct AppContext {
     pub(crate) svg_renderer: SvgRenderer,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
-    pub(crate) globals_by_type: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    pub(crate) globals_by_type: HashMap<TypeId, AnyBox>,
     pub(crate) unit_entity: Handle<()>,
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
@@ -574,7 +574,7 @@ impl AppContext {
         )
     }
 
-    pub(crate) fn lease_global<G: 'static + Send + Sync>(&mut self) -> Box<G> {
+    pub(crate) fn lease_global<G: Any>(&mut self) -> Box<G> {
         self.globals_by_type
             .remove(&TypeId::of::<G>())
             .ok_or_else(|| anyhow!("no global registered of type {}", type_name::<G>()))
@@ -583,7 +583,7 @@ impl AppContext {
             .unwrap()
     }
 
-    pub(crate) fn restore_global<G: 'static + Send + Sync>(&mut self, global: Box<G>) {
+    pub(crate) fn restore_global<G: Any>(&mut self, global: Box<G>) {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, global);
@@ -639,7 +639,7 @@ impl AppContext {
 }
 
 impl Context for AppContext {
-    type EntityContext<'a, 'w, T: Send + Sync + 'static> = ModelContext<'a, T>;
+    type EntityContext<'a, 'w, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
     fn entity<T: Send + Sync + 'static>(
@@ -653,7 +653,7 @@ impl Context for AppContext {
         })
     }
 
-    fn update_entity<T: Send + Sync + 'static, R>(
+    fn update_entity<T, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
@@ -723,11 +723,11 @@ impl MainThread<AppContext> {
         self.platform().open_url(url);
     }
 
-    pub fn open_window<S: 'static + Send + Sync>(
+    pub fn open_window<V: 'static + Send + Sync>(
         &mut self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut WindowContext) -> View<S> + Send + 'static,
-    ) -> WindowHandle<S> {
+        build_root_view: impl FnOnce(&mut WindowContext) -> View<V> + Send + 'static,
+    ) -> WindowHandle<V> {
         self.update(|cx| {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
@@ -739,7 +739,7 @@ impl MainThread<AppContext> {
         })
     }
 
-    pub fn update_global<G: 'static + Send + Sync, R>(
+    pub fn update_global<G: Any, R>(
         &mut self,
         update: impl FnOnce(&mut G, &mut MainThread<AppContext>) -> R,
     ) -> R {
@@ -756,7 +756,7 @@ pub(crate) enum Effect {
     },
     Emit {
         emitter: EntityId,
-        event: Box<dyn Any + Send + Sync + 'static>,
+        event: AnyBox,
     },
     FocusChanged {
         window_id: WindowId,

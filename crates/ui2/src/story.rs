@@ -18,10 +18,7 @@ impl Story {
             .bg(color.background)
     }
 
-    pub fn title<S: 'static + Send + Sync>(
-        cx: &mut ViewContext<S>,
-        title: &str,
-    ) -> impl Element<ViewState = S> {
+    pub fn title<V>(cx: &mut ViewContext<V>, title: &str) -> impl Element<ViewState = V> {
         let color = ThemeColor::new(cx);
 
         div()
@@ -30,16 +27,11 @@ impl Story {
             .child(title.to_owned())
     }
 
-    pub fn title_for<S: 'static + Send + Sync, T>(
-        cx: &mut ViewContext<S>,
-    ) -> impl Element<ViewState = S> {
+    pub fn title_for<V, T>(cx: &mut ViewContext<V>) -> impl Element<ViewState = V> {
         Self::title(cx, std::any::type_name::<T>())
     }
 
-    pub fn label<S: 'static + Send + Sync>(
-        cx: &mut ViewContext<S>,
-        label: &str,
-    ) -> impl Element<ViewState = S> {
+    pub fn label<V>(cx: &mut ViewContext<V>, label: &str) -> impl Element<ViewState = V> {
         let color = ThemeColor::new(cx);
 
         div()

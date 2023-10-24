@@ -1129,7 +1129,7 @@ impl<'a, 'w> MainThread<WindowContext<'a, 'w>> {
 }
 
 impl Context for WindowContext<'_, '_> {
-    type EntityContext<'a, 'w, T: 'static + Send + Sync> = ViewContext<'a, 'w, T>;
+    type EntityContext<'a, 'w, T> = ViewContext<'a, 'w, T>;
     type Result<T> = T;
 
     fn entity<T: Send + Sync + 'static>(
@@ -1145,7 +1145,7 @@ impl Context for WindowContext<'_, '_> {
         self.entities.insert(slot, entity)
     }
 
-    fn update_entity<T: Send + Sync + 'static, R>(
+    fn update_entity<T, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
@@ -1340,7 +1340,7 @@ impl<S> BorrowWindow for ViewContext<'_, '_, S> {
     }
 }
 
-impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
+impl<'a, 'w, V> ViewContext<'a, 'w, V> {
     fn mutable(app: &'a mut AppContext, window: &'w mut Window, entity_id: EntityId) -> Self {
         Self {
             window_cx: WindowContext::mutable(app, window),
@@ -1580,8 +1580,9 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         f: impl FnOnce(WeakHandle<V>, AsyncWindowContext) -> Fut + Send + 'static,
     ) -> Task<R>
     where
-        R: Send + 'static,
-        Fut: Future<Output = R> + Send + 'static,
+        V: 'static + Send + Sync,
+        R: 'static + Send,
+        Fut: 'static + Future<Output = R> + Send,
     {
         let handle = self.handle();
         self.window_cx.spawn(move |_, cx| {
@@ -1640,11 +1641,8 @@ impl<'a, 'w, V: EventEmitter + Send + Sync + 'static> ViewContext<'a, 'w, V> {
     }
 }
 
-impl<'a, 'w, V> Context for ViewContext<'a, 'w, V>
-where
-    V: 'static + Send + Sync,
-{
-    type EntityContext<'b, 'c, U: 'static + Send + Sync> = ViewContext<'b, 'c, U>;
+impl<'a, 'w, V> Context for ViewContext<'a, 'w, V> {
+    type EntityContext<'b, 'c, U> = ViewContext<'b, 'c, U>;
     type Result<U> = U;
 
     fn entity<T2: Send + Sync + 'static>(
@@ -1654,7 +1652,7 @@ where
         self.window_cx.entity(build_entity)
     }
 
-    fn update_entity<U: 'static + Send + Sync, R>(
+    fn update_entity<U, R>(
         &mut self,
         handle: &Handle<U>,
         update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,

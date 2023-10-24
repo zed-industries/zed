@@ -44,7 +44,7 @@ pub fn derive_into_any_element(input: TokenStream) -> TokenStream {
             #where_clause
             {
                 fn into_any(self) -> gpui2::AnyElement<#view_type> {
-                    self.render().into_any()
+                    Self::render(self).into_any()
                 }
             }
         }

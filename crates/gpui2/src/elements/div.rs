@@ -20,7 +20,10 @@ pub struct Div<
     base_style: StyleRefinement,
 }
 
-pub fn div<V>() -> Div<V, StatelessInteraction<V>, FocusDisabled> {
+pub fn div<V>() -> Div<V, StatelessInteraction<V>, FocusDisabled>
+// where
+    // V: 'static + Send + Sync,
+{
     Div {
         interaction: StatelessInteraction::default(),
         focus: FocusDisabled,
@@ -33,7 +36,6 @@ pub fn div<V>() -> Div<V, StatelessInteraction<V>, FocusDisabled> {
 impl<V, F> Div<V, StatelessInteraction<V>, F>
 where
     F: ElementFocus<V>,
-    V: 'static + Send + Sync,
 {
     pub fn id(self, id: impl Into<ElementId>) -> Div<V, StatefulInteraction<V>, F> {
         Div {
@@ -50,7 +52,6 @@ impl<V, I, F> Div<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
-    V: 'static + Send + Sync,
 {
     pub fn group(mut self, group: impl Into<SharedString>) -> Self {
         self.group = Some(group.into());
@@ -105,10 +106,7 @@ where
     }
 }
 
-impl<V> Div<V, StatefulInteraction<V>, FocusDisabled>
-where
-    V: 'static + Send + Sync,
-{
+impl<V> Div<V, StatefulInteraction<V>, FocusDisabled> {
     pub fn focusable(self) -> Div<V, StatefulInteraction<V>, FocusEnabled<V>> {
         Div {
             interaction: self.interaction,
@@ -149,10 +147,7 @@ where
     }
 }
 
-impl<V> Div<V, StatelessInteraction<V>, FocusDisabled>
-where
-    V: 'static + Send + Sync,
-{
+impl<V> Div<V, StatelessInteraction<V>, FocusDisabled> {
     pub fn track_focus(
         self,
         handle: &FocusHandle,
@@ -170,7 +165,6 @@ where
 impl<V, I> Focusable for Div<V, I, FocusEnabled<V>>
 where
     I: ElementInteraction<V>,
-    V: 'static + Send + Sync,
 {
     fn focus_listeners(&mut self) -> &mut FocusListeners<V> {
         &mut self.focus.focus_listeners
@@ -200,7 +194,6 @@ impl<V, I, F> Element for Div<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
-    V: 'static + Send + Sync,
 {
     type ViewState = V;
     type ElementState = DivState;
@@ -316,7 +309,6 @@ impl<V, I, F> IntoAnyElement<V> for Div<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
-    V: 'static + Send + Sync,
 {
     fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
@@ -327,7 +319,6 @@ impl<V, I, F> ParentElement for Div<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
-    V: 'static + Send + Sync,
 {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
         &mut self.children
@@ -338,7 +329,6 @@ impl<V, I, F> Styled for Div<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
-    V: 'static + Send + Sync,
 {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.base_style
@@ -349,7 +339,6 @@ impl<V, I, F> StatelessInteractive for Div<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
-    V: 'static + Send + Sync,
 {
     fn stateless_interaction(&mut self) -> &mut StatelessInteraction<V> {
         self.interaction.as_stateless_mut()
@@ -359,7 +348,6 @@ where
 impl<V, F> StatefulInteractive for Div<V, StatefulInteraction<V>, F>
 where
     F: ElementFocus<V>,
-    V: 'static + Send + Sync,
 {
     fn stateful_interaction(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
         &mut self.interaction

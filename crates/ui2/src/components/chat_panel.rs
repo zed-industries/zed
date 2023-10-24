@@ -19,7 +19,7 @@ impl ChatPanel {
         }
     }
 
-    pub fn messages(mut self, messages: Vec<ChatMessage<S>>) -> Self {
+    pub fn messages(mut self, messages: Vec<ChatMessage>) -> Self {
         self.messages = messages;
         self
     }

@@ -30,7 +30,7 @@ impl Display for EntityId {
 }
 
 pub(crate) struct EntityMap {
-    entities: SecondaryMap<EntityId, Box<dyn Any + Send + Sync>>,
+    entities: SecondaryMap<EntityId, Box<dyn Any>>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
@@ -51,24 +51,20 @@ impl EntityMap {
     }
 
     /// Reserve a slot for an entity, which you can subsequently use with `insert`.
-    pub fn reserve<T: 'static + Send + Sync>(&self) -> Slot<T> {
+    pub fn reserve<T: 'static>(&self) -> Slot<T> {
         let id = self.ref_counts.write().counts.insert(1.into());
         Slot(Handle::new(id, Arc::downgrade(&self.ref_counts)))
     }
 
     /// Insert an entity into a slot obtained by calling `reserve`.
-    pub fn insert<T: 'static + Any + Send + Sync>(
-        &mut self,
-        slot: Slot<T>,
-        entity: T,
-    ) -> Handle<T> {
+    pub fn insert<T: Any>(&mut self, slot: Slot<T>, entity: T) -> Handle<T> {
         let handle = slot.0;
         self.entities.insert(handle.entity_id, Box::new(entity));
         handle
     }
 
     /// Move an entity to the stack.
-    pub fn lease<'a, T: 'static + Send + Sync>(&mut self, handle: &'a Handle<T>) -> Lease<'a, T> {
+    pub fn lease<'a, T>(&mut self, handle: &'a Handle<T>) -> Lease<'a, T> {
         let entity = Some(
             self.entities
                 .remove(handle.entity_id)
@@ -80,16 +76,16 @@ impl EntityMap {
     }
 
     /// Return an entity after moving it to the stack.
-    pub fn end_lease<T: 'static + Send + Sync>(&mut self, mut lease: Lease<T>) {
+    pub fn end_lease<T>(&mut self, mut lease: Lease<T>) {
         self.entities
             .insert(lease.handle.entity_id, lease.entity.take().unwrap());
     }
 
-    pub fn read<T: 'static + Send + Sync>(&self, handle: &Handle<T>) -> &T {
+    pub fn read<T>(&self, handle: &Handle<T>) -> &T {
         self.entities[handle.entity_id].downcast_ref().unwrap()
     }
 
-    pub fn weak_handle<T: 'static + Send + Sync>(&self, id: EntityId) -> WeakHandle<T> {
+    pub fn weak_handle<T>(&self, id: EntityId) -> WeakHandle<T> {
         WeakHandle {
             any_handle: AnyWeakHandle {
                 entity_id: id,
@@ -100,7 +96,7 @@ impl EntityMap {
         }
     }
 
-    pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any + Send + Sync>)> {
+    pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
         let dropped_entity_ids = mem::take(&mut self.ref_counts.write().dropped_entity_ids);
         dropped_entity_ids
             .into_iter()
@@ -109,15 +105,12 @@ impl EntityMap {
     }
 }
 
-pub struct Lease<'a, T: Send + Sync> {
+pub struct Lease<'a, T> {
     entity: Option<Box<T>>,
     pub handle: &'a Handle<T>,
 }
 
-impl<'a, T> core::ops::Deref for Lease<'a, T>
-where
-    T: Send + Sync,
-{
+impl<'a, T> core::ops::Deref for Lease<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -125,19 +118,13 @@ where
     }
 }
 
-impl<'a, T> core::ops::DerefMut for Lease<'a, T>
-where
-    T: Send + Sync,
-{
+impl<'a, T> core::ops::DerefMut for Lease<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.entity.as_mut().unwrap()
     }
 }
 
-impl<'a, T> Drop for Lease<'a, T>
-where
-    T: Send + Sync,
-{
+impl<'a, T> Drop for Lease<'a, T> {
     fn drop(&mut self) {
         if self.entity.is_some() {
             // We don't panic here, because other panics can cause us to drop the lease without ending it cleanly.
@@ -147,7 +134,7 @@ where
 }
 
 #[derive(Deref, DerefMut)]
-pub struct Slot<T: Send + Sync + 'static>(Handle<T>);
+pub struct Slot<T>(Handle<T>);
 
 pub struct AnyHandle {
     pub(crate) entity_id: EntityId,
@@ -178,7 +165,7 @@ impl AnyHandle {
 
     pub fn downcast<T>(&self) -> Option<Handle<T>>
     where
-        T: 'static + Send + Sync,
+        T: Any,
     {
         if TypeId::of::<T>() == self.entity_type {
             Some(Handle {
@@ -231,10 +218,7 @@ impl Drop for AnyHandle {
     }
 }
 
-impl<T> From<Handle<T>> for AnyHandle
-where
-    T: 'static + Send + Sync,
-{
+impl<T> From<Handle<T>> for AnyHandle {
     fn from(handle: Handle<T>) -> Self {
         handle.any_handle
     }
@@ -255,14 +239,14 @@ impl PartialEq for AnyHandle {
 impl Eq for AnyHandle {}
 
 #[derive(Deref, DerefMut)]
-pub struct Handle<T: Send + Sync> {
+pub struct Handle<T> {
     #[deref]
     #[deref_mut]
     any_handle: AnyHandle,
     entity_type: PhantomData<T>,
 }
 
-impl<T: 'static + Send + Sync> Handle<T> {
+impl<T> Handle<T> {
     fn new(id: EntityId, entity_map: Weak<RwLock<EntityRefCounts>>) -> Self {
         Self {
             any_handle: AnyHandle::new(id, TypeId::of::<T>(), entity_map),
@@ -295,7 +279,7 @@ impl<T: 'static + Send + Sync> Handle<T> {
     }
 }
 
-impl<T: Send + Sync> Clone for Handle<T> {
+impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
         Self {
             any_handle: self.any_handle.clone(),
@@ -304,7 +288,7 @@ impl<T: Send + Sync> Clone for Handle<T> {
     }
 }
 
-impl<T: 'static + Send + Sync> std::fmt::Debug for Handle<T> {
+impl<T> std::fmt::Debug for Handle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -315,19 +299,19 @@ impl<T: 'static + Send + Sync> std::fmt::Debug for Handle<T> {
     }
 }
 
-impl<T: Send + Sync + 'static> Hash for Handle<T> {
+impl<T> Hash for Handle<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.any_handle.hash(state);
     }
 }
 
-impl<T: Send + Sync + 'static> PartialEq for Handle<T> {
+impl<T> PartialEq for Handle<T> {
     fn eq(&self, other: &Self) -> bool {
         self.any_handle == other.any_handle
     }
 }
 
-impl<T: Send + Sync + 'static> Eq for Handle<T> {}
+impl<T> Eq for Handle<T> {}
 
 #[derive(Clone)]
 pub struct AnyWeakHandle {
@@ -436,16 +420,16 @@ impl<T: Send + Sync + 'static> WeakHandle<T> {
     }
 }
 
-impl<T: Send + Sync + 'static> Hash for WeakHandle<T> {
+impl<T> Hash for WeakHandle<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.any_handle.hash(state);
     }
 }
 
-impl<T: Send + Sync + 'static> PartialEq for WeakHandle<T> {
+impl<T> PartialEq for WeakHandle<T> {
     fn eq(&self, other: &Self) -> bool {
         self.any_handle == other.any_handle
     }
 }
 
-impl<T: Send + Sync + 'static> Eq for WeakHandle<T> {}
+impl<T> Eq for WeakHandle<T> {}

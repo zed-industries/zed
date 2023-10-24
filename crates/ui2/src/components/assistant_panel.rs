@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::{Icon, IconButton, Label, Panel, PanelSide};
-use gpui2::{rems, AbsoluteLength, IntoAnyElement};
+use gpui2::{div, rems, AbsoluteLength, IntoAnyElement};
 
 #[derive(IntoAnyElement)]
 pub struct AssistantPanel {
@@ -21,7 +21,9 @@ impl AssistantPanel {
         self
     }
 
-    fn render<S: 'static + Send + Sync>(mut self) -> impl IntoAnyElement<S> {
+    fn render<V>(mut self) -> impl IntoAnyElement<V> {
+        div()
+
         // let color = ThemeColor::new(cx);
 
         // Panel::new(self.id, cx)
@@ -91,9 +93,9 @@ mod stories {
             Self
         }
 
-        fn render<S: 'static + Send + Sync>(self) -> impl IntoAnyElement<S> {
-            Story::container(self.cx)
-                .child(Story::title_for::<_, AssistantPanel<S>>(self.cx))
+        fn render<V>(self) -> impl IntoAnyElement<V> {
+            Story::container(self.0)
+                .child(Story::title_for::<_, AssistantPanel>(self.0))
                 .child(Story::label(self.cx, "Default"))
                 .child(AssistantPanel::new("assistant-panel"))
         }

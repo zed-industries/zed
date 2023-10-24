@@ -6,12 +6,12 @@ use crate::{
 };
 use std::{marker::PhantomData, sync::Arc};
 
-pub struct View<V: Send + Sync> {
+pub struct View<V> {
     state: Handle<V>,
     render: Arc<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyElement<V> + Send + Sync + 'static>,
 }
 
-impl<V: 'static + Send + Sync> View<V> {
+impl<V> View<V> {
     pub fn into_any(self) -> AnyView {
         AnyView {
             view: Arc::new(Mutex::new(self)),
@@ -19,7 +19,7 @@ impl<V: 'static + Send + Sync> View<V> {
     }
 }
 
-impl<V: Send + Sync> Clone for View<V> {
+impl<V> Clone for View<V> {
     fn clone(&self) -> Self {
         Self {
             state: self.state.clone(),
@@ -42,9 +42,7 @@ where
     }
 }
 
-impl<V: 'static + Send + Sync, ParentViewState: 'static + Send + Sync>
-    IntoAnyElement<ParentViewState> for View<V>
-{
+impl<V, ParentViewState> IntoAnyElement<ParentViewState> for View<V> {
     fn into_any(self) -> AnyElement<ParentViewState> {
         AnyElement::new(EraseViewState {
             view: self,
@@ -53,7 +51,7 @@ impl<V: 'static + Send + Sync, ParentViewState: 'static + Send + Sync>
     }
 }
 
-impl<V: 'static + Send + Sync> Element for View<V> {
+impl<V> Element for View<V> {
     type ViewState = ();
     type ElementState = AnyElement<V>;
 
@@ -94,26 +92,18 @@ impl<V: 'static + Send + Sync> Element for View<V> {
     }
 }
 
-struct EraseViewState<V: 'static + Send + Sync, ParentV> {
+struct EraseViewState<V, ParentV> {
     view: View<V>,
     parent_view_state_type: PhantomData<ParentV>,
 }
 
-impl<V, ParentV> IntoAnyElement<ParentV> for EraseViewState<V, ParentV>
-where
-    V: 'static + Send + Sync,
-    ParentV: 'static + Send + Sync,
-{
+impl<V, ParentV> IntoAnyElement<ParentV> for EraseViewState<V, ParentV> {
     fn into_any(self) -> AnyElement<ParentV> {
         AnyElement::new(self)
     }
 }
 
-impl<V, ParentV> Element for EraseViewState<V, ParentV>
-where
-    V: 'static + Send + Sync,
-    ParentV: 'static + Send + Sync,
-{
+impl<V, ParentV> Element for EraseViewState<V, ParentV> {
     type ViewState = ParentV;
     type ElementState = AnyBox;
 
@@ -150,14 +140,14 @@ where
     }
 }
 
-trait ViewObject: 'static + Send + Sync {
+trait ViewObject {
     fn entity_id(&self) -> EntityId;
     fn initialize(&mut self, cx: &mut WindowContext) -> AnyBox;
     fn layout(&mut self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId;
     fn paint(&mut self, bounds: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext);
 }
 
-impl<V: Send + Sync + 'static> ViewObject for View<V> {
+impl<V: 'static + Send + Sync> ViewObject for View<V> {
     fn entity_id(&self) -> EntityId {
         self.state.entity_id
     }

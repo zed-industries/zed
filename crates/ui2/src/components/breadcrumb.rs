@@ -16,7 +16,7 @@ pub struct Breadcrumb<'a> {
     cx: &'a AppContext,
 }
 
-impl Breadcrumb {
+impl<'a> Breadcrumb<'a> {
     pub fn new(path: PathBuf, symbols: Vec<Symbol>, cx: &'a AppContext) -> Self {
         Self { path, symbols, cx }
     }
@@ -27,7 +27,7 @@ impl Breadcrumb {
     }
 
     fn render<V>(mut self) -> impl IntoAnyElement<V> {
-        let color = ThemeColor::new(cx);
+        let color = ThemeColor::new(self.cx);
 
         let symbols_len = self.symbols.len();
 

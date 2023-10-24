@@ -397,7 +397,10 @@ pub trait ElementInteraction<V> {
         &mut self,
         cx: &mut ViewContext<V>,
         f: impl FnOnce(&mut ViewContext<V>) -> R,
-    ) -> R {
+    ) -> R
+    where
+        V: 'static + Send + Sync,
+    {
         if let Some(stateful) = self.as_stateful_mut() {
             cx.with_element_id(stateful.id.clone(), |global_id, cx| {
                 stateful.key_listeners.push((
@@ -433,7 +436,9 @@ pub trait ElementInteraction<V> {
         bounds: Bounds<Pixels>,
         element_state: &InteractiveElementState,
         cx: &mut ViewContext<V>,
-    ) {
+    ) where
+        V: 'static + Send + Sync,
+    {
         let mouse_position = cx.mouse_position();
         let stateless = self.as_stateless();
         if let Some(group_hover) = stateless.group_hover_style.as_ref() {
@@ -487,7 +492,9 @@ pub trait ElementInteraction<V> {
         overflow: Point<Overflow>,
         element_state: &mut InteractiveElementState,
         cx: &mut ViewContext<V>,
-    ) {
+    ) where
+        V: 'static + Send + Sync,
+    {
         let stateless = self.as_stateless();
         for listener in stateless.mouse_down_listeners.iter().cloned() {
             cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
@@ -906,9 +913,7 @@ pub struct ClickEvent {
 
 pub struct Drag<S, R, V, E>
 where
-    S: 'static + Send + Sync,
     R: Fn(&mut V, &mut ViewContext<V>) -> E,
-    V: 'static + Send + Sync,
     E: Element<ViewState = V>,
 {
     pub state: S,
@@ -918,9 +923,7 @@ where
 
 impl<S, R, V, E> Drag<S, R, V, E>
 where
-    S: 'static + Send + Sync,
     R: Fn(&mut V, &mut ViewContext<V>) -> E + Send + Sync,
-    V: 'static + Send + Sync,
     E: Element<ViewState = V>,
 {
     pub fn new(state: S, render_drag_handle: R) -> Self {

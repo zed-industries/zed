@@ -15,7 +15,7 @@ pub struct ModelContext<'a, T> {
     entity_id: EntityId,
 }
 
-impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
+impl<'a, T> ModelContext<'a, T> {
     pub(crate) fn mutable(app: &'a mut AppContext, entity_id: EntityId) -> Self {
         Self {
             app: Reference::Mutable(app),
@@ -38,7 +38,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         self.app.entities.weak_handle(self.entity_id)
     }
 
-    pub fn observe<E: Send + Sync + 'static>(
+    pub fn observe<E>(
         &mut self,
         handle: &Handle<E>,
         on_notify: impl Fn(&mut T, Handle<E>, &mut ModelContext<'_, T>) + Send + Sync + 'static,
@@ -58,7 +58,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         )
     }
 
-    pub fn subscribe<E: EventEmitter + Send + Sync + 'static>(
+    pub fn subscribe<E: EventEmitter>(
         &mut self,
         handle: &Handle<E>,
         on_event: impl Fn(&mut T, Handle<E>, &E::Event, &mut ModelContext<'_, T>)
@@ -95,7 +95,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         )
     }
 
-    pub fn observe_release<E: Send + Sync + 'static>(
+    pub fn observe_release<E>(
         &mut self,
         handle: &Handle<E>,
         on_release: impl Fn(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + Sync + 'static,
@@ -176,7 +176,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
     }
 }
 
-impl<'a, T: EventEmitter + Send + Sync + 'static> ModelContext<'a, T> {
+impl<'a, T: EventEmitter> ModelContext<'a, T> {
     pub fn emit(&mut self, event: T::Event) {
         self.app.pending_effects.push_back(Effect::Emit {
             emitter: self.entity_id,
@@ -186,7 +186,7 @@ impl<'a, T: EventEmitter + Send + Sync + 'static> ModelContext<'a, T> {
 }
 
 impl<'a, T: 'static> Context for ModelContext<'a, T> {
-    type EntityContext<'b, 'c, U: Send + Sync + 'static> = ModelContext<'b, U>;
+    type EntityContext<'b, 'c, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
     fn entity<U: Send + Sync + 'static>(
@@ -196,7 +196,7 @@ impl<'a, T: 'static> Context for ModelContext<'a, T> {
         self.app.entity(build_entity)
     }
 
-    fn update_entity<U: Send + Sync + 'static, R>(
+    fn update_entity<U, R>(
         &mut self,
         handle: &Handle<U>,
         update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,

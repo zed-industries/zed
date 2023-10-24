@@ -14,7 +14,7 @@ pub struct AsyncAppContext {
 }
 
 impl Context for AsyncAppContext {
-    type EntityContext<'a, 'w, T: 'static + Send + Sync> = ModelContext<'a, T>;
+    type EntityContext<'a, 'w, T> = ModelContext<'a, T>;
     type Result<T> = Result<T>;
 
     fn entity<T: Send + Sync + 'static>(
@@ -29,7 +29,7 @@ impl Context for AsyncAppContext {
         Ok(lock.entity(build_entity))
     }
 
-    fn update_entity<T: Send + Sync + 'static, R>(
+    fn update_entity<T, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
@@ -213,18 +213,18 @@ impl AsyncWindowContext {
 }
 
 impl Context for AsyncWindowContext {
-    type EntityContext<'a, 'w, T: 'static + Send + Sync> = ViewContext<'a, 'w, T>;
+    type EntityContext<'a, 'w, T> = ViewContext<'a, 'w, T>;
     type Result<T> = Result<T>;
 
-    fn entity<R: Send + Sync + 'static>(
+    fn entity<T: Send + Sync + 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, R>) -> R,
-    ) -> Result<Handle<R>> {
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
+    ) -> Result<Handle<T>> {
         self.app
             .update_window(self.window, |cx| cx.entity(build_entity))
     }
 
-    fn update_entity<T: Send + Sync + 'static, R>(
+    fn update_entity<T, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,

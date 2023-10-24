@@ -4,8 +4,8 @@ pub(crate) use smallvec::SmallVec;
 use std::mem;
 
 pub trait Element: IntoAnyElement<Self::ViewState> {
-    type ViewState: 'static + Send + Sync;
-    type ElementState: 'static + Send + Sync;
+    type ViewState;
+    type ElementState;
 
     fn id(&self) -> Option<ElementId>;
 
@@ -59,7 +59,7 @@ pub trait ParentElement: Element {
     }
 }
 
-trait ElementObject<V>: 'static + Send + Sync {
+trait ElementObject<V> {
     fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
     fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId;
     fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
@@ -98,7 +98,7 @@ impl<E: Element> RenderedElement<E> {
 
 impl<E> ElementObject<E::ViewState> for RenderedElement<E>
 where
-    E: 'static + Element + Send + Sync,
+    E: Element,
 {
     fn initialize(&mut self, view_state: &mut E::ViewState, cx: &mut ViewContext<E::ViewState>) {
         let frame_state = if let Some(id) = self.element.id() {
@@ -173,8 +173,8 @@ where
 
 pub struct AnyElement<V>(Box<dyn ElementObject<V>>);
 
-impl<V: 'static + Send + Sync> AnyElement<V> {
-    pub fn new<E: 'static + Send + Sync + Element<ViewState = V>>(element: E) -> Self {
+impl<V> AnyElement<V> {
+    pub fn new<E: Element<ViewState = V>>(element: E) -> Self {
         AnyElement(Box::new(RenderedElement::new(element)))
     }
 

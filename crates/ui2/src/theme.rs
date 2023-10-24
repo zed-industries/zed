@@ -150,7 +150,7 @@ pub struct Themed<E> {
 
 impl<E> IntoAnyElement<E::ViewState> for Themed<E>
 where
-    E: Element,
+    E: 'static + Element + Send + Sync,
 {
     fn into_any(self) -> AnyElement<E::ViewState> {
         AnyElement::new(self)
@@ -160,7 +160,10 @@ where
 #[derive(Default)]
 struct ThemeStack(Vec<Theme>);
 
-impl<E: Element> Element for Themed<E> {
+impl<E> Element for Themed<E>
+where
+    E: 'static + Element + Send + Sync,
+{
     type ViewState = E::ViewState;
     type ElementState = E::ElementState;
 
