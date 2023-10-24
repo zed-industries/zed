@@ -21,7 +21,7 @@ struct SubscriberSetState<EmitterKey, Callback> {
 
 impl<EmitterKey, Callback> SubscriberSet<EmitterKey, Callback>
 where
-    EmitterKey: 'static + Ord + Clone + Debug,
+    EmitterKey: 'static + Send + Sync + Ord + Clone + Debug,
     Callback: 'static + Send + Sync,
 {
     pub fn new() -> Self {
@@ -96,7 +96,7 @@ where
 
 #[must_use]
 pub struct Subscription {
-    unsubscribe: Option<Box<dyn FnOnce()>>,
+    unsubscribe: Option<Box<dyn FnOnce() + Send + Sync + 'static>>,
 }
 
 impl Subscription {

@@ -43,7 +43,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe<T2: 'static>(
         &mut self,
         handle: &Handle<T2>,
-        on_notify: impl Fn(&mut T, Handle<T2>, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+        mut on_notify: impl FnMut(&mut T, Handle<T2>, &mut ModelContext<'_, T>) + Send + Sync + 'static,
     ) -> Subscription
     where
         T: Any + Send + Sync,
@@ -66,7 +66,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn subscribe<E: 'static + EventEmitter>(
         &mut self,
         handle: &Handle<E>,
-        on_event: impl Fn(&mut T, Handle<E>, &E::Event, &mut ModelContext<'_, T>)
+        mut on_event: impl FnMut(&mut T, Handle<E>, &E::Event, &mut ModelContext<'_, T>)
             + Send
             + Sync
             + 'static,
@@ -92,7 +92,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn on_release(
         &mut self,
-        on_release: impl Fn(&mut T, &mut AppContext) + Send + Sync + 'static,
+        mut on_release: impl FnMut(&mut T, &mut AppContext) + Send + Sync + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -109,7 +109,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe_release<E: 'static>(
         &mut self,
         handle: &Handle<E>,
-        on_release: impl Fn(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+        mut on_release: impl FnMut(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + Sync + 'static,
     ) -> Subscription
     where
         T: Any + Send + Sync,
@@ -128,7 +128,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut T, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+        mut f: impl FnMut(&mut T, &mut ModelContext<'_, T>) + Send + Sync + 'static,
     ) -> Subscription
     where
         T: Any + Send + Sync,
@@ -142,7 +142,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn on_app_quit<Fut>(
         &mut self,
-        on_quit: impl Fn(&mut T, &mut ModelContext<T>) -> Fut + Send + Sync + 'static,
+        mut on_quit: impl FnMut(&mut T, &mut ModelContext<T>) -> Fut + Send + Sync + 'static,
     ) -> Subscription
     where
         Fut: 'static + Future<Output = ()> + Send,

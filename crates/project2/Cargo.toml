@@ -37,7 +37,7 @@ prettier2 = { path = "../prettier2" }
 rpc = { path = "../rpc" }
 settings2 = { path = "../settings2" }
 sum_tree = { path = "../sum_tree" }
-terminal = { path = "../terminal" }
+terminal2 = { path = "../terminal2" }
 util = { path = "../util" }
 
 aho-corasick = "1.1"
