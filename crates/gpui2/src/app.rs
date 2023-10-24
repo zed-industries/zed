@@ -163,10 +163,11 @@ impl App {
 
 type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
 type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
-type Handler = Box<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>;
-type Listener = Box<dyn Fn(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>;
-type QuitHandler = Box<dyn Fn(&mut AppContext) -> BoxFuture<'static, ()> + Send + Sync + 'static>;
-type ReleaseListener = Box<dyn Fn(&mut dyn Any, &mut AppContext) + Send + Sync + 'static>;
+type Handler = Box<dyn FnMut(&mut AppContext) -> bool + Send + Sync + 'static>;
+type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>;
+type QuitHandler =
+    Box<dyn FnMut(&mut AppContext) -> BoxFuture<'static, ()> + Send + Sync + 'static>;
+type ReleaseListener = Box<dyn FnMut(&mut dyn Any, &mut AppContext) + Send + Sync + 'static>;
 
 pub struct AppContext {
     this: Weak<Mutex<AppContext>>,
@@ -355,7 +356,7 @@ impl AppContext {
             for (entity_id, mut entity) in dropped {
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
-                for release_callback in self.release_listeners.remove(&entity_id) {
+                for mut release_callback in self.release_listeners.remove(&entity_id) {
                     release_callback(&mut entity, self);
                 }
             }
@@ -571,7 +572,7 @@ impl AppContext {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut Self) + Send + Sync + 'static,
+        mut f: impl FnMut(&mut Self) + Send + Sync + 'static,
     ) -> Subscription {
         self.global_observers.insert(
             TypeId::of::<G>(),

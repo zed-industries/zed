@@ -399,7 +399,7 @@ impl Worktree {
         })
     }
 
-    pub fn remote<C: Context>(
+    pub fn remote(
         project_remote_id: u64,
         replica_id: ReplicaId,
         worktree: proto::WorktreeMetadata,
@@ -935,7 +935,7 @@ impl LocalWorktree {
         let version = buffer.version();
         let save = self.write_file(path, text, buffer.line_ending(), cx);
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             let entry = save.await?;
             let this = this.upgrade().context("worktree dropped")?;
 
@@ -1245,7 +1245,7 @@ impl LocalWorktree {
             .unbounded_send((self.snapshot(), Arc::from([]), Arc::from([])))
             .ok();
 
-        let worktree_id = cx.entity_id().;
+        let worktree_id = cx.entity_id().as_u64();
         let _maintain_remote_snapshot = cx.executor().spawn(async move {
             let mut is_first = true;
             while let Some((snapshot, entry_changes, repo_changes)) = snapshots_rx.next().await {
@@ -1338,7 +1338,7 @@ impl RemoteWorktree {
         let version = buffer.version();
         let rpc = self.client.clone();
         let project_id = self.project_id;
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(move |_, mut cx| async move {
             let response = rpc
                 .request(proto::SaveBuffer {
                     project_id,
@@ -1446,7 +1446,7 @@ impl RemoteWorktree {
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<()>> {
         let wait_for_snapshot = self.wait_for_snapshot(scan_id);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             wait_for_snapshot.await?;
             this.update(&mut cx, |worktree, _| {
                 let worktree = worktree.as_remote_mut().unwrap();

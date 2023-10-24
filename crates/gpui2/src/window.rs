@@ -1418,7 +1418,10 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn observe<E>(
         &mut self,
         handle: &Handle<E>,
-        on_notify: impl Fn(&mut V, Handle<E>, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
+        mut on_notify: impl FnMut(&mut V, Handle<E>, &mut ViewContext<'_, '_, V>)
+            + Send
+            + Sync
+            + 'static,
     ) -> Subscription
     where
         E: 'static,
@@ -1446,7 +1449,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn subscribe<E: EventEmitter>(
         &mut self,
         handle: &Handle<E>,
-        on_event: impl Fn(&mut V, Handle<E>, &E::Event, &mut ViewContext<'_, '_, V>)
+        mut on_event: impl FnMut(&mut V, Handle<E>, &E::Event, &mut ViewContext<'_, '_, V>)
             + Send
             + Sync
             + 'static,
@@ -1473,7 +1476,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn on_release(
         &mut self,
-        on_release: impl Fn(&mut V, &mut WindowContext) + Send + Sync + 'static,
+        mut on_release: impl FnMut(&mut V, &mut WindowContext) + Send + Sync + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
@@ -1489,7 +1492,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn observe_release<T: 'static>(
         &mut self,
         handle: &Handle<T>,
-        on_release: impl Fn(&mut V, &mut T, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
+        mut on_release: impl FnMut(&mut V, &mut T, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
     ) -> Subscription
     where
         V: Any + Send + Sync,

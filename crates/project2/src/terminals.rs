@@ -1,7 +1,7 @@
 use crate::Project;
-use gpui2::{AnyWindowHandle, Handle, ModelContext, WeakHandle};
+use gpui2::{AnyWindowHandle, Context, Handle, ModelContext, WeakHandle};
 use std::path::{Path, PathBuf};
-use terminal::{
+use terminal2::{
     terminal_settings::{self, TerminalSettings, VenvSettingsContent},
     Terminal, TerminalBuilder,
 };
@@ -10,7 +10,7 @@ use terminal::{
 use std::os::unix::ffi::OsStrExt;
 
 pub struct Terminals {
-    pub(crate) local_handles: Vec<WeakHandle<terminal::Terminal>>,
+    pub(crate) local_handles: Vec<WeakHandle<terminal2::Terminal>>,
 }
 
 impl Project {
@@ -36,19 +36,23 @@ impl Project {
                 Some(settings.blinking.clone()),
                 settings.alternate_scroll,
                 window,
+                |index, cx| todo!("color_for_index"),
             )
             .map(|builder| {
-                let terminal_handle = cx.add_model(|cx| builder.subscribe(cx));
+                let terminal_handle = cx.entity(|cx| builder.subscribe(cx));
 
                 self.terminals
                     .local_handles
                     .push(terminal_handle.downgrade());
 
-                let id = terminal_handle.id();
+                let id = terminal_handle.entity_id();
                 cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
                     let handles = &mut project.terminals.local_handles;
 
-                    if let Some(index) = handles.iter().position(|terminal| terminal.id() == id) {
+                    if let Some(index) = handles
+                        .iter()
+                        .position(|terminal| terminal.entity_id() == id)
+                    {
                         handles.remove(index);
                         cx.notify();
                     }
@@ -116,7 +120,7 @@ impl Project {
         }
     }
 
-    pub fn local_terminal_handles(&self) -> &Vec<WeakHandle<terminal::Terminal>> {
+    pub fn local_terminal_handles(&self) -> &Vec<WeakHandle<terminal2::Terminal>> {
         &self.terminals.local_handles
     }
 }

@@ -32,8 +32,8 @@ pub fn lsp_formatting_options(tab_size: u32) -> lsp2::FormattingOptions {
     }
 }
 
-#[async_trait(?Send)]
-pub(crate) trait LspCommand: 'static + Sized {
+#[async_trait]
+pub(crate) trait LspCommand: 'static + Sized + Send {
     type Response: 'static + Default + Send;
     type LspRequest: 'static + Send + lsp2::request::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;
@@ -148,7 +148,7 @@ impl From<lsp2::FormattingOptions> for FormattingOptions {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl LspCommand for PrepareRename {
     type Response = Option<Range<Anchor>>;
     type LspRequest = lsp2::request::PrepareRenameRequest;
@@ -183,7 +183,7 @@ impl LspCommand for PrepareRename {
         _: Handle<Project>,
         buffer: Handle<Buffer>,
         _: LanguageServerId,
-        cx: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<Option<Range<Anchor>>> {
         buffer.update(&mut cx, |buffer, _| {
             if let Some(
@@ -279,7 +279,7 @@ impl LspCommand for PrepareRename {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl LspCommand for PerformRename {
     type Response = ProjectTransaction;
     type LspRequest = lsp2::request::Rename;
@@ -398,7 +398,7 @@ impl LspCommand for PerformRename {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl LspCommand for GetDefinition {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp2::request::GotoDefinition;
@@ -491,7 +491,7 @@ impl LspCommand for GetDefinition {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl LspCommand for GetTypeDefinition {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp2::request::GotoTypeDefinition;
@@ -783,7 +783,7 @@ fn location_links_to_proto(
         .collect()
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl LspCommand for GetReferences {
     type Response = Vec<Location>;
     type LspRequest = lsp2::request::References;
@@ -836,17 +836,19 @@ impl LspCommand for GetReferences {
                     })?
                     .await?;
 
-                target_buffer_handle.update(&mut cx, |target_buffer, cx| {
-                    let target_start = target_buffer
-                        .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
-                    let target_end = target_buffer
-                        .clip_point_utf16(point_from_lsp(lsp_location.range.end), Bias::Left);
-                    references.push(Location {
-                        buffer: target_buffer_handle,
-                        range: target_buffer.anchor_after(target_start)
-                            ..target_buffer.anchor_before(target_end),
-                    });
-                })?;
+                target_buffer_handle
+                    .clone()
+                    .update(&mut cx, |target_buffer, _| {
+                        let target_start = target_buffer
+                            .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
+                        let target_end = target_buffer
+                            .clip_point_utf16(point_from_lsp(lsp_location.range.end), Bias::Left);
+                        references.push(Location {
+                            buffer: target_buffer_handle,
+                            range: target_buffer.anchor_after(target_start)
+                                ..target_buffer.anchor_before(target_end),
+                        });
+                    })?;
             }
         }
 
@@ -943,7 +945,7 @@ impl LspCommand for GetReferences {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl LspCommand for GetDocumentHighlights {
     type Response = Vec<DocumentHighlight>;
     type LspRequest = lsp2::request::DocumentHighlightRequest;
@@ -978,7 +980,7 @@ impl LspCommand for GetDocumentHighlights {
         _: Handle<Project>,
         buffer: Handle<Buffer>,
         _: LanguageServerId,
-        cx: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<Vec<DocumentHighlight>> {
         buffer.update(&mut cx, |buffer, _| {
             let mut lsp_highlights = lsp_highlights.unwrap_or_default();
@@ -1094,7 +1096,7 @@ impl LspCommand for GetDocumentHighlights {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl LspCommand for GetHover {
     type Response = Option<Hover>;
     type LspRequest = lsp2::request::HoverRequest;
@@ -1130,7 +1132,7 @@ impl LspCommand for GetHover {
             return Ok(None);
         };
 
-        let (language, range) = buffer.update(&mut cx, |buffer, cx| {
+        let (language, range) = buffer.update(&mut cx, |buffer, _| {
             (
                 buffer.language().cloned(),
                 hover.range.map(|range| {
@@ -1272,7 +1274,7 @@ impl LspCommand for GetHover {
         message: proto::GetHoverResponse,
         _: Handle<Project>,
         buffer: Handle<Buffer>,
-        cx: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<Self::Response> {
         let contents: Vec<_> = message
             .contents
@@ -1312,7 +1314,7 @@ impl LspCommand for GetHover {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl LspCommand for GetCompletions {
     type Response = Vec<Completion>;
     type LspRequest = lsp2::request::Completion;
@@ -1342,7 +1344,7 @@ impl LspCommand for GetCompletions {
         _: Handle<Project>,
         buffer: Handle<Buffer>,
         server_id: LanguageServerId,
-        cx: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<Vec<Completion>> {
         let mut response_list = None;
         let completions = if let Some(completions) = completions {
@@ -1543,7 +1545,7 @@ impl LspCommand for GetCompletions {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl LspCommand for GetCodeActions {
     type Response = Vec<CodeAction>;
     type LspRequest = lsp2::request::CodeActionRequest;
@@ -1682,7 +1684,7 @@ impl LspCommand for GetCodeActions {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl LspCommand for OnTypeFormatting {
     type Response = Option<Transaction>;
     type LspRequest = lsp2::request::OnTypeFormatting;
@@ -2190,7 +2192,7 @@ impl InlayHints {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl LspCommand for InlayHints {
     type Response = Vec<InlayHint>;
     type LspRequest = lsp2::InlayHintRequest;
@@ -2253,7 +2255,7 @@ impl LspCommand for InlayHints {
             };
 
             let buffer = buffer.clone();
-            cx.spawn(|mut cx| async move {
+            cx.spawn(move |mut cx| async move {
                 InlayHints::lsp_to_project_hint(
                     lsp_hint,
                     &buffer,

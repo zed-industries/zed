@@ -63,7 +63,7 @@ members = [
     "crates/prettier",
     "crates/prettier2",
     "crates/project",
-    # "crates/project2",
+    "crates/project2",
     "crates/project_panel",
     "crates/project_symbols",
     "crates/recent_projects",
