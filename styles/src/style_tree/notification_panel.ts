@@ -1,11 +1,21 @@
 import { background, border, text } from "./components"
 import { icon_button } from "../component/icon_button"
-import { useTheme } from "../theme"
-import { interactive } from "../element"
+import { useTheme, with_opacity } from "../theme"
+import { text_button } from "../component"
 
 export default function (): any {
     const theme = useTheme()
     const layer = theme.middle
+
+    const notification_text = {
+        padding: { top: 4, bottom: 4 },
+        ...text(layer, "sans", "base"),
+    }
+
+    const notification_read_text_color = with_opacity(
+        theme.middle.base.default.foreground,
+        0.6
+    )
 
     return {
         background: background(layer),
@@ -31,34 +41,19 @@ export default function (): any {
             },
         },
         read_text: {
-            padding: { top: 4, bottom: 4 },
-            ...text(layer, "sans", "disabled"),
+            ...notification_text,
+            color: notification_read_text_color,
         },
-        unread_text: {
-            padding: { top: 4, bottom: 4 },
-            ...text(layer, "sans", "base"),
-        },
-        button: interactive({
-            base: {
-                ...text(theme.lowest, "sans", "on", { size: "xs" }),
-                background: background(theme.lowest, "on"),
-                padding: 4,
-                corner_radius: 6,
-                margin: { left: 6 },
-            },
-
-            state: {
-                hovered: {
-                    background: background(theme.lowest, "on", "hovered"),
-                },
-            },
+        unread_text: notification_text,
+        button: text_button({
+            variant: "ghost",
         }),
         timestamp: text(layer, "sans", "base", "disabled"),
         avatar_container: {
             padding: {
-                right: 6,
+                right: 8,
                 left: 2,
-                top: 2,
+                top: 4,
                 bottom: 2,
             },
         },
