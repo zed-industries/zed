@@ -6542,7 +6542,7 @@ impl Editor {
                     {
                         if selections
                             .iter()
-                            .find(|selection| selection.equals(&offset_range))
+                            .find(|selection| selection.range().overlaps(&offset_range))
                             .is_none()
                         {
                             next_selected_range = Some(offset_range);
