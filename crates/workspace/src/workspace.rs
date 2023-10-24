@@ -4238,6 +4238,10 @@ async fn join_channel_internal(
         })
         .await?;
 
+    let Some(room) = room else {
+        return anyhow::Ok(true);
+    };
+
     room.update(cx, |room, _| room.room_update_completed())
         .await;
 
