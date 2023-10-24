@@ -4555,11 +4555,7 @@ async fn test_prettier_formatting_buffer(
         .insert_tree(&directory, json!({ "a.rs": buffer_text }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project(&directory, cx_a).await;
-    let prettier_format_suffix = project_a.update(cx_a, |project, _| {
-        let suffix = project.enable_test_prettier(&[test_plugin]);
-        project.languages().add(language);
-        suffix
-    });
+    let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
     let buffer_a = cx_a
         .background()
         .spawn(project_a.update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))

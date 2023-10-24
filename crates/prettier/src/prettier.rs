@@ -44,6 +44,9 @@ pub const PRETTIER_SERVER_JS: &str = include_str!("./prettier_server.js");
 const PRETTIER_PACKAGE_NAME: &str = "prettier";
 const TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME: &str = "prettier-plugin-tailwindcss";
 
+#[cfg(any(test, feature = "test-support"))]
+pub const FORMAT_SUFFIX: &str = "\nformatted by test prettier";
+
 impl Prettier {
     pub const CONFIG_FILE_NAMES: &'static [&'static str] = &[
         ".prettierrc",
@@ -59,9 +62,6 @@ impl Prettier {
         "prettier.config.cjs",
         ".editorconfig",
     ];
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub const FORMAT_SUFFIX: &str = "\nformatted by test prettier";
 
     pub async fn locate(
         starting_path: Option<LocateStart>,
@@ -349,7 +349,7 @@ impl Prettier {
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => Ok(buffer
                 .read_with(cx, |buffer, cx| {
-                    let formatted_text = buffer.text() + Self::FORMAT_SUFFIX;
+                    let formatted_text = buffer.text() + FORMAT_SUFFIX;
                     buffer.diff(formatted_text, cx)
                 })
                 .await),
