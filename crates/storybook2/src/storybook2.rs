@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use clap::Parser;
 use gpui3::{
-    div, px, size, view, AnyView, BorrowAppContext, Bounds, Context, Element, ViewContext,
-    WindowBounds, WindowOptions,
+    div, px, size, view, AnyView, AppContext, AssetSource, BorrowAppContext, Bounds, Context,
+    Element, ViewContext, WindowBounds, WindowOptions,
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;
@@ -54,6 +54,8 @@ fn main() {
 
     let asset_source = Arc::new(Assets);
     gpui3::App::production(asset_source).run(move |cx| {
+        load_embedded_fonts(cx);
+
         let selector =
             story_selector.unwrap_or(StorySelector::Component(ComponentStory::Workspace));
 
@@ -112,15 +114,16 @@ impl StoryWrapper {
     }
 }
 
-// fn load_embedded_fonts(platform: &dyn gpui2::Platform) {
-//     let font_paths = Assets.list("fonts");
-//     let mut embedded_fonts = Vec::new();
-//     for font_path in &font_paths {
-//         if font_path.ends_with(".ttf") {
-//             let font_path = &*font_path;
-//             let font_bytes = Assets.load(font_path).unwrap().to_vec();
-//             embedded_fonts.push(Arc::from(font_bytes));
-//         }
-//     }
-//     platform.fonts().add_fonts(&embedded_fonts).unwrap();
-// }
+fn load_embedded_fonts(cx: &AppContext) {
+    let font_paths = Assets.list(&"fonts".into()).unwrap();
+    let mut embedded_fonts = Vec::new();
+    for font_path in &font_paths {
+        if font_path.ends_with(".ttf") {
+            let font_path = &*font_path;
+            let font_bytes = Assets.load(font_path).unwrap().to_vec();
+            embedded_fonts.push(Arc::from(font_bytes));
+        }
+    }
+
+    cx.text_system().add_fonts(&embedded_fonts).unwrap();
+}

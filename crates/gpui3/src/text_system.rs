@@ -55,6 +55,10 @@ impl TextSystem {
         }
     }
 
+    pub fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
+        self.platform_text_system.add_fonts(fonts)
+    }
+
     pub fn font_id(&self, font: &Font) -> Result<FontId> {
         let font_id = self.font_ids_by_font.read().get(font).copied();
         if let Some(font_id) = font_id {
