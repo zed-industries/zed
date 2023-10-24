@@ -657,6 +657,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "audio2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.28",
+ "gpui2",
+ "log",
+ "parking_lot 0.11.2",
+ "rodio",
+ "util",
+]
+
+[[package]]
 name = "auto_update"
 version = "0.1.0"
 dependencies = [
