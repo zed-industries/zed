@@ -5974,61 +5974,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "project2"
-version = "0.1.0"
-dependencies = [
- "aho-corasick",
- "anyhow",
- "async-trait",
- "backtrace",
- "client2",
- "clock",
- "collections",
- "copilot2",
- "ctor",
- "db2",
- "env_logger 0.9.3",
- "fs",
- "fsevent",
- "futures 0.3.28",
- "fuzzy2",
- "git",
- "git2",
- "globset",
- "gpui2",
- "ignore",
- "itertools 0.10.5",
- "language2",
- "lazy_static",
- "log",
- "lsp2",
- "node_runtime",
- "parking_lot 0.11.2",
- "postage",
- "prettier2",
- "pretty_assertions",
- "rand 0.8.5",
- "regex",
- "rpc",
- "schemars",
- "serde",
- "serde_derive",
- "serde_json",
- "settings2",
- "sha2 0.10.7",
- "similar",
- "smol",
- "sum_tree",
- "tempdir",
- "terminal",
- "text",
- "thiserror",
- "toml 0.5.11",
- "unindent",
- "util",
-]
-
-[[package]]
 name = "project_panel"
 version = "0.1.0"
 dependencies = [
@@ -8390,35 +8335,6 @@ dependencies = [
  "smallvec",
  "smol",
  "theme",
- "thiserror",
- "util",
-]
-
-[[package]]
-name = "terminal2"
-version = "0.1.0"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "db2",
- "dirs 4.0.0",
- "futures 0.3.28",
- "gpui2",
- "itertools 0.10.5",
- "lazy_static",
- "libc",
- "mio-extras",
- "ordered-float 2.10.0",
- "procinfo",
- "rand 0.8.5",
- "schemars",
- "serde",
- "serde_derive",
- "settings2",
- "shellexpand",
- "smallvec",
- "smol",
- "theme2",
  "thiserror",
  "util",
 ]

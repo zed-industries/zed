@@ -195,7 +195,7 @@ impl Prettier {
     ) -> anyhow::Result<Self> {
         use lsp2::LanguageServerBinary;
 
-        let executor = cx.executor();
+        let executor = cx.executor().clone();
         anyhow::ensure!(
             prettier_dir.is_dir(),
             "Prettier dir {prettier_dir:?} is not a directory"
