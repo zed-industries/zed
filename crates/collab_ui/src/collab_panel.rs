@@ -2143,7 +2143,7 @@ impl CollabPanel {
         .on_up(MouseButton::Left, move |_, this, cx| {
             if let Some((_, dragged_channel)) = cx
                 .global::<DragAndDrop<Workspace>>()
-                .currently_dragged::<Arc<Channel>>(cx.window())
+                .currently_dragged::<Channel>(cx.window())
             {
                 this.channel_store
                     .update(cx, |channel_store, cx| {
@@ -2155,20 +2155,18 @@ impl CollabPanel {
         .on_move({
             let channel = channel.clone();
             move |_, this, cx| {
-                if let Some((_, dragged_channel_id)) = cx
+                if let Some((_, dragged_channel)) = cx
                     .global::<DragAndDrop<Workspace>>()
-                    .currently_dragged::<ChannelId>(cx.window())
+                    .currently_dragged::<Channel>(cx.window())
                 {
-                    if this.drag_target_channel != Some(*dragged_channel_id) {
+                    if channel.id != dragged_channel.id {
                         this.drag_target_channel = Some(channel.id);
-                    } else {
-                        this.drag_target_channel = None;
                     }
                     cx.notify()
                 }
             }
         })
-        .as_draggable(
+        .as_draggable::<_, Channel>(
             channel.clone(),
             move |_, channel, cx: &mut ViewContext<Workspace>| {
                 let theme = &theme::current(cx).collab_panel;
