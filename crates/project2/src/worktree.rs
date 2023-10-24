@@ -358,7 +358,8 @@ impl Worktree {
                             }
                         }
                         cx.notify();
-                    });
+                    })
+                    .ok();
                 }
             })
             .detach();
@@ -962,7 +963,7 @@ impl LocalWorktree {
                     if has_changed_file {
                         buffer.file_updated(new_file, cx).detach();
                     }
-                });
+                })?;
             }
 
             if let Some(project_id) = project_id {
@@ -977,7 +978,7 @@ impl LocalWorktree {
 
             buffer_handle.update(&mut cx, |buffer, cx| {
                 buffer.did_save(version.clone(), fingerprint, entry.mtime, cx);
-            });
+            })?;
 
             Ok(())
         })
@@ -1453,7 +1454,7 @@ impl RemoteWorktree {
                 let mut snapshot = worktree.background_snapshot.lock();
                 snapshot.delete_entry(id);
                 worktree.snapshot = snapshot.clone();
-            });
+            })?;
             Ok(())
         })
     }

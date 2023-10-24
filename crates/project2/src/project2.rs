@@ -800,7 +800,7 @@ impl Project {
             this.set_collaborators_from_proto(response.payload.collaborators, cx)?;
             this.client_subscriptions.push(subscription);
             anyhow::Ok(())
-        })?;
+        })??;
 
         Ok(this)
     }
@@ -1832,7 +1832,8 @@ impl Project {
                         (worktree.read(cx).id(), language_server_name),
                         language_server_id,
                     );
-                });
+                })
+                .ok();
                 (worktree, PathBuf::new())
             };
 
@@ -1915,7 +1916,7 @@ impl Project {
             if let Some(old_file) = &old_file {
                 this.update(&mut cx, |this, cx| {
                     this.unregister_buffer_from_language_servers(&buffer, old_file, cx);
-                });
+                })?;
             }
             let (worktree, path) = worktree_task.await?;
             worktree
@@ -1930,7 +1931,7 @@ impl Project {
             this.update(&mut cx, |this, cx| {
                 this.detect_language_for_buffer(&buffer, cx);
                 this.register_buffer_with_language_servers(&buffer, cx);
-            });
+            })?;
             Ok(())
         })
     }
@@ -2241,7 +2242,7 @@ impl Project {
                             is_local,
                             &mut cx,
                         )
-                        .await;
+                        .await?;
 
                         this.update(&mut cx, |this, _| {
                             if let Some(project_id) = this.remote_id() {
@@ -2253,7 +2254,7 @@ impl Project {
                                     })
                                     .log_err();
                             }
-                        });
+                        })?;
                     }
                 }
             }
@@ -2265,7 +2266,7 @@ impl Project {
                 is_local,
                 &mut cx,
             )
-            .await;
+            .await?;
         }
 
         Ok(())
@@ -2446,7 +2447,7 @@ impl Project {
                                                 },
                                             )
                                             .ok();
-                                    });
+                                    }).ok();
                                 }
                             });
                             *simulate_disk_based_diagnostics_completion = Some(task);
@@ -2587,46 +2588,54 @@ impl Project {
                     let reload_count = languages.reload_count();
                     if reload_count > prev_reload_count {
                         prev_reload_count = reload_count;
-                        project.update(&mut cx, |this, cx| {
-                            let buffers = this
-                                .opened_buffers
-                                .values()
-                                .filter_map(|b| b.upgrade())
-                                .collect::<Vec<_>>();
-                            for buffer in buffers {
-                                if let Some(f) = File::from_dyn(buffer.read(cx).file()).cloned() {
-                                    this.unregister_buffer_from_language_servers(&buffer, &f, cx);
-                                    buffer.update(cx, |buffer, cx| buffer.set_language(None, cx));
+                        project
+                            .update(&mut cx, |this, cx| {
+                                let buffers = this
+                                    .opened_buffers
+                                    .values()
+                                    .filter_map(|b| b.upgrade())
+                                    .collect::<Vec<_>>();
+                                for buffer in buffers {
+                                    if let Some(f) = File::from_dyn(buffer.read(cx).file()).cloned()
+                                    {
+                                        this.unregister_buffer_from_language_servers(
+                                            &buffer, &f, cx,
+                                        );
+                                        buffer
+                                            .update(cx, |buffer, cx| buffer.set_language(None, cx));
+                                    }
                                 }
-                            }
-                        });
+                            })
+                            .ok();
                     }
 
-                    project.update(&mut cx, |project, cx| {
-                        let mut plain_text_buffers = Vec::new();
-                        let mut buffers_with_unknown_injections = Vec::new();
-                        for buffer in project.opened_buffers.values() {
-                            if let Some(handle) = buffer.upgrade() {
-                                let buffer = &handle.read(cx);
-                                if buffer.language().is_none()
-                                    || buffer.language() == Some(&*language2::PLAIN_TEXT)
-                                {
-                                    plain_text_buffers.push(handle);
-                                } else if buffer.contains_unknown_injections() {
-                                    buffers_with_unknown_injections.push(handle);
+                    project
+                        .update(&mut cx, |project, cx| {
+                            let mut plain_text_buffers = Vec::new();
+                            let mut buffers_with_unknown_injections = Vec::new();
+                            for buffer in project.opened_buffers.values() {
+                                if let Some(handle) = buffer.upgrade() {
+                                    let buffer = &handle.read(cx);
+                                    if buffer.language().is_none()
+                                        || buffer.language() == Some(&*language2::PLAIN_TEXT)
+                                    {
+                                        plain_text_buffers.push(handle);
+                                    } else if buffer.contains_unknown_injections() {
+                                        buffers_with_unknown_injections.push(handle);
+                                    }
                                 }
                             }
-                        }
 
-                        for buffer in plain_text_buffers {
-                            project.detect_language_for_buffer(&buffer, cx);
-                            project.register_buffer_with_language_servers(&buffer, cx);
-                        }
+                            for buffer in plain_text_buffers {
+                                project.detect_language_for_buffer(&buffer, cx);
+                                project.register_buffer_with_language_servers(&buffer, cx);
+                            }
 
-                        for buffer in buffers_with_unknown_injections {
-                            buffer.update(cx, |buffer, cx| buffer.reparse(cx));
-                        }
-                    });
+                            for buffer in buffers_with_unknown_injections {
+                                buffer.update(cx, |buffer, cx| buffer.reparse(cx));
+                            }
+                        })
+                        .ok();
                 }
             }
         })
@@ -2834,7 +2843,8 @@ impl Project {
                                         installation_test_binary,
                                         cx,
                                     )
-                                });
+                                })
+                                .ok();
                             }
                         }
 
@@ -2948,7 +2958,7 @@ impl Project {
                 key,
                 cx,
             )
-        })?;
+        })??;
 
         Ok(Some(language_server))
     }
@@ -2983,7 +2993,8 @@ impl Project {
                                 cx,
                             )
                             .log_err();
-                        });
+                        })
+                        .ok();
                     }
                 }
             })
@@ -3111,7 +3122,8 @@ impl Project {
                             disk_based_diagnostics_progress_token.clone(),
                             cx,
                         );
-                    });
+                    })
+                    .ok();
                 }
             })
             .detach();
@@ -3321,7 +3333,8 @@ impl Project {
                     this.update(&mut cx, |this, cx| {
                         this.language_server_statuses.remove(&server_id);
                         cx.notify();
-                    });
+                    })
+                    .ok();
                 }
 
                 (root_path, orphaned_worktrees)
@@ -3411,7 +3424,8 @@ impl Project {
                         }
                     }
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -3757,7 +3771,7 @@ impl Project {
                 this.last_workspace_edits_by_language_server
                     .insert(server_id, transaction);
             }
-        });
+        })?;
         Ok(lsp2::ApplyWorkspaceEditResponse {
             applied: true,
             failed_change: None,
@@ -4061,7 +4075,7 @@ impl Project {
                         }
                         project_transaction.0.insert(cx.handle(), transaction);
                     }
-                });
+                })?;
             }
 
             Ok(project_transaction)
@@ -4097,7 +4111,7 @@ impl Project {
                         this.buffers_being_formatted
                             .insert(buffer.read(cx).remote_id())
                     });
-                });
+                })?;
 
                 let _cleanup = defer({
                     let this = this.clone();
@@ -4109,7 +4123,7 @@ impl Project {
                                 this.buffers_being_formatted
                                     .remove(&buffer.read(cx).remote_id());
                             }
-                        });
+                        }).ok();
                     }
                 });
 
@@ -4305,7 +4319,7 @@ impl Project {
                             }
                             project_transaction.0.insert(buffer.clone(), transaction);
                         }
-                    });
+                    })?;
                 }
 
                 Ok(project_transaction)
@@ -4779,7 +4793,7 @@ impl Project {
                             cx,
                         ));
                     }
-                });
+                })?;
 
                 let mut completions = Vec::new();
                 for task in tasks {
@@ -4896,7 +4910,7 @@ impl Project {
                     if push_to_history {
                         buffer_handle.update(&mut cx, |buffer, _| {
                             buffer.push_transaction(transaction.clone(), Instant::now());
-                        });
+                        })?;
                     }
                     Ok(Some(transaction))
                 } else {
@@ -4985,7 +4999,7 @@ impl Project {
                     this.update(&mut cx, |this, _| {
                         this.last_workspace_edits_by_language_server
                             .remove(&lang_server.server_id());
-                    });
+                    })?;
 
                     let result = lang_server
                         .request::<lsp2::request::ExecuteCommand>(lsp2::ExecuteCommandParams {
@@ -5046,7 +5060,7 @@ impl Project {
                 this.update(&mut cx, |this, cx| {
                     this.buffers_being_formatted
                         .insert(buffer.read(cx).remote_id())
-                });
+                })?;
 
                 let _cleanup = defer({
                     let this = this.clone();
@@ -5056,7 +5070,8 @@ impl Project {
                         this.update(&mut cx, |this, cx| {
                             this.buffers_being_formatted
                                 .remove(&closure_buffer.read(cx).remote_id());
-                        });
+                        })
+                        .ok();
                     }
                 });
 
@@ -6022,10 +6037,11 @@ impl Project {
 
                         project.update(&mut cx, |project, _| {
                             project.loading_local_worktrees.remove(&path);
-                        });
+                        })?;
 
                         let worktree = worktree?;
-                        project.update(&mut cx, |project, cx| project.add_worktree(&worktree, cx));
+                        project
+                            .update(&mut cx, |project, cx| project.add_worktree(&worktree, cx))?;
                         Ok(worktree)
                     }
                     .map_err(Arc::new)
@@ -6445,7 +6461,8 @@ impl Project {
                         }
                     }
                 });
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -6649,7 +6666,7 @@ impl Project {
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);
             cx.notify();
-        });
+        })?;
 
         Ok(())
     }
@@ -6879,7 +6896,7 @@ impl Project {
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
 
-        this.update(&mut cx, |_, cx| cx.emit(Event::DeletedEntry(entry_id)));
+        this.update(&mut cx, |_, cx| cx.emit(Event::DeletedEntry(entry_id)))?;
 
         let worktree = this.update(&mut cx, |this, cx| {
             this.worktree_for_entry(entry_id, cx)
@@ -6975,7 +6992,7 @@ impl Project {
                 },
             );
             cx.notify();
-        });
+        })?;
         Ok(())
     }
 
@@ -7346,7 +7363,7 @@ impl Project {
                         .detach();
                 }
             }
-        });
+        })?;
 
         Ok(response)
     }
@@ -7803,7 +7820,7 @@ impl Project {
                 if push_to_history {
                     buffer.update(&mut cx, |buffer, _| {
                         buffer.push_transaction(transaction.clone(), Instant::now());
-                    });
+                    })?;
                 }
             }
 
@@ -8524,7 +8541,8 @@ impl Project {
                     project
                         .prettier_instances
                         .insert((worktree_id, prettier_dir), new_prettier_task.clone());
-                });
+                })
+                .ok();
                 Some(new_prettier_task)
             })
         } else if self.remote_id().is_some() {
