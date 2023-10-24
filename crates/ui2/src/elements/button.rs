@@ -129,7 +129,7 @@ impl<S: 'static + Send + Sync> Button<S> {
         if self.disabled {
             LabelColor::Disabled
         } else {
-            self.label_color()
+            Default::default()
         }
     }
 
@@ -137,7 +137,7 @@ impl<S: 'static + Send + Sync> Button<S> {
         if self.disabled {
             IconColor::Disabled
         } else {
-            self.icon_color()
+            Default::default()
         }
     }
 
