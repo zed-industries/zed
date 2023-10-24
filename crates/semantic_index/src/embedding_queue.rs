@@ -41,6 +41,7 @@ pub struct EmbeddingQueue {
     pending_batch_token_count: usize,
     finished_files_tx: channel::Sender<FileToEmbed>,
     finished_files_rx: channel::Receiver<FileToEmbed>,
+    api_key: Option<String>,
 }
 
 #[derive(Clone)]
@@ -50,7 +51,11 @@ pub struct FileFragmentToEmbed {
 }
 
 impl EmbeddingQueue {
-    pub fn new(embedding_provider: Arc<dyn EmbeddingProvider>, executor: Arc<Background>) -> Self {
+    pub fn new(
+        embedding_provider: Arc<dyn EmbeddingProvider>,
+        executor: Arc<Background>,
+        api_key: Option<String>,
+    ) -> Self {
         let (finished_files_tx, finished_files_rx) = channel::unbounded();
         Self {
             embedding_provider,
@@ -59,7 +64,12 @@ impl EmbeddingQueue {
             pending_batch_token_count: 0,
             finished_files_tx,
             finished_files_rx,
+            api_key,
         }
+    }
+
+    pub fn set_api_key(&mut self, api_key: Option<String>) {
+        self.api_key = api_key
     }
 
     pub fn push(&mut self, file: FileToEmbed) {
@@ -108,6 +118,7 @@ impl EmbeddingQueue {
 
         let finished_files_tx = self.finished_files_tx.clone();
         let embedding_provider = self.embedding_provider.clone();
+        let api_key = self.api_key.clone();
 
         self.executor
             .spawn(async move {
@@ -132,7 +143,7 @@ impl EmbeddingQueue {
                     return;
                 };
 
-                match embedding_provider.embed_batch(spans).await {
+                match embedding_provider.embed_batch(spans, api_key).await {
                     Ok(embeddings) => {
                         let mut embeddings = embeddings.into_iter();
                         for fragment in batch {
