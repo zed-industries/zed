@@ -86,6 +86,8 @@ use util::{
 };
 
 pub use fs::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use worktree::*;
 
 pub trait Item {
@@ -831,16 +833,6 @@ impl Project {
                 .await;
         }
         project
-    }
-
-    /// Enables a prettier mock that avoids interacting with node runtime, prettier LSP wrapper, or any real file changes.
-    /// Instead, if appends the suffix to every input, this suffix is returned by this method.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn enable_test_prettier(&mut self, plugins: &[&'static str]) -> &'static str {
-        self.node = Some(node_runtime::FakeNodeRuntime::with_prettier_support(
-            plugins,
-        ));
-        Prettier::FORMAT_SUFFIX
     }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
