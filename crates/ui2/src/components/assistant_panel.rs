@@ -45,7 +45,7 @@ impl<S: 'static + Send + Sync> AssistantPanel<S> {
                         .child(
                             div()
                                 .flex()
-                                .child(IconButton::new(Icon::Menu, "menu"))
+                                .child(IconButton::new("menu", Icon::Menu))
                                 .child(Label::new("New Conversation")),
                         )
                         .child(
@@ -53,11 +53,11 @@ impl<S: 'static + Send + Sync> AssistantPanel<S> {
                                 .flex()
                                 .items_center()
                                 .gap_px()
-                                .child(IconButton::new(Icon::SplitMessage, "split_message"))
-                                .child(IconButton::new(Icon::Quote, "quote"))
-                                .child(IconButton::new(Icon::MagicWand, "magic_wand"))
-                                .child(IconButton::new(Icon::Plus, "plus"))
-                                .child(IconButton::new(Icon::Maximize, "maximize")),
+                                .child(IconButton::new("split_message", Icon::SplitMessage))
+                                .child(IconButton::new("quote", Icon::Quote))
+                                .child(IconButton::new("magic_wand", Icon::MagicWand))
+                                .child(IconButton::new("plus", Icon::Plus))
+                                .child(IconButton::new("maximize", Icon::Maximize)),
                         ),
                 )
                 // Chat Body

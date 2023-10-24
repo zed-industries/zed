@@ -129,7 +129,7 @@ impl TitleBar {
                             .child(Button::new("nate/gpui2-ui-components")),
                     )
                     .children(player_list.map(|p| PlayerStack::new(p)))
-                    .child(IconButton::new(Icon::Plus, "plus")),
+                    .child(IconButton::new("plus", Icon::Plus)),
             )
             .child(
                 div()
@@ -141,8 +141,8 @@ impl TitleBar {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(IconButton::new(Icon::FolderX, "folder_x"))
-                            .child(IconButton::new(Icon::Exit, "exit")),
+                            .child(IconButton::new("folder_x", Icon::FolderX))
+                            .child(IconButton::new("exit", Icon::Exit)),
                     )
                     .child(ToolDivider::new())
                     .child(
@@ -152,17 +152,17 @@ impl TitleBar {
                             .items_center()
                             .gap_1()
                             .child(
-                                IconButton::<TitleBar>::new(Icon::Mic, "toggle_mic_status")
+                                IconButton::<TitleBar>::new("toggle_mic_status", Icon::Mic)
                                     .when(self.is_mic_muted(), |this| this.color(IconColor::Error))
                                     .on_click(|title_bar, cx| title_bar.toggle_mic_status(cx)),
                             )
                             .child(
-                                IconButton::<TitleBar>::new(Icon::AudioOn, "toggle_deafened")
+                                IconButton::<TitleBar>::new("toggle_deafened", Icon::AudioOn)
                                     .when(self.is_deafened, |this| this.color(IconColor::Error))
                                     .on_click(|title_bar, cx| title_bar.toggle_deafened(cx)),
                             )
                             .child(
-                                IconButton::<TitleBar>::new(Icon::Screen, "toggle_screen_share")
+                                IconButton::<TitleBar>::new("toggle_screen_share", Icon::Screen)
                                     .when(
                                         self.screen_share_status == ScreenShareStatus::Shared,
                                         |this| this.color(IconColor::Accent),

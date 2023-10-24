@@ -45,8 +45,8 @@ impl<S: 'static + Send + Sync> ChatPanel<S> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(IconButton::new(Icon::File, "file"))
-                            .child(IconButton::new(Icon::AudioOn, "audio_on")),
+                            .child(IconButton::new("file", Icon::File))
+                            .child(IconButton::new("audio_on", Icon::AudioOn)),
                     ),
             )
             .child(

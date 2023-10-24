@@ -130,9 +130,9 @@ mod stories {
                             ],
                         ))
                         .right_items(vec![
-                            IconButton::new(Icon::InlayHint, "toggle_inlay_hints"),
-                            IconButton::new(Icon::MagnifyingGlass, "buffer_search"),
-                            IconButton::new(Icon::MagicWand, "inline_assist"),
+                            IconButton::new("toggle_inlay_hints", Icon::InlayHint),
+                            IconButton::new("buffer_search", Icon::MagnifyingGlass),
+                            IconButton::new("inline_assist", Icon::MagicWand),
                         ]),
                 )
         }

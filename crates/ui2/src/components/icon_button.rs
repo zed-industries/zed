@@ -28,7 +28,7 @@ pub struct IconButton<S: 'static + Send + Sync> {
 }
 
 impl<S: 'static + Send + Sync> IconButton<S> {
-    pub fn new(icon: Icon, id: impl Into<ElementId>) -> Self {
+    pub fn new(id: impl Into<ElementId>, icon: Icon) -> Self {
         Self {
             state_type: PhantomData,
             id: id.into(),
