@@ -8540,7 +8540,7 @@ impl Project {
                 let prettier_wrapper_path = default_prettier_dir.join(prettier::PRETTIER_SERVER_FILE);
                 // method creates parent directory if it doesn't exist
                 fs.save(&prettier_wrapper_path, &text::Rope::from(prettier::PRETTIER_SERVER_JS), text::LineEnding::Unix).await
-                .with_context(|| format!("writing {prettier::PRETTIER_SERVER_FILE} file at {prettier_wrapper_path:?}"))?;
+                .with_context(|| format!("writing {} file at {prettier_wrapper_path:?}", prettier::PRETTIER_SERVER_FILE))?;
 
                 let packages_to_versions = future::try_join_all(
                     prettier_plugins
