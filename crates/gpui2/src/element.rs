@@ -1,11 +1,11 @@
 use crate::{BorrowWindow, Bounds, ElementId, LayoutId, Pixels, ViewContext};
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
-use std::mem;
+use std::{any::Any, mem};
 
-pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
-    type ViewState: 'static + Send + Sync;
-    type ElementState: 'static + Send + Sync;
+pub trait Element: IntoAnyElement<Self::ViewState> {
+    type ViewState: 'static;
+    type ElementState: 'static;
 
     fn id(&self) -> Option<ElementId>;
 
@@ -15,6 +15,8 @@ pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> Self::ElementState;
+    // where
+    //     Self::ViewState: Any + Send + Sync;
 
     fn layout(
         &mut self,
@@ -22,6 +24,8 @@ pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> LayoutId;
+    // where
+    //     Self::ViewState: Any + Send + Sync;
 
     fn paint(
         &mut self,
@@ -30,6 +34,9 @@ pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     );
+
+    // where
+    //     Self::ViewState: Any + Send + Sync;
 }
 
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
@@ -59,7 +66,7 @@ pub trait ParentElement: Element {
     }
 }
 
-trait ElementObject<V>: 'static + Send + Sync {
+trait ElementObject<V> {
     fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
     fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId;
     fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
@@ -99,6 +106,8 @@ impl<E: Element> RenderedElement<E> {
 impl<E> ElementObject<E::ViewState> for RenderedElement<E>
 where
     E: Element,
+    // E::ViewState: Any + Send + Sync,
+    E::ElementState: Any + Send + Sync,
 {
     fn initialize(&mut self, view_state: &mut E::ViewState, cx: &mut ViewContext<E::ViewState>) {
         let frame_state = if let Some(id) = self.element.id() {
@@ -171,10 +180,15 @@ where
     }
 }
 
-pub struct AnyElement<V>(Box<dyn ElementObject<V>>);
+pub struct AnyElement<V>(Box<dyn ElementObject<V> + Send + Sync>);
 
-impl<V: 'static + Send + Sync> AnyElement<V> {
-    pub fn new<E: Element<ViewState = V>>(element: E) -> Self {
+impl<V> AnyElement<V> {
+    pub fn new<E>(element: E) -> Self
+    where
+        E: 'static + Send + Sync,
+        E: Element<ViewState = V>,
+        E::ElementState: Any + Send + Sync,
+    {
         AnyElement(Box::new(RenderedElement::new(element)))
     }
 

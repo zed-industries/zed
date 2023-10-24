@@ -360,8 +360,9 @@ pub trait StatefulInteractive: StatelessInteractive {
     ) -> Self
     where
         Self: Sized,
-        S: 'static + Send + Sync,
-        R: 'static + Fn(&mut Self::ViewState, &mut ViewContext<Self::ViewState>) -> E + Send + Sync,
+        S: Any + Send + Sync,
+        R: Fn(&mut Self::ViewState, &mut ViewContext<Self::ViewState>) -> E,
+        R: 'static + Send + Sync,
         E: Element<ViewState = Self::ViewState>,
     {
         debug_assert!(
@@ -387,7 +388,7 @@ pub trait StatefulInteractive: StatelessInteractive {
     }
 }
 
-pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
+pub trait ElementInteraction<V: 'static>: 'static + Send + Sync {
     fn as_stateless(&self) -> &StatelessInteraction<V>;
     fn as_stateless_mut(&mut self) -> &mut StatelessInteraction<V>;
     fn as_stateful(&self) -> Option<&StatefulInteraction<V>>;
@@ -681,7 +682,7 @@ pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
 }
 
 #[derive(Deref, DerefMut)]
-pub struct StatefulInteraction<V: 'static + Send + Sync> {
+pub struct StatefulInteraction<V> {
     pub id: ElementId,
     #[deref]
     #[deref_mut]
@@ -692,10 +693,7 @@ pub struct StatefulInteraction<V: 'static + Send + Sync> {
     drag_listener: Option<DragListener<V>>,
 }
 
-impl<V> ElementInteraction<V> for StatefulInteraction<V>
-where
-    V: 'static + Send + Sync,
-{
+impl<V: 'static> ElementInteraction<V> for StatefulInteraction<V> {
     fn as_stateful(&self) -> Option<&StatefulInteraction<V>> {
         Some(self)
     }
@@ -713,10 +711,7 @@ where
     }
 }
 
-impl<V> From<ElementId> for StatefulInteraction<V>
-where
-    V: 'static + Send + Sync,
-{
+impl<V> From<ElementId> for StatefulInteraction<V> {
     fn from(id: ElementId) -> Self {
         Self {
             id,
@@ -729,7 +724,7 @@ where
     }
 }
 
-type DropListener<V> = dyn Fn(&mut V, AnyBox, &mut ViewContext<V>) + Send + Sync;
+type DropListener<V> = dyn Fn(&mut V, AnyBox, &mut ViewContext<V>) + 'static + Send + Sync;
 
 pub struct StatelessInteraction<V> {
     pub dispatch_context: DispatchContext,
@@ -745,10 +740,7 @@ pub struct StatelessInteraction<V> {
     drop_listeners: SmallVec<[(TypeId, Arc<DropListener<V>>); 2]>,
 }
 
-impl<V> StatelessInteraction<V>
-where
-    V: 'static + Send + Sync,
-{
+impl<V> StatelessInteraction<V> {
     pub fn into_stateful(self, id: impl Into<ElementId>) -> StatefulInteraction<V> {
         StatefulInteraction {
             id: id.into(),
@@ -840,10 +832,7 @@ impl<V> Default for StatelessInteraction<V> {
     }
 }
 
-impl<V> ElementInteraction<V> for StatelessInteraction<V>
-where
-    V: 'static + Send + Sync,
-{
+impl<V: 'static> ElementInteraction<V> for StatelessInteraction<V> {
     fn as_stateful(&self) -> Option<&StatefulInteraction<V>> {
         None
     }
@@ -918,9 +907,7 @@ pub struct ClickEvent {
 
 pub struct Drag<S, R, V, E>
 where
-    S: 'static + Send + Sync,
     R: Fn(&mut V, &mut ViewContext<V>) -> E,
-    V: 'static + Send + Sync,
     E: Element<ViewState = V>,
 {
     pub state: S,
@@ -930,9 +917,7 @@ where
 
 impl<S, R, V, E> Drag<S, R, V, E>
 where
-    S: 'static + Send + Sync,
-    R: Fn(&mut V, &mut ViewContext<V>) -> E + Send + Sync,
-    V: 'static + Send + Sync,
+    R: Fn(&mut V, &mut ViewContext<V>) -> E,
     E: Element<ViewState = V>,
 {
     pub fn new(state: S, render_drag_handle: R) -> Self {

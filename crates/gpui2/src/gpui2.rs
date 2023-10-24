@@ -66,15 +66,17 @@ use taffy::TaffyLayoutEngine;
 type AnyBox = Box<dyn Any + Send + Sync>;
 
 pub trait Context {
-    type EntityContext<'a, 'w, T: 'static + Send + Sync>;
+    type EntityContext<'a, 'w, T>;
     type Result<T>;
 
-    fn entity<T: Send + Sync + 'static>(
+    fn entity<T>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
-    ) -> Self::Result<Handle<T>>;
+    ) -> Self::Result<Handle<T>>
+    where
+        T: 'static + Send + Sync;
 
-    fn update_entity<T: Send + Sync + 'static, R>(
+    fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
@@ -105,13 +107,16 @@ impl<T> DerefMut for MainThread<T> {
 }
 
 impl<C: Context> Context for MainThread<C> {
-    type EntityContext<'a, 'w, T: 'static + Send + Sync> = MainThread<C::EntityContext<'a, 'w, T>>;
+    type EntityContext<'a, 'w, T> = MainThread<C::EntityContext<'a, 'w, T>>;
     type Result<T> = C::Result<T>;
 
-    fn entity<T: Send + Sync + 'static>(
+    fn entity<T>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
-    ) -> Self::Result<Handle<T>> {
+    ) -> Self::Result<Handle<T>>
+    where
+        T: Any + Send + Sync,
+    {
         self.0.entity(|cx| {
             let cx = unsafe {
                 mem::transmute::<
@@ -123,7 +128,7 @@ impl<C: Context> Context for MainThread<C> {
         })
     }
 
-    fn update_entity<T: Send + Sync + 'static, R>(
+    fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
@@ -153,13 +158,13 @@ pub trait BorrowAppContext {
         result
     }
 
-    fn set_global<T: Send + Sync + 'static>(&mut self, global: T) {
+    fn set_global<G: Any + Send + Sync>(&mut self, global: G) {
         self.app_mut().set_global(global)
     }
 }
 
-pub trait EventEmitter {
-    type Event: Any + Send + Sync + 'static;
+pub trait EventEmitter: 'static {
+    type Event: Any;
 }
 
 pub trait Flatten<T> {

@@ -4,28 +4,29 @@ use crate::{
 };
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
-use std::{any::TypeId, future::Future, marker::PhantomData};
+use std::{
+    any::{Any, TypeId},
+    future::Future,
+};
 
 #[derive(Deref, DerefMut)]
 pub struct ModelContext<'a, T> {
     #[deref]
     #[deref_mut]
     app: Reference<'a, AppContext>,
-    entity_type: PhantomData<T>,
-    entity_id: EntityId,
+    model_state: WeakHandle<T>,
 }
 
-impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
-    pub(crate) fn mutable(app: &'a mut AppContext, entity_id: EntityId) -> Self {
+impl<'a, T: 'static> ModelContext<'a, T> {
+    pub(crate) fn mutable(app: &'a mut AppContext, model_state: WeakHandle<T>) -> Self {
         Self {
             app: Reference::Mutable(app),
-            entity_type: PhantomData,
-            entity_id,
+            model_state,
         }
     }
 
     pub fn entity_id(&self) -> EntityId {
-        self.entity_id
+        self.model_state.entity_id
     }
 
     pub fn handle(&self) -> Handle<T> {
@@ -35,14 +36,17 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
     }
 
     pub fn weak_handle(&self) -> WeakHandle<T> {
-        self.app.entities.weak_handle(self.entity_id)
+        self.model_state.clone()
     }
 
-    pub fn observe<E: Send + Sync + 'static>(
+    pub fn observe<T2: 'static>(
         &mut self,
-        handle: &Handle<E>,
-        on_notify: impl Fn(&mut T, Handle<E>, &mut ModelContext<'_, T>) + Send + Sync + 'static,
-    ) -> Subscription {
+        handle: &Handle<T2>,
+        on_notify: impl Fn(&mut T, Handle<T2>, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+    ) -> Subscription
+    where
+        T: Any + Send + Sync,
+    {
         let this = self.weak_handle();
         let handle = handle.downgrade();
         self.app.observers.insert(
@@ -58,14 +62,17 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         )
     }
 
-    pub fn subscribe<E: EventEmitter + Send + Sync + 'static>(
+    pub fn subscribe<E: 'static + EventEmitter>(
         &mut self,
         handle: &Handle<E>,
         on_event: impl Fn(&mut T, Handle<E>, &E::Event, &mut ModelContext<'_, T>)
             + Send
             + Sync
             + 'static,
-    ) -> Subscription {
+    ) -> Subscription
+    where
+        T: Any + Send + Sync,
+    {
         let this = self.weak_handle();
         let handle = handle.downgrade();
         self.app.event_listeners.insert(
@@ -85,9 +92,12 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
     pub fn on_release(
         &mut self,
         on_release: impl Fn(&mut T, &mut AppContext) + Send + Sync + 'static,
-    ) -> Subscription {
+    ) -> Subscription
+    where
+        T: 'static,
+    {
         self.app.release_listeners.insert(
-            self.entity_id,
+            self.model_state.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
                 on_release(this, cx);
@@ -95,11 +105,14 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         )
     }
 
-    pub fn observe_release<E: Send + Sync + 'static>(
+    pub fn observe_release<E: 'static>(
         &mut self,
         handle: &Handle<E>,
         on_release: impl Fn(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + Sync + 'static,
-    ) -> Subscription {
+    ) -> Subscription
+    where
+        T: Any + Send + Sync,
+    {
         let this = self.weak_handle();
         self.app.release_listeners.insert(
             handle.entity_id,
@@ -115,7 +128,10 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
     pub fn observe_global<G: 'static>(
         &mut self,
         f: impl Fn(&mut T, &mut ModelContext<'_, T>) + Send + Sync + 'static,
-    ) -> Subscription {
+    ) -> Subscription
+    where
+        T: Any + Send + Sync,
+    {
         let handle = self.weak_handle();
         self.global_observers.insert(
             TypeId::of::<G>(),
@@ -129,6 +145,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
     ) -> Subscription
     where
         Fut: 'static + Future<Output = ()> + Send,
+        T: Any + Send + Sync,
     {
         let handle = self.weak_handle();
         self.app.quit_observers.insert(
@@ -146,9 +163,13 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
     }
 
     pub fn notify(&mut self) {
-        if self.app.pending_notifications.insert(self.entity_id) {
+        if self
+            .app
+            .pending_notifications
+            .insert(self.model_state.entity_id)
+        {
             self.app.pending_effects.push_back(Effect::Notify {
-                emitter: self.entity_id,
+                emitter: self.model_state.entity_id,
             });
         }
     }
@@ -158,8 +179,8 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         G: 'static + Send + Sync,
     {
         let mut global = self.app.lease_global::<G>();
-        let result = f(global.as_mut(), self);
-        self.app.restore_global(global);
+        let result = f(&mut global, self);
+        self.app.end_global_lease(global);
         result
     }
 
@@ -168,6 +189,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         f: impl FnOnce(WeakHandle<T>, AsyncAppContext) -> Fut + Send + 'static,
     ) -> Task<R>
     where
+        T: 'static,
         Fut: Future<Output = R> + Send + 'static,
         R: Send + 'static,
     {
@@ -176,27 +198,34 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
     }
 }
 
-impl<'a, T: EventEmitter + Send + Sync + 'static> ModelContext<'a, T> {
+impl<'a, T> ModelContext<'a, T>
+where
+    T: EventEmitter,
+    T::Event: Send + Sync,
+{
     pub fn emit(&mut self, event: T::Event) {
         self.app.pending_effects.push_back(Effect::Emit {
-            emitter: self.entity_id,
+            emitter: self.model_state.entity_id,
             event: Box::new(event),
         });
     }
 }
 
-impl<'a, T: 'static> Context for ModelContext<'a, T> {
-    type EntityContext<'b, 'c, U: Send + Sync + 'static> = ModelContext<'b, U>;
+impl<'a, T> Context for ModelContext<'a, T> {
+    type EntityContext<'b, 'c, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
-    fn entity<U: Send + Sync + 'static>(
+    fn entity<U>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, U>) -> U,
-    ) -> Handle<U> {
+    ) -> Handle<U>
+    where
+        U: 'static + Send + Sync,
+    {
         self.app.entity(build_entity)
     }
 
-    fn update_entity<U: Send + Sync + 'static, R>(
+    fn update_entity<U: 'static, R>(
         &mut self,
         handle: &Handle<U>,
         update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,

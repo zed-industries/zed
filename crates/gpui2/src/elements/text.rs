@@ -7,8 +7,8 @@ use smallvec::SmallVec;
 use std::{marker::PhantomData, sync::Arc};
 use util::ResultExt;
 
-impl<S: 'static + Send + Sync> IntoAnyElement<S> for SharedString {
-    fn into_any(self) -> AnyElement<S> {
+impl<V: 'static> IntoAnyElement<V> for SharedString {
+    fn into_any(self) -> AnyElement<V> {
         Text {
             text: self,
             state_type: PhantomData,
@@ -17,7 +17,7 @@ impl<S: 'static + Send + Sync> IntoAnyElement<S> for SharedString {
     }
 }
 
-impl<V: 'static + Send + Sync> IntoAnyElement<V> for &'static str {
+impl<V: 'static> IntoAnyElement<V> for &'static str {
     fn into_any(self) -> AnyElement<V> {
         Text {
             text: self.into(),
@@ -29,8 +29,8 @@ impl<V: 'static + Send + Sync> IntoAnyElement<V> for &'static str {
 
 // TODO: Figure out how to pass `String` to `child` without this.
 // This impl doesn't exist in the `gpui2` crate.
-impl<S: 'static + Send + Sync> IntoAnyElement<S> for String {
-    fn into_any(self) -> AnyElement<S> {
+impl<V: 'static> IntoAnyElement<V> for String {
+    fn into_any(self) -> AnyElement<V> {
         Text {
             text: self.into(),
             state_type: PhantomData,
@@ -44,13 +44,16 @@ pub struct Text<V> {
     state_type: PhantomData<V>,
 }
 
-impl<V: 'static + Send + Sync> IntoAnyElement<V> for Text<V> {
+unsafe impl<V> Send for Text<V> {}
+unsafe impl<V> Sync for Text<V> {}
+
+impl<V: 'static> IntoAnyElement<V> for Text<V> {
     fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<V: 'static + Send + Sync> Element for Text<V> {
+impl<V: 'static> Element for Text<V> {
     type ViewState = V;
     type ElementState = Arc<Mutex<Option<TextElementState>>>;
 

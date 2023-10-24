@@ -22,7 +22,9 @@ use parking_lot::{Mutex, RwLock};
 use slotmap::SlotMap;
 use std::{
     any::{type_name, Any, TypeId},
+    marker::PhantomData,
     mem,
+    ops::{Deref, DerefMut},
     sync::{atomic::Ordering::SeqCst, Arc, Weak},
     time::Duration,
 };
@@ -178,7 +180,7 @@ pub struct AppContext {
     pub(crate) svg_renderer: SvgRenderer,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
-    pub(crate) globals_by_type: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    pub(crate) globals_by_type: HashMap<TypeId, AnyBox>,
     pub(crate) unit_entity: Handle<()>,
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
@@ -545,19 +547,16 @@ impl AppContext {
             .unwrap()
     }
 
-    pub fn set_global<T: Send + Sync + 'static>(&mut self, global: T) {
-        let global_type = TypeId::of::<T>();
+    pub fn set_global<G: Any + Send + Sync>(&mut self, global: G) {
+        let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, Box::new(global));
     }
 
-    pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
-    where
-        G: 'static + Send + Sync,
-    {
+    pub fn update_global<G: 'static, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R {
         let mut global = self.lease_global::<G>();
-        let result = f(global.as_mut(), self);
-        self.restore_global(global);
+        let result = f(&mut global, self);
+        self.end_global_lease(global);
         result
     }
 
@@ -574,19 +573,19 @@ impl AppContext {
         )
     }
 
-    pub(crate) fn lease_global<G: 'static + Send + Sync>(&mut self) -> Box<G> {
-        self.globals_by_type
-            .remove(&TypeId::of::<G>())
-            .ok_or_else(|| anyhow!("no global registered of type {}", type_name::<G>()))
-            .unwrap()
-            .downcast()
-            .unwrap()
+    pub(crate) fn lease_global<G: 'static>(&mut self) -> GlobalLease<G> {
+        GlobalLease::new(
+            self.globals_by_type
+                .remove(&TypeId::of::<G>())
+                .ok_or_else(|| anyhow!("no global registered of type {}", type_name::<G>()))
+                .unwrap(),
+        )
     }
 
-    pub(crate) fn restore_global<G: 'static + Send + Sync>(&mut self, global: Box<G>) {
+    pub(crate) fn end_global_lease<G: 'static>(&mut self, lease: GlobalLease<G>) {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
-        self.globals_by_type.insert(global_type, global);
+        self.globals_by_type.insert(global_type, lease.global);
     }
 
     pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
@@ -639,21 +638,21 @@ impl AppContext {
 }
 
 impl Context for AppContext {
-    type EntityContext<'a, 'w, T: Send + Sync + 'static> = ModelContext<'a, T>;
+    type EntityContext<'a, 'w, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
-    fn entity<T: Send + Sync + 'static>(
+    fn entity<T: Any + Send + Sync>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
-            let entity = build_entity(&mut ModelContext::mutable(cx, slot.entity_id));
+            let entity = build_entity(&mut ModelContext::mutable(cx, slot.downgrade()));
             cx.entities.insert(slot, entity)
         })
     }
 
-    fn update_entity<T: Send + Sync + 'static, R>(
+    fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
@@ -662,7 +661,7 @@ impl Context for AppContext {
             let mut entity = cx.entities.lease(handle);
             let result = update(
                 &mut entity,
-                &mut ModelContext::mutable(cx, handle.entity_id),
+                &mut ModelContext::mutable(cx, handle.downgrade()),
             );
             cx.entities.end_lease(entity);
             result
@@ -723,11 +722,11 @@ impl MainThread<AppContext> {
         self.platform().open_url(url);
     }
 
-    pub fn open_window<S: 'static + Send + Sync>(
+    pub fn open_window<V: 'static>(
         &mut self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut WindowContext) -> View<S> + Send + 'static,
-    ) -> WindowHandle<S> {
+        build_root_view: impl FnOnce(&mut WindowContext) -> View<V> + Send + 'static,
+    ) -> WindowHandle<V> {
         self.update(|cx| {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
@@ -766,6 +765,34 @@ pub(crate) enum Effect {
     NotifyGlobalObservers {
         global_type: TypeId,
     },
+}
+
+pub(crate) struct GlobalLease<G: 'static> {
+    global: AnyBox,
+    global_type: PhantomData<G>,
+}
+
+impl<G: 'static> GlobalLease<G> {
+    fn new(global: AnyBox) -> Self {
+        GlobalLease {
+            global,
+            global_type: PhantomData,
+        }
+    }
+}
+
+impl<G: 'static> Deref for GlobalLease<G> {
+    type Target = G;
+
+    fn deref(&self) -> &Self::Target {
+        self.global.downcast_ref().unwrap()
+    }
+}
+
+impl<G: 'static> DerefMut for GlobalLease<G> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.global.downcast_mut().unwrap()
+    }
 }
 
 pub(crate) struct AnyDrag {
