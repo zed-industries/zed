@@ -2,7 +2,7 @@ use std::{io::Cursor, sync::Arc};
 
 use anyhow::Result;
 use collections::HashMap;
-use gpui2::{AppContext, AssetSource, SharedString};
+use gpui2::{AppContext, AssetSource};
 use rodio::{
     source::{Buffered, SamplesConverter},
     Decoder, Source,
@@ -33,7 +33,7 @@ impl SoundRegistry {
         }
 
         let path = format!("sounds/{}.wav", name);
-        let bytes = self.assets.load(SharedString::from(path))?.into_owned();
+        let bytes = self.assets.load(&path)?.into_owned();
         let cursor = Cursor::new(bytes);
         let source = Decoder::new(cursor)?.convert_samples::<f32>().buffered();
 
