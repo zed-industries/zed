@@ -110,7 +110,7 @@ fn main() {
         // handle_keymap_file_changes(user_keymap_file_rx, cx);
 
         // let client = client2::Client::new(http.clone(), cx);
-        let mut languages = LanguageRegistry::new(login_shell_env_loaded);
+        let languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
         // languages.set_executor(cx.background().clone());
         // languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
