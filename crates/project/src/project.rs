@@ -53,7 +53,7 @@ use lsp::{
 use lsp_command::*;
 use node_runtime::NodeRuntime;
 use postage::watch;
-use prettier::{LocateStart, Prettier, PRETTIER_SERVER_FILE, PRETTIER_SERVER_JS};
+use prettier::{LocateStart, Prettier};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
@@ -79,13 +79,10 @@ use std::{
     time::{Duration, Instant},
 };
 use terminals::Terminals;
-use text::{Anchor, LineEnding, Rope};
+use text::Anchor;
 use util::{
-    debug_panic, defer,
-    http::HttpClient,
-    merge_json_value_into,
-    paths::{DEFAULT_PRETTIER_DIR, LOCAL_SETTINGS_RELATIVE_PATH},
-    post_inc, ResultExt, TryFutureExt as _,
+    debug_panic, defer, http::HttpClient, merge_json_value_into,
+    paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
 };
 
 pub use fs::*;
@@ -8531,7 +8528,7 @@ impl Project {
             return Task::ready(Ok(()));
         };
 
-        let default_prettier_dir = DEFAULT_PRETTIER_DIR.as_path();
+        let default_prettier_dir = util::paths::DEFAULT_PRETTIER_DIR.as_path();
         let already_running_prettier = self
             .prettier_instances
             .get(&(worktree, default_prettier_dir.to_path_buf()))
@@ -8540,10 +8537,10 @@ impl Project {
         let fs = Arc::clone(&self.fs);
         cx.background()
             .spawn(async move {
-                let prettier_wrapper_path = default_prettier_dir.join(PRETTIER_SERVER_FILE);
+                let prettier_wrapper_path = default_prettier_dir.join(prettier::PRETTIER_SERVER_FILE);
                 // method creates parent directory if it doesn't exist
-                fs.save(&prettier_wrapper_path, &Rope::from(PRETTIER_SERVER_JS), LineEnding::Unix).await
-                .with_context(|| format!("writing {PRETTIER_SERVER_FILE} file at {prettier_wrapper_path:?}"))?;
+                fs.save(&prettier_wrapper_path, &text::Rope::from(prettier::PRETTIER_SERVER_JS), text::LineEnding::Unix).await
+                .with_context(|| format!("writing {prettier::PRETTIER_SERVER_FILE} file at {prettier_wrapper_path:?}"))?;
 
                 let packages_to_versions = future::try_join_all(
                     prettier_plugins
