@@ -16,7 +16,8 @@ impl Database {
         connection: ConnectionId,
     ) -> Result<proto::JoinChannelBufferResponse> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_participant(channel_id, user_id, &tx)
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            self.check_user_is_channel_participant(&channel, user_id, &tx)
                 .await?;
 
             let buffer = channel::Model {
@@ -129,9 +130,11 @@ impl Database {
         self.transaction(|tx| async move {
             let mut results = Vec::new();
             for client_buffer in buffers {
-                let channel_id = ChannelId::from_proto(client_buffer.channel_id);
+                let channel = self
+                    .get_channel_internal(ChannelId::from_proto(client_buffer.channel_id), &*tx)
+                    .await?;
                 if self
-                    .check_user_is_channel_participant(channel_id, user_id, &*tx)
+                    .check_user_is_channel_participant(&channel, user_id, &*tx)
                     .await
                     .is_err()
                 {
@@ -139,9 +142,9 @@ impl Database {
                     continue;
                 }
 
-                let buffer = self.get_channel_buffer(channel_id, &*tx).await?;
+                let buffer = self.get_channel_buffer(channel.id, &*tx).await?;
                 let mut collaborators = channel_buffer_collaborator::Entity::find()
-                    .filter(channel_buffer_collaborator::Column::ChannelId.eq(channel_id))
+                    .filter(channel_buffer_collaborator::Column::ChannelId.eq(channel.id))
                     .all(&*tx)
                     .await?;
 
@@ -439,7 +442,8 @@ impl Database {
         Vec<proto::VectorClockEntry>,
     )> {
         self.transaction(move |tx| async move {
-            self.check_user_is_channel_member(channel_id, user, &*tx)
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            self.check_user_is_channel_member(&channel, user, &*tx)
                 .await?;
 
             let buffer = buffer::Entity::find()
@@ -482,7 +486,7 @@ impl Database {
                 )
                 .await?;
 
-                channel_members = self.get_channel_participants(channel_id, &*tx).await?;
+                channel_members = self.get_channel_participants(&channel, &*tx).await?;
                 let collaborators = self
                     .get_channel_buffer_collaborators_internal(channel_id, &*tx)
                     .await?;

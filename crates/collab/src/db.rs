@@ -13,7 +13,6 @@ use anyhow::anyhow;
 use collections::{BTreeMap, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
-use queries::channels::ChannelGraph;
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use rpc::{
     proto::{self},
@@ -492,21 +491,33 @@ pub struct RemoveChannelMemberResult {
     pub notification_id: Option<NotificationId>,
 }
 
-#[derive(FromQueryResult, Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
     pub visibility: ChannelVisibility,
     pub role: ChannelRole,
+    pub parent_path: Vec<ChannelId>,
 }
 
 impl Channel {
+    fn from_model(value: channel::Model, role: ChannelRole) -> Self {
+        Channel {
+            id: value.id,
+            visibility: value.visibility,
+            name: value.clone().name,
+            role,
+            parent_path: value.ancestors().collect(),
+        }
+    }
+
     pub fn to_proto(&self) -> proto::Channel {
         proto::Channel {
             id: self.id.to_proto(),
             name: self.name.clone(),
             visibility: self.visibility.into(),
             role: self.role.into(),
+            parent_path: self.parent_path.iter().map(|c| c.to_proto()).collect(),
         }
     }
 }
@@ -530,7 +541,7 @@ impl ChannelMember {
 
 #[derive(Debug, PartialEq)]
 pub struct ChannelsForUser {
-    pub channels: ChannelGraph,
+    pub channels: Vec<Channel>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
     pub unseen_buffer_changes: Vec<proto::UnseenChannelBufferChange>,
     pub channel_messages: Vec<proto::UnseenChannelMessage>,

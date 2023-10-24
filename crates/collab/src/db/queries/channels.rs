@@ -1,5 +1,6 @@
 use super::*;
-use rpc::proto::{channel_member::Kind, ChannelEdge};
+use rpc::proto::channel_member::Kind;
+use sea_orm::TryGetableMany;
 
 impl Database {
     #[cfg(test)]
@@ -42,55 +43,41 @@ impl Database {
     pub async fn create_channel(
         &self,
         name: &str,
-        parent: Option<ChannelId>,
+        parent_channel_id: Option<ChannelId>,
         admin_id: UserId,
     ) -> Result<CreateChannelResult> {
         let name = Self::sanitize_channel_name(name)?;
         self.transaction(move |tx| async move {
-            if let Some(parent) = parent {
-                self.check_user_is_channel_admin(parent, admin_id, &*tx)
+            let mut parent = None;
+
+            if let Some(parent_channel_id) = parent_channel_id {
+                let parent_channel = self.get_channel_internal(parent_channel_id, &*tx).await?;
+                self.check_user_is_channel_admin(&parent_channel, admin_id, &*tx)
                     .await?;
+                parent = Some(parent_channel);
             }
 
             let channel = channel::ActiveModel {
                 id: ActiveValue::NotSet,
                 name: ActiveValue::Set(name.to_string()),
                 visibility: ActiveValue::Set(ChannelVisibility::Members),
+                parent_path: ActiveValue::Set(
+                    parent
+                        .as_ref()
+                        .map_or(String::new(), |parent| parent.path()),
+                ),
             }
             .insert(&*tx)
             .await?;
 
-            if let Some(parent) = parent {
-                let sql = r#"
-                    INSERT INTO channel_paths
-                    (id_path, channel_id)
-                    SELECT
-                        id_path || $1 || '/', $2
-                    FROM
-                        channel_paths
-                    WHERE
-                        channel_id = $3
-                "#;
-                let channel_paths_stmt = Statement::from_sql_and_values(
-                    self.pool.get_database_backend(),
-                    sql,
-                    [
-                        channel.id.to_proto().into(),
-                        channel.id.to_proto().into(),
-                        parent.to_proto().into(),
-                    ],
-                );
-                tx.execute(channel_paths_stmt).await?;
+            let participants_to_update;
+            if let Some(parent) = &parent {
+                participants_to_update = self
+                    .participants_to_notify_for_channel_change(parent, &*tx)
+                    .await?;
             } else {
-                channel_path::Entity::insert(channel_path::ActiveModel {
-                    channel_id: ActiveValue::Set(channel.id),
-                    id_path: ActiveValue::Set(format!("/{}/", channel.id)),
-                })
-                .exec(&*tx)
-                .await?;
-            }
+                participants_to_update = vec![];
 
-            if parent.is_none() {
                 channel_member::ActiveModel {
                     id: ActiveValue::NotSet,
                     channel_id: ActiveValue::Set(channel.id),
@@ -100,22 +87,10 @@ impl Database {
                 }
                 .insert(&*tx)
                 .await?;
-            }
-
-            let participants_to_update = if let Some(parent) = parent {
-                self.participants_to_notify_for_channel_change(parent, &*tx)
-                    .await?
-            } else {
-                vec![]
             };
 
             Ok(CreateChannelResult {
-                channel: Channel {
-                    id: channel.id,
-                    visibility: channel.visibility,
-                    name: channel.name,
-                    role: ChannelRole::Admin,
-                },
+                channel: Channel::from_model(channel, ChannelRole::Admin),
                 participants_to_update,
             })
         })
@@ -130,20 +105,14 @@ impl Database {
         environment: &str,
     ) -> Result<(JoinRoom, Option<MembershipUpdated>, ChannelRole)> {
         self.transaction(move |tx| async move {
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            let mut role = self.channel_role_for_user(&channel, user_id, &*tx).await?;
+
             let mut accept_invite_result = None;
 
-            let channel = channel::Entity::find()
-                .filter(channel::Column::Id.eq(channel_id))
-                .one(&*tx)
-                .await?;
-
-            let mut role = self
-                .channel_role_for_user(channel_id, user_id, &*tx)
-                .await?;
-
-            if role.is_none() && channel.is_some() {
+            if role.is_none() {
                 if let Some(invitation) = self
-                    .pending_invite_for_channel(channel_id, user_id, &*tx)
+                    .pending_invite_for_channel(&channel, user_id, &*tx)
                     .await?
                 {
                     // note, this may be a parent channel
@@ -156,31 +125,28 @@ impl Database {
                     .await?;
 
                     accept_invite_result = Some(
-                        self.calculate_membership_updated(channel_id, user_id, &*tx)
+                        self.calculate_membership_updated(&channel, user_id, &*tx)
                             .await?,
                     );
 
                     debug_assert!(
-                        self.channel_role_for_user(channel_id, user_id, &*tx)
-                            .await?
-                            == role
+                        self.channel_role_for_user(&channel, user_id, &*tx).await? == role
                     );
                 }
             }
-            if role.is_none()
-                && channel.as_ref().map(|c| c.visibility) == Some(ChannelVisibility::Public)
-            {
+
+            if channel.visibility == ChannelVisibility::Public {
                 role = Some(ChannelRole::Guest);
-                let channel_id_to_join = self
-                    .public_path_to_channel(channel_id, &*tx)
+                let channel_to_join = self
+                    .public_ancestors_including_self(&channel, &*tx)
                     .await?
                     .first()
                     .cloned()
-                    .unwrap_or(channel_id);
+                    .unwrap_or(channel.clone());
 
                 channel_member::Entity::insert(channel_member::ActiveModel {
                     id: ActiveValue::NotSet,
-                    channel_id: ActiveValue::Set(channel_id_to_join),
+                    channel_id: ActiveValue::Set(channel_to_join.id),
                     user_id: ActiveValue::Set(user_id),
                     accepted: ActiveValue::Set(true),
                     role: ActiveValue::Set(ChannelRole::Guest),
@@ -189,19 +155,15 @@ impl Database {
                 .await?;
 
                 accept_invite_result = Some(
-                    self.calculate_membership_updated(channel_id, user_id, &*tx)
+                    self.calculate_membership_updated(&channel_to_join, user_id, &*tx)
                         .await?,
                 );
 
-                debug_assert!(
-                    self.channel_role_for_user(channel_id, user_id, &*tx)
-                        .await?
-                        == role
-                );
+                debug_assert!(self.channel_role_for_user(&channel, user_id, &*tx).await? == role);
             }
 
-            if channel.is_none() || role.is_none() || role == Some(ChannelRole::Banned) {
-                Err(anyhow!("no such channel, or not allowed"))?
+            if role.is_none() || role == Some(ChannelRole::Banned) {
+                Err(anyhow!("not allowed"))?
             }
 
             let live_kit_room = format!("channel-{}", nanoid::nanoid!(30));
@@ -209,7 +171,7 @@ impl Database {
                 .get_or_create_channel_room(channel_id, &live_kit_room, environment, &*tx)
                 .await?;
 
-            self.join_channel_room_internal(channel_id, room_id, user_id, connection, &*tx)
+            self.join_channel_room_internal(room_id, user_id, connection, &*tx)
                 .await
                 .map(|jr| (jr, accept_invite_result, role.unwrap()))
         })
@@ -223,23 +185,21 @@ impl Database {
         admin_id: UserId,
     ) -> Result<SetChannelVisibilityResult> {
         self.transaction(move |tx| async move {
-            self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+
+            self.check_user_is_channel_admin(&channel, admin_id, &*tx)
                 .await?;
 
             let previous_members = self
-                .get_channel_participant_details_internal(channel_id, &*tx)
+                .get_channel_participant_details_internal(&channel, &*tx)
                 .await?;
 
-            channel::ActiveModel {
-                id: ActiveValue::Unchanged(channel_id),
-                visibility: ActiveValue::Set(visibility),
-                ..Default::default()
-            }
-            .update(&*tx)
-            .await?;
+            let mut model = channel.into_active_model();
+            model.visibility = ActiveValue::Set(visibility);
+            let channel = model.update(&*tx).await?;
 
             let mut participants_to_update: HashMap<UserId, ChannelsForUser> = self
-                .participants_to_notify_for_channel_change(channel_id, &*tx)
+                .participants_to_notify_for_channel_change(&channel, &*tx)
                 .await?
                 .into_iter()
                 .collect();
@@ -249,10 +209,10 @@ impl Database {
             match visibility {
                 ChannelVisibility::Members => {
                     let all_descendents: Vec<ChannelId> = self
-                        .get_channel_descendants(vec![channel_id], &*tx)
+                        .get_channel_descendants_including_self(vec![channel_id], &*tx)
                         .await?
                         .into_iter()
-                        .map(|edge| ChannelId::from_proto(edge.channel_id))
+                        .map(|channel| channel.id)
                         .collect();
 
                     channels_to_remove = channel::Entity::find()
@@ -268,6 +228,7 @@ impl Database {
                         .collect();
 
                     channels_to_remove.push(channel_id);
+
                     for member in previous_members {
                         if member.role.can_only_see_public_descendants() {
                             participants_to_remove.insert(member.user_id);
@@ -275,11 +236,9 @@ impl Database {
                     }
                 }
                 ChannelVisibility::Public => {
-                    if let Some(public_parent_id) =
-                        self.public_parent_channel_id(channel_id, &*tx).await?
-                    {
+                    if let Some(public_parent) = self.public_parent_channel(&channel, &*tx).await? {
                         let parent_updates = self
-                            .participants_to_notify_for_channel_change(public_parent_id, &*tx)
+                            .participants_to_notify_for_channel_change(&public_parent, &*tx)
                             .await?;
 
                         for (user_id, channels) in parent_updates {
@@ -304,39 +263,12 @@ impl Database {
         user_id: UserId,
     ) -> Result<(Vec<ChannelId>, Vec<UserId>)> {
         self.transaction(move |tx| async move {
-            self.check_user_is_channel_admin(channel_id, user_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            self.check_user_is_channel_admin(&channel, user_id, &*tx)
                 .await?;
 
-            // Don't remove descendant channels that have additional parents.
-            let mut channels_to_remove: HashSet<ChannelId> = HashSet::default();
-            channels_to_remove.insert(channel_id);
-
-            let graph = self.get_channel_descendants([channel_id], &*tx).await?;
-            for edge in graph.iter() {
-                channels_to_remove.insert(ChannelId::from_proto(edge.channel_id));
-            }
-
-            {
-                let mut channels_to_keep = channel_path::Entity::find()
-                    .filter(
-                        channel_path::Column::ChannelId
-                            .is_in(channels_to_remove.iter().copied())
-                            .and(
-                                channel_path::Column::IdPath
-                                    .not_like(&format!("%/{}/%", channel_id)),
-                            ),
-                    )
-                    .stream(&*tx)
-                    .await?;
-                while let Some(row) = channels_to_keep.next().await {
-                    let row = row?;
-                    channels_to_remove.remove(&row.channel_id);
-                }
-            }
-
-            let channel_ancestors = self.get_channel_ancestors(channel_id, &*tx).await?;
             let members_to_notify: Vec<UserId> = channel_member::Entity::find()
-                .filter(channel_member::Column::ChannelId.is_in(channel_ancestors))
+                .filter(channel_member::Column::ChannelId.is_in(channel.ancestors_including_self()))
                 .select_only()
                 .column(channel_member::Column::UserId)
                 .distinct()
@@ -344,25 +276,19 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
+            let channels_to_remove = self
+                .get_channel_descendants_including_self(vec![channel.id], &*tx)
+                .await?
+                .into_iter()
+                .map(|channel| channel.id)
+                .collect::<Vec<_>>();
+
             channel::Entity::delete_many()
                 .filter(channel::Column::Id.is_in(channels_to_remove.iter().copied()))
                 .exec(&*tx)
                 .await?;
 
-            // Delete any other paths that include this channel
-            let sql = r#"
-                    DELETE FROM channel_paths
-                    WHERE
-                        id_path LIKE '%' || $1 || '%'
-                "#;
-            let channel_paths_stmt = Statement::from_sql_and_values(
-                self.pool.get_database_backend(),
-                sql,
-                [channel_id.to_proto().into()],
-            );
-            tx.execute(channel_paths_stmt).await?;
-
-            Ok((channels_to_remove.into_iter().collect(), members_to_notify))
+            Ok((channels_to_remove, members_to_notify))
         })
         .await
     }
@@ -375,7 +301,8 @@ impl Database {
         role: ChannelRole,
     ) -> Result<InviteMemberResult> {
         self.transaction(move |tx| async move {
-            self.check_user_is_channel_admin(channel_id, inviter_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            self.check_user_is_channel_admin(&channel, inviter_id, &*tx)
                 .await?;
 
             channel_member::ActiveModel {
@@ -388,17 +315,7 @@ impl Database {
             .insert(&*tx)
             .await?;
 
-            let channel = channel::Entity::find_by_id(channel_id)
-                .one(&*tx)
-                .await?
-                .unwrap();
-
-            let channel = Channel {
-                id: channel.id,
-                visibility: channel.visibility,
-                name: channel.name,
-                role,
-            };
+            let channel = Channel::from_model(channel, role);
 
             let notifications = self
                 .create_notification(
@@ -440,40 +357,27 @@ impl Database {
         self.transaction(move |tx| async move {
             let new_name = Self::sanitize_channel_name(new_name)?.to_string();
 
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
             let role = self
-                .check_user_is_channel_admin(channel_id, admin_id, &*tx)
+                .check_user_is_channel_admin(&channel, admin_id, &*tx)
                 .await?;
 
-            let channel = channel::ActiveModel {
-                id: ActiveValue::Unchanged(channel_id),
-                name: ActiveValue::Set(new_name.clone()),
-                ..Default::default()
-            }
-            .update(&*tx)
-            .await?;
+            let mut model = channel.into_active_model();
+            model.name = ActiveValue::Set(new_name.clone());
+            let channel = model.update(&*tx).await?;
 
             let participants = self
-                .get_channel_participant_details_internal(channel_id, &*tx)
+                .get_channel_participant_details_internal(&channel, &*tx)
                 .await?;
 
             Ok(RenameChannelResult {
-                channel: Channel {
-                    id: channel.id,
-                    name: channel.name,
-                    visibility: channel.visibility,
-                    role,
-                },
+                channel: Channel::from_model(channel.clone(), role),
                 participants_to_update: participants
                     .iter()
                     .map(|participant| {
                         (
                             participant.user_id,
-                            Channel {
-                                id: channel.id,
-                                name: new_name.clone(),
-                                visibility: channel.visibility,
-                                role: participant.role,
-                            },
+                            Channel::from_model(channel.clone(), participant.role),
                         )
                     })
                     .collect(),
@@ -489,6 +393,8 @@ impl Database {
         accept: bool,
     ) -> Result<RespondToChannelInvite> {
         self.transaction(move |tx| async move {
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+
             let membership_update = if accept {
                 let rows_affected = channel_member::Entity::update_many()
                     .set(channel_member::ActiveModel {
@@ -510,7 +416,7 @@ impl Database {
                 }
 
                 Some(
-                    self.calculate_membership_updated(channel_id, user_id, &*tx)
+                    self.calculate_membership_updated(&channel, user_id, &*tx)
                         .await?,
                 )
             } else {
@@ -554,53 +460,26 @@ impl Database {
 
     async fn calculate_membership_updated(
         &self,
-        channel_id: ChannelId,
+        channel: &channel::Model,
         user_id: UserId,
         tx: &DatabaseTransaction,
     ) -> Result<MembershipUpdated> {
-        let mut channel_to_refresh = channel_id;
-        let mut removed_channels: Vec<ChannelId> = Vec::new();
-
-        // if the user was previously a guest of a parent public channel they may have seen this
-        // channel (or its descendants) in the tree already.
-        // Now they have new permissions, the graph of channels needs updating from that point.
-        if let Some(public_parent) = self.public_parent_channel_id(channel_id, &*tx).await? {
-            if self
-                .channel_role_for_user(public_parent, user_id, &*tx)
-                .await?
-                == Some(ChannelRole::Guest)
-            {
-                channel_to_refresh = public_parent;
-            }
-        }
-
-        // remove all descendant channels from the user's tree
-        removed_channels.append(
-            &mut self
-                .get_channel_descendants(vec![channel_to_refresh], &*tx)
-                .await?
-                .into_iter()
-                .map(|edge| ChannelId::from_proto(edge.channel_id))
-                .collect(),
-        );
-
-        let new_channels = self
-            .get_user_channels(user_id, Some(channel_to_refresh), &*tx)
-            .await?;
-
-        // We only add the current channel to "moved" if the user has lost access,
-        // otherwise it would be made a root channel on the client.
-        if !new_channels
-            .channels
-            .channels
-            .iter()
-            .any(|c| c.id == channel_id)
-        {
-            removed_channels.push(channel_id);
-        }
+        let new_channels = self.get_user_channels(user_id, Some(channel), &*tx).await?;
+        let removed_channels = self
+            .get_channel_descendants_including_self(vec![channel.id], &*tx)
+            .await?
+            .into_iter()
+            .filter_map(|channel| {
+                if !new_channels.channels.iter().any(|c| c.id == channel.id) {
+                    Some(channel.id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
 
         Ok(MembershipUpdated {
-            channel_id,
+            channel_id: channel.id,
             new_channels,
             removed_channels,
         })
@@ -613,7 +492,8 @@ impl Database {
         admin_id: UserId,
     ) -> Result<RemoveChannelMemberResult> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            self.check_user_is_channel_admin(&channel, admin_id, &*tx)
                 .await?;
 
             let result = channel_member::Entity::delete_many()
@@ -631,7 +511,7 @@ impl Database {
 
             Ok(RemoveChannelMemberResult {
                 membership_update: self
-                    .calculate_membership_updated(channel_id, member_id, &*tx)
+                    .calculate_membership_updated(&channel, member_id, &*tx)
                     .await?,
                 notification_id: self
                     .remove_notification(
@@ -673,11 +553,9 @@ impl Database {
 
             let channels = channels
                 .into_iter()
-                .map(|channel| Channel {
-                    id: channel.id,
-                    name: channel.name,
-                    visibility: channel.visibility,
-                    role: role_for_channel[&channel.id],
+                .filter_map(|channel| {
+                    let role = *role_for_channel.get(&channel.id)?;
+                    Some(Channel::from_model(channel, role))
                 })
                 .collect();
 
@@ -698,15 +576,9 @@ impl Database {
     pub async fn get_user_channels(
         &self,
         user_id: UserId,
-        parent_channel_id: Option<ChannelId>,
+        ancestor_channel: Option<&channel::Model>,
         tx: &DatabaseTransaction,
     ) -> Result<ChannelsForUser> {
-        // note: we could (maybe) win some efficiency here when parent_channel_id
-        // is set by getting just the role for that channel, then getting descendants
-        // with roles attached; but that's not as straightforward as it sounds
-        // because we need to calculate the path to the channel to make the query
-        // efficient, which currently requires an extra round trip to the database.
-        // Fix this later...
         let channel_memberships = channel_member::Entity::find()
             .filter(
                 channel_member::Column::UserId
@@ -716,117 +588,65 @@ impl Database {
             .all(&*tx)
             .await?;
 
-        let mut edges = self
-            .get_channel_descendants(channel_memberships.iter().map(|m| m.channel_id), &*tx)
+        let descendants = self
+            .get_channel_descendants_including_self(
+                channel_memberships.iter().map(|m| m.channel_id),
+                &*tx,
+            )
             .await?;
 
-        let mut role_for_channel: HashMap<ChannelId, (ChannelRole, bool)> = HashMap::default();
-
+        let mut roles_by_channel_id: HashMap<ChannelId, ChannelRole> = HashMap::default();
         for membership in channel_memberships.iter() {
-            let included =
-                parent_channel_id.is_none() || membership.channel_id == parent_channel_id.unwrap();
-            role_for_channel.insert(membership.channel_id, (membership.role, included));
+            roles_by_channel_id.insert(membership.channel_id, membership.role);
         }
 
-        for ChannelEdge {
-            parent_id,
-            channel_id,
-        } in edges.iter()
-        {
-            let parent_id = ChannelId::from_proto(*parent_id);
-            let channel_id = ChannelId::from_proto(*channel_id);
-            debug_assert!(role_for_channel.get(&parent_id).is_some());
-            let (parent_role, parent_included) = role_for_channel[&parent_id];
+        let mut visible_channel_ids: HashSet<ChannelId> = HashSet::default();
 
-            if let Some((existing_role, included)) = role_for_channel.get(&channel_id) {
-                role_for_channel.insert(
-                    channel_id,
-                    (existing_role.max(parent_role), *included || parent_included),
-                );
-            } else {
-                role_for_channel.insert(
-                    channel_id,
-                    (
-                        parent_role,
-                        parent_included
-                            || parent_channel_id.is_none()
-                            || Some(channel_id) == parent_channel_id,
-                    ),
-                );
-            }
-        }
+        let channels: Vec<Channel> = descendants
+            .into_iter()
+            .filter_map(|channel| {
+                let parent_role = channel
+                    .parent_id()
+                    .and_then(|parent_id| roles_by_channel_id.get(&parent_id));
 
-        let mut channels: Vec<Channel> = Vec::new();
-        let mut channels_to_remove: HashSet<u64> = HashSet::default();
-
-        let mut rows = channel::Entity::find()
-            .filter(channel::Column::Id.is_in(role_for_channel.keys().copied()))
-            .stream(&*tx)
-            .await?;
-
-        while let Some(row) = rows.next().await {
-            let channel = row?;
-            let (role, included) = role_for_channel[&channel.id];
-
-            if !included
-                || role == ChannelRole::Banned
-                || role == ChannelRole::Guest && channel.visibility != ChannelVisibility::Public
-            {
-                channels_to_remove.insert(channel.id.0 as u64);
-                continue;
-            }
-
-            channels.push(Channel {
-                id: channel.id,
-                name: channel.name,
-                visibility: channel.visibility,
-                role,
-            });
-        }
-        drop(rows);
-
-        if !channels_to_remove.is_empty() {
-            // Note: this code assumes each channel has one parent.
-            // If there are multiple valid public paths to a channel,
-            // e.g.
-            // If both of these paths are present (* indicating public):
-            // - zed* -> projects -> vim*
-            // - zed* -> conrad -> public-projects* -> vim*
-            // Users would only see one of them (based on edge sort order)
-            let mut replacement_parent: HashMap<u64, u64> = HashMap::default();
-            for ChannelEdge {
-                parent_id,
-                channel_id,
-            } in edges.iter()
-            {
-                if channels_to_remove.contains(channel_id) {
-                    replacement_parent.insert(*channel_id, *parent_id);
-                }
-            }
-
-            let mut new_edges: Vec<ChannelEdge> = Vec::new();
-            'outer: for ChannelEdge {
-                mut parent_id,
-                channel_id,
-            } in edges.iter()
-            {
-                if channels_to_remove.contains(channel_id) {
-                    continue;
-                }
-                while channels_to_remove.contains(&parent_id) {
-                    if let Some(new_parent_id) = replacement_parent.get(&parent_id) {
-                        parent_id = *new_parent_id;
+                let role = if let Some(parent_role) = parent_role {
+                    let role = if let Some(existing_role) = roles_by_channel_id.get(&channel.id) {
+                        existing_role.max(*parent_role)
                     } else {
-                        continue 'outer;
+                        *parent_role
+                    };
+                    roles_by_channel_id.insert(channel.id, role);
+                    role
+                } else {
+                    *roles_by_channel_id.get(&channel.id)?
+                };
+
+                let can_see_parent_paths = role.can_see_all_descendants()
+                    || role.can_only_see_public_descendants()
+                        && channel.visibility == ChannelVisibility::Public;
+                if !can_see_parent_paths {
+                    return None;
+                }
+
+                visible_channel_ids.insert(channel.id);
+
+                if let Some(ancestor) = ancestor_channel {
+                    if !channel
+                        .ancestors_including_self()
+                        .any(|id| id == ancestor.id)
+                    {
+                        return None;
                     }
                 }
-                new_edges.push(ChannelEdge {
-                    parent_id,
-                    channel_id: *channel_id,
-                })
-            }
-            edges = new_edges;
-        }
+
+                let mut channel = Channel::from_model(channel, role);
+                channel
+                    .parent_path
+                    .retain(|id| visible_channel_ids.contains(&id));
+
+                Some(channel)
+            })
+            .collect();
 
         #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
         enum QueryUserIdsAndChannelIds {
@@ -861,7 +681,7 @@ impl Database {
             .await?;
 
         Ok(ChannelsForUser {
-            channels: ChannelGraph { channels, edges },
+            channels,
             channel_participants,
             unseen_buffer_changes: channel_buffer_changes,
             channel_messages: unseen_messages,
@@ -870,7 +690,7 @@ impl Database {
 
     async fn participants_to_notify_for_channel_change(
         &self,
-        new_parent: ChannelId,
+        new_parent: &channel::Model,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<(UserId, ChannelsForUser)>> {
         let mut results: Vec<(UserId, ChannelsForUser)> = Vec::new();
@@ -890,11 +710,10 @@ impl Database {
             ))
         }
 
-        let public_parent = self
-            .public_path_to_channel(new_parent, &*tx)
-            .await?
-            .last()
-            .copied();
+        let public_parents = self
+            .public_ancestors_including_self(new_parent, &*tx)
+            .await?;
+        let public_parent = public_parents.last();
 
         let Some(public_parent) = public_parent else {
             return Ok(results);
@@ -931,7 +750,8 @@ impl Database {
         role: ChannelRole,
     ) -> Result<SetMemberRoleResult> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            self.check_user_is_channel_admin(&channel, admin_id, &*tx)
                 .await?;
 
             let membership = channel_member::Entity::find()
@@ -951,24 +771,16 @@ impl Database {
             update.role = ActiveValue::Set(role);
             let updated = channel_member::Entity::update(update).exec(&*tx).await?;
 
-            if !updated.accepted {
-                let channel = channel::Entity::find_by_id(channel_id)
-                    .one(&*tx)
-                    .await?
-                    .unwrap();
-
-                return Ok(SetMemberRoleResult::InviteUpdated(Channel {
-                    id: channel.id,
-                    visibility: channel.visibility,
-                    name: channel.name,
-                    role,
-                }));
+            if updated.accepted {
+                Ok(SetMemberRoleResult::MembershipUpdated(
+                    self.calculate_membership_updated(&channel, for_user, &*tx)
+                        .await?,
+                ))
+            } else {
+                Ok(SetMemberRoleResult::InviteUpdated(Channel::from_model(
+                    channel, role,
+                )))
             }
-
-            Ok(SetMemberRoleResult::MembershipUpdated(
-                self.calculate_membership_updated(channel_id, for_user, &*tx)
-                    .await?,
-            ))
         })
         .await
     }
@@ -980,12 +792,13 @@ impl Database {
     ) -> Result<Vec<proto::ChannelMember>> {
         let (role, members) = self
             .transaction(move |tx| async move {
+                let channel = self.get_channel_internal(channel_id, &*tx).await?;
                 let role = self
-                    .check_user_is_channel_participant(channel_id, user_id, &*tx)
+                    .check_user_is_channel_participant(&channel, user_id, &*tx)
                     .await?;
                 Ok((
                     role,
-                    self.get_channel_participant_details_internal(channel_id, &*tx)
+                    self.get_channel_participant_details_internal(&channel, &*tx)
                         .await?,
                 ))
             })
@@ -1016,16 +829,9 @@ impl Database {
 
     async fn get_channel_participant_details_internal(
         &self,
-        channel_id: ChannelId,
+        channel: &channel::Model,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<ChannelMember>> {
-        let channel_visibility = channel::Entity::find()
-            .filter(channel::Column::Id.eq(channel_id))
-            .one(&*tx)
-            .await?
-            .map(|channel| channel.visibility)
-            .unwrap_or(ChannelVisibility::Members);
-
         #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
         enum QueryMemberDetails {
             UserId,
@@ -1035,16 +841,14 @@ impl Database {
             Visibility,
         }
 
-        let tx = tx;
-        let ancestor_ids = self.get_channel_ancestors(channel_id, &*tx).await?;
         let mut stream = channel_member::Entity::find()
             .left_join(channel::Entity)
-            .filter(channel_member::Column::ChannelId.is_in(ancestor_ids.iter().copied()))
+            .filter(channel_member::Column::ChannelId.is_in(channel.ancestors_including_self()))
             .select_only()
             .column(channel_member::Column::UserId)
             .column(channel_member::Column::Role)
             .column_as(
-                channel_member::Column::ChannelId.eq(channel_id),
+                channel_member::Column::ChannelId.eq(channel.id),
                 QueryMemberDetails::IsDirectMember,
             )
             .column(channel_member::Column::Accepted)
@@ -1072,7 +876,7 @@ impl Database {
 
             if channel_role == ChannelRole::Guest
                 && visibility != ChannelVisibility::Public
-                && channel_visibility != ChannelVisibility::Public
+                && channel.visibility != ChannelVisibility::Public
             {
                 continue;
             }
@@ -1108,11 +912,11 @@ impl Database {
 
     pub async fn get_channel_participants(
         &self,
-        channel_id: ChannelId,
+        channel: &channel::Model,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<UserId>> {
         let participants = self
-            .get_channel_participant_details_internal(channel_id, &*tx)
+            .get_channel_participant_details_internal(channel, &*tx)
             .await?;
         Ok(participants
             .into_iter()
@@ -1122,11 +926,11 @@ impl Database {
 
     pub async fn check_user_is_channel_admin(
         &self,
-        channel_id: ChannelId,
+        channel: &channel::Model,
         user_id: UserId,
         tx: &DatabaseTransaction,
     ) -> Result<ChannelRole> {
-        let role = self.channel_role_for_user(channel_id, user_id, tx).await?;
+        let role = self.channel_role_for_user(channel, user_id, tx).await?;
         match role {
             Some(ChannelRole::Admin) => Ok(role.unwrap()),
             Some(ChannelRole::Member)
@@ -1140,11 +944,11 @@ impl Database {
 
     pub async fn check_user_is_channel_member(
         &self,
-        channel_id: ChannelId,
+        channel: &channel::Model,
         user_id: UserId,
         tx: &DatabaseTransaction,
     ) -> Result<ChannelRole> {
-        let channel_role = self.channel_role_for_user(channel_id, user_id, tx).await?;
+        let channel_role = self.channel_role_for_user(channel, user_id, tx).await?;
         match channel_role {
             Some(ChannelRole::Admin) | Some(ChannelRole::Member) => Ok(channel_role.unwrap()),
             Some(ChannelRole::Banned) | Some(ChannelRole::Guest) | None => Err(anyhow!(
@@ -1155,11 +959,11 @@ impl Database {
 
     pub async fn check_user_is_channel_participant(
         &self,
-        channel_id: ChannelId,
+        channel: &channel::Model,
         user_id: UserId,
         tx: &DatabaseTransaction,
     ) -> Result<ChannelRole> {
-        let role = self.channel_role_for_user(channel_id, user_id, tx).await?;
+        let role = self.channel_role_for_user(channel, user_id, tx).await?;
         match role {
             Some(ChannelRole::Admin) | Some(ChannelRole::Member) | Some(ChannelRole::Guest) => {
                 Ok(role.unwrap())
@@ -1172,14 +976,12 @@ impl Database {
 
     pub async fn pending_invite_for_channel(
         &self,
-        channel_id: ChannelId,
+        channel: &channel::Model,
         user_id: UserId,
         tx: &DatabaseTransaction,
     ) -> Result<Option<channel_member::Model>> {
-        let channel_ids = self.get_channel_ancestors(channel_id, tx).await?;
-
         let row = channel_member::Entity::find()
-            .filter(channel_member::Column::ChannelId.is_in(channel_ids))
+            .filter(channel_member::Column::ChannelId.is_in(channel.ancestors_including_self()))
             .filter(channel_member::Column::UserId.eq(user_id))
             .filter(channel_member::Column::Accepted.eq(false))
             .one(&*tx)
@@ -1188,88 +990,39 @@ impl Database {
         Ok(row)
     }
 
-    pub async fn parent_channel_id(
+    pub async fn public_parent_channel(
         &self,
-        channel_id: ChannelId,
+        channel: &channel::Model,
         tx: &DatabaseTransaction,
-    ) -> Result<Option<ChannelId>> {
-        let path = self.path_to_channel(channel_id, &*tx).await?;
-        if path.len() >= 2 {
-            Ok(Some(path[path.len() - 2]))
-        } else {
-            Ok(None)
+    ) -> Result<Option<channel::Model>> {
+        let mut path = self.public_ancestors_including_self(channel, &*tx).await?;
+        if path.last().unwrap().id == channel.id {
+            path.pop();
         }
+        Ok(path.pop())
     }
 
-    pub async fn public_parent_channel_id(
+    pub async fn public_ancestors_including_self(
         &self,
-        channel_id: ChannelId,
+        channel: &channel::Model,
         tx: &DatabaseTransaction,
-    ) -> Result<Option<ChannelId>> {
-        let path = self.public_path_to_channel(channel_id, &*tx).await?;
-        if path.len() >= 2 && path.last().copied() == Some(channel_id) {
-            Ok(Some(path[path.len() - 2]))
-        } else {
-            Ok(path.last().copied())
-        }
-    }
-
-    pub async fn path_to_channel(
-        &self,
-        channel_id: ChannelId,
-        tx: &DatabaseTransaction,
-    ) -> Result<Vec<ChannelId>> {
-        let arbitary_path = channel_path::Entity::find()
-            .filter(channel_path::Column::ChannelId.eq(channel_id))
-            .order_by(channel_path::Column::IdPath, sea_orm::Order::Desc)
-            .one(tx)
-            .await?;
-
-        let Some(path) = arbitary_path else {
-            return Ok(vec![]);
-        };
-
-        Ok(path
-            .id_path
-            .trim_matches('/')
-            .split('/')
-            .map(|id| ChannelId::from_proto(id.parse().unwrap()))
-            .collect())
-    }
-
-    pub async fn public_path_to_channel(
-        &self,
-        channel_id: ChannelId,
-        tx: &DatabaseTransaction,
-    ) -> Result<Vec<ChannelId>> {
-        let ancestor_ids = self.path_to_channel(channel_id, &*tx).await?;
-
-        let rows = channel::Entity::find()
-            .filter(channel::Column::Id.is_in(ancestor_ids.iter().copied()))
+    ) -> Result<Vec<channel::Model>> {
+        let visible_channels = channel::Entity::find()
+            .filter(channel::Column::Id.is_in(channel.ancestors_including_self()))
             .filter(channel::Column::Visibility.eq(ChannelVisibility::Public))
+            .order_by_asc(channel::Column::ParentPath)
             .all(&*tx)
             .await?;
 
-        let mut visible_channels: HashSet<ChannelId> = HashSet::default();
-
-        for row in rows {
-            visible_channels.insert(row.id);
-        }
-
-        Ok(ancestor_ids
-            .into_iter()
-            .filter(|id| visible_channels.contains(id))
-            .collect())
+        Ok(visible_channels)
     }
 
     pub async fn channel_role_for_user(
         &self,
-        channel_id: ChannelId,
+        channel: &channel::Model,
         user_id: UserId,
         tx: &DatabaseTransaction,
     ) -> Result<Option<ChannelRole>> {
-        let channel_ids = self.get_channel_ancestors(channel_id, tx).await?;
-
         #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
         enum QueryChannelMembership {
             ChannelId,
@@ -1281,7 +1034,7 @@ impl Database {
             .left_join(channel::Entity)
             .filter(
                 channel_member::Column::ChannelId
-                    .is_in(channel_ids)
+                    .is_in(channel.ancestors_including_self())
                     .and(channel_member::Column::UserId.eq(user_id))
                     .and(channel_member::Column::Accepted.eq(true)),
             )
@@ -1320,7 +1073,7 @@ impl Database {
                 }
                 ChannelRole::Guest => {}
             }
-            if channel_id == membership_channel {
+            if channel.id == membership_channel {
                 current_channel_visibility = Some(visibility);
             }
         }
@@ -1330,7 +1083,7 @@ impl Database {
         if is_participant && user_role.is_none() {
             if current_channel_visibility.is_none() {
                 current_channel_visibility = channel::Entity::find()
-                    .filter(channel::Column::Id.eq(channel_id))
+                    .filter(channel::Column::Id.eq(channel.id))
                     .one(&*tx)
                     .await?
                     .map(|channel| channel.visibility);
@@ -1343,39 +1096,13 @@ impl Database {
         Ok(user_role)
     }
 
-    /// Returns the channel ancestors in arbitrary order
-    pub async fn get_channel_ancestors(
-        &self,
-        channel_id: ChannelId,
-        tx: &DatabaseTransaction,
-    ) -> Result<Vec<ChannelId>> {
-        let paths = channel_path::Entity::find()
-            .filter(channel_path::Column::ChannelId.eq(channel_id))
-            .order_by(channel_path::Column::IdPath, sea_orm::Order::Desc)
-            .all(tx)
-            .await?;
-        let mut channel_ids = Vec::new();
-        for path in paths {
-            for id in path.id_path.trim_matches('/').split('/') {
-                if let Ok(id) = id.parse() {
-                    let id = ChannelId::from_proto(id);
-                    if let Err(ix) = channel_ids.binary_search(&id) {
-                        channel_ids.insert(ix, id);
-                    }
-                }
-            }
-        }
-        Ok(channel_ids)
-    }
-
-    // Returns the channel desendants as a sorted list of edges for further processing.
-    // The edges are sorted such that you will see unknown channel ids as children
-    // before you see them as parents.
-    async fn get_channel_descendants(
+    // Get the descendants of the given set if channels, ordered by their
+    // path.
+    async fn get_channel_descendants_including_self(
         &self,
         channel_ids: impl IntoIterator<Item = ChannelId>,
         tx: &DatabaseTransaction,
-    ) -> Result<Vec<ChannelEdge>> {
+    ) -> Result<Vec<channel::Model>> {
         let mut values = String::new();
         for id in channel_ids {
             if !values.is_empty() {
@@ -1390,63 +1117,53 @@ impl Database {
 
         let sql = format!(
             r#"
-            SELECT
-                descendant_paths.*
+            SELECT DISTINCT
+                descendant_channels.*,
+                descendant_channels.parent_path || descendant_channels.id as full_path
             FROM
-                channel_paths parent_paths, channel_paths descendant_paths
+                channels parent_channels, channels descendant_channels
             WHERE
-                parent_paths.channel_id IN ({values}) AND
-                descendant_paths.id_path != parent_paths.id_path AND
-                descendant_paths.id_path LIKE (parent_paths.id_path || '%')
+                descendant_channels.id IN ({values}) OR
+                (
+                    parent_channels.id IN ({values}) AND
+                    descendant_channels.parent_path LIKE (parent_channels.parent_path || parent_channels.id || '/%')
+                )
             ORDER BY
-                descendant_paths.id_path
-        "#
+                full_path ASC
+            "#
         );
 
-        let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
-
-        let mut paths = channel_path::Entity::find()
-            .from_raw_sql(stmt)
-            .stream(tx)
-            .await?;
-
-        let mut results: Vec<ChannelEdge> = Vec::new();
-        while let Some(path) = paths.next().await {
-            let path = path?;
-            let ids: Vec<&str> = path.id_path.trim_matches('/').split('/').collect();
-
-            debug_assert!(ids.len() >= 2);
-            debug_assert!(ids[ids.len() - 1] == path.channel_id.to_string());
-
-            results.push(ChannelEdge {
-                parent_id: ids[ids.len() - 2].parse().unwrap(),
-                channel_id: ids[ids.len() - 1].parse().unwrap(),
-            })
-        }
-
-        Ok(results)
+        Ok(channel::Entity::find()
+            .from_raw_sql(Statement::from_string(
+                self.pool.get_database_backend(),
+                sql,
+            ))
+            .all(tx)
+            .await?)
     }
 
     /// Returns the channel with the given ID
     pub async fn get_channel(&self, channel_id: ChannelId, user_id: UserId) -> Result<Channel> {
         self.transaction(|tx| async move {
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
             let role = self
-                .check_user_is_channel_participant(channel_id, user_id, &*tx)
+                .check_user_is_channel_participant(&channel, user_id, &*tx)
                 .await?;
 
-            let channel = channel::Entity::find_by_id(channel_id).one(&*tx).await?;
-            let Some(channel) = channel else {
-                Err(anyhow!("no such channel"))?
-            };
-
-            Ok(Channel {
-                id: channel.id,
-                visibility: channel.visibility,
-                role,
-                name: channel.name,
-            })
+            Ok(Channel::from_model(channel, role))
         })
         .await
+    }
+
+    pub async fn get_channel_internal(
+        &self,
+        channel_id: ChannelId,
+        tx: &DatabaseTransaction,
+    ) -> Result<channel::Model> {
+        Ok(channel::Entity::find_by_id(channel_id)
+            .one(&*tx)
+            .await?
+            .ok_or_else(|| anyhow!("no such channel"))?)
     }
 
     pub(crate) async fn get_or_create_channel_room(
@@ -1484,203 +1201,66 @@ impl Database {
         Ok(room_id)
     }
 
-    // Insert an edge from the given channel to the given other channel.
-    pub async fn link_channel(
-        &self,
-        user: UserId,
-        channel: ChannelId,
-        to: ChannelId,
-    ) -> Result<ChannelGraph> {
-        self.transaction(|tx| async move {
-            self.check_user_is_channel_admin(channel, user, &*tx)
-                .await?;
-
-            self.link_channel_internal(user, channel, to, &*tx).await
-        })
-        .await
-    }
-
-    pub async fn link_channel_internal(
-        &self,
-        user: UserId,
-        channel: ChannelId,
-        new_parent: ChannelId,
-        tx: &DatabaseTransaction,
-    ) -> Result<ChannelGraph> {
-        self.check_user_is_channel_admin(new_parent, user, &*tx)
-            .await?;
-
-        let paths = channel_path::Entity::find()
-            .filter(channel_path::Column::IdPath.like(&format!("%/{}/%", channel)))
-            .all(tx)
-            .await?;
-
-        let mut new_path_suffixes = HashSet::default();
-        for path in paths {
-            if let Some(start_offset) = path.id_path.find(&format!("/{}/", channel)) {
-                new_path_suffixes.insert((
-                    path.channel_id,
-                    path.id_path[(start_offset + 1)..].to_string(),
-                ));
-            }
-        }
-
-        let paths_to_new_parent = channel_path::Entity::find()
-            .filter(channel_path::Column::ChannelId.eq(new_parent))
-            .all(tx)
-            .await?;
-
-        let mut new_paths = Vec::new();
-        for path in paths_to_new_parent {
-            if path.id_path.contains(&format!("/{}/", channel)) {
-                Err(anyhow!("cycle"))?;
-            }
-
-            new_paths.extend(new_path_suffixes.iter().map(|(channel_id, path_suffix)| {
-                channel_path::ActiveModel {
-                    channel_id: ActiveValue::Set(*channel_id),
-                    id_path: ActiveValue::Set(format!("{}{}", &path.id_path, path_suffix)),
-                }
-            }));
-        }
-
-        channel_path::Entity::insert_many(new_paths)
-            .exec(&*tx)
-            .await?;
-
-        // remove any root edges for the channel we just linked
-        {
-            channel_path::Entity::delete_many()
-                .filter(channel_path::Column::IdPath.like(&format!("/{}/%", channel)))
-                .exec(&*tx)
-                .await?;
-        }
-
-        let mut channel_info = self.get_user_channels(user, Some(channel), &*tx).await?;
-
-        channel_info.channels.edges.push(ChannelEdge {
-            channel_id: channel.to_proto(),
-            parent_id: new_parent.to_proto(),
-        });
-
-        Ok(channel_info.channels)
-    }
-
-    /// Unlink a channel from a given parent. This will add in a root edge if
-    /// the channel has no other parents after this operation.
-    pub async fn unlink_channel(
-        &self,
-        user: UserId,
-        channel: ChannelId,
-        from: ChannelId,
-    ) -> Result<()> {
-        self.transaction(|tx| async move {
-            self.check_user_is_channel_admin(channel, user, &*tx)
-                .await?;
-
-            self.unlink_channel_internal(user, channel, from, &*tx)
-                .await?;
-
-            Ok(())
-        })
-        .await
-    }
-
-    pub async fn unlink_channel_internal(
-        &self,
-        user: UserId,
-        channel: ChannelId,
-        from: ChannelId,
-        tx: &DatabaseTransaction,
-    ) -> Result<()> {
-        self.check_user_is_channel_admin(from, user, &*tx).await?;
-
-        let sql = r#"
-            DELETE FROM channel_paths
-            WHERE
-                id_path LIKE '%/' || $1 || '/' || $2 || '/%'
-            RETURNING id_path, channel_id
-        "#;
-
-        let paths = channel_path::Entity::find()
-            .from_raw_sql(Statement::from_sql_and_values(
-                self.pool.get_database_backend(),
-                sql,
-                [from.to_proto().into(), channel.to_proto().into()],
-            ))
-            .all(&*tx)
-            .await?;
-
-        let is_stranded = channel_path::Entity::find()
-            .filter(channel_path::Column::ChannelId.eq(channel))
-            .count(&*tx)
-            .await?
-            == 0;
-
-        // Make sure that there is always at least one path to the channel
-        if is_stranded {
-            let root_paths: Vec<_> = paths
-                .iter()
-                .map(|path| {
-                    let start_offset = path.id_path.find(&format!("/{}/", channel)).unwrap();
-                    channel_path::ActiveModel {
-                        channel_id: ActiveValue::Set(path.channel_id),
-                        id_path: ActiveValue::Set(path.id_path[start_offset..].to_string()),
-                    }
-                })
-                .collect();
-
-            channel_path::Entity::insert_many(root_paths)
-                .exec(&*tx)
-                .await?;
-        }
-
-        Ok(())
-    }
-
     /// Move a channel from one parent to another
     pub async fn move_channel(
         &self,
         channel_id: ChannelId,
-        old_parent_id: Option<ChannelId>,
         new_parent_id: ChannelId,
         admin_id: UserId,
     ) -> Result<Option<MoveChannelResult>> {
+        // check you're an admin of source and target (and maybe current channel)
+        // change parent_path on current channel
+        // change parent_path on all children
+
         self.transaction(|tx| async move {
-            self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
+            let new_parent = self.get_channel_internal(new_parent_id, &*tx).await?;
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+
+            self.check_user_is_channel_admin(&channel, admin_id, &*tx)
+                .await?;
+            self.check_user_is_channel_admin(&new_parent, admin_id, &*tx)
                 .await?;
 
-            debug_assert_eq!(
-                self.parent_channel_id(channel_id, &*tx).await?,
-                old_parent_id
-            );
+            let previous_participants = self
+                .get_channel_participant_details_internal(&channel, &*tx)
+                .await?;
 
-            if old_parent_id == Some(new_parent_id) {
+            let old_path = format!("{}{}/", channel.parent_path, channel.id);
+            let new_parent_path = format!("{}{}/", new_parent.parent_path, new_parent_id);
+            let new_path = format!("{}{}/", new_parent_path, channel.id);
+
+            if old_path == new_path {
                 return Ok(None);
             }
-            let previous_participants = self
-                .get_channel_participant_details_internal(channel_id, &*tx)
-                .await?;
 
-            self.link_channel_internal(admin_id, channel_id, new_parent_id, &*tx)
-                .await?;
+            let mut channel = channel.into_active_model();
+            channel.parent_path = ActiveValue::Set(new_parent_path);
+            channel.save(&*tx).await?;
 
-            if let Some(from) = old_parent_id {
-                self.unlink_channel_internal(admin_id, channel_id, from, &*tx)
-                    .await?;
-            }
+            let descendent_ids =
+                ChannelId::find_by_statement::<QueryIds>(Statement::from_sql_and_values(
+                    self.pool.get_database_backend(),
+                    "
+                    UPDATE channels SET parent_path = REPLACE(parent_path, $1, $2)
+                    WHERE parent_path LIKE $3 || '%'
+                    RETURNING id
+                ",
+                    [old_path.clone().into(), new_path.into(), old_path.into()],
+                ))
+                .all(&*tx)
+                .await?;
 
             let participants_to_update: HashMap<UserId, ChannelsForUser> = self
-                .participants_to_notify_for_channel_change(new_parent_id, &*tx)
+                .participants_to_notify_for_channel_change(&new_parent, &*tx)
                 .await?
                 .into_iter()
                 .collect();
 
             let mut moved_channels: HashSet<ChannelId> = HashSet::default();
-            moved_channels.insert(channel_id);
-            for edge in self.get_channel_descendants([channel_id], &*tx).await? {
-                moved_channels.insert(ChannelId::from_proto(edge.channel_id));
+            for id in descendent_ids {
+                moved_channels.insert(id);
             }
+            moved_channels.insert(channel_id);
 
             let mut participants_to_remove: HashSet<UserId> = HashSet::default();
             for participant in previous_participants {
@@ -1702,46 +1282,11 @@ impl Database {
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+enum QueryIds {
+    Id,
+}
+
+#[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
 enum QueryUserIds {
     UserId,
-}
-
-#[derive(Debug)]
-pub struct ChannelGraph {
-    pub channels: Vec<Channel>,
-    pub edges: Vec<ChannelEdge>,
-}
-
-impl ChannelGraph {
-    pub fn is_empty(&self) -> bool {
-        self.channels.is_empty() && self.edges.is_empty()
-    }
-}
-
-#[cfg(test)]
-impl PartialEq for ChannelGraph {
-    fn eq(&self, other: &Self) -> bool {
-        // Order independent comparison for tests
-        let channels_set = self.channels.iter().collect::<HashSet<_>>();
-        let other_channels_set = other.channels.iter().collect::<HashSet<_>>();
-        let edges_set = self
-            .edges
-            .iter()
-            .map(|edge| (edge.channel_id, edge.parent_id))
-            .collect::<HashSet<_>>();
-        let other_edges_set = other
-            .edges
-            .iter()
-            .map(|edge| (edge.channel_id, edge.parent_id))
-            .collect::<HashSet<_>>();
-
-        channels_set == other_channels_set && edges_set == other_edges_set
-    }
-}
-
-#[cfg(not(test))]
-impl PartialEq for ChannelGraph {
-    fn eq(&self, other: &Self) -> bool {
-        self.channels == other.channels && self.edges == other.edges
-    }
 }

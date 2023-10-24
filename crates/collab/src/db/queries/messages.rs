@@ -1,5 +1,4 @@
 use super::*;
-use futures::Stream;
 use rpc::Notification;
 use sea_orm::TryInsertResult;
 use time::OffsetDateTime;
@@ -12,7 +11,8 @@ impl Database {
         user_id: UserId,
     ) -> Result<()> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_participant(channel_id, user_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            self.check_user_is_channel_participant(&channel, user_id, &*tx)
                 .await?;
             channel_chat_participant::ActiveModel {
                 id: ActiveValue::NotSet,
@@ -80,7 +80,8 @@ impl Database {
         before_message_id: Option<MessageId>,
     ) -> Result<Vec<proto::ChannelMessage>> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_participant(channel_id, user_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            self.check_user_is_channel_participant(&channel, user_id, &*tx)
                 .await?;
 
             let mut condition =
@@ -94,7 +95,7 @@ impl Database {
                 .filter(condition)
                 .order_by_desc(channel_message::Column::Id)
                 .limit(count as u64)
-                .stream(&*tx)
+                .all(&*tx)
                 .await?;
 
             self.load_channel_messages(rows, &*tx).await
@@ -111,27 +112,23 @@ impl Database {
             let rows = channel_message::Entity::find()
                 .filter(channel_message::Column::Id.is_in(message_ids.iter().copied()))
                 .order_by_desc(channel_message::Column::Id)
-                .stream(&*tx)
+                .all(&*tx)
                 .await?;
 
-            let mut channel_ids = HashSet::<ChannelId>::default();
-            let messages = self
-                .load_channel_messages(
-                    rows.map(|row| {
-                        row.map(|row| {
-                            channel_ids.insert(row.channel_id);
-                            row
-                        })
-                    }),
-                    &*tx,
-                )
-                .await?;
+            let mut channels = HashMap::<ChannelId, channel::Model>::default();
+            for row in &rows {
+                channels.insert(
+                    row.channel_id,
+                    self.get_channel_internal(row.channel_id, &*tx).await?,
+                );
+            }
 
-            for channel_id in channel_ids {
-                self.check_user_is_channel_member(channel_id, user_id, &*tx)
+            for (_, channel) in channels {
+                self.check_user_is_channel_participant(&channel, user_id, &*tx)
                     .await?;
             }
 
+            let messages = self.load_channel_messages(rows, &*tx).await?;
             Ok(messages)
         })
         .await
@@ -139,26 +136,26 @@ impl Database {
 
     async fn load_channel_messages(
         &self,
-        mut rows: impl Send + Unpin + Stream<Item = Result<channel_message::Model, sea_orm::DbErr>>,
+        rows: Vec<channel_message::Model>,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<proto::ChannelMessage>> {
-        let mut messages = Vec::new();
-        while let Some(row) = rows.next().await {
-            let row = row?;
-            let nonce = row.nonce.as_u64_pair();
-            messages.push(proto::ChannelMessage {
-                id: row.id.to_proto(),
-                sender_id: row.sender_id.to_proto(),
-                body: row.body,
-                timestamp: row.sent_at.assume_utc().unix_timestamp() as u64,
-                mentions: vec![],
-                nonce: Some(proto::Nonce {
-                    upper_half: nonce.0,
-                    lower_half: nonce.1,
-                }),
-            });
-        }
-        drop(rows);
+        let mut messages = rows
+            .into_iter()
+            .map(|row| {
+                let nonce = row.nonce.as_u64_pair();
+                proto::ChannelMessage {
+                    id: row.id.to_proto(),
+                    sender_id: row.sender_id.to_proto(),
+                    body: row.body,
+                    timestamp: row.sent_at.assume_utc().unix_timestamp() as u64,
+                    mentions: vec![],
+                    nonce: Some(proto::Nonce {
+                        upper_half: nonce.0,
+                        lower_half: nonce.1,
+                    }),
+                }
+            })
+            .collect::<Vec<_>>();
         messages.reverse();
 
         let mut mentions = channel_message_mention::Entity::find()
@@ -203,7 +200,8 @@ impl Database {
         nonce: u128,
     ) -> Result<CreatedChannelMessage> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_participant(channel_id, user_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            self.check_user_is_channel_participant(&channel, user_id, &*tx)
                 .await?;
 
             let mut rows = channel_chat_participant::Entity::find()
@@ -310,7 +308,7 @@ impl Database {
                 }
             }
 
-            let mut channel_members = self.get_channel_participants(channel_id, &*tx).await?;
+            let mut channel_members = self.get_channel_participants(&channel, &*tx).await?;
             channel_members.retain(|member| !participant_user_ids.contains(member));
 
             Ok(CreatedChannelMessage {
@@ -483,8 +481,9 @@ impl Database {
                 .await?;
 
             if result.rows_affected == 0 {
+                let channel = self.get_channel_internal(channel_id, &*tx).await?;
                 if self
-                    .check_user_is_channel_admin(channel_id, user_id, &*tx)
+                    .check_user_is_channel_admin(&channel, user_id, &*tx)
                     .await
                     .is_ok()
                 {

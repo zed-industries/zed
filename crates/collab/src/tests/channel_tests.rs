@@ -61,10 +61,7 @@ async fn test_core_channels(
     );
 
     client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert!(channels
-            .channel_dag_entries()
-            .collect::<Vec<_>>()
-            .is_empty())
+        assert!(channels.ordered_channels().collect::<Vec<_>>().is_empty())
     });
 
     // Invite client B to channel A as client A.
@@ -1019,7 +1016,7 @@ async fn test_channel_link_notifications(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.link_channel(vim_channel, active_channel, cx)
+            channel_store.move_channel(vim_channel, active_channel, cx)
         })
         .await
         .unwrap();
@@ -1054,7 +1051,7 @@ async fn test_channel_link_notifications(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.link_channel(helix_channel, vim_channel, cx)
+            channel_store.move_channel(helix_channel, vim_channel, cx)
         })
         .await
         .unwrap();
@@ -1427,7 +1424,7 @@ async fn test_channel_moving(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.move_channel(channel_d_id, channel_c_id, channel_b_id, cx)
+            channel_store.move_channel(channel_d_id, channel_b_id, cx)
         })
         .await
         .unwrap();
@@ -1445,189 +1442,6 @@ async fn test_channel_moving(
             (channel_d_id, 2),
         ],
     );
-
-    // TODO: Restore this test once we have a way to make channel symlinks
-    // client_a
-    //     .channel_store()
-    //     .update(cx_a, |channel_store, cx| {
-    //         channel_store.link_channel(channel_d_id, channel_c_id, cx)
-    //     })
-    //     .await
-    //     .unwrap();
-
-    // // Current shape for A:
-    // //      /------\
-    // // a - b -- c -- d
-    // assert_channels_list_shape(
-    //     client_a.channel_store(),
-    //     cx_a,
-    //     &[
-    //         (channel_a_id, 0),
-    //         (channel_b_id, 1),
-    //         (channel_c_id, 2),
-    //         (channel_d_id, 3),
-    //         (channel_d_id, 2),
-    //     ],
-    // );
-    //
-    // let b_channels = server
-    //     .make_channel_tree(
-    //         &[
-    //             ("channel-mu", None),
-    //             ("channel-gamma", Some("channel-mu")),
-    //             ("channel-epsilon", Some("channel-mu")),
-    //         ],
-    //         (&client_b, cx_b),
-    //     )
-    //     .await;
-    // let channel_mu_id = b_channels[0];
-    // let channel_ga_id = b_channels[1];
-    // let channel_ep_id = b_channels[2];
-
-    // // Current shape for B:
-    // //    /- ep
-    // // mu -- ga
-    // assert_channels_list_shape(
-    //     client_b.channel_store(),
-    //     cx_b,
-    //     &[(channel_mu_id, 0), (channel_ep_id, 1), (channel_ga_id, 1)],
-    // );
-
-    // client_a
-    //     .add_admin_to_channel((&client_b, cx_b), channel_b_id, cx_a)
-    //     .await;
-
-    // // Current shape for B:
-    // //    /- ep
-    // // mu -- ga
-    // //  /---------\
-    // // b  -- c  -- d
-    // assert_channels_list_shape(
-    //     client_b.channel_store(),
-    //     cx_b,
-    //     &[
-    //         // New channels from a
-    //         (channel_b_id, 0),
-    //         (channel_c_id, 1),
-    //         (channel_d_id, 2),
-    //         (channel_d_id, 1),
-    //         // B's old channels
-    //         (channel_mu_id, 0),
-    //         (channel_ep_id, 1),
-    //         (channel_ga_id, 1),
-    //     ],
-    // );
-
-    // client_b
-    //     .add_admin_to_channel((&client_c, cx_c), channel_ep_id, cx_b)
-    //     .await;
-
-    // // Current shape for C:
-    // // - ep
-    // assert_channels_list_shape(client_c.channel_store(), cx_c, &[(channel_ep_id, 0)]);
-
-    // client_b
-    //     .channel_store()
-    //     .update(cx_b, |channel_store, cx| {
-    //         channel_store.link_channel(channel_b_id, channel_ep_id, cx)
-    //     })
-    //     .await
-    //     .unwrap();
-
-    // // Current shape for B:
-    // //              /---------\
-    // //    /- ep -- b  -- c  -- d
-    // // mu -- ga
-    // assert_channels_list_shape(
-    //     client_b.channel_store(),
-    //     cx_b,
-    //     &[
-    //         (channel_mu_id, 0),
-    //         (channel_ep_id, 1),
-    //         (channel_b_id, 2),
-    //         (channel_c_id, 3),
-    //         (channel_d_id, 4),
-    //         (channel_d_id, 3),
-    //         (channel_ga_id, 1),
-    //     ],
-    // );
-
-    // // Current shape for C:
-    // //        /---------\
-    // // ep -- b  -- c  -- d
-    // assert_channels_list_shape(
-    //     client_c.channel_store(),
-    //     cx_c,
-    //     &[
-    //         (channel_ep_id, 0),
-    //         (channel_b_id, 1),
-    //         (channel_c_id, 2),
-    //         (channel_d_id, 3),
-    //         (channel_d_id, 2),
-    //     ],
-    // );
-
-    // client_b
-    //     .channel_store()
-    //     .update(cx_b, |channel_store, cx| {
-    //         channel_store.link_channel(channel_ga_id, channel_b_id, cx)
-    //     })
-    //     .await
-    //     .unwrap();
-
-    // // Current shape for B:
-    // //              /---------\
-    // //    /- ep -- b  -- c  -- d
-    // //   /          \
-    // // mu ---------- ga
-    // assert_channels_list_shape(
-    //     client_b.channel_store(),
-    //     cx_b,
-    //     &[
-    //         (channel_mu_id, 0),
-    //         (channel_ep_id, 1),
-    //         (channel_b_id, 2),
-    //         (channel_c_id, 3),
-    //         (channel_d_id, 4),
-    //         (channel_d_id, 3),
-    //         (channel_ga_id, 3),
-    //         (channel_ga_id, 1),
-    //     ],
-    // );
-
-    // // Current shape for A:
-    // //      /------\
-    // // a - b -- c -- d
-    // //      \-- ga
-    // assert_channels_list_shape(
-    //     client_a.channel_store(),
-    //     cx_a,
-    //     &[
-    //         (channel_a_id, 0),
-    //         (channel_b_id, 1),
-    //         (channel_c_id, 2),
-    //         (channel_d_id, 3),
-    //         (channel_d_id, 2),
-    //         (channel_ga_id, 2),
-    //     ],
-    // );
-
-    // // Current shape for C:
-    // //        /-------\
-    // // ep -- b -- c -- d
-    // //        \-- ga
-    // assert_channels_list_shape(
-    //     client_c.channel_store(),
-    //     cx_c,
-    //     &[
-    //         (channel_ep_id, 0),
-    //         (channel_b_id, 1),
-    //         (channel_c_id, 2),
-    //         (channel_d_id, 3),
-    //         (channel_d_id, 2),
-    //         (channel_ga_id, 2),
-    //     ],
-    // );
 }
 
 #[derive(Debug, PartialEq)]
@@ -1667,7 +1481,7 @@ fn assert_channels(
 ) {
     let actual = channel_store.read_with(cx, |store, _| {
         store
-            .channel_dag_entries()
+            .ordered_channels()
             .map(|(depth, channel)| ExpectedChannel {
                 depth,
                 name: channel.name.clone(),
@@ -1689,7 +1503,7 @@ fn assert_channels_list_shape(
 
     let actual = channel_store.read_with(cx, |store, _| {
         store
-            .channel_dag_entries()
+            .ordered_channels()
             .map(|(depth, channel)| (channel.id, depth))
             .collect::<Vec<_>>()
     });

@@ -50,10 +50,10 @@ impl Database {
                     .map(|participant| participant.user_id),
             );
 
-            let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
+            let (channel, room) = self.get_channel_room(room_id, &tx).await?;
             let channel_members;
-            if let Some(channel_id) = channel_id {
-                channel_members = self.get_channel_participants(channel_id, &tx).await?;
+            if let Some(channel) = &channel {
+                channel_members = self.get_channel_participants(channel, &tx).await?;
             } else {
                 channel_members = Vec::new();
 
@@ -69,7 +69,7 @@ impl Database {
 
             Ok(RefreshedRoom {
                 room,
-                channel_id,
+                channel_id: channel.map(|channel| channel.id),
                 channel_members,
                 stale_participant_user_ids,
                 canceled_calls_to_user_ids,
@@ -381,7 +381,6 @@ impl Database {
 
     pub(crate) async fn join_channel_room_internal(
         &self,
-        channel_id: ChannelId,
         room_id: RoomId,
         user_id: UserId,
         connection: ConnectionId,
@@ -420,11 +419,12 @@ impl Database {
         .exec(&*tx)
         .await?;
 
-        let room = self.get_room(room_id, &tx).await?;
-        let channel_members = self.get_channel_participants(channel_id, &tx).await?;
+        let (channel, room) = self.get_channel_room(room_id, &tx).await?;
+        let channel = channel.ok_or_else(|| anyhow!("no channel for room"))?;
+        let channel_members = self.get_channel_participants(&channel, &*tx).await?;
         Ok(JoinRoom {
             room,
-            channel_id: Some(channel_id),
+            channel_id: Some(channel.id),
             channel_members,
         })
     }
@@ -718,16 +718,16 @@ impl Database {
                 });
             }
 
-            let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
-            let channel_members = if let Some(channel_id) = channel_id {
-                self.get_channel_participants(channel_id, &tx).await?
+            let (channel, room) = self.get_channel_room(room_id, &tx).await?;
+            let channel_members = if let Some(channel) = &channel {
+                self.get_channel_participants(&channel, &tx).await?
             } else {
                 Vec::new()
             };
 
             Ok(RejoinedRoom {
                 room,
-                channel_id,
+                channel_id: channel.map(|channel| channel.id),
                 channel_members,
                 rejoined_projects,
                 reshared_projects,
@@ -869,7 +869,7 @@ impl Database {
                     .exec(&*tx)
                     .await?;
 
-                let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
+                let (channel, room) = self.get_channel_room(room_id, &tx).await?;
                 let deleted = if room.participants.is_empty() {
                     let result = room::Entity::delete_by_id(room_id).exec(&*tx).await?;
                     result.rows_affected > 0
@@ -877,14 +877,14 @@ impl Database {
                     false
                 };
 
-                let channel_members = if let Some(channel_id) = channel_id {
-                    self.get_channel_participants(channel_id, &tx).await?
+                let channel_members = if let Some(channel) = &channel {
+                    self.get_channel_participants(channel, &tx).await?
                 } else {
                     Vec::new()
                 };
                 let left_room = LeftRoom {
                     room,
-                    channel_id,
+                    channel_id: channel.map(|channel| channel.id),
                     channel_members,
                     left_projects,
                     canceled_calls_to_user_ids,
@@ -1072,7 +1072,7 @@ impl Database {
         &self,
         room_id: RoomId,
         tx: &DatabaseTransaction,
-    ) -> Result<(Option<ChannelId>, proto::Room)> {
+    ) -> Result<(Option<channel::Model>, proto::Room)> {
         let db_room = room::Entity::find_by_id(room_id)
             .one(tx)
             .await?
@@ -1181,9 +1181,16 @@ impl Database {
                 project_id: db_follower.project_id.to_proto(),
             });
         }
+        drop(db_followers);
+
+        let channel = if let Some(channel_id) = db_room.channel_id {
+            Some(self.get_channel_internal(channel_id, &*tx).await?)
+        } else {
+            None
+        };
 
         Ok((
-            db_room.channel_id,
+            channel,
             proto::Room {
                 id: db_room.id.to_proto(),
                 live_kit_room: db_room.live_kit_room,

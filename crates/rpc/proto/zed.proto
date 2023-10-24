@@ -171,8 +171,6 @@ message Envelope {
         AckChannelMessage ack_channel_message = 143;
         GetChannelMessagesById get_channel_messages_by_id = 144;
 
-        LinkChannel link_channel = 145;
-        UnlinkChannel unlink_channel = 146;
         MoveChannel move_channel = 147;
         SetChannelVisibility set_channel_visibility = 148;
 
@@ -972,8 +970,6 @@ message LspDiskBasedDiagnosticsUpdated {}
 
 message UpdateChannels {
     repeated Channel channels = 1;
-    repeated ChannelEdge insert_edge = 2;
-    repeated ChannelEdge delete_edge = 3;
     repeated uint64 delete_channels = 4;
     repeated Channel channel_invitations = 5;
     repeated uint64 remove_channel_invitations = 6;
@@ -991,11 +987,6 @@ message UnseenChannelBufferChange {
     uint64 channel_id = 1;
     uint64 epoch = 2;
     repeated VectorClockEntry version = 3;
-}
-
-message ChannelEdge {
-    uint64 channel_id = 1;
-    uint64 parent_id = 2;
 }
 
 message ChannelPermission {
@@ -1137,20 +1128,9 @@ message GetChannelMessagesById {
     repeated uint64 message_ids = 1;
 }
 
-message LinkChannel {
-    uint64 channel_id = 1;
-    uint64 to = 2;
-}
-
-message UnlinkChannel {
-    uint64 channel_id = 1;
-    uint64 from = 2;
-}
-
 message MoveChannel {
     uint64 channel_id = 1;
-    uint64 from = 2;
-    uint64 to = 3;
+    uint64 to = 2;
 }
 
 message JoinChannelBuffer {
@@ -1586,6 +1566,7 @@ message Channel {
     string name = 2;
     ChannelVisibility visibility = 3;
     ChannelRole role = 4;
+    repeated uint64 parent_path = 5;
 }
 
 message Contact {

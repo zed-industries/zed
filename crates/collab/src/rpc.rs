@@ -277,8 +277,6 @@ impl Server {
             .add_request_handler(get_channel_messages_by_id)
             .add_request_handler(get_notifications)
             .add_request_handler(mark_notification_as_read)
-            .add_request_handler(link_channel)
-            .add_request_handler(unlink_channel)
             .add_request_handler(move_channel)
             .add_request_handler(follow)
             .add_message_handler(unfollow)
@@ -2472,52 +2470,19 @@ async fn rename_channel(
     Ok(())
 }
 
-// TODO: Implement in terms of symlinks
-// Current behavior of this is more like 'Move root channel'
-async fn link_channel(
-    request: proto::LinkChannel,
-    response: Response<proto::LinkChannel>,
-    session: Session,
-) -> Result<()> {
-    let db = session.db().await;
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let to = ChannelId::from_proto(request.to);
-
-    let result = db
-        .move_channel(channel_id, None, to, session.user_id)
-        .await?;
-    drop(db);
-
-    notify_channel_moved(result, session).await?;
-
-    response.send(Ack {})?;
-
-    Ok(())
-}
-
-// TODO: Implement in terms of symlinks
-async fn unlink_channel(
-    _request: proto::UnlinkChannel,
-    _response: Response<proto::UnlinkChannel>,
-    _session: Session,
-) -> Result<()> {
-    Err(anyhow!("unimplemented").into())
-}
-
 async fn move_channel(
     request: proto::MoveChannel,
     response: Response<proto::MoveChannel>,
     session: Session,
 ) -> Result<()> {
-    let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let from_parent = ChannelId::from_proto(request.from);
     let to = ChannelId::from_proto(request.to);
 
-    let result = db
-        .move_channel(channel_id, Some(from_parent), to, session.user_id)
+    let result = session
+        .db()
+        .await
+        .move_channel(channel_id, to, session.user_id)
         .await?;
-    drop(db);
 
     notify_channel_moved(result, session).await?;
 
@@ -3244,18 +3209,12 @@ fn build_channels_update(
 ) -> proto::UpdateChannels {
     let mut update = proto::UpdateChannels::default();
 
-    for channel in channels.channels.channels {
-        update.channels.push(proto::Channel {
-            id: channel.id.to_proto(),
-            name: channel.name,
-            visibility: channel.visibility.into(),
-            role: channel.role.into(),
-        });
+    for channel in channels.channels {
+        update.channels.push(channel.to_proto());
     }
 
     update.unseen_channel_buffer_changes = channels.unseen_buffer_changes;
     update.unseen_channel_messages = channels.channel_messages;
-    update.insert_edge = channels.channels.edges;
 
     for (channel_id, participants) in channels.channel_participants {
         update
@@ -3267,12 +3226,7 @@ fn build_channels_update(
     }
 
     for channel in channel_invites {
-        update.channel_invitations.push(proto::Channel {
-            id: channel.id.to_proto(),
-            name: channel.name,
-            visibility: channel.visibility.into(),
-            role: channel.role.into(),
-        });
+        update.channel_invitations.push(channel.to_proto());
     }
 
     update
