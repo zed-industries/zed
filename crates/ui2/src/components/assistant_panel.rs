@@ -92,7 +92,7 @@ mod stories {
         fn render<V>(self, cx: &mut ViewContext<V>) -> impl IntoAnyElement<V> {
             Story::container(self.0)
                 .child(Story::title_for::<_, AssistantPanel>(self.0))
-                .child(Story::label(self.cx, "Default"))
+                .child(Story::label(cx, "Default"))
                 .child(AssistantPanel::new("assistant-panel"))
         }
     }

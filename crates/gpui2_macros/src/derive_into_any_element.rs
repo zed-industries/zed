@@ -122,7 +122,7 @@ pub fn derive_into_any_element(input: TokenStream) -> TokenStream {
             #where_clause
             {
                 fn into_any(self) -> gpui2::AnyElement<ViewState> {
-                    #trampoline_name(self).into_any()
+                    #trampoline_name::new(self).into_any()
                 }
             }
         }
