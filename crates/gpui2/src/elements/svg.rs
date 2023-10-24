@@ -7,7 +7,7 @@ use crate::{
 use util::ResultExt;
 
 pub struct Svg<
-    V: 'static + Send + Sync,
+    V: 'static,
     I: ElementInteraction<V> = StatelessInteraction<V>,
     F: ElementFocus<V> = FocusDisabled,
 > {
@@ -15,10 +15,7 @@ pub struct Svg<
     path: Option<SharedString>,
 }
 
-pub fn svg<V>() -> Svg<V, StatelessInteraction<V>, FocusDisabled>
-where
-    V: 'static + Send + Sync,
-{
+pub fn svg<V: 'static>() -> Svg<V, StatelessInteraction<V>, FocusDisabled> {
     Svg {
         base: div(),
         path: None,
@@ -27,7 +24,6 @@ where
 
 impl<V, I, F> Svg<V, I, F>
 where
-    V: 'static + Send + Sync,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
@@ -39,7 +35,6 @@ where
 
 impl<V, F> Svg<V, StatelessInteraction<V>, F>
 where
-    V: 'static + Send + Sync,
     F: ElementFocus<V>,
 {
     pub fn id(self, id: impl Into<ElementId>) -> Svg<V, StatefulInteraction<V>, F> {
@@ -52,7 +47,6 @@ where
 
 impl<V, I, F> IntoAnyElement<V> for Svg<V, I, F>
 where
-    V: 'static + Send + Sync,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
@@ -63,7 +57,6 @@ where
 
 impl<V, I, F> Element for Svg<V, I, F>
 where
-    V: 'static + Send + Sync,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
@@ -115,7 +108,6 @@ where
 
 impl<V, I, F> Styled for Svg<V, I, F>
 where
-    V: 'static + Send + Sync,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
@@ -126,7 +118,6 @@ where
 
 impl<V, I, F> StatelessInteractive for Svg<V, I, F>
 where
-    V: 'static + Send + Sync,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
@@ -137,7 +128,7 @@ where
 
 impl<V, F> StatefulInteractive for Svg<V, StatefulInteraction<V>, F>
 where
-    V: 'static + Send + Sync,
+    V: 'static,
     F: ElementFocus<V>,
 {
     fn stateful_interaction(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
@@ -145,9 +136,8 @@ where
     }
 }
 
-impl<V, I> Focusable for Svg<V, I, FocusEnabled<V>>
+impl<V: 'static, I> Focusable for Svg<V, I, FocusEnabled<V>>
 where
-    V: 'static + Send + Sync,
     I: ElementInteraction<V>,
 {
     fn focus_listeners(&mut self) -> &mut FocusListeners<Self::ViewState> {

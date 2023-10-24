@@ -428,11 +428,11 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static + Send + Sync,
+        G: 'static,
     {
         let mut global = self.app.lease_global::<G>();
-        let result = f(global.as_mut(), self);
-        self.app.set_global(global);
+        let result = f(&mut global, self);
+        self.app.end_global_lease(global);
         result
     }
 
@@ -1139,23 +1139,26 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 }
 
 impl Context for WindowContext<'_, '_> {
-    type EntityContext<'a, 'w, T: 'static + Send + Sync> = ViewContext<'a, 'w, T>;
+    type EntityContext<'a, 'w, T> = ViewContext<'a, 'w, T>;
     type Result<T> = T;
 
-    fn entity<T: Send + Sync + 'static>(
+    fn entity<T>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
-    ) -> Handle<T> {
+    ) -> Handle<T>
+    where
+        T: Any + Send + Sync,
+    {
         let slot = self.app.entities.reserve();
         let entity = build_entity(&mut ViewContext::mutable(
             &mut *self.app,
             &mut self.window,
-            slot.entity_id,
+            slot.downgrade(),
         ));
         self.entities.insert(slot, entity)
     }
 
-    fn update_entity<T: Send + Sync + 'static, R>(
+    fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
@@ -1163,7 +1166,7 @@ impl Context for WindowContext<'_, '_> {
         let mut entity = self.entities.lease(handle);
         let result = update(
             &mut *entity,
-            &mut ViewContext::mutable(&mut *self.app, &mut *self.window, handle.entity_id),
+            &mut ViewContext::mutable(&mut *self.app, &mut *self.window, handle.downgrade()),
         );
         self.entities.end_lease(entity);
         result
@@ -1271,11 +1274,14 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
             .unwrap_or_default()
     }
 
-    fn with_element_state<S: 'static + Send + Sync, R>(
+    fn with_element_state<S, R>(
         &mut self,
         id: ElementId,
         f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
-    ) -> R {
+    ) -> R
+    where
+        S: Any + Send + Sync,
+    {
         self.with_element_id(id, |global_id, cx| {
             if let Some(any) = cx
                 .window_mut()
@@ -1304,11 +1310,14 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         })
     }
 
-    fn with_optional_element_state<S: 'static + Send + Sync, R>(
+    fn with_optional_element_state<S, R>(
         &mut self,
         element_id: Option<ElementId>,
         f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
-    ) -> R {
+    ) -> R
+    where
+        S: Any + Send + Sync,
+    {
         if let Some(element_id) = element_id {
             self.with_element_state(element_id, f)
         } else {
@@ -1350,8 +1359,7 @@ impl<T> BorrowWindow for T where T: BorrowMut<AppContext> + BorrowMut<Window> {}
 
 pub struct ViewContext<'a, 'w, V> {
     window_cx: WindowContext<'a, 'w>,
-    entity_type: PhantomData<V>,
-    entity_id: EntityId,
+    view_state: WeakHandle<V>,
 }
 
 impl<V> Borrow<AppContext> for ViewContext<'_, '_, V> {
@@ -1378,17 +1386,16 @@ impl<V> BorrowMut<Window> for ViewContext<'_, '_, V> {
     }
 }
 
-impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
-    fn mutable(app: &'a mut AppContext, window: &'w mut Window, entity_id: EntityId) -> Self {
+impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
+    fn mutable(app: &'a mut AppContext, window: &'w mut Window, view_state: WeakHandle<V>) -> Self {
         Self {
             window_cx: WindowContext::mutable(app, window),
-            entity_id,
-            entity_type: PhantomData,
+            view_state,
         }
     }
 
     pub fn handle(&self) -> WeakHandle<V> {
-        self.entities.weak_handle(self.entity_id)
+        self.view_state.clone()
     }
 
     pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -1398,18 +1405,25 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         result
     }
 
-    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + Send + 'static) {
+    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + Send + 'static)
+    where
+        V: Any + Send + Sync,
+    {
         let entity = self.handle();
         self.window_cx.on_next_frame(move |cx| {
             entity.update(cx, f).ok();
         });
     }
 
-    pub fn observe<E: Send + Sync + 'static>(
+    pub fn observe<E>(
         &mut self,
         handle: &Handle<E>,
         on_notify: impl Fn(&mut V, Handle<E>, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
-    ) -> Subscription {
+    ) -> Subscription
+    where
+        E: 'static,
+        V: Any + Send + Sync,
+    {
         let this = self.handle();
         let handle = handle.downgrade();
         let window_handle = self.window.handle;
@@ -1429,7 +1443,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         )
     }
 
-    pub fn subscribe<E: EventEmitter + Send + Sync + 'static>(
+    pub fn subscribe<E: EventEmitter>(
         &mut self,
         handle: &Handle<E>,
         on_event: impl Fn(&mut V, Handle<E>, &E::Event, &mut ViewContext<'_, '_, V>)
@@ -1463,7 +1477,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
     ) -> Subscription {
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
-            self.entity_id,
+            self.view_state.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
                 // todo!("are we okay with silently swallowing the error?")
@@ -1472,11 +1486,14 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         )
     }
 
-    pub fn observe_release<E: Send + Sync + 'static>(
+    pub fn observe_release<T: 'static>(
         &mut self,
-        handle: &Handle<E>,
-        on_release: impl Fn(&mut V, &mut E, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
-    ) -> Subscription {
+        handle: &Handle<T>,
+        on_release: impl Fn(&mut V, &mut T, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
+    ) -> Subscription
+    where
+        V: Any + Send + Sync,
+    {
         let this = self.handle();
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
@@ -1494,7 +1511,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
     pub fn notify(&mut self) {
         self.window_cx.notify();
         self.window_cx.app.push_effect(Effect::Notify {
-            emitter: self.entity_id,
+            emitter: self.view_state.entity_id,
         });
     }
 
@@ -1633,8 +1650,8 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         G: 'static + Send + Sync,
     {
         let mut global = self.app.lease_global::<G>();
-        let result = f(global.as_mut(), self);
-        self.app.restore_global(global);
+        let result = f(&mut global, self);
+        self.app.end_global_lease(global);
         result
     }
 
@@ -1668,9 +1685,13 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
     }
 }
 
-impl<'a, 'w, V: EventEmitter + Send + Sync + 'static> ViewContext<'a, 'w, V> {
+impl<'a, 'w, V> ViewContext<'a, 'w, V>
+where
+    V: EventEmitter,
+    V::Event: Any + Send + Sync,
+{
     pub fn emit(&mut self, event: V::Event) {
-        let emitter = self.entity_id;
+        let emitter = self.view_state.entity_id;
         self.app.push_effect(Effect::Emit {
             emitter,
             event: Box::new(event),
@@ -1678,30 +1699,30 @@ impl<'a, 'w, V: EventEmitter + Send + Sync + 'static> ViewContext<'a, 'w, V> {
     }
 }
 
-impl<'a, 'w, V> Context for ViewContext<'a, 'w, V>
-where
-    V: 'static + Send + Sync,
-{
-    type EntityContext<'b, 'c, U: 'static + Send + Sync> = ViewContext<'b, 'c, U>;
+impl<'a, 'w, V> Context for ViewContext<'a, 'w, V> {
+    type EntityContext<'b, 'c, U> = ViewContext<'b, 'c, U>;
     type Result<U> = U;
 
-    fn entity<T2: Send + Sync + 'static>(
+    fn entity<T>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T2>) -> T2,
-    ) -> Handle<T2> {
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
+    ) -> Handle<T>
+    where
+        T: 'static + Send + Sync,
+    {
         self.window_cx.entity(build_entity)
     }
 
-    fn update_entity<U: 'static + Send + Sync, R>(
+    fn update_entity<T: 'static, R>(
         &mut self,
-        handle: &Handle<U>,
-        update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,
+        handle: &Handle<T>,
+        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
     ) -> R {
         self.window_cx.update_entity(handle, update)
     }
 }
 
-impl<'a, 'w, S: 'static> std::ops::Deref for ViewContext<'a, 'w, S> {
+impl<'a, 'w, V> std::ops::Deref for ViewContext<'a, 'w, V> {
     type Target = WindowContext<'a, 'w>;
 
     fn deref(&self) -> &Self::Target {
@@ -1709,7 +1730,7 @@ impl<'a, 'w, S: 'static> std::ops::Deref for ViewContext<'a, 'w, S> {
     }
 }
 
-impl<'a, 'w, S: 'static> std::ops::DerefMut for ViewContext<'a, 'w, S> {
+impl<'a, 'w, V> std::ops::DerefMut for ViewContext<'a, 'w, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.window_cx
     }
@@ -1725,9 +1746,9 @@ impl WindowId {
 }
 
 #[derive(PartialEq, Eq)]
-pub struct WindowHandle<S> {
+pub struct WindowHandle<V> {
     id: WindowId,
-    state_type: PhantomData<S>,
+    state_type: PhantomData<V>,
 }
 
 impl<S> Copy for WindowHandle<S> {}

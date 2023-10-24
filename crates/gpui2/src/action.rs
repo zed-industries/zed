@@ -19,7 +19,7 @@ pub trait Action: Any + Send + Sync {
 
 impl<A> Action for A
 where
-    A: for<'a> Deserialize<'a> + Any + PartialEq + Clone + Default + Send + Sync,
+    A: for<'a> Deserialize<'a> + PartialEq + Any + Send + Sync + Clone + Default,
 {
     fn qualified_name() -> SharedString {
         type_name::<A>().into()

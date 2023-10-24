@@ -135,7 +135,7 @@ pub trait Focusable: Element {
     }
 }
 
-pub trait ElementFocus<V: 'static + Send + Sync>: 'static + Send + Sync {
+pub trait ElementFocus<V: 'static>: 'static + Send + Sync {
     fn as_focusable(&self) -> Option<&FocusEnabled<V>>;
     fn as_focusable_mut(&mut self) -> Option<&mut FocusEnabled<V>>;
 
@@ -200,7 +200,7 @@ pub trait ElementFocus<V: 'static + Send + Sync>: 'static + Send + Sync {
     }
 }
 
-pub struct FocusEnabled<V: 'static + Send + Sync> {
+pub struct FocusEnabled<V> {
     pub focus_handle: Option<FocusHandle>,
     pub focus_listeners: FocusListeners<V>,
     pub focus_style: StyleRefinement,
@@ -208,10 +208,7 @@ pub struct FocusEnabled<V: 'static + Send + Sync> {
     pub in_focus_style: StyleRefinement,
 }
 
-impl<V> FocusEnabled<V>
-where
-    V: 'static + Send + Sync,
-{
+impl<V> FocusEnabled<V> {
     pub fn new() -> Self {
         Self {
             focus_handle: None,
@@ -233,10 +230,7 @@ where
     }
 }
 
-impl<V> ElementFocus<V> for FocusEnabled<V>
-where
-    V: 'static + Send + Sync,
-{
+impl<V: 'static> ElementFocus<V> for FocusEnabled<V> {
     fn as_focusable(&self) -> Option<&FocusEnabled<V>> {
         Some(self)
     }
@@ -246,10 +240,7 @@ where
     }
 }
 
-impl<V> From<FocusHandle> for FocusEnabled<V>
-where
-    V: 'static + Send + Sync,
-{
+impl<V> From<FocusHandle> for FocusEnabled<V> {
     fn from(value: FocusHandle) -> Self {
         Self {
             focus_handle: Some(value),
@@ -263,10 +254,7 @@ where
 
 pub struct FocusDisabled;
 
-impl<V> ElementFocus<V> for FocusDisabled
-where
-    V: 'static + Send + Sync,
-{
+impl<V: 'static> ElementFocus<V> for FocusDisabled {
     fn as_focusable(&self) -> Option<&FocusEnabled<V>> {
         None
     }

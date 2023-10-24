@@ -8,7 +8,7 @@ use futures::FutureExt;
 use util::ResultExt;
 
 pub struct Img<
-    V: 'static + Send + Sync,
+    V: 'static,
     I: ElementInteraction<V> = StatelessInteraction<V>,
     F: ElementFocus<V> = FocusDisabled,
 > {
@@ -17,10 +17,7 @@ pub struct Img<
     grayscale: bool,
 }
 
-pub fn img<V>() -> Img<V, StatelessInteraction<V>, FocusDisabled>
-where
-    V: 'static + Send + Sync,
-{
+pub fn img<V: 'static>() -> Img<V, StatelessInteraction<V>, FocusDisabled> {
     Img {
         base: div(),
         uri: None,
@@ -30,7 +27,7 @@ where
 
 impl<V, I, F> Img<V, I, F>
 where
-    V: 'static + Send + Sync,
+    V: 'static,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
@@ -47,7 +44,6 @@ where
 
 impl<V, F> Img<V, StatelessInteraction<V>, F>
 where
-    V: 'static + Send + Sync,
     F: ElementFocus<V>,
 {
     pub fn id(self, id: impl Into<ElementId>) -> Img<V, StatefulInteraction<V>, F> {
@@ -61,7 +57,6 @@ where
 
 impl<V, I, F> IntoAnyElement<V> for Img<V, I, F>
 where
-    V: 'static + Send + Sync,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
@@ -72,7 +67,6 @@ where
 
 impl<V, I, F> Element for Img<V, I, F>
 where
-    V: Send + Sync + 'static,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
@@ -141,7 +135,6 @@ where
 
 impl<V, I, F> Styled for Img<V, I, F>
 where
-    V: 'static + Send + Sync,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
@@ -152,7 +145,6 @@ where
 
 impl<V, I, F> StatelessInteractive for Img<V, I, F>
 where
-    V: 'static + Send + Sync,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
@@ -163,7 +155,6 @@ where
 
 impl<V, F> StatefulInteractive for Img<V, StatefulInteraction<V>, F>
 where
-    V: 'static + Send + Sync,
     F: ElementFocus<V>,
 {
     fn stateful_interaction(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
@@ -173,7 +164,7 @@ where
 
 impl<V, I> Focusable for Img<V, I, FocusEnabled<V>>
 where
-    V: 'static + Send + Sync,
+    V: 'static,
     I: ElementInteraction<V>,
 {
     fn focus_listeners(&mut self) -> &mut FocusListeners<Self::ViewState> {

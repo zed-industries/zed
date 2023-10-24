@@ -5,7 +5,7 @@ use crate::{
 use anyhow::anyhow;
 use derive_more::{Deref, DerefMut};
 use parking_lot::Mutex;
-use std::{future::Future, sync::Weak};
+use std::{any::Any, future::Future, sync::Weak};
 
 #[derive(Clone)]
 pub struct AsyncAppContext {
@@ -14,13 +14,16 @@ pub struct AsyncAppContext {
 }
 
 impl Context for AsyncAppContext {
-    type EntityContext<'a, 'w, T: 'static + Send + Sync> = ModelContext<'a, T>;
+    type EntityContext<'a, 'w, T> = ModelContext<'a, T>;
     type Result<T> = Result<T>;
 
-    fn entity<T: Send + Sync + 'static>(
+    fn entity<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
-    ) -> Self::Result<Handle<T>> {
+    ) -> Self::Result<Handle<T>>
+    where
+        T: Any + Send + Sync,
+    {
         let app = self
             .app
             .upgrade()
@@ -29,7 +32,7 @@ impl Context for AsyncAppContext {
         Ok(lock.entity(build_entity))
     }
 
-    fn update_entity<T: Send + Sync + 'static, R>(
+    fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
@@ -129,7 +132,7 @@ impl AsyncAppContext {
         Ok(app_context.run_on_main(f))
     }
 
-    pub fn has_global<G: 'static + Send + Sync>(&self) -> Result<bool> {
+    pub fn has_global<G: 'static>(&self) -> Result<bool> {
         let app = self
             .app
             .upgrade()
@@ -138,10 +141,7 @@ impl AsyncAppContext {
         Ok(lock.has_global::<G>())
     }
 
-    pub fn read_global<G: 'static + Send + Sync, R>(
-        &self,
-        read: impl FnOnce(&G, &AppContext) -> R,
-    ) -> Result<R> {
+    pub fn read_global<G: 'static, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> Result<R> {
         let app = self
             .app
             .upgrade()
@@ -150,7 +150,7 @@ impl AsyncAppContext {
         Ok(read(lock.global(), &lock))
     }
 
-    pub fn try_read_global<G: 'static + Send + Sync, R>(
+    pub fn try_read_global<G: 'static, R>(
         &self,
         read: impl FnOnce(&G, &AppContext) -> R,
     ) -> Option<R> {
@@ -159,7 +159,7 @@ impl AsyncAppContext {
         Some(read(lock.try_global()?, &lock))
     }
 
-    pub fn update_global<G: 'static + Send + Sync, R>(
+    pub fn update_global<G: 'static, R>(
         &mut self,
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
     ) -> Result<R> {
@@ -195,7 +195,7 @@ impl AsyncWindowContext {
             .ok();
     }
 
-    pub fn read_global<G: 'static + Send + Sync, R>(
+    pub fn read_global<G: 'static, R>(
         &self,
         read: impl FnOnce(&G, &WindowContext) -> R,
     ) -> Result<R> {
@@ -203,33 +203,50 @@ impl AsyncWindowContext {
             .read_window(self.window, |cx| read(cx.global(), cx))
     }
 
-    pub fn update_global<G: 'static + Send + Sync, R>(
+    pub fn update_global<G, R>(
         &mut self,
         update: impl FnOnce(&mut G, &mut WindowContext) -> R,
-    ) -> Result<R> {
+    ) -> Result<R>
+    where
+        G: 'static,
+    {
         self.app
             .update_window(self.window, |cx| cx.update_global(update))
     }
 }
 
 impl Context for AsyncWindowContext {
-    type EntityContext<'a, 'w, T: 'static + Send + Sync> = ViewContext<'a, 'w, T>;
+    type EntityContext<'a, 'w, T> = ViewContext<'a, 'w, T>;
     type Result<T> = Result<T>;
 
-    fn entity<R: Send + Sync + 'static>(
+    fn entity<T>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, R>) -> R,
-    ) -> Result<Handle<R>> {
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
+    ) -> Result<Handle<T>>
+    where
+        T: Any + Send + Sync,
+    {
         self.app
             .update_window(self.window, |cx| cx.entity(build_entity))
     }
 
-    fn update_entity<T: Send + Sync + 'static, R>(
+    fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
     ) -> Result<R> {
         self.app
             .update_window(self.window, |cx| cx.update_entity(handle, update))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_async_app_context_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<AsyncAppContext>();
     }
 }

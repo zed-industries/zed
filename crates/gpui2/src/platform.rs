@@ -102,7 +102,7 @@ pub(crate) trait Platform: 'static {
     fn delete_credentials(&self, url: &str) -> Result<()>;
 }
 
-pub trait PlatformDisplay: Debug {
+pub trait PlatformDisplay: Send + Sync + Debug {
     fn id(&self) -> DisplayId;
     fn as_any(&self) -> &dyn Any;
     fn bounds(&self) -> Bounds<GlobalPixels>;
