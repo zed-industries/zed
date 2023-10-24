@@ -272,9 +272,7 @@ mod stories {
                                             Label::new(state.to_string()).color(LabelColor::Muted),
                                         )
                                         .child(
-                                            Button::new("Label")
-                                                .variant(ButtonVariant::Ghost)
-                                                .state(state),
+                                            Button::new("Label").variant(ButtonVariant::Ghost), // .state(state),
                                         )
                                 })))
                                 .child(Story::label(cx, "Ghost – Left Icon"))
@@ -288,8 +286,7 @@ mod stories {
                                             Button::new("Label")
                                                 .variant(ButtonVariant::Ghost)
                                                 .icon(Icon::Plus)
-                                                .icon_position(IconPosition::Left)
-                                                .state(state),
+                                                .icon_position(IconPosition::Left), // .state(state),
                                         )
                                 })))
                                 .child(Story::label(cx, "Ghost – Right Icon"))
@@ -303,8 +300,7 @@ mod stories {
                                             Button::new("Label")
                                                 .variant(ButtonVariant::Ghost)
                                                 .icon(Icon::Plus)
-                                                .icon_position(IconPosition::Right)
-                                                .state(state),
+                                                .icon_position(IconPosition::Right), // .state(state),
                                         )
                                 }))),
                         )
@@ -318,9 +314,7 @@ mod stories {
                                             Label::new(state.to_string()).color(LabelColor::Muted),
                                         )
                                         .child(
-                                            Button::new("Label")
-                                                .variant(ButtonVariant::Filled)
-                                                .state(state),
+                                            Button::new("Label").variant(ButtonVariant::Filled), // .state(state),
                                         )
                                 })))
                                 .child(Story::label(cx, "Filled – Left Button"))
@@ -334,8 +328,7 @@ mod stories {
                                             Button::new("Label")
                                                 .variant(ButtonVariant::Filled)
                                                 .icon(Icon::Plus)
-                                                .icon_position(IconPosition::Left)
-                                                .state(state),
+                                                .icon_position(IconPosition::Left), // .state(state),
                                         )
                                 })))
                                 .child(Story::label(cx, "Filled – Right Button"))
@@ -349,8 +342,7 @@ mod stories {
                                             Button::new("Label")
                                                 .variant(ButtonVariant::Filled)
                                                 .icon(Icon::Plus)
-                                                .icon_position(IconPosition::Right)
-                                                .state(state),
+                                                .icon_position(IconPosition::Right), // .state(state),
                                         )
                                 }))),
                         )
@@ -366,7 +358,7 @@ mod stories {
                                         .child(
                                             Button::new("Label")
                                                 .variant(ButtonVariant::Filled)
-                                                .state(state)
+                                                // .state(state)
                                                 .width(Some(rems(6.).into())),
                                         )
                                 })))
@@ -380,7 +372,7 @@ mod stories {
                                         .child(
                                             Button::new("Label")
                                                 .variant(ButtonVariant::Filled)
-                                                .state(state)
+                                                // .state(state)
                                                 .icon(Icon::Plus)
                                                 .icon_position(IconPosition::Left)
                                                 .width(Some(rems(6.).into())),
@@ -396,7 +388,7 @@ mod stories {
                                         .child(
                                             Button::new("Label")
                                                 .variant(ButtonVariant::Filled)
-                                                .state(state)
+                                                // .state(state)
                                                 .icon(Icon::Plus)
                                                 .icon_position(IconPosition::Right)
                                                 .width(Some(rems(6.).into())),
