@@ -18,6 +18,7 @@ doctest = false
 [dependencies]
 gpui2 = { path = "../gpui2" }
 fs = { path = "../fs" }
+schemars.workspace = true
 settings2 = { path = "../settings2" }
 util = { path = "../util" }
 

@@ -8459,6 +8459,7 @@ dependencies = [
  "gpui2",
  "indexmap 1.9.3",
  "parking_lot 0.11.2",
+ "schemars",
  "serde",
  "serde_derive",
  "serde_json",

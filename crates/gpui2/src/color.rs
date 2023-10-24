@@ -11,6 +11,14 @@ pub fn rgb<C: From<Rgba>>(hex: u32) -> C {
     Rgba { r, g, b, a: 1.0 }.into()
 }
 
+pub fn rgba(hex: u32) -> Rgba {
+    let r = ((hex >> 24) & 0xFF) as f32 / 255.0;
+    let g = ((hex >> 16) & 0xFF) as f32 / 255.0;
+    let b = ((hex >> 8) & 0xFF) as f32 / 255.0;
+    let a = (hex & 0xFF) as f32 / 255.0;
+    Rgba { r, g, b, a }
+}
+
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Rgba {
     pub r: f32,
@@ -33,6 +41,14 @@ impl Rgba {
                 a: self.a,
             };
         }
+    }
+
+    pub fn to_hex(&self) -> String {
+        let r = (self.r * 255.0) as u32;
+        let g = (self.g * 255.0) as u32;
+        let b = (self.b * 255.0) as u32;
+        let a = (self.a * 255.0) as u32;
+        format!("rgba(0x{:02x}{:02x}{:02x}{:02x}).into()", r, g, b, a)
     }
 }
 
@@ -126,7 +142,15 @@ pub struct Hsla {
     pub a: f32,
 }
 
+impl Hsla {
+    pub fn to_rgb(self) -> Rgba {
+        self.into()
+    }
+}
+
+
 impl Eq for Hsla {}
+
 
 pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
     Hsla {
