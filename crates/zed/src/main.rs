@@ -7,6 +7,7 @@ use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{
     self, Client, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
 };
+use collab_ui::channel_view::ChannelView;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use futures::StreamExt;
@@ -240,6 +241,20 @@ fn main() {
                 })
                 .detach_and_log_err(cx)
             }
+            Ok(Some(OpenRequest::OpenChannelNotes { channel_id })) => {
+                triggered_authentication = true;
+                let app_state = app_state.clone();
+                let client = client.clone();
+                cx.spawn(|mut cx| async move {
+                    // ignore errors here, we'll show a generic "not signed in"
+                    let _ = authenticate(client, &cx).await;
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                    cx.update(|cx| ChannelView::open(channel_id, workspace, cx))
+                        .await
+                })
+                .detach_and_log_err(cx)
+            }
             Ok(None) | Err(_) => cx
                 .spawn({
                     let app_state = app_state.clone();
@@ -254,8 +269,10 @@ fn main() {
                 while let Some(request) = open_rx.next().await {
                     match request {
                         OpenRequest::Paths { paths } => {
-                            cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
-                                .detach();
+                            cx.update(|cx| {
+                                workspace::open_paths(&paths, &app_state.clone(), None, cx)
+                            })
+                            .detach();
                         }
                         OpenRequest::CliConnection { connection } => {
                             cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
@@ -266,6 +283,16 @@ fn main() {
                                 workspace::join_channel(channel_id, app_state.clone(), None, cx)
                             })
                             .detach(),
+                        OpenRequest::OpenChannelNotes { channel_id } => {
+                            let app_state = app_state.clone();
+                            if let Ok(workspace) =
+                                workspace::get_any_active_workspace(app_state, cx.clone()).await
+                            {
+                                cx.update(|cx| {
+                                    ChannelView::open(channel_id, workspace, cx).detach();
+                                })
+                            }
+                        }
                     }
                 }
             }
