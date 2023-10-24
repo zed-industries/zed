@@ -24,6 +24,7 @@ mod color;
 mod components;
 mod element_ext;
 mod elements;
+mod elevation;
 pub mod prelude;
 pub mod settings;
 mod static_data;
