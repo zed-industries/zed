@@ -611,38 +611,6 @@ impl TestClient {
     ) -> WindowHandle<Workspace> {
         cx.add_window(|cx| Workspace::new(0, project.clone(), self.app_state.clone(), cx))
     }
-
-    pub async fn add_admin_to_channel(
-        &self,
-        user: (&TestClient, &mut TestAppContext),
-        channel: u64,
-        cx_self: &mut TestAppContext,
-    ) {
-        let (other_client, other_cx) = user;
-
-        cx_self
-            .read(ChannelStore::global)
-            .update(cx_self, |channel_store, cx| {
-                channel_store.invite_member(
-                    channel,
-                    other_client.user_id().unwrap(),
-                    ChannelRole::Admin,
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-
-        cx_self.foreground().run_until_parked();
-
-        other_cx
-            .read(ChannelStore::global)
-            .update(other_cx, |channel_store, cx| {
-                channel_store.respond_to_channel_invite(channel, true, cx)
-            })
-            .await
-            .unwrap();
-    }
 }
 
 impl Drop for TestClient {

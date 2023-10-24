@@ -15,13 +15,14 @@ use gpui::{
     ViewContext, ViewHandle,
 };
 use project::Project;
+use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     sync::Arc,
 };
 use util::ResultExt;
 use workspace::{
-    item::{FollowableItem, Item, ItemHandle},
+    item::{FollowableItem, Item, ItemEvent, ItemHandle},
     register_followable_item,
     searchable::SearchableItemHandle,
     ItemNavHistory, Pane, SaveIntent, ViewId, Workspace, WorkspaceId,
@@ -140,6 +141,12 @@ impl ChannelView {
             editor.set_collaboration_hub(Box::new(ChannelBufferCollaborationHub(
                 channel_buffer.clone(),
             )));
+            editor.set_read_only(
+                !channel_buffer
+                    .read(cx)
+                    .channel(cx)
+                    .is_some_and(|c| c.can_edit_notes()),
+            );
             editor
         });
         let _editor_event_subscription = cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()));
@@ -157,8 +164,8 @@ impl ChannelView {
         }
     }
 
-    pub fn channel(&self, cx: &AppContext) -> Arc<Channel> {
-        self.channel_buffer.read(cx).channel()
+    pub fn channel(&self, cx: &AppContext) -> Option<Arc<Channel>> {
+        self.channel_buffer.read(cx).channel(cx)
     }
 
     fn handle_channel_buffer_event(
@@ -172,6 +179,13 @@ impl ChannelView {
                 editor.set_read_only(true);
                 cx.notify();
             }),
+            ChannelBufferEvent::ChannelChanged => {
+                self.editor.update(cx, |editor, cx| {
+                    editor.set_read_only(!self.channel(cx).is_some_and(|c| c.can_edit_notes()));
+                    cx.emit(editor::Event::TitleChanged);
+                    cx.notify()
+                });
+            }
             ChannelBufferEvent::BufferEdited => {
                 if cx.is_self_focused() || self.editor.is_focused(cx) {
                     self.acknowledge_buffer_version(cx);
@@ -179,7 +193,7 @@ impl ChannelView {
                     self.channel_store.update(cx, |store, cx| {
                         let channel_buffer = self.channel_buffer.read(cx);
                         store.notes_changed(
-                            channel_buffer.channel().id,
+                            channel_buffer.channel_id,
                             channel_buffer.epoch(),
                             &channel_buffer.buffer().read(cx).version(),
                             cx,
@@ -187,7 +201,7 @@ impl ChannelView {
                     });
                 }
             }
-            _ => {}
+            ChannelBufferEvent::CollaboratorsChanged => {}
         }
     }
 
@@ -195,7 +209,7 @@ impl ChannelView {
         self.channel_store.update(cx, |store, cx| {
             let channel_buffer = self.channel_buffer.read(cx);
             store.acknowledge_notes_version(
-                channel_buffer.channel().id,
+                channel_buffer.channel_id,
                 channel_buffer.epoch(),
                 &channel_buffer.buffer().read(cx).version(),
                 cx,
@@ -250,11 +264,17 @@ impl Item for ChannelView {
         style: &theme::Tab,
         cx: &gpui::AppContext,
     ) -> AnyElement<V> {
-        let channel_name = &self.channel_buffer.read(cx).channel().name;
-        let label = if self.channel_buffer.read(cx).is_connected() {
-            format!("#{}", channel_name)
+        let label = if let Some(channel) = self.channel(cx) {
+            match (
+                channel.can_edit_notes(),
+                self.channel_buffer.read(cx).is_connected(),
+            ) {
+                (true, true) => format!("#{}", channel.name),
+                (false, true) => format!("#{} (read-only)", channel.name),
+                (_, false) => format!("#{} (disconnected)", channel.name),
+            }
         } else {
-            format!("#{} (disconnected)", channel_name)
+            format!("channel notes (disconnected)")
         };
         Label::new(label, style.label.to_owned()).into_any()
     }
@@ -298,6 +318,10 @@ impl Item for ChannelView {
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Vector2F> {
         self.editor.read(cx).pixel_position_of_cursor(cx)
     }
+
+    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
+        editor::Editor::to_item_events(event)
+    }
 }
 
 impl FollowableItem for ChannelView {
@@ -313,7 +337,7 @@ impl FollowableItem for ChannelView {
 
         Some(proto::view::Variant::ChannelView(
             proto::view::ChannelView {
-                channel_id: channel_buffer.channel().id,
+                channel_id: channel_buffer.channel_id,
                 editor: if let Some(proto::view::Variant::Editor(proto)) =
                     self.editor.read(cx).to_state_proto(cx)
                 {

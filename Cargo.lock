@@ -1575,6 +1575,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "settings",
+ "smallvec",
  "theme",
  "theme_selector",
  "time",

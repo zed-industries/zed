@@ -477,7 +477,7 @@ impl NotificationPanel {
                             return panel.read_with(cx, |panel, cx| {
                                 panel.is_scrolled_to_bottom()
                                     && panel.active_chat().map_or(false, |chat| {
-                                        chat.read(cx).channel().id == *channel_id
+                                        chat.read(cx).channel_id == *channel_id
                                     })
                             });
                         }

@@ -84,7 +84,7 @@ id_type!(FlagId);
 id_type!(NotificationId);
 id_type!(NotificationKindId);
 
-#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default)]
+#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash)]
 #[sea_orm(rs_type = "String", db_type = "String(None)")]
 pub enum ChannelRole {
     #[sea_orm(string_value = "admin")]
@@ -114,6 +114,22 @@ impl ChannelRole {
             *self
         } else {
             other
+        }
+    }
+
+    pub fn can_see_all_descendants(&self) -> bool {
+        use ChannelRole::*;
+        match self {
+            Admin | Member => true,
+            Guest | Banned => false,
+        }
+    }
+
+    pub fn can_only_see_public_descendants(&self) -> bool {
+        use ChannelRole::*;
+        match self {
+            Guest => true,
+            Admin | Member | Banned => false,
         }
     }
 }

@@ -1,4 +1,4 @@
-use channel::{Channel, ChannelMembership, ChannelStore, MessageParams};
+use channel::{ChannelId, ChannelMembership, ChannelStore, MessageParams};
 use client::UserId;
 use collections::HashMap;
 use editor::{AnchorRangeExt, Editor};
@@ -30,7 +30,7 @@ pub struct MessageEditor {
     users: HashMap<String, UserId>,
     mentions: Vec<UserId>,
     mentions_task: Option<Task<()>>,
-    channel: Option<Arc<Channel>>,
+    channel_id: Option<ChannelId>,
 }
 
 impl MessageEditor {
@@ -68,24 +68,33 @@ impl MessageEditor {
             editor,
             channel_store,
             users: HashMap::default(),
-            channel: None,
+            channel_id: None,
             mentions: Vec::new(),
             mentions_task: None,
         }
     }
 
-    pub fn set_channel(&mut self, channel: Arc<Channel>, cx: &mut ViewContext<Self>) {
+    pub fn set_channel(
+        &mut self,
+        channel_id: u64,
+        channel_name: Option<String>,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text(format!("Message #{}", channel.name), cx);
+            if let Some(channel_name) = channel_name {
+                editor.set_placeholder_text(format!("Message #{}", channel_name), cx);
+            } else {
+                editor.set_placeholder_text(format!("Message Channel"), cx);
+            }
         });
-        self.channel = Some(channel);
+        self.channel_id = Some(channel_id);
         self.refresh_users(cx);
     }
 
     pub fn refresh_users(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(channel) = &self.channel {
+        if let Some(channel_id) = self.channel_id {
             let members = self.channel_store.update(cx, |store, cx| {
-                store.get_channel_member_details(channel.id, cx)
+                store.get_channel_member_details(channel_id, cx)
             });
             cx.spawn(|this, mut cx| async move {
                 let members = members.await?;
