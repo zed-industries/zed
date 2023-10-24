@@ -1,8 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
-
-use gpui2::{fonts, AppContext};
+use gpui2::{AppContext, FontFeatures};
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
+use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -19,7 +18,7 @@ pub struct TerminalSettings {
     font_size: Option<f32>,
     pub font_family: Option<String>,
     pub line_height: TerminalLineHeight,
-    pub font_features: Option<fonts::Features>,
+    pub font_features: Option<FontFeatures>,
     pub env: HashMap<String, String>,
     pub blinking: TerminalBlink,
     pub alternate_scroll: AlternateScroll,
@@ -79,7 +78,7 @@ pub struct TerminalSettingsContent {
     pub font_size: Option<f32>,
     pub font_family: Option<String>,
     pub line_height: Option<TerminalLineHeight>,
-    pub font_features: Option<fonts::Features>,
+    pub font_features: Option<FontFeatures>,
     pub env: Option<HashMap<String, String>>,
     pub blinking: Option<TerminalBlink>,
     pub alternate_scroll: Option<AlternateScroll>,
@@ -92,10 +91,11 @@ pub struct TerminalSettingsContent {
 }
 
 impl TerminalSettings {
-    pub fn font_size(&self, cx: &AppContext) -> Option<f32> {
-        self.font_size
-            .map(|size| theme2::adjusted_font_size(size, cx))
-    }
+    // todo!("move to terminal element")
+    // pub fn font_size(&self, cx: &AppContext) -> Option<f32> {
+    //     self.font_size
+    //         .map(|size| theme2::adjusted_font_size(size, cx))
+    // }
 }
 
 impl settings2::Setting for TerminalSettings {

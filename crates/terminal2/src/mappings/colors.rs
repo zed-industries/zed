@@ -1,9 +1,9 @@
 // todo!()
-// use alacritty_terminal::{ansi::Color as AnsiColor, term::color::Rgb as AlacRgb};
+use alacritty_terminal::term::color::Rgb as AlacRgb;
 // use gpui2::color::Color;
 // use theme2::TerminalStyle;
 
-// ///Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent
+///Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent
 // pub fn convert_color(alac_color: &AnsiColor, style: &TerminalStyle) -> Color {
 //     match alac_color {
 //         //Named and theme defined colors
@@ -45,9 +45,10 @@
 //     }
 // }
 
-// ///Converts an 8 bit ANSI color to it's GPUI equivalent.
-// ///Accepts usize for compatibility with the alacritty::Colors interface,
-// ///Other than that use case, should only be called with values in the [0,255] range
+/// TODO: Move this
+///Converts an 8 bit ANSI color to it's GPUI equivalent.
+///Accepts usize for compatibility with the alacritty::Colors interface,
+///Other than that use case, should only be called with values in the [0,255] range
 // pub fn get_color_at_index(index: &usize, style: &TerminalStyle) -> Color {
 //     match index {
 //         //0-15 are the same as the named colors above
@@ -96,14 +97,14 @@
 //         _ => Color::new(0, 0, 0, 255),
 //     }
 // }
-// ///Generates the rgb channels in [0, 5] for a given index into the 6x6x6 ANSI color cube
-// ///See: [8 bit ansi color](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit).
-// ///
-// ///Wikipedia gives a formula for calculating the index for a given color:
-// ///
-// ///index = 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
-// ///
-// ///This function does the reverse, calculating the r, g, and b components from a given index.
+///Generates the rgb channels in [0, 5] for a given index into the 6x6x6 ANSI color cube
+///See: [8 bit ansi color](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit).
+///
+///Wikipedia gives a formula for calculating the index for a given color:
+///
+///index = 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
+///
+///This function does the reverse, calculating the r, g, and b components from a given index.
 // fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
 //     debug_assert!((&16..=&231).contains(&i));
 //     let i = i - 16;
@@ -112,11 +113,16 @@
 //     let b = (i % 36) % 6;
 //     (r, g, b)
 // }
+use gpui2::Rgba;
 
-// //Convenience method to convert from a GPUI color to an alacritty Rgb
-// pub fn to_alac_rgb(color: Color) -> AlacRgb {
-//     AlacRgb::new(color.r, color.g, color.g)
-// }
+//Convenience method to convert from a GPUI color to an alacritty Rgb
+pub fn to_alac_rgb(color: impl Into<Rgba>) -> AlacRgb {
+    let color = color.into();
+    let r = ((color.r * color.a) * 255.) as u8;
+    let g = ((color.g * color.a) * 255.) as u8;
+    let b = ((color.b * color.a) * 255.) as u8;
+    AlacRgb::new(r, g, b)
+}
 
 // #[cfg(test)]
 // mod tests {

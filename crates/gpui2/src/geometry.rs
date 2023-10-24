@@ -1,5 +1,5 @@
 use core::fmt::Debug;
-use derive_more::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
+use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
 use serde_derive::{Deserialize, Serialize};
 use std::{
@@ -131,7 +131,7 @@ impl<T: Clone + Default + Debug> Clone for Point<T> {
     }
 }
 
-#[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash)]
+#[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash, Serialize, Deserialize)]
 #[refineable(debug)]
 #[repr(C)]
 pub struct Size<T: Clone + Default + Debug> {
@@ -660,8 +660,9 @@ impl<T> Copy for Corners<T> where T: Copy + Clone + Default + Debug {}
     AddAssign,
     Sub,
     SubAssign,
-    Div,
     Neg,
+    Div,
+    DivAssign,
     PartialEq,
     PartialOrd,
     Serialize,
@@ -669,6 +670,34 @@ impl<T> Copy for Corners<T> where T: Copy + Clone + Default + Debug {}
 )]
 #[repr(transparent)]
 pub struct Pixels(pub(crate) f32);
+
+impl std::ops::Div for Pixels {
+    type Output = Self;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        Self(self.0 / rhs.0)
+    }
+}
+
+impl std::ops::DivAssign for Pixels {
+    fn div_assign(&mut self, rhs: Self) {
+        self.0 /= rhs.0;
+    }
+}
+
+impl std::ops::RemAssign for Pixels {
+    fn rem_assign(&mut self, rhs: Self) {
+        self.0 %= rhs.0;
+    }
+}
+
+impl std::ops::Rem for Pixels {
+    type Output = Self;
+
+    fn rem(self, rhs: Self) -> Self {
+        Self(self.0 % rhs.0)
+    }
+}
 
 impl Mul<f32> for Pixels {
     type Output = Pixels;
@@ -703,6 +732,14 @@ impl MulAssign<f32> for Pixels {
 impl Pixels {
     pub const MAX: Pixels = Pixels(f32::MAX);
 
+    pub fn as_usize(&self) -> usize {
+        self.0 as usize
+    }
+
+    pub fn as_isize(&self) -> isize {
+        self.0 as isize
+    }
+
     pub fn floor(&self) -> Self {
         Self(self.0.floor())
     }
@@ -713,6 +750,10 @@ impl Pixels {
 
     pub fn scale(&self, factor: f32) -> ScaledPixels {
         ScaledPixels(self.0 * factor)
+    }
+
+    pub fn pow(&self, exponent: f32) -> Self {
+        Self(self.0.powf(exponent))
     }
 }
 

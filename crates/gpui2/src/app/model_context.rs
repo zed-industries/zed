@@ -1,10 +1,15 @@
 use crate::{
-    AppContext, AsyncAppContext, Context, Effect, EntityId, EventEmitter, Handle, Reference,
-    Subscription, Task, WeakHandle,
+    AppContext, AsyncAppContext, Context, Effect, EntityId, EventEmitter, Handle, MainThread,
+    Reference, Subscription, Task, WeakHandle,
 };
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
-use std::{any::TypeId, future::Future, marker::PhantomData};
+use std::{
+    any::TypeId,
+    borrow::{Borrow, BorrowMut},
+    future::Future,
+    marker::PhantomData,
+};
 
 #[derive(Deref, DerefMut)]
 pub struct ModelContext<'a, T> {
@@ -174,6 +179,18 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         let this = self.weak_handle();
         self.app.spawn(|cx| f(this, cx))
     }
+
+    pub fn spawn_on_main<Fut, R>(
+        &self,
+        f: impl FnOnce(WeakHandle<T>, MainThread<AsyncAppContext>) -> Fut + Send + 'static,
+    ) -> Task<R>
+    where
+        Fut: Future<Output = R> + 'static,
+        R: Send + 'static,
+    {
+        let this = self.weak_handle();
+        self.app.spawn_on_main(|cx| f(this, cx))
+    }
 }
 
 impl<'a, T: EventEmitter + Send + Sync + 'static> ModelContext<'a, T> {
@@ -202,5 +219,17 @@ impl<'a, T: 'static> Context for ModelContext<'a, T> {
         update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,
     ) -> R {
         self.app.update_entity(handle, update)
+    }
+}
+
+impl<T> Borrow<AppContext> for ModelContext<'_, T> {
+    fn borrow(&self) -> &AppContext {
+        &self.app
+    }
+}
+
+impl<T> BorrowMut<AppContext> for ModelContext<'_, T> {
+    fn borrow_mut(&mut self) -> &mut AppContext {
+        &mut self.app
     }
 }

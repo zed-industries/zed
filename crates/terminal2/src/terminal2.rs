@@ -37,7 +37,7 @@ use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings}
 use util::truncate_and_trailoff;
 
 use std::{
-    cmp::min,
+    cmp::{self, min},
     collections::{HashMap, VecDeque},
     fmt::Display,
     ops::{Deref, Index, RangeInclusive},
@@ -49,15 +49,12 @@ use std::{
 use thiserror::Error;
 
 use gpui2::{
-    px, AnyWindowHandle, AppContext, ClipboardItem, EventEmitter, Keystroke, MainThread,
-    ModelContext, Modifiers, MouseButton, MouseDragEvent, MouseScrollWheel, MouseUp, Pixels, Point,
-    Task, TouchPhase,
+    px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla, Keystroke,
+    MainThread, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, ScrollWheelEvent, Size, Task, TouchPhase,
 };
 
-use crate::mappings::{
-    colors::{get_color_at_index, to_alac_rgb},
-    keys::to_esc_str,
-};
+use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
 use lazy_static::lazy_static;
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
@@ -136,34 +133,32 @@ pub fn init(cx: &mut AppContext) {
 pub struct TerminalSize {
     pub cell_width: Pixels,
     pub line_height: Pixels,
-    pub height: Pixels,
-    pub width: Pixels,
+    pub size: Size<Pixels>,
 }
 
 impl TerminalSize {
-    pub fn new(line_height: Pixels, cell_width: Pixels, size: Point<Pixels>) -> Self {
+    pub fn new(line_height: Pixels, cell_width: Pixels, size: Size<Pixels>) -> Self {
         TerminalSize {
             cell_width,
             line_height,
-            width: size.x(),
-            height: size.y(),
+            size,
         }
     }
 
     pub fn num_lines(&self) -> usize {
-        (self.height / self.line_height).floor() as usize
+        f32::from((self.size.height / self.line_height).floor()) as usize
     }
 
     pub fn num_columns(&self) -> usize {
-        (self.width / self.cell_width).floor() as usize
+        f32::from((self.size.width / self.cell_width).floor()) as usize
     }
 
     pub fn height(&self) -> Pixels {
-        self.height
+        self.size.height
     }
 
     pub fn width(&self) -> Pixels {
-        self.width
+        self.size.width
     }
 
     pub fn cell_width(&self) -> Pixels {
@@ -179,7 +174,10 @@ impl Default for TerminalSize {
         TerminalSize::new(
             DEBUG_LINE_HEIGHT,
             DEBUG_CELL_WIDTH,
-            Point::new(DEBUG_TERMINAL_WIDTH, DEBUG_TERMINAL_HEIGHT),
+            Size {
+                width: DEBUG_TERMINAL_WIDTH,
+                height: DEBUG_TERMINAL_HEIGHT,
+            },
         )
     }
 }
@@ -287,6 +285,7 @@ impl TerminalBuilder {
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: AlternateScroll,
         window: AnyWindowHandle,
+        color_for_index: impl Fn(usize, &mut AppContext) -> Hsla + Send + Sync + 'static,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
             let alac_shell = match shell.clone() {
@@ -392,6 +391,7 @@ impl TerminalBuilder {
             selection_phase: SelectionPhase::Ended,
             cmd_pressed: false,
             hovered_word: false,
+            color_for_index: Box::new(color_for_index),
         };
 
         Ok(TerminalBuilder {
@@ -402,7 +402,7 @@ impl TerminalBuilder {
 
     pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         //Event loop
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_on_main(|this, mut cx| async move {
             use futures::StreamExt;
 
             while let Some(event) = self.events_rx.next().await {
@@ -545,6 +545,8 @@ pub struct Terminal {
     selection_phase: SelectionPhase,
     cmd_pressed: bool,
     hovered_word: bool,
+    // An implementation of the 8 bit ANSI color palette
+    color_for_index: Box<dyn Fn(usize, &mut AppContext) -> Hsla + Send + Sync + 'static>,
 }
 
 impl Terminal {
@@ -627,19 +629,17 @@ impl Terminal {
     ) {
         match event {
             InternalEvent::ColorRequest(index, format) => {
-                let color = term.colors()[*index].unwrap_or_else(|| {
-                    let term_style = &theme::current(cx).terminal;
-                    to_alac_rgb(get_color_at_index(index, &term_style))
-                });
+                let color = term.colors()[*index]
+                    .unwrap_or_else(|| to_alac_rgb((self.color_for_index)(*index, cx)));
                 self.write_to_pty(format(color))
             }
             InternalEvent::Resize(mut new_size) => {
-                new_size.height = f32::max(new_size.line_height, new_size.height);
-                new_size.width = f32::max(new_size.cell_width, new_size.width);
+                new_size.size.height = cmp::max(new_size.line_height, new_size.height());
+                new_size.size.width = cmp::max(new_size.cell_width, new_size.width());
 
                 self.last_content.size = new_size.clone();
 
-                self.pty_tx.0.send(Msg::Resize((new_size).into())).ok();
+                self.pty_tx.0.send(Msg::Resize(new_size.into())).ok();
 
                 term.resize(new_size);
             }
@@ -707,7 +707,8 @@ impl Terminal {
 
             InternalEvent::Copy => {
                 if let Some(txt) = term.selection_to_string() {
-                    cx.write_to_clipboard(ClipboardItem::new(txt))
+                    cx.run_on_main(|cx| cx.write_to_clipboard(ClipboardItem::new(txt)))
+                        .detach();
                 }
             }
             InternalEvent::ScrollToAlacPoint(point) => {
@@ -952,11 +953,11 @@ impl Terminal {
     }
 
     pub fn try_modifiers_change(&mut self, modifiers: &Modifiers) -> bool {
-        let changed = self.cmd_pressed != modifiers.cmd;
-        if !self.cmd_pressed && modifiers.cmd {
+        let changed = self.cmd_pressed != modifiers.command;
+        if !self.cmd_pressed && modifiers.command {
             self.refresh_hovered_word();
         }
-        self.cmd_pressed = modifiers.cmd;
+        self.cmd_pressed = modifiers.command;
         changed
     }
 
@@ -983,14 +984,14 @@ impl Terminal {
             let delay = cx.executor().timer(Duration::from_millis(16));
             self.sync_task = Some(cx.spawn(|weak_handle, mut cx| async move {
                 delay.await;
-                cx.update(|cx| {
-                    if let Some(handle) = weak_handle.upgrade(cx) {
-                        handle.update(cx, |terminal, cx| {
+                if let Some(handle) = weak_handle.upgrade() {
+                    handle
+                        .update(&mut cx, |terminal, cx| {
                             terminal.sync_task.take();
                             cx.notify();
-                        });
-                    }
-                });
+                        })
+                        .ok();
+                }
             }));
             return;
         } else {
@@ -1069,10 +1070,10 @@ impl Terminal {
         self.last_content.mode.intersects(TermMode::MOUSE_MODE) && !shift
     }
 
-    pub fn mouse_move(&mut self, e: &MouseMovedEvent, origin: Point<Pixels>) {
-        let position = e.position.sub(origin);
+    pub fn mouse_move(&mut self, e: &MouseMoveEvent, origin: Point<Pixels>) {
+        let position = e.position - origin;
         self.last_mouse_position = Some(position);
-        if self.mouse_mode(e.shift) {
+        if self.mouse_mode(e.modifiers.shift) {
             let point = grid_point(
                 position,
                 self.last_content.size,
@@ -1099,11 +1100,11 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_drag(&mut self, e: MouseDrag, origin: Point<Pixels>) {
-        let position = e.position.sub(origin);
+    pub fn mouse_drag(&mut self, e: MouseMoveEvent, origin: Point<Pixels>) {
+        let position = e.position - origin;
         self.last_mouse_position = Some(position);
 
-        if !self.mouse_mode(e.shift) {
+        if !self.mouse_mode(e.modifiers.shift) {
             self.selection_phase = SelectionPhase::Selecting;
             // Alacritty has the same ordering, of first updating the selection
             // then scrolling 15ms later
@@ -1125,21 +1126,21 @@ impl Terminal {
         }
     }
 
-    fn drag_line_delta(&mut self, e: MouseDrag) -> Option<f32> {
+    fn drag_line_delta(&mut self, e: MouseMoveEvent, region: Bounds<Pixels>) -> Option<f32> {
         //TODO: Why do these need to be doubled? Probably the same problem that the IME has
-        let top = e.region.origin_y() + (self.last_content.size.line_height * 2.);
-        let bottom = e.region.lower_left().y() - (self.last_content.size.line_height * 2.);
-        let scroll_delta = if e.position.y() < top {
-            (top - e.position.y()).powf(1.1)
-        } else if e.position.y() > bottom {
-            -((e.position.y() - bottom).powf(1.1))
+        let top = region.origin.y + (self.last_content.size.line_height * 2.);
+        let bottom = region.lower_left().y - (self.last_content.size.line_height * 2.);
+        let scroll_delta = if e.position.y < top {
+            (top - e.position.y).powf(1.1)
+        } else if e.position.y > bottom {
+            -((e.position.y - bottom).powf(1.1))
         } else {
             return None; //Nothing to do
         };
         Some(scroll_delta)
     }
 
-    pub fn mouse_down(&mut self, e: &MouseDown, origin: Point<Pixels>) {
+    pub fn mouse_down(&mut self, e: &MouseDownEvent, origin: Point<Pixels>) {
         let position = e.position.sub(origin);
         let point = grid_point(
             position,
@@ -1148,7 +1149,9 @@ impl Terminal {
         );
 
         if self.mouse_mode(e.shift) {
-            if let Some(bytes) = mouse_button_report(point, e, true, self.last_content.mode) {
+            if let Some(bytes) =
+                mouse_button_report(point, e.button, e.modifiers, true, self.last_content.mode)
+            {
                 self.pty_tx.notify(bytes);
             }
         } else if e.button == MouseButton::Left {
@@ -1180,7 +1183,12 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_up(&mut self, e: &MouseUp, origin: Point<Pixels>, cx: &mut ModelContext<Self>) {
+    pub fn mouse_up(
+        &mut self,
+        e: &MouseUpEvent,
+        origin: Point<Pixels>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let setting = settings2::get::<TerminalSettings>(cx);
 
         let position = e.position.sub(origin);
@@ -1191,7 +1199,9 @@ impl Terminal {
                 self.last_content.display_offset,
             );
 
-            if let Some(bytes) = mouse_button_report(point, e, false, self.last_content.mode) {
+            if let Some(bytes) =
+                mouse_button_report(point, e.button, e.modifiers, false, self.last_content.mode)
+            {
                 self.pty_tx.notify(bytes);
             }
         } else {
@@ -1274,7 +1284,7 @@ impl Terminal {
 
                 // Whenever we hit the edges, reset our stored scroll to 0
                 // so we can respond to changes in direction quickly
-                self.scroll_px %= self.last_content.size.height;
+                self.scroll_px %= self.last_content.size.height();
 
                 Some(new_offset - old_offset)
             }
@@ -1385,25 +1395,21 @@ fn all_search_matches<'a, T>(
     RegexIter::new(start, end, AlacDirection::Right, term, regex)
 }
 
-fn content_index_for_mouse(pos: AlacPoint<Pixels>, size: &TerminalSize) -> usize {
-    let col = (pos.x() / size.cell_width()).round() as usize;
-
+fn content_index_for_mouse(pos: Point<Pixels>, size: &TerminalSize) -> usize {
+    let col = (pos.x / size.cell_width()).round().as_usize();
     let clamped_col = min(col, size.columns() - 1);
-
-    let row = (pos.y() / size.line_height()).round() as usize;
-
+    let row = (pos.y / size.line_height()).round().as_usize();
     let clamped_row = min(row, size.screen_lines() - 1);
-
     clamped_row * size.columns() + clamped_col
 }
 
 #[cfg(test)]
 mod tests {
     use alacritty_terminal::{
-        index::{AlacColumn, Line},
+        index::{AlacColumn, Line, Point as AlacPoint},
         term::cell::Cell,
     };
-    use gpui2::geometry::vecto::vec2f;
+    use gpui2::{geometry::vecto::vec2f, size, Pixels};
     use rand::{distributions::Alphanumeric, rngs::ThreadRng, thread_rng, Rng};
 
     use crate::{content_index_for_mouse, IndexedCell, TerminalContent, TerminalSize};
@@ -1419,10 +1425,12 @@ mod tests {
             let cell_size = rng.gen_range(5 * PRECISION..20 * PRECISION) as f32 / PRECISION as f32;
 
             let size = crate::TerminalSize {
-                cell_width: cell_size,
-                line_height: cell_size,
-                height: cell_size * (viewport_cells as f32),
-                width: cell_size * (viewport_cells as f32),
+                cell_width: Pixels::from(cell_size),
+                line_height: Pixels::from(cell_size),
+                size: size(
+                    Pixels::from(cell_size * (viewport_cells as f32)),
+                    Pixels::from(cell_size * (viewport_cells as f32)),
+                ),
             };
 
             let cells = get_cells(size, &mut rng);
@@ -1456,10 +1464,9 @@ mod tests {
         let mut rng = thread_rng();
 
         let size = crate::TerminalSize {
-            cell_width: 10.,
-            line_height: 10.,
-            height: 100.,
-            width: 100.,
+            cell_width: Pixels::from(10.),
+            line_height: Pixels::from(10.),
+            size: size(Pixels::from(100.), Pixels::from(100.)),
         };
 
         let cells = get_cells(size, &mut rng);
@@ -1478,9 +1485,9 @@ mod tests {
     fn get_cells(size: TerminalSize, rng: &mut ThreadRng) -> Vec<Vec<char>> {
         let mut cells = Vec::new();
 
-        for _ in 0..((size.height() / size.line_height()) as usize) {
+        for _ in 0..(f32::from(size.height() / size.line_height()) as usize) {
             let mut row_vec = Vec::new();
-            for _ in 0..((size.width() / size.cell_width()) as usize) {
+            for _ in 0..(f32::from(size.width() / size.cell_width()) as usize) {
                 let cell_char = rng.sample(Alphanumeric) as char;
                 row_vec.push(cell_char)
             }
@@ -1497,7 +1504,7 @@ mod tests {
             for col in 0..cells[row].len() {
                 let cell_char = cells[row][col];
                 ic.push(IndexedCell {
-                    point: Point::new(Line(row as i32), Column(col)),
+                    point: AlacPoint::new(Line(row as i32), Column(col)),
                     cell: Cell {
                         c: cell_char,
                         ..Default::default()

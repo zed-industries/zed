@@ -476,19 +476,14 @@ impl AppContext {
 
     pub fn spawn_on_main<F, R>(
         &self,
-        f: impl FnOnce(&mut MainThread<AppContext>) -> F + Send + 'static,
+        f: impl FnOnce(MainThread<AsyncAppContext>) -> F + Send + 'static,
     ) -> Task<R>
     where
         F: Future<Output = R> + 'static,
         R: Send + 'static,
     {
-        let this = self.this.upgrade().unwrap();
-        self.executor.spawn_on_main(move || {
-            let cx = &mut *this.lock();
-            cx.update(|cx| {
-                f(unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) })
-            })
-        })
+        let cx = self.to_async();
+        self.executor.spawn_on_main(move || f(MainThread(cx)))
     }
 
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static) -> Task<R>
