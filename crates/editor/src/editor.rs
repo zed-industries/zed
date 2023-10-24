@@ -7308,11 +7308,11 @@ impl Editor {
         let display_point = initial_point.to_display_point(snapshot);
         let mut hunks = hunks
             .map(|hunk| diff_hunk_to_display(hunk, &snapshot))
-            .skip_while(|hunk| {
+            .filter(|hunk| {
                 if is_wrapped {
-                    false
+                    true
                 } else {
-                    hunk.contains_display_row(display_point.row())
+                    !hunk.contains_display_row(display_point.row())
                 }
             })
             .dedup();

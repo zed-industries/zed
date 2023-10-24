@@ -6801,6 +6801,46 @@ async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppCon
     );
 
     cx.update_editor(|editor, cx| {
+        editor.go_to_prev_hunk(&GoToPrevHunk, cx);
+    });
+
+    cx.assert_editor_state(
+        &r#"
+        use some::modified;
+
+        ˇ
+        fn main() {
+            println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        for _ in 0..3 {
+            editor.go_to_prev_hunk(&GoToPrevHunk, cx);
+        }
+    });
+
+    cx.assert_editor_state(
+        &r#"
+        use some::modified;
+
+
+        fn main() {
+        ˇ    println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
         editor.fold(&Fold, cx);
 
         //Make sure that the fold only gets one hunk
