@@ -15,7 +15,7 @@ test-support = [
     "language2/test-support",
     "settings2/test-support",
     "text/test-support",
-    "prettier/test-support",
+    "prettier2/test-support",
 ]
 
 [dependencies]
@@ -33,7 +33,7 @@ gpui2 = { path = "../gpui2" }
 language2 = { path = "../language2" }
 lsp2 = { path = "../lsp2" }
 node_runtime = { path = "../node_runtime" }
-prettier = { path = "../prettier" }
+prettier2 = { path = "../prettier2" }
 rpc = { path = "../rpc" }
 settings2 = { path = "../settings2" }
 sum_tree = { path = "../sum_tree" }
@@ -76,7 +76,7 @@ gpui2 = { path = "../gpui2", features = ["test-support"] }
 language2 = { path = "../language2", features = ["test-support"] }
 lsp2 = { path = "../lsp2", features = ["test-support"] }
 settings2 = { path = "../settings2", features = ["test-support"] }
-prettier = { path = "../prettier", features = ["test-support"] }
+prettier2 = { path = "../prettier2", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 git2.workspace = true

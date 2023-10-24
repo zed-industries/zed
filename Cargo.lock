@@ -6005,7 +6005,7 @@ dependencies = [
  "node_runtime",
  "parking_lot 0.11.2",
  "postage",
- "prettier",
+ "prettier2",
  "pretty_assertions",
  "rand 0.8.5",
  "regex",

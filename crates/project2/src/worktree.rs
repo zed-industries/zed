@@ -399,14 +399,14 @@ impl Worktree {
         })
     }
 
-    pub fn remote(
+    pub fn remote<C: Context>(
         project_remote_id: u64,
         replica_id: ReplicaId,
         worktree: proto::WorktreeMetadata,
         client: Arc<Client>,
         cx: &mut AppContext,
     ) -> Handle<Self> {
-        cx.add_model(|cx: &mut ModelContext<Self>| {
+        cx.entity(|cx: &mut ModelContext<Self>| {
             let snapshot = Snapshot {
                 id: WorktreeId(worktree.id as usize),
                 abs_path: Arc::from(PathBuf::from(worktree.abs_path)),

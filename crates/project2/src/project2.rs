@@ -26,8 +26,8 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui2::{
-    AnyHandle, AppContext, AsyncAppContext, EventEmitter, Executor, Handle, ModelContext, Task,
-    WeakHandle,
+    AnyHandle, AppContext, AsyncAppContext, Context, EventEmitter, Executor, Handle, ModelContext,
+    Task, WeakHandle,
 };
 use itertools::Itertools;
 use language2::{
@@ -53,7 +53,7 @@ use lsp2::{
 use lsp_command::*;
 use node_runtime::NodeRuntime;
 use postage::watch;
-use prettier::{LocateStart, Prettier, PRETTIER_SERVER_FILE, PRETTIER_SERVER_JS};
+use prettier2::{LocateStart, Prettier, PRETTIER_SERVER_FILE, PRETTIER_SERVER_JS};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
@@ -186,7 +186,7 @@ impl DelayedDebounced {
 
     fn fire_new<F>(&mut self, delay: Duration, cx: &mut ModelContext<Project>, func: F)
     where
-        F: 'static + FnOnce(&mut Project, &mut ModelContext<Project>) -> Task<()>,
+        F: 'static + Send + FnOnce(&mut Project, &mut ModelContext<Project>) -> Task<()>,
     {
         if let Some(channel) = self.cancel_channel.take() {
             _ = channel.send(());
@@ -256,7 +256,7 @@ enum ProjectClientState {
     Local {
         remote_id: u64,
         updates_tx: mpsc::UnboundedSender<LocalProjectUpdate>,
-        _send_updates: Task<()>,
+        _send_updates: Task<Result<()>>,
     },
     Remote {
         sharing_has_stopped: bool,
@@ -702,14 +702,13 @@ impl Project {
 
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
-                let worktree = cx.update(|cx| {
-                    Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx)
-                });
+                let worktree =
+                    Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx);
                 worktrees.push(worktree);
             }
 
             let (tx, rx) = mpsc::unbounded();
-            cx.spawn_weak(|this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
+            cx.spawn(|this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
             let copilot_lsp_subscription =
                 Copilot::global(cx).map(|copilot| subscribe_for_copilot_events(&copilot, cx));
@@ -1402,26 +1401,25 @@ impl Project {
             updates_tx,
             _send_updates: cx.spawn(move |this, mut cx| async move {
                 while let Some(update) = updates_rx.next().await {
-                    let Some(this) = this.upgrade() else { break };
-
                     match update {
                         LocalProjectUpdate::WorktreesChanged => {
-                            let worktrees =
-                                this.read(&cx, |this, cx| this.worktrees(cx).collect::<Vec<_>>());
+                            let worktrees = this.update(&mut cx, |this, cx| {
+                                this.worktrees(cx).collect::<Vec<_>>()
+                            })?;
                             let update_project = this
-                                .read(&cx, |this, cx| {
+                                .update(&mut cx, |this, cx| {
                                     this.client.request(proto::UpdateProject {
                                         project_id,
                                         worktrees: this.worktree_metadata_protos(cx),
                                     })
-                                })
+                                })?
                                 .await;
                             if update_project.is_ok() {
                                 for worktree in worktrees {
                                     worktree.update(&mut cx, |worktree, cx| {
                                         let worktree = worktree.as_local_mut().unwrap();
                                         worktree.share(project_id, cx).detach_and_log_err(cx)
-                                    });
+                                    })?;
                                 }
                             }
                         }
@@ -1439,7 +1437,7 @@ impl Project {
                                 } else {
                                     None
                                 }
-                            });
+                            })?;
 
                             let Some(buffer) = buffer else { continue };
                             let operations =
@@ -1481,6 +1479,7 @@ impl Project {
                         }
                     }
                 }
+                Ok(())
             }),
         });
 
@@ -2169,26 +2168,26 @@ impl Project {
         this: WeakHandle<Self>,
         rx: UnboundedReceiver<BufferOrderedMessage>,
         mut cx: AsyncAppContext,
-    ) -> Option<()> {
+    ) -> Result<()> {
         const MAX_BATCH_SIZE: usize = 128;
 
         let mut operations_by_buffer_id = HashMap::default();
         async fn flush_operations(
-            this: &Handle<Project>,
+            this: &WeakHandle<Project>,
             operations_by_buffer_id: &mut HashMap<u64, Vec<proto::Operation>>,
             needs_resync_with_host: &mut bool,
             is_local: bool,
-            cx: &AsyncAppContext,
-        ) {
+            cx: &mut AsyncAppContext,
+        ) -> Result<()> {
             for (buffer_id, operations) in operations_by_buffer_id.drain() {
-                let request = this.read(cx, |this, _| {
+                let request = this.update(cx, |this, _| {
                     let project_id = this.remote_id()?;
                     Some(this.client.request(proto::UpdateBuffer {
                         buffer_id,
                         project_id,
                         operations,
                     }))
-                });
+                })?;
                 if let Some(request) = request {
                     if request.await.is_err() && !is_local {
                         *needs_resync_with_host = true;
@@ -2196,14 +2195,14 @@ impl Project {
                     }
                 }
             }
+            Ok(())
         }
 
         let mut needs_resync_with_host = false;
         let mut changes = rx.ready_chunks(MAX_BATCH_SIZE);
 
         while let Some(changes) = changes.next().await {
-            let this = this.upgrade()?;
-            let is_local = this.read(&cx, |this, _| this.is_local());
+            let is_local = this.update(&mut cx, |this, _| this.is_local())?;
 
             for change in changes {
                 match change {
@@ -2224,7 +2223,7 @@ impl Project {
                     BufferOrderedMessage::Resync => {
                         operations_by_buffer_id.clear();
                         if this
-                            .update(&mut cx, |this, cx| this.synchronize_remote_buffers(cx))
+                            .update(&mut cx, |this, cx| this.synchronize_remote_buffers(cx))?
                             .await
                             .is_ok()
                         {
@@ -2241,11 +2240,11 @@ impl Project {
                             &mut operations_by_buffer_id,
                             &mut needs_resync_with_host,
                             is_local,
-                            &cx,
+                            &mut cx,
                         )
                         .await;
 
-                        this.read(&cx, |this, _| {
+                        this.update(&mut cx, |this, _| {
                             if let Some(project_id) = this.remote_id() {
                                 this.client
                                     .send(proto::UpdateLanguageServer {
@@ -2265,12 +2264,12 @@ impl Project {
                 &mut operations_by_buffer_id,
                 &mut needs_resync_with_host,
                 is_local,
-                &cx,
+                &mut cx,
             )
             .await;
         }
 
-        None
+        Ok(())
     }
 
     fn on_buffer_event(
@@ -2432,7 +2431,7 @@ impl Project {
                             const DISK_BASED_DIAGNOSTICS_DEBOUNCE: Duration =
                                 Duration::from_secs(1);
 
-                            let task = cx.spawn_weak(|this, mut cx| async move {
+                            let task = cx.spawn(|this, mut cx| async move {
                                 cx.executor().timer(DISK_BASED_DIAGNOSTICS_DEBOUNCE).await;
                                 if let Some(this) = this.upgrade(&cx) {
                                     this.update(&mut cx, |this, cx| {
@@ -7065,7 +7064,7 @@ impl Project {
                     }
 
                     let buffer_id = state.id;
-                    let buffer = cx.add_model(|_| {
+                    let buffer = cx.entity(|_| {
                         Buffer::from_proto(this.replica_id(), state, buffer_file).unwrap()
                     });
                     this.incomplete_remote_buffers
@@ -7169,7 +7168,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::BufferSaved> {
         let buffer_id = envelope.payload.buffer_id;
-        let (project_id, buffer) = this.update(&mut cx, |this, cx| {
+        let (project_id, buffer) = this.update(&mut cx, |this, _cx| {
             let project_id = this.remote_id().ok_or_else(|| anyhow!("not connected"))?;
             let buffer = this
                 .opened_buffers
@@ -7339,12 +7338,12 @@ impl Project {
             }
             let trigger = FormatTrigger::from_proto(envelope.payload.trigger);
             Ok::<_, anyhow::Error>(this.format(buffers, false, trigger, cx))
-        })?;
+        })??;
 
         let project_transaction = format.await?;
         let project_transaction = this.update(&mut cx, |this, cx| {
             this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
-        });
+        })?;
         Ok(proto::FormatBuffersResponse {
             transaction: Some(project_transaction),
         })
@@ -7371,13 +7370,13 @@ impl Project {
                 language.cloned(),
             );
             Ok::<_, anyhow::Error>((buffer, completion))
-        })?;
+        })??;
 
         let completion = completion.await?;
 
         let apply_additional_edits = this.update(&mut cx, |this, cx| {
             this.apply_additional_edits_for_completion(buffer, completion, false, cx)
-        });
+        })?;
 
         Ok(proto::ApplyCompletionAdditionalEditsResponse {
             transaction: apply_additional_edits
@@ -7407,12 +7406,12 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
             Ok::<_, anyhow::Error>(this.apply_code_action(buffer, action, false, cx))
-        })?;
+        })??;
 
         let project_transaction = apply_code_action.await?;
         let project_transaction = this.update(&mut cx, |this, cx| {
             this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
-        });
+        })?;
         Ok(proto::ApplyCodeActionResponse {
             transaction: Some(project_transaction),
         })
@@ -7441,7 +7440,7 @@ impl Project {
                 envelope.payload.trigger.clone(),
                 cx,
             ))
-        })?;
+        })??;
 
         let transaction = on_type_formatting
             .await?
@@ -7462,13 +7461,13 @@ impl Project {
                 .get(&envelope.payload.buffer_id)
                 .and_then(|buffer| buffer.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
-        })?;
+        })??;
         let buffer_version = deserialize_version(&envelope.payload.version);
 
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(buffer_version.clone())
-            })
+            })?
             .await
             .with_context(|| {
                 format!(
@@ -7557,12 +7556,12 @@ impl Project {
     {
         let sender_id = envelope.original_sender_id()?;
         let buffer_id = T::buffer_id_from_proto(&envelope.payload);
-        let buffer_handle = this.read(&cx, |this, _| {
+        let buffer_handle = this.update(&mut cx, |this, _cx| {
             this.opened_buffers
                 .get(&buffer_id)
-                .and_then(|buffer| buffer.upgrade(&cx))
+                .and_then(|buffer| buffer.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))
-        })?;
+        })??;
         let request = T::from_proto(
             envelope.payload,
             this.clone(),
@@ -7570,11 +7569,11 @@ impl Project {
             cx.clone(),
         )
         .await?;
-        let buffer_version = buffer_handle.read_with(&cx, |buffer, _| buffer.version());
+        let buffer_version = buffer_handle.update(&mut cx, |buffer, _| buffer.version())?;
         let response = this
             .update(&mut cx, |this, cx| {
                 this.request_lsp(buffer_handle, LanguageServerToQuery::Primary, request, cx)
-            })
+            })?
             .await?;
         this.update(&mut cx, |this, cx| {
             Ok(T::response_to_proto(
@@ -7584,7 +7583,7 @@ impl Project {
                 &buffer_version,
                 cx,
             ))
-        })
+        })?
     }
 
     async fn handle_get_project_symbols(

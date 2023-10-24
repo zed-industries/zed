@@ -316,6 +316,9 @@ impl AppContext {
                     Effect::NotifyGlobalObservers { global_type } => {
                         self.apply_notify_global_observers_effect(global_type);
                     }
+                    Effect::Defer { callback } => {
+                        self.apply_defer_effect(callback);
+                    }
                 }
             } else {
                 break;
@@ -436,6 +439,10 @@ impl AppContext {
             .retain(&type_id, |observer| observer(self));
     }
 
+    fn apply_defer_effect(&mut self, callback: Box<dyn FnOnce(&mut Self) + Send + Sync + 'static>) {
+        callback(self);
+    }
+
     pub fn to_async(&self) -> AsyncAppContext {
         AsyncAppContext {
             app: unsafe { mem::transmute(self.this.clone()) },
@@ -494,6 +501,12 @@ impl AppContext {
             let future = f(cx);
             future.await
         })
+    }
+
+    pub fn defer(&mut self, f: impl FnOnce(&mut AppContext) + 'static + Send + Sync) {
+        self.push_effect(Effect::Defer {
+            callback: Box::new(f),
+        });
     }
 
     pub fn text_system(&self) -> &Arc<TextSystem> {
@@ -771,6 +784,9 @@ pub(crate) enum Effect {
     Refresh,
     NotifyGlobalObservers {
         global_type: TypeId,
+    },
+    Defer {
+        callback: Box<dyn FnOnce(&mut AppContext) + Send + Sync + 'static>,
     },
 }
 
