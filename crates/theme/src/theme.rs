@@ -674,7 +674,6 @@ pub struct NotificationPanel {
     pub icon_button: Interactive<IconButton>,
     pub unread_text: ContainedText,
     pub read_text: ContainedText,
-    pub meta_text: ContainedText,
     pub timestamp: ContainedText,
     pub button: Interactive<ContainedText>,
 }
