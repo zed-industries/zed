@@ -60,6 +60,12 @@ impl OneAtATime {
             }
         })
     }
+
+    fn running(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|cancel| !cancel.is_canceled())
+    }
 }
 
 /// Singleton global maintaining the user's participation in a room across workspaces.
@@ -169,6 +175,10 @@ impl ActiveCall {
             return Task::ready(Err(anyhow!("user was already invited")));
         }
         cx.notify();
+
+        if self._join_debouncer.running() {
+            return Task::ready(Ok(()));
+        }
 
         let room = if let Some(room) = self.room().cloned() {
             Some(Task::ready(Ok(room)).shared())
@@ -286,6 +296,10 @@ impl ActiveCall {
             return Task::ready(Err(anyhow!("no incoming call")));
         };
 
+        if self.pending_room_creation.is_some() {
+            return Task::ready(Ok(()));
+        }
+
         let room_id = call.room_id.clone();
         let client = self.client.clone();
         let user_store = self.user_store.clone();
@@ -329,6 +343,10 @@ impl ActiveCall {
             } else {
                 room.update(cx, |room, cx| room.clear_state(cx));
             }
+        }
+
+        if self.pending_room_creation.is_some() {
+            return Task::ready(Ok(None));
         }
 
         let client = self.client.clone();
