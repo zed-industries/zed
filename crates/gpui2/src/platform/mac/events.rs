@@ -202,7 +202,7 @@ impl InputEvent {
                 };
 
                 window_height.map(|window_height| {
-                    Self::MouseMoved(MouseMoveEvent {
+                    Self::MouseMove(MouseMoveEvent {
                         pressed_button: Some(pressed_button),
                         position: point(
                             px(native_event.locationInWindow().x as f32),
@@ -213,7 +213,7 @@ impl InputEvent {
                 })
             }
             NSEventType::NSMouseMoved => window_height.map(|window_height| {
-                Self::MouseMoved(MouseMoveEvent {
+                Self::MouseMove(MouseMoveEvent {
                     position: point(
                         px(native_event.locationInWindow().x as f32),
                         window_height - px(native_event.locationInWindow().y as f32),

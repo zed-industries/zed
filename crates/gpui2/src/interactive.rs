@@ -374,10 +374,12 @@ pub trait StatefulInteractive: StatelessInteractive {
             Some(Arc::new(move |view_state, cursor_offset, cx| {
                 let drag = listener(view_state, cx);
                 let view_handle = cx.handle().upgrade().unwrap();
-                let drag_handle_view = view(view_handle, move |view_state, cx| {
-                    (drag.render_drag_handle)(view_state, cx)
-                })
-                .into_any();
+                let drag_handle_view = Some(
+                    view(view_handle, move |view_state, cx| {
+                        (drag.render_drag_handle)(view_state, cx)
+                    })
+                    .into_any(),
+                );
                 AnyDrag {
                     drag_handle_view,
                     cursor_offset,
@@ -780,11 +782,7 @@ impl GroupBounds {
     }
 
     pub fn pop(name: &SharedString, cx: &mut AppContext) {
-        cx.default_global::<Self>()
-            .0
-            .get_mut(name)
-            .unwrap()
-            .pop();
+        cx.default_global::<Self>().0.get_mut(name).unwrap().pop();
     }
 }
 
@@ -1035,16 +1033,21 @@ impl Deref for MouseExitEvent {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct DroppedFiles(pub(crate) SmallVec<[PathBuf; 2]>);
+
+#[derive(Debug, Clone)]
 pub enum FileDropEvent {
-    #[default]
-    End,
+    Entered {
+        position: Point<Pixels>,
+        files: DroppedFiles,
+    },
     Pending {
         position: Point<Pixels>,
     },
     Submit {
         position: Point<Pixels>,
-        paths: Vec<PathBuf>,
     },
+    Exited,
 }
 
 #[derive(Clone, Debug)]
@@ -1054,7 +1057,7 @@ pub enum InputEvent {
     ModifiersChanged(ModifiersChangedEvent),
     MouseDown(MouseDownEvent),
     MouseUp(MouseUpEvent),
-    MouseMoved(MouseMoveEvent),
+    MouseMove(MouseMoveEvent),
     MouseExited(MouseExitEvent),
     ScrollWheel(ScrollWheelEvent),
     FileDrop(FileDropEvent),
@@ -1068,12 +1071,14 @@ impl InputEvent {
             InputEvent::ModifiersChanged { .. } => None,
             InputEvent::MouseDown(event) => Some(event.position),
             InputEvent::MouseUp(event) => Some(event.position),
-            InputEvent::MouseMoved(event) => Some(event.position),
+            InputEvent::MouseMove(event) => Some(event.position),
             InputEvent::MouseExited(event) => Some(event.position),
             InputEvent::ScrollWheel(event) => Some(event.position),
-            InputEvent::FileDrop(FileDropEvent::End) => None,
+            InputEvent::FileDrop(FileDropEvent::Exited) => None,
             InputEvent::FileDrop(
-                FileDropEvent::Pending { position } | FileDropEvent::Submit { position, .. },
+                FileDropEvent::Entered { position, .. }
+                | FileDropEvent::Pending { position, .. }
+                | FileDropEvent::Submit { position, .. },
             ) => Some(*position),
         }
     }
@@ -1085,7 +1090,7 @@ impl InputEvent {
             InputEvent::ModifiersChanged { .. } => None,
             InputEvent::MouseDown(event) => Some(event),
             InputEvent::MouseUp(event) => Some(event),
-            InputEvent::MouseMoved(event) => Some(event),
+            InputEvent::MouseMove(event) => Some(event),
             InputEvent::MouseExited(event) => Some(event),
             InputEvent::ScrollWheel(event) => Some(event),
             InputEvent::FileDrop(event) => Some(event),
@@ -1099,7 +1104,7 @@ impl InputEvent {
             InputEvent::ModifiersChanged(event) => Some(event),
             InputEvent::MouseDown(_) => None,
             InputEvent::MouseUp(_) => None,
-            InputEvent::MouseMoved(_) => None,
+            InputEvent::MouseMove(_) => None,
             InputEvent::MouseExited(_) => None,
             InputEvent::ScrollWheel(_) => None,
             InputEvent::FileDrop(_) => None,

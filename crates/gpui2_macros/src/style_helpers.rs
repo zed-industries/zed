@@ -305,7 +305,18 @@ fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>, &'static str)> 
             vec![quote! { padding.right }],
             "Sets the right padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
         ),
-        ("top", true, vec![quote! { inset.top }], "Sets the top value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",),
+        (
+            "inset",
+            true,
+            vec![quote! { inset.top }, quote! { inset.right }, quote! { inset.bottom }, quote! { inset.left }],
+            "Sets the top, right, bottom, and left values of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
+        ),
+        (
+            "top",
+            true,
+            vec![quote! { inset.top }],
+            "Sets the top value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
+        ),
         (
             "bottom",
             true,

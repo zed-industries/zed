@@ -1,13 +1,14 @@
 use crate::{
-    px, size, Action, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, Bounds,
-    BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect, Element,
-    EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId, Handle,
-    Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
-    MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
-    Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
-    WindowOptions, SUBPIXEL_VARIANTS,
+    px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
+    Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, DroppedFiles,
+    Edges, Effect, Element, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId,
+    GlobalElementId, GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch,
+    KeyMatcher, Keystroke, LayoutId, MainThread, MainThreadOnly, Modifiers, MonochromeSprite,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle, WindowOptions,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -816,7 +817,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     cx.with_element_offset(Some(offset), |cx| {
                         let available_space =
                             size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                        draw_any_view(&mut active_drag.drag_handle_view, available_space, cx);
+                        if let Some(drag_handle_view) = &mut active_drag.drag_handle_view {
+                            draw_any_view(drag_handle_view, available_space, cx);
+                        }
                         cx.active_drag = Some(active_drag);
                     });
                 });
@@ -889,27 +892,48 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     fn dispatch_event(&mut self, event: InputEvent) -> bool {
+        let event = match event {
+            InputEvent::MouseMove(mouse_move) => {
+                self.window.mouse_position = mouse_move.position;
+                InputEvent::MouseMove(mouse_move)
+            }
+            InputEvent::FileDrop(file_drop) => match file_drop {
+                FileDropEvent::Entered { position, files } => {
+                    self.active_drag.get_or_insert_with(|| AnyDrag {
+                        drag_handle_view: None,
+                        cursor_offset: position,
+                        state: Box::new(files),
+                        state_type: TypeId::of::<DroppedFiles>(),
+                    });
+                    InputEvent::MouseDown(MouseDownEvent {
+                        position,
+                        button: MouseButton::Left,
+                        click_count: 1,
+                        modifiers: Modifiers::default(),
+                    })
+                }
+                FileDropEvent::Pending { position } => InputEvent::MouseMove(MouseMoveEvent {
+                    position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::default(),
+                }),
+                FileDropEvent::Submit { position } => InputEvent::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                }),
+                FileDropEvent::Exited => InputEvent::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position: Point::default(),
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                }),
+            },
+            _ => event,
+        };
+
         if let Some(any_mouse_event) = event.mouse_event() {
-            if let Some(MouseMoveEvent { position, .. }) = any_mouse_event.downcast_ref() {
-                self.window.mouse_position = *position;
-            }
-
-            match any_mouse_event.downcast_ref() {
-                Some(FileDropEvent::Pending { position }) => {
-                    dbg!("FileDropEvent::Pending", position);
-                    return true;
-                }
-                Some(FileDropEvent::Submit { position, paths }) => {
-                    dbg!("FileDropEvent::Submit", position, paths);
-                    return true;
-                }
-                Some(FileDropEvent::End) => {
-                    self.active_drag = None;
-                    return true;
-                }
-                _ => {}
-            }
-
             // Handlers may set this to false by calling `stop_propagation`
             self.app.propagate_event = true;
             self.window.default_prevented = false;

@@ -821,7 +821,7 @@ impl<G: 'static> DerefMut for GlobalLease<G> {
 }
 
 pub(crate) struct AnyDrag {
-    pub drag_handle_view: AnyView,
+    pub drag_handle_view: Option<AnyView>,
     pub cursor_offset: Point<Pixels>,
     pub state: AnyBox,
     pub state_type: TypeId,

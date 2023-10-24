@@ -1,10 +1,10 @@
 use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
-    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, Executor, FileDropEvent,
-    GlobalPixels, InputEvent, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, Scene, Size, Timer,
-    WindowAppearance, WindowBounds, WindowKind, WindowOptions, WindowPromptLevel,
+    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, DroppedFiles, Executor,
+    FileDropEvent, GlobalPixels, InputEvent, KeyDownEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, Scene, Size,
+    Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions, WindowPromptLevel,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -31,6 +31,7 @@ use objc::{
     sel, sel_impl,
 };
 use parking_lot::Mutex;
+use smallvec::SmallVec;
 use std::{
     any::Any,
     cell::{Cell, RefCell},
@@ -1177,7 +1178,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         };
 
         match &event {
-            InputEvent::MouseMoved(
+            InputEvent::MouseMove(
                 event @ MouseMoveEvent {
                     pressed_button: Some(_),
                     ..
@@ -1194,7 +1195,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     .detach();
             }
 
-            InputEvent::MouseMoved(_) if !(is_active || lock.kind == WindowKind::PopUp) => return,
+            InputEvent::MouseMove(_) if !(is_active || lock.kind == WindowKind::PopUp) => return,
 
             InputEvent::MouseUp(MouseUpEvent {
                 button: MouseButton::Left,
@@ -1633,11 +1634,14 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
     let window_state = unsafe { get_window_state(this) };
-    let position = drag_event_position(&window_state, dragging_info);
-    if send_new_event(
-        &window_state,
-        InputEvent::FileDrop(FileDropEvent::Pending { position }),
-    ) {
+    if send_new_event(&window_state, {
+        let position = drag_event_position(&window_state, dragging_info);
+        let paths = external_paths_from_event(dragging_info);
+        InputEvent::FileDrop(FileDropEvent::Entered {
+            position,
+            files: paths,
+        })
+    }) {
         NSDragOperationCopy
     } else {
         NSDragOperationNone
@@ -1659,26 +1663,17 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
 
 extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    send_new_event(&window_state, InputEvent::FileDrop(FileDropEvent::End));
+    send_new_event(&window_state, InputEvent::FileDrop(FileDropEvent::Exited));
 }
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
-    let mut paths = Vec::new();
-    let pb: id = unsafe { msg_send![dragging_info, draggingPasteboard] };
-    let filenames = unsafe { NSPasteboard::propertyListForType(pb, NSFilenamesPboardType) };
-    for file in unsafe { filenames.iter() } {
-        let path = unsafe {
-            let f = NSString::UTF8String(file);
-            CStr::from_ptr(f).to_string_lossy().into_owned()
-        };
-        paths.push(PathBuf::from(path))
-    }
+    let files = external_paths_from_event(dragging_info);
 
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     if send_new_event(
         &window_state,
-        InputEvent::FileDrop(FileDropEvent::Submit { position, paths }),
+        InputEvent::FileDrop(FileDropEvent::Submit { position }),
     ) {
         YES
     } else {
@@ -1686,9 +1681,23 @@ extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -
     }
 }
 
+fn external_paths_from_event(dragging_info: *mut Object) -> DroppedFiles {
+    let mut paths = SmallVec::new();
+    let pasteboard: id = unsafe { msg_send![dragging_info, draggingPasteboard] };
+    let filenames = unsafe { NSPasteboard::propertyListForType(pasteboard, NSFilenamesPboardType) };
+    for file in unsafe { filenames.iter() } {
+        let path = unsafe {
+            let f = NSString::UTF8String(file);
+            CStr::from_ptr(f).to_string_lossy().into_owned()
+        };
+        paths.push(PathBuf::from(path))
+    }
+    DroppedFiles(paths)
+}
+
 extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    send_new_event(&window_state, InputEvent::FileDrop(FileDropEvent::End));
+    send_new_event(&window_state, InputEvent::FileDrop(FileDropEvent::Exited));
 }
 
 async fn synthetic_drag(
@@ -1703,7 +1712,7 @@ async fn synthetic_drag(
             if lock.synthetic_drag_counter == drag_id {
                 if let Some(mut callback) = lock.event_callback.take() {
                     drop(lock);
-                    callback(InputEvent::MouseMoved(event.clone()));
+                    callback(InputEvent::MouseMove(event.clone()));
                     window_state.lock().event_callback = Some(callback);
                 }
             } else {

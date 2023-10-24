@@ -159,8 +159,6 @@ pub struct ThemeColor {
 
 impl std::fmt::Debug for ThemeColor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        dbg!("ThemeColor debug");
-
         f.debug_struct("ThemeColor")
             .field("transparent", &self.transparent.to_rgb().to_hex())
             .field(
