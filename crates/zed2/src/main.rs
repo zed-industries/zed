@@ -111,26 +111,26 @@ fn main() {
         handle_settings_file_changes(user_settings_file_rx, cx);
         // handle_keymap_file_changes(user_keymap_file_rx, cx);
 
-        // let client = client2::Client::new(http.clone(), cx);
-        let languages = LanguageRegistry::new(login_shell_env_loaded);
+        let client = client2::Client::new(http.clone(), cx);
+        let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
-        // languages.set_executor(cx.background().clone());
-        // languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
-        // let languages = Arc::new(languages);
+        languages.set_executor(cx.executor().clone());
+        languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
+        let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
 
-        // languages::init(languages.clone(), node_runtime.clone(), cx);
+        languages2::init(languages.clone(), node_runtime.clone(), cx);
         // let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         // let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
-        // cx.set_global(client.clone());
+        cx.set_global(client.clone());
 
         theme2::init(cx);
         // context_menu::init(cx);
-        // project::Project::init(&client, cx);
-        // client::init(&client, cx);
+        project2::Project::init(&client, cx);
+        client2::init(&client, cx);
         // command_palette::init(cx);
-        // language::init(cx);
+        language2::init(cx);
         // editor::init(cx);
         // go_to_line::init(cx);
         // file_finder::init(cx);
@@ -193,7 +193,7 @@ fn main() {
         // theme_selector::init(cx);
         // activity_indicator::init(cx);
         // language_tools::init(cx);
-        // call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        call2::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         // collab_ui::init(&app_state, cx);
         // feedback::init(cx);
         // welcome::init(cx);

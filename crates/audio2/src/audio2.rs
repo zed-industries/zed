@@ -78,12 +78,17 @@ impl Audio {
         Self { tx }
     }
 
-    pub fn play_sound(&self, sound: Sound, cx: &mut AppContext) {
+    pub fn play_sound(sound: Sound, cx: &mut AppContext) {
+        if !cx.has_global::<Self>() {
+            return;
+        }
+
         let Some(source) = SoundRegistry::global(cx).get(sound.file()).log_err() else {
             return;
         };
 
-        self.tx
+        let this = cx.global::<Self>();
+        this.tx
             .unbounded_send(Box::new(move |state| {
                 if let Some(output_handle) = state.ensure_output_exists() {
                     output_handle.play_raw(source).log_err();
@@ -92,8 +97,14 @@ impl Audio {
             .ok();
     }
 
-    pub fn end_call(&self) {
-        self.tx
+    pub fn end_call(cx: &AppContext) {
+        if !cx.has_global::<Self>() {
+            return;
+        }
+
+        let this = cx.global::<Self>();
+
+        this.tx
             .unbounded_send(Box::new(move |state| state.take()))
             .ok();
     }
