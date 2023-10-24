@@ -8,16 +8,6 @@ pub struct ThemeRegistry {
 }
 
 impl ThemeRegistry {
-    pub fn new() -> Self {
-        let mut this = Self {
-            themes: HashMap::default(),
-        };
-
-        this.insert_themes([one_dark()]);
-
-        this
-    }
-
     fn insert_themes(&mut self, themes: impl IntoIterator<Item = Theme>) {
         for theme in themes.into_iter() {
             self.themes
@@ -33,11 +23,22 @@ impl ThemeRegistry {
         self.themes.values().map(|theme| theme.metadata.clone())
     }
 
-    pub fn get(&self, name: impl Into<SharedString>) -> Result<Arc<Theme>> {
-        let name = name.into();
+    pub fn get(&self, name: &str) -> Result<Arc<Theme>> {
         self.themes
-            .get(&name)
+            .get(name)
             .ok_or_else(|| anyhow!("theme not found: {}", name))
             .cloned()
+    }
+}
+
+impl Default for ThemeRegistry {
+    fn default() -> Self {
+        let mut this = Self {
+            themes: HashMap::default(),
+        };
+
+        this.insert_themes([one_dark()]);
+
+        this
     }
 }

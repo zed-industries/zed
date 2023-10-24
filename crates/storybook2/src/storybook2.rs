@@ -47,7 +47,6 @@ fn main() {
     let args = Args::parse();
 
     let story_selector = args.story.clone();
-
     let theme_name = args.theme.unwrap_or("One Dark".to_string());
     let theme = themes::load_theme(theme_name).unwrap();
 

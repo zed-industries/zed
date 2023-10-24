@@ -262,7 +262,7 @@ impl settings2::Setting for AllLanguageSettings {
     fn load(
         default_value: &Self::FileContent,
         user_settings: &[&Self::FileContent],
-        _: &AppContext,
+        _: &mut AppContext,
     ) -> Result<Self> {
         // A default is provided for all settings.
         let mut defaults: LanguageSettings =

@@ -137,9 +137,9 @@ where
     E: Element,
     F: FnOnce(&mut ViewContext<E::ViewState>) -> E,
 {
-    cx.default_global_mut::<ThemeStack>().0.push(theme.clone());
+    cx.default_global::<ThemeStack>().0.push(theme.clone());
     let child = build_child(cx);
-    cx.default_global_mut::<ThemeStack>().0.pop();
+    cx.default_global::<ThemeStack>().0.pop();
     Themed { theme, child }
 }
 
@@ -178,11 +178,11 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> Self::ElementState {
-        cx.default_global_mut::<ThemeStack>()
+        cx.default_global::<ThemeStack>()
             .0
             .push(self.theme.clone());
         let element_state = self.child.initialize(view_state, element_state, cx);
-        cx.default_global_mut::<ThemeStack>().0.pop();
+        cx.default_global::<ThemeStack>().0.pop();
         element_state
     }
 
@@ -195,11 +195,11 @@ where
     where
         Self: Sized,
     {
-        cx.default_global_mut::<ThemeStack>()
+        cx.default_global::<ThemeStack>()
             .0
             .push(self.theme.clone());
         let layout_id = self.child.layout(view_state, element_state, cx);
-        cx.default_global_mut::<ThemeStack>().0.pop();
+        cx.default_global::<ThemeStack>().0.pop();
         layout_id
     }
 
@@ -212,11 +212,11 @@ where
     ) where
         Self: Sized,
     {
-        cx.default_global_mut::<ThemeStack>()
+        cx.default_global::<ThemeStack>()
             .0
             .push(self.theme.clone());
         self.child.paint(bounds, view_state, frame_state, cx);
-        cx.default_global_mut::<ThemeStack>().0.pop();
+        cx.default_global::<ThemeStack>().0.pop();
     }
 }
 

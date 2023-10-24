@@ -62,7 +62,7 @@ impl BufferLineHeight {
 impl ThemeSettings {
     pub fn buffer_font_size(&self, cx: &mut AppContext) -> Pixels {
         let font_size = *cx
-            .default_global_mut::<AdjustedBufferFontSize>()
+            .default_global::<AdjustedBufferFontSize>()
             .0
             .get_or_insert(self.buffer_font_size.into());
         font_size.max(MIN_FONT_SIZE)
@@ -74,7 +74,7 @@ impl ThemeSettings {
 }
 
 pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
-    if let Some(adjusted_size) = cx.default_global_mut::<AdjustedBufferFontSize>().0 {
+    if let Some(adjusted_size) = cx.default_global::<AdjustedBufferFontSize>().0 {
         let buffer_font_size = settings2::get::<ThemeSettings>(cx).buffer_font_size;
         let delta = adjusted_size - buffer_font_size;
         size + delta
@@ -87,7 +87,7 @@ pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
 pub fn adjust_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
     let buffer_font_size = settings2::get::<ThemeSettings>(cx).buffer_font_size;
     let adjusted_size = cx
-        .default_global_mut::<AdjustedBufferFontSize>()
+        .default_global::<AdjustedBufferFontSize>()
         .0
         .get_or_insert(buffer_font_size);
     f(adjusted_size);
@@ -110,9 +110,9 @@ impl settings2::Setting for ThemeSettings {
     fn load(
         defaults: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<Self> {
-        let themes = cx.global::<Arc<ThemeRegistry>>();
+        let themes = cx.default_global::<Arc<ThemeRegistry>>();
 
         let mut this = Self {
             buffer_font: Font {
@@ -123,7 +123,7 @@ impl settings2::Setting for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
-            theme: themes.get(defaults.theme.as_ref().unwrap().clone()).unwrap(),
+            theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
         };
 
         for value in user_values.into_iter().copied().cloned() {
@@ -135,7 +135,7 @@ impl settings2::Setting for ThemeSettings {
             }
 
             if let Some(value) = &value.theme {
-                if let Some(theme) = themes.get(value.clone()).log_err() {
+                if let Some(theme) = themes.get(value).log_err() {
                     this.theme = theme;
                 }
             }

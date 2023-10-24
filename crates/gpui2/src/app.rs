@@ -554,7 +554,7 @@ impl AppContext {
             .unwrap()
     }
 
-    pub fn default_global_mut<G: 'static + Default + Sync + Send>(&mut self) -> &mut G {
+    pub fn default_global<G: 'static + Default + Sync + Send>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type

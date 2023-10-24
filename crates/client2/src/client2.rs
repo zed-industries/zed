@@ -379,7 +379,7 @@ impl settings2::Setting for TelemetrySettings {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _: &AppContext,
+        _: &mut AppContext,
     ) -> Result<Self> {
         Ok(Self {
             diagnostics: user_values.first().and_then(|v| v.diagnostics).unwrap_or(

@@ -35,7 +35,7 @@ pub trait Setting: 'static + Send + Sync {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<Self>
     where
         Self: Sized;
@@ -121,7 +121,7 @@ trait AnySettingValue: 'static + Send + Sync {
         &self,
         default_value: &DeserializedSetting,
         custom: &[DeserializedSetting],
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<Box<dyn Any>>;
     fn value_for_path(&self, path: Option<(usize, &Path)>) -> &dyn Any;
     fn set_global_value(&mut self, value: Box<dyn Any>);
@@ -138,7 +138,7 @@ struct DeserializedSetting(Box<dyn Any>);
 
 impl SettingsStore {
     /// Add a new type of setting to the store.
-    pub fn register_setting<T: Setting>(&mut self, cx: &AppContext) {
+    pub fn register_setting<T: Setting>(&mut self, cx: &mut AppContext) {
         let setting_type_id = TypeId::of::<T>();
         let entry = self.setting_values.entry(setting_type_id);
         if matches!(entry, hash_map::Entry::Occupied(_)) {
@@ -205,7 +205,7 @@ impl SettingsStore {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(cx: &AppContext) -> Self {
+    pub fn test(cx: &mut AppContext) -> Self {
         let mut this = Self::default();
         this.set_default_settings(&crate::test_settings(), cx)
             .unwrap();
@@ -220,7 +220,7 @@ impl SettingsStore {
     #[cfg(any(test, feature = "test-support"))]
     pub fn update_user_settings<T: Setting>(
         &mut self,
-        cx: &AppContext,
+        cx: &mut AppContext,
         update: impl FnOnce(&mut T::FileContent),
     ) {
         let old_text = serde_json::to_string(&self.raw_user_settings).unwrap();
@@ -317,7 +317,7 @@ impl SettingsStore {
     pub fn set_default_settings(
         &mut self,
         default_settings_content: &str,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<()> {
         let settings: serde_json::Value = parse_json_with_comments(default_settings_content)?;
         if settings.is_object() {
@@ -333,7 +333,7 @@ impl SettingsStore {
     pub fn set_user_settings(
         &mut self,
         user_settings_content: &str,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<()> {
         let settings: serde_json::Value = parse_json_with_comments(user_settings_content)?;
         if settings.is_object() {
@@ -351,7 +351,7 @@ impl SettingsStore {
         root_id: usize,
         path: Arc<Path>,
         settings_content: Option<&str>,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<()> {
         if let Some(content) = settings_content {
             self.raw_local_settings
@@ -364,7 +364,7 @@ impl SettingsStore {
     }
 
     /// Add or remove a set of local settings via a JSON string.
-    pub fn clear_local_settings(&mut self, root_id: usize, cx: &AppContext) -> Result<()> {
+    pub fn clear_local_settings(&mut self, root_id: usize, cx: &mut AppContext) -> Result<()> {
         self.raw_local_settings.retain(|k, _| k.0 != root_id);
         self.recompute_values(Some((root_id, "".as_ref())), cx)?;
         Ok(())
@@ -456,7 +456,7 @@ impl SettingsStore {
     fn recompute_values(
         &mut self,
         changed_local_path: Option<(usize, &Path)>,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<()> {
         // Reload the global and local values for every setting.
         let mut user_settings_stack = Vec::<DeserializedSetting>::new();
@@ -557,7 +557,7 @@ impl<T: Setting> AnySettingValue for SettingValue<T> {
         &self,
         default_value: &DeserializedSetting,
         user_values: &[DeserializedSetting],
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<Box<dyn Any>> {
         let default_value = default_value.0.downcast_ref::<T::FileContent>().unwrap();
         let values: SmallVec<[&T::FileContent; 6]> = user_values
