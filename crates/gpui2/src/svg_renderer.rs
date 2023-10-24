@@ -1,7 +1,6 @@
-use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size};
+use crate::{DevicePixels, IsZero, Result, SharedString, Size, AnyAssetSource};
 use anyhow::anyhow;
 use std::hash::Hash;
-use std::sync::Arc;
 
 #[derive(Clone, PartialEq, Hash, Eq)]
 pub struct RenderSvgParams {
@@ -10,11 +9,11 @@ pub struct RenderSvgParams {
 }
 
 pub struct SvgRenderer {
-    asset_source: Arc<dyn AssetSource>,
+    asset_source: AnyAssetSource,
 }
 
 impl SvgRenderer {
-    pub fn new(asset_source: Arc<dyn AssetSource>) -> Self {
+    pub fn new(asset_source: AnyAssetSource) -> Self {
         Self { asset_source }
     }
 
@@ -24,7 +23,7 @@ impl SvgRenderer {
         }
 
         // Load the tree.
-        let bytes = self.asset_source.load(&params.path)?;
+        let bytes = self.asset_source.load(params.path.clone())?;
         let tree = usvg::Tree::from_data(&bytes, &usvg::Options::default())?;
 
         // Render the SVG to a pixmap with the specified width and height.

@@ -13,7 +13,7 @@ use crate::{
     ClipboardItem, Context, DispatchPhase, DisplayId, Executor, FocusEvent, FocusHandle, FocusId,
     KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly, Pixels, Platform, Point,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
-    TextSystem, View, Window, WindowContext, WindowHandle, WindowId,
+    TextSystem, View, Window, WindowContext, WindowHandle, WindowId, AnyAssetSource,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -66,6 +66,8 @@ impl App {
             os_version: platform.os_version().ok(),
             app_version: platform.app_version().ok(),
         };
+        let asset_source = AnyAssetSource(asset_source);
+
         Self(Arc::new_cyclic(|this| {
             Mutex::new(AppContext {
                 this: this.clone(),
@@ -76,7 +78,8 @@ impl App {
                 pending_updates: 0,
                 next_frame_callbacks: Default::default(),
                 executor,
-                svg_renderer: SvgRenderer::new(asset_source),
+                svg_renderer: SvgRenderer::new(asset_source.clone()),
+                asset_source,
                 image_cache: ImageCache::new(http_client),
                 text_style_stack: Vec::new(),
                 globals_by_type: HashMap::default(),
@@ -179,6 +182,7 @@ pub struct AppContext {
     pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
     pub(crate) executor: Executor,
     pub(crate) svg_renderer: SvgRenderer,
+    asset_source: AnyAssetSource,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) globals_by_type: HashMap<TypeId, AnyBox>,
@@ -504,6 +508,10 @@ impl AppContext {
         self.push_effect(Effect::Defer {
             callback: Box::new(f),
         });
+    }
+
+    pub fn asset_source(&self) -> &AnyAssetSource {
+        &self.asset_source
     }
 
     pub fn text_system(&self) -> &Arc<TextSystem> {

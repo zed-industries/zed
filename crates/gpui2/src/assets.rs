@@ -5,23 +5,37 @@ use std::{
     borrow::Cow,
     fmt,
     hash::Hash,
-    sync::atomic::{AtomicUsize, Ordering::SeqCst},
+    sync::{atomic::{AtomicUsize, Ordering::SeqCst}, Arc},
 };
 
 pub trait AssetSource: 'static + Send + Sync {
-    fn load(&self, path: &SharedString) -> Result<Cow<[u8]>>;
-    fn list(&self, path: &SharedString) -> Result<Vec<SharedString>>;
+    fn load(&self, path: SharedString) -> Result<Cow<[u8]>>;
+    fn list(&self, path: SharedString) -> Result<Vec<SharedString>>;
 }
 
+#[derive(Clone)]
+pub struct AnyAssetSource(pub(crate) Arc<dyn AssetSource>);
+
+impl AnyAssetSource {
+    pub fn load(&self, path: impl Into<SharedString>) -> Result<Cow<[u8]>> {
+        self.0.load(path.into())
+    }
+
+    pub fn list(&self, path: impl Into<SharedString>) -> Result<Vec<SharedString>> {
+        self.0.list(path.into())
+    }
+}
+
+
 impl AssetSource for () {
-    fn load(&self, path: &SharedString) -> Result<Cow<[u8]>> {
+    fn load(&self, path: SharedString) -> Result<Cow<[u8]>> {
         Err(anyhow!(
             "get called on empty asset provider with \"{}\"",
             path
         ))
     }
 
-    fn list(&self, _path: &SharedString) -> Result<Vec<SharedString>> {
+    fn list(&self, _path: SharedString) -> Result<Vec<SharedString>> {
         Ok(vec![])
     }
 }

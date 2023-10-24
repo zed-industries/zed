@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use gpui2::{
-    div, px, size, view, AnyView, AppContext, AssetSource, Bounds, Context, Element, ViewContext,
+    div, px, size, view, AnyView, AppContext, Bounds, Context, Element, ViewContext,
     WindowBounds, WindowOptions,
 };
 use log::LevelFilter;
@@ -104,12 +104,11 @@ impl StoryWrapper {
 }
 
 fn load_embedded_fonts(cx: &AppContext) -> gpui2::Result<()> {
-    let font_paths = Assets.list(&"fonts".into())?;
+    let font_paths = cx.asset_source().list("fonts")?;
     let mut embedded_fonts = Vec::new();
-    for font_path in &font_paths {
+    for font_path in font_paths {
         if font_path.ends_with(".ttf") {
-            let font_path = &*font_path;
-            let font_bytes = Assets.load(font_path)?.to_vec();
+            let font_bytes = cx.asset_source().load(font_path)?.to_vec();
             embedded_fonts.push(Arc::from(font_bytes));
         }
     }

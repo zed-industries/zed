@@ -67,8 +67,6 @@ fn main() {
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
-    load_embedded_fonts(&app);
-
     let fs = Arc::new(RealFs);
     let user_settings_file_rx =
         watch_config_file(&app.executor(), fs.clone(), paths::SETTINGS.clone());
@@ -101,6 +99,7 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
+        load_embedded_fonts(cx);
 
         let mut store = SettingsStore::default();
         store
@@ -635,10 +634,12 @@ fn collect_url_args() -> Vec<String> {
         .collect()
 }
 
-fn load_embedded_fonts(app: &App) {
-    let font_paths = Assets.list(&"fonts".into()).unwrap();
+fn load_embedded_fonts(cx: &AppContext) {
+    let asset_source = cx.asset_source();
+    let font_paths = asset_source.list("fonts").unwrap();
     let embedded_fonts = Mutex::new(Vec::new());
-    let executor = app.executor();
+    let executor = cx.executor();
+
     executor.block(executor.scoped(|scope| {
         for font_path in &font_paths {
             if !font_path.ends_with(".ttf") {
@@ -646,13 +647,13 @@ fn load_embedded_fonts(app: &App) {
             }
 
             scope.spawn(async {
-                let font_path = &*font_path;
-                let font_bytes = Assets.load(font_path).unwrap().to_vec();
+                let font_bytes = asset_source.load(font_path).unwrap().to_vec();
                 embedded_fonts.lock().push(Arc::from(font_bytes));
             });
         }
     }));
-    app.text_system()
+
+    cx.text_system()
         .add_fonts(&embedded_fonts.into_inner())
         .unwrap();
 }
