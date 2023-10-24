@@ -1,21 +1,22 @@
 use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
-    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, Executor, GlobalPixels,
-    InputEvent, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInputHandler, PlatformWindow, Point, Scene, Size, Timer, WindowAppearance,
-    WindowBounds, WindowKind, WindowOptions, WindowPromptLevel,
+    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, Executor, FileDropEvent,
+    GlobalPixels, InputEvent, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, Scene, Size, Timer,
+    WindowAppearance, WindowBounds, WindowKind, WindowOptions, WindowPromptLevel,
 };
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
-        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-        NSWindowStyleMask, NSWindowTitleVisibility,
+        CGPoint, NSApplication, NSBackingStoreBuffered, NSFilenamesPboardType, NSPasteboard,
+        NSScreen, NSView, NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowButton,
+        NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
-        NSAutoreleasePool, NSDictionary, NSInteger, NSPoint, NSRect, NSSize, NSString, NSUInteger,
+        NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSPoint, NSRect,
+        NSSize, NSString, NSUInteger,
     },
 };
 use core_graphics::display::CGRect;
@@ -37,6 +38,7 @@ use std::{
     mem,
     ops::Range,
     os::raw::c_char,
+    path::PathBuf,
     ptr,
     rc::Rc,
     sync::{Arc, Weak},
@@ -68,6 +70,13 @@ const NSTrackingInVisibleRect: NSUInteger = 0x200;
 const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
 #[allow(non_upper_case_globals)]
 const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
+// https://developer.apple.com/documentation/appkit/nsdragoperation
+#[allow(non_upper_case_globals)]
+type NSDragOperation = NSUInteger;
+#[allow(non_upper_case_globals)]
+const NSDragOperationNone: NSDragOperation = 0;
+#[allow(non_upper_case_globals)]
+const NSDragOperationCopy: NSDragOperation = 1;
 
 #[ctor]
 unsafe fn build_classes() {
@@ -259,6 +268,28 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         window_should_close as extern "C" fn(&Object, Sel, id) -> BOOL,
     );
     decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
+
+    decl.add_method(
+        sel!(draggingEntered:),
+        dragging_entered as extern "C" fn(&Object, Sel, id) -> NSDragOperation,
+    );
+    decl.add_method(
+        sel!(draggingUpdated:),
+        dragging_updated as extern "C" fn(&Object, Sel, id) -> NSDragOperation,
+    );
+    decl.add_method(
+        sel!(draggingExited:),
+        dragging_exited as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(performDragOperation:),
+        perform_drag_operation as extern "C" fn(&Object, Sel, id) -> BOOL,
+    );
+    decl.add_method(
+        sel!(concludeDragOperation:),
+        conclude_drag_operation as extern "C" fn(&Object, Sel, id),
+    );
+
     decl.register()
 }
 
@@ -472,6 +503,11 @@ impl MacWindow {
                 target_screen,
             );
             assert!(!native_window.is_null());
+            let () = msg_send![
+                native_window,
+                registerForDraggedTypes:
+                    NSArray::arrayWithObject(nil, NSFilenamesPboardType)
+            ];
 
             let screen = native_window.screen();
             match options.bounds {
@@ -1595,6 +1631,66 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     }
 }
 
+extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
+    let window_state = unsafe { get_window_state(this) };
+    let position = drag_event_position(&window_state, dragging_info);
+    if send_new_event(
+        &window_state,
+        InputEvent::FileDrop(FileDropEvent::Pending { position }),
+    ) {
+        NSDragOperationCopy
+    } else {
+        NSDragOperationNone
+    }
+}
+
+extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
+    let window_state = unsafe { get_window_state(this) };
+    let position = drag_event_position(&window_state, dragging_info);
+    if send_new_event(
+        &window_state,
+        InputEvent::FileDrop(FileDropEvent::Pending { position }),
+    ) {
+        NSDragOperationCopy
+    } else {
+        NSDragOperationNone
+    }
+}
+
+extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    send_new_event(&window_state, InputEvent::FileDrop(FileDropEvent::End));
+}
+
+extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
+    let mut paths = Vec::new();
+    let pb: id = unsafe { msg_send![dragging_info, draggingPasteboard] };
+    let filenames = unsafe { NSPasteboard::propertyListForType(pb, NSFilenamesPboardType) };
+    for file in unsafe { filenames.iter() } {
+        let path = unsafe {
+            let f = NSString::UTF8String(file);
+            CStr::from_ptr(f).to_string_lossy().into_owned()
+        };
+        paths.push(PathBuf::from(path))
+    }
+
+    let window_state = unsafe { get_window_state(this) };
+    let position = drag_event_position(&window_state, dragging_info);
+    if send_new_event(
+        &window_state,
+        InputEvent::FileDrop(FileDropEvent::Submit { position, paths }),
+    ) {
+        YES
+    } else {
+        NO
+    }
+}
+
+extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    send_new_event(&window_state, InputEvent::FileDrop(FileDropEvent::End));
+}
+
 async fn synthetic_drag(
     window_state: Weak<Mutex<MacWindowState>>,
     drag_id: usize,
@@ -1615,6 +1711,22 @@ async fn synthetic_drag(
             }
         }
     }
+}
+
+fn send_new_event(window_state_lock: &Mutex<MacWindowState>, e: InputEvent) -> bool {
+    let window_state = window_state_lock.lock().event_callback.take();
+    if let Some(mut callback) = window_state {
+        callback(e);
+        window_state_lock.lock().event_callback = Some(callback);
+        true
+    } else {
+        false
+    }
+}
+
+fn drag_event_position(window_state: &Mutex<MacWindowState>, dragging_info: id) -> Point<Pixels> {
+    let drag_location: NSPoint = unsafe { msg_send![dragging_info, draggingLocation] };
+    convert_mouse_position(drag_location, window_state.lock().content_size().height)
 }
 
 fn with_input_handler<F, R>(window: &Object, f: F) -> Option<R>

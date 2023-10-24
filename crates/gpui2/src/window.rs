@@ -1,13 +1,13 @@
 use crate::{
     px, size, Action, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, Bounds,
     BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect, Element,
-    EntityId, EventEmitter, FocusEvent, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData,
-    InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId, MainThread,
-    MainThreadOnly, MonochromeSprite, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle, WindowOptions,
-    SUBPIXEL_VARIANTS,
+    EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId, Handle,
+    Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
+    MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
+    Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -892,6 +892,22 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         if let Some(any_mouse_event) = event.mouse_event() {
             if let Some(MouseMoveEvent { position, .. }) = any_mouse_event.downcast_ref() {
                 self.window.mouse_position = *position;
+            }
+
+            match any_mouse_event.downcast_ref() {
+                Some(FileDropEvent::Pending { position }) => {
+                    dbg!("FileDropEvent::Pending", position);
+                    return true;
+                }
+                Some(FileDropEvent::Submit { position, paths }) => {
+                    dbg!("FileDropEvent::Submit", position, paths);
+                    return true;
+                }
+                Some(FileDropEvent::End) => {
+                    self.active_drag = None;
+                    return true;
+                }
+                _ => {}
             }
 
             // Handlers may set this to false by calling `stop_propagation`
