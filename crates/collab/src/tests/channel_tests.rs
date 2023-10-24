@@ -1,4 +1,5 @@
 use crate::{
+    db::{self, UserId},
     rpc::RECONNECT_TIMEOUT,
     tests::{room_participants, RoomParticipants, TestServer},
 };
@@ -292,11 +293,14 @@ async fn test_core_channels(
     server.disconnect_client(client_a.peer_id().unwrap());
     deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
 
-    client_b
-        .channel_store()
-        .update(cx_b, |channel_store, cx| {
-            channel_store.rename(channel_a_id, "channel-a-renamed", cx)
-        })
+    server
+        .app_state
+        .db
+        .rename_channel(
+            db::ChannelId::from_proto(channel_a_id),
+            UserId::from_proto(client_a.id()),
+            "channel-a-renamed",
+        )
         .await
         .unwrap();
 
