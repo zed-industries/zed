@@ -748,11 +748,10 @@ async fn test_select_all_issue_2170(cx: &mut gpui::TestAppContext) {
         Mode::Normal,
     );
     cx.simulate_keystrokes(["g", "a"]);
-    // TODO: this would be better if it selected the [ not the space.
     cx.assert_state(
         indoc! {"
-        defmodule« ˇ»Test« ˇ»do
-        «    ˇ»def« ˇ»test(a,« ˇ»[_,« ˇ»_]« ˇ»=« ˇ»b),« ˇ»do:« ˇ»IO.puts('hi')
+        defmodule Test do
+            def test(a, «[ˇ»_, _] = b), do: IO.puts('hi')
         end
     "},
         Mode::Visual,

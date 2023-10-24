@@ -373,8 +373,8 @@ pub(crate) struct DiagnosticEndpoint {
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
 pub enum CharKind {
-    Punctuation,
     Whitespace,
+    Punctuation,
     Word,
 }
 

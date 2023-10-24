@@ -707,7 +707,9 @@ mod tests {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 surrounding_word(&snapshot, display_points[1]),
-                display_points[0]..display_points[2]
+                display_points[0]..display_points[2],
+                "{}",
+                marked_text.to_string()
             );
         }
 
@@ -717,7 +719,7 @@ mod tests {
         assert("loremˇ ˇ  ˇipsum", cx);
         assert("lorem\nˇˇˇ\nipsum", cx);
         assert("lorem\nˇˇipsumˇ", cx);
-        assert("lorem,ˇˇ ˇipsum", cx);
+        assert("loremˇ,ˇˇ ipsum", cx);
         assert("ˇloremˇˇ, ipsum", cx);
     }
 
