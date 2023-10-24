@@ -257,7 +257,7 @@ impl NotificationPanel {
                                                 } else {
                                                     "You declined"
                                                 },
-                                                style.read_text.text.clone(),
+                                                style.meta_text.text.clone(),
                                             )
                                             .flex_float()
                                             .into_any(),

@@ -44,6 +44,13 @@ export default function (): any {
             ...notification_text,
             color: notification_read_text_color,
         },
+        meta_text: {
+            padding: { top: 4, bottom: 4, right: 4 },
+            ...text(layer, "sans", "base"),
+            color: with_opacity(
+                theme.middle.base.default.foreground,
+                0.6)
+        },
         unread_text: notification_text,
         button: text_button({
             variant: "ghost",
