@@ -1119,11 +1119,7 @@ async fn test_channel_link_notifications(
             )
         });
 
-    assert_channels_list_shape(
-        client_c.channel_store(),
-        cx_c,
-        &[(zed_channel, 0)],
-    );
+    assert_channels_list_shape(client_c.channel_store(), cx_c, &[(zed_channel, 0)]);
 }
 
 #[gpui::test]
