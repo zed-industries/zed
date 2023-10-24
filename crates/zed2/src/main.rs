@@ -11,7 +11,7 @@ use cli::{
 use db2::kvp::KEY_VALUE_STORE;
 use fs::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui2::{App, AppContext, AssetSource, AsyncAppContext, SemanticVersion, Task};
+use gpui2::{App, AppContext, AsyncAppContext, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
 use language2::LanguageRegistry;
 use log::LevelFilter;

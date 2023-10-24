@@ -108,7 +108,7 @@ fn load_embedded_fonts(cx: &AppContext) -> gpui2::Result<()> {
     let mut embedded_fonts = Vec::new();
     for font_path in font_paths {
         if font_path.ends_with(".ttf") {
-            let font_bytes = cx.asset_source().load(font_path)?.to_vec();
+            let font_bytes = cx.asset_source().load(&font_path)?.to_vec();
             embedded_fonts.push(Arc::from(font_bytes));
         }
     }

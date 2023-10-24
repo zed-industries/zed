@@ -13,7 +13,7 @@ use crate::{
     ClipboardItem, Context, DispatchPhase, DisplayId, Executor, FocusEvent, FocusHandle, FocusId,
     KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly, Pixels, Platform, Point,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
-    TextSystem, View, Window, WindowContext, WindowHandle, WindowId, AnyAssetSource,
+    TextSystem, View, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -66,7 +66,6 @@ impl App {
             os_version: platform.os_version().ok(),
             app_version: platform.app_version().ok(),
         };
-        let asset_source = AnyAssetSource(asset_source);
 
         Self(Arc::new_cyclic(|this| {
             Mutex::new(AppContext {
@@ -183,7 +182,7 @@ pub struct AppContext {
     pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
     pub(crate) executor: Executor,
     pub(crate) svg_renderer: SvgRenderer,
-    asset_source: AnyAssetSource,
+    asset_source: Arc<dyn AssetSource>,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) globals_by_type: HashMap<TypeId, AnyBox>,
@@ -511,7 +510,7 @@ impl AppContext {
         });
     }
 
-    pub fn asset_source(&self) -> &AnyAssetSource {
+    pub fn asset_source(&self) -> &Arc<dyn AssetSource> {
         &self.asset_source
     }
 

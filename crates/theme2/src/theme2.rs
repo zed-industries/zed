@@ -93,6 +93,7 @@ pub struct PlayerTheme {
     pub selection: Hsla,
 }
 
+#[derive(Clone)]
 pub struct ThemeMetadata {
     pub name: SharedString,
     pub is_light: bool,

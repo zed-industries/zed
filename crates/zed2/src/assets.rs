@@ -13,16 +13,16 @@ use rust_embed::RustEmbed;
 pub struct Assets;
 
 impl AssetSource for Assets {
-    fn load(&self, path: &SharedString) -> Result<std::borrow::Cow<[u8]>> {
+    fn load(&self, path: &str) -> Result<std::borrow::Cow<[u8]>> {
         Self::get(path)
             .map(|f| f.data)
             .ok_or_else(|| anyhow!("could not find asset at path \"{}\"", path))
     }
 
-    fn list(&self, path: &SharedString) -> Result<Vec<SharedString>> {
+    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
         Ok(Self::iter()
             .filter_map(|p| {
-                if p.starts_with(path.as_ref()) {
+                if p.starts_with(path) {
                     Some(p.into())
                 } else {
                     None
