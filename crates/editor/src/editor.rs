@@ -7202,6 +7202,7 @@ impl Editor {
                     && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
                     && !entry.range.is_empty()
                     && Some(entry.range.end) != active_primary_range.as_ref().map(|r| *r.end())
+                    && !entry.range.contains(&search_start)
                 {
                     Some((entry.range, entry.diagnostic.group_id))
                 } else {
@@ -8946,6 +8947,16 @@ impl Editor {
         telemetry.report_clickhouse_event(event, telemetry_settings);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    fn report_editor_event(
+        &self,
+        _operation: &'static str,
+        _file_extension: Option<String>,
+        _cx: &AppContext,
+    ) {
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
     fn report_editor_event(
         &self,
         operation: &'static str,
