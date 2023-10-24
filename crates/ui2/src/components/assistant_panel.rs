@@ -86,14 +86,10 @@ mod stories {
     use super::*;
 
     #[derive(IntoAnyElement)]
-    pub struct AssistantPanelStory<'a>(&'a AppContext);
+    pub struct AssistantPanelStory;
 
-    impl<'a> AssistantPanelStory<'a> {
-        pub fn new() -> Self {
-            Self
-        }
-
-        fn render<V>(self) -> impl IntoAnyElement<V> {
+    impl AssistantPanelStory {
+        fn render<V>(self, cx: &mut ViewContext<V>) -> impl IntoAnyElement<V> {
             Story::container(self.0)
                 .child(Story::title_for::<_, AssistantPanel>(self.0))
                 .child(Story::label(self.cx, "Default"))

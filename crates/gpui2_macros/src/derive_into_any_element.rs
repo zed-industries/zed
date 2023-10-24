@@ -11,7 +11,7 @@
 
 // Defining a derive macro
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{quote, format_ident};
 use syn::{parse_macro_input, DeriveInput};
 
 pub fn derive_into_any_element(input: TokenStream) -> TokenStream {
@@ -57,12 +57,72 @@ pub fn derive_into_any_element(input: TokenStream) -> TokenStream {
         let (_, ty_generics, _) = generics.split_for_impl();
         let (impl_generics, _, where_clause) = trait_generics.split_for_impl();
 
+        let trampoline_name = format_ident!("{}{}", name, "Trampoline");
+
         quote! {
+            struct #trampoline_name<S, E> {
+                contents: Option<E>,
+                phantom: std::marker::PhantomData<S>,
+            }
+
+            impl<S, E> #trampoline_name<S, E> {
+                fn new(contents: E) -> Self {
+                    IntoAnyElementTrampolineName {
+                        contents: Some(contents),
+                        phantom: std::marker::PhantomData,
+                    }
+                }
+            }
+
+            impl<S, E> Element for #trampoline_name<S, E> {
+                type ViewState = S;
+
+                type ElementState = AnyElement<S>;
+
+                fn id(&self) -> Option<crate::ElementId> {
+                    None
+                }
+
+                fn initialize(
+                    &mut self,
+                    view_state: &mut Self::ViewState,
+                    element_state: Option<Self::ElementState>,
+                    cx: &mut ViewContext<Self::ViewState>,
+                ) -> Self::ElementState {
+                    self.contents.take().unwrap().render(cx)
+                }
+
+                fn layout(
+                    &mut self,
+                    view_state: &mut Self::ViewState,
+                    element_state: &mut Self::ElementState,
+                    cx: &mut ViewContext<Self::ViewState>,
+                ) -> crate::LayoutId {
+                    element_state.layout(view_state, cx)
+                }
+
+                fn paint(
+                    &mut self,
+                    bounds: crate::Bounds<crate::Pixels>,
+                    view_state: &mut Self::ViewState,
+                    element_state: &mut Self::ElementState,
+                    cx: &mut ViewContext<Self::ViewState>,
+                ) {
+                    element_state.paint(view_state, cx);
+                }
+            }
+
+            impl<S, E> IntoAnyElement<S> for IntoAnyElementTrampolineName<S, E> {
+                fn into_any(self) -> AnyElement<S> {
+                    AnyElement::new(self)
+                }
+            }
+
             impl #impl_generics gpui2::IntoAnyElement<ViewState> for #name #ty_generics
             #where_clause
             {
                 fn into_any(self) -> gpui2::AnyElement<ViewState> {
-                    Self::render(self).into_any()
+                    #trampoline_name(self).into_any()
                 }
             }
         }
