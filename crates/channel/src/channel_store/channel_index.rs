@@ -26,8 +26,10 @@ impl ChannelIndex {
     pub fn delete_channels(&mut self, channels: &[ChannelId]) {
         self.channels_by_id
             .retain(|channel_id, _| !channels.contains(channel_id));
-        self.paths
-            .retain(|path| !path.iter().any(|channel_id| channels.contains(channel_id)));
+        self.paths.retain(|path| {
+            path.iter()
+                .all(|channel_id| self.channels_by_id.contains_key(channel_id))
+        });
     }
 
     pub fn bulk_insert(&mut self) -> ChannelPathsInsertGuard {
@@ -119,17 +121,10 @@ impl<'a> ChannelPathsInsertGuard<'a> {
         insert_new_message(&mut self.channels_by_id, channel_id, message_id)
     }
 
-    pub fn insert(&mut self, channel_proto: proto::Channel) -> bool {
-        let mut ret = false;
+    pub fn insert(&mut self, channel_proto: proto::Channel) {
         if let Some(existing_channel) = self.channels_by_id.get_mut(&channel_proto.id) {
             let existing_channel = Arc::make_mut(existing_channel);
-
-            ret = existing_channel.visibility != channel_proto.visibility()
-                || existing_channel.role != channel_proto.role()
-                || existing_channel.name != channel_proto.name;
-
             existing_channel.visibility = channel_proto.visibility();
-            existing_channel.role = channel_proto.role();
             existing_channel.name = channel_proto.name;
         } else {
             self.channels_by_id.insert(
@@ -137,7 +132,6 @@ impl<'a> ChannelPathsInsertGuard<'a> {
                 Arc::new(Channel {
                     id: channel_proto.id,
                     visibility: channel_proto.visibility(),
-                    role: channel_proto.role(),
                     name: channel_proto.name,
                     unseen_note_version: None,
                     unseen_message_id: None,
@@ -145,7 +139,6 @@ impl<'a> ChannelPathsInsertGuard<'a> {
             );
             self.insert_root(channel_proto.id);
         }
-        ret
     }
 
     pub fn insert_edge(&mut self, channel_id: ChannelId, parent_id: ChannelId) {

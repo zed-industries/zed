@@ -16,7 +16,7 @@ impl Database {
         connection: ConnectionId,
     ) -> Result<proto::JoinChannelBufferResponse> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_participant(channel_id, user_id, &tx)
+            self.check_user_is_channel_member(channel_id, user_id, &tx)
                 .await?;
 
             let buffer = channel::Model {
@@ -131,7 +131,7 @@ impl Database {
             for client_buffer in buffers {
                 let channel_id = ChannelId::from_proto(client_buffer.channel_id);
                 if self
-                    .check_user_is_channel_participant(channel_id, user_id, &*tx)
+                    .check_user_is_channel_member(channel_id, user_id, &*tx)
                     .await
                     .is_err()
                 {
@@ -482,7 +482,9 @@ impl Database {
                 )
                 .await?;
 
-                channel_members = self.get_channel_participants(channel_id, &*tx).await?;
+                channel_members = self
+                    .get_channel_participants_internal(channel_id, &*tx)
+                    .await?;
                 let collaborators = self
                     .get_channel_buffer_collaborators_internal(channel_id, &*tx)
                     .await?;

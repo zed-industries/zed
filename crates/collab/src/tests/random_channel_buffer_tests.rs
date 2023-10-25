@@ -48,7 +48,7 @@ impl RandomizedTest for RandomChannelBufferTest {
         let db = &server.app_state.db;
         for ix in 0..CHANNEL_COUNT {
             let id = db
-                .create_root_channel(&format!("channel-{ix}"), users[0].user_id)
+                .create_channel(&format!("channel-{ix}"), None, users[0].user_id)
                 .await
                 .unwrap();
             for user in &users[1..] {
@@ -98,16 +98,15 @@ impl RandomizedTest for RandomChannelBufferTest {
 
                 30..=40 => {
                     if let Some(buffer) = channel_buffers.iter().choose(rng) {
-                        let channel_name =
-                            buffer.read_with(cx, |b, cx| b.channel(cx).unwrap().name.clone());
+                        let channel_name = buffer.read_with(cx, |b, _| b.channel().name.clone());
                         break ChannelBufferOperation::LeaveChannelNotes { channel_name };
                     }
                 }
 
                 _ => {
                     if let Some(buffer) = channel_buffers.iter().choose(rng) {
-                        break buffer.read_with(cx, |b, cx| {
-                            let channel_name = b.channel(cx).unwrap().name.clone();
+                        break buffer.read_with(cx, |b, _| {
+                            let channel_name = b.channel().name.clone();
                             let edits = b
                                 .buffer()
                                 .read_with(cx, |buffer, _| buffer.get_random_edits(rng, 3));
@@ -154,7 +153,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                 let buffer = cx.update(|cx| {
                     let mut left_buffer = Err(TestError::Inapplicable);
                     client.channel_buffers().retain(|buffer| {
-                        if buffer.read(cx).channel(cx).unwrap().name == channel_name {
+                        if buffer.read(cx).channel().name == channel_name {
                             left_buffer = Ok(buffer.clone());
                             false
                         } else {
@@ -180,9 +179,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                         client
                             .channel_buffers()
                             .iter()
-                            .find(|buffer| {
-                                buffer.read(cx).channel(cx).unwrap().name == channel_name
-                            })
+                            .find(|buffer| buffer.read(cx).channel().name == channel_name)
                             .cloned()
                     })
                     .ok_or_else(|| TestError::Inapplicable)?;
@@ -253,7 +250,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                     if let Some(channel_buffer) = client
                         .channel_buffers()
                         .iter()
-                        .find(|b| b.read(cx).channel_id == channel_id.to_proto())
+                        .find(|b| b.read(cx).channel().id == channel_id.to_proto())
                     {
                         let channel_buffer = channel_buffer.read(cx);
 

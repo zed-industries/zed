@@ -12,7 +12,7 @@ impl Database {
         user_id: UserId,
     ) -> Result<()> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_participant(channel_id, user_id, &*tx)
+            self.check_user_is_channel_member(channel_id, user_id, &*tx)
                 .await?;
             channel_chat_participant::ActiveModel {
                 id: ActiveValue::NotSet,
@@ -80,7 +80,7 @@ impl Database {
         before_message_id: Option<MessageId>,
     ) -> Result<Vec<proto::ChannelMessage>> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_participant(channel_id, user_id, &*tx)
+            self.check_user_is_channel_member(channel_id, user_id, &*tx)
                 .await?;
 
             let mut condition =
@@ -203,9 +203,6 @@ impl Database {
         nonce: u128,
     ) -> Result<CreatedChannelMessage> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_participant(channel_id, user_id, &*tx)
-                .await?;
-
             let mut rows = channel_chat_participant::Entity::find()
                 .filter(channel_chat_participant::Column::ChannelId.eq(channel_id))
                 .stream(&*tx)
@@ -310,7 +307,9 @@ impl Database {
                 }
             }
 
-            let mut channel_members = self.get_channel_participants(channel_id, &*tx).await?;
+            let mut channel_members = self
+                .get_channel_participants_internal(channel_id, &*tx)
+                .await?;
             channel_members.retain(|member| !participant_user_ids.contains(member));
 
             Ok(CreatedChannelMessage {

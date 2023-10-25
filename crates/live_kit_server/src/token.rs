@@ -57,15 +57,6 @@ impl<'a> VideoGrant<'a> {
             ..Default::default()
         }
     }
-
-    pub fn for_guest(room: &'a str) -> Self {
-        Self {
-            room: Some(Cow::Borrowed(room)),
-            room_join: Some(true),
-            can_subscribe: Some(true),
-            ..Default::default()
-        }
-    }
 }
 
 pub fn create(

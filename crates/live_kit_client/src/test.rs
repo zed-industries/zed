@@ -306,16 +306,6 @@ impl live_kit_server::api::Client for TestApiClient {
             token::VideoGrant::to_join(room),
         )
     }
-
-    fn guest_token(&self, room: &str, identity: &str) -> Result<String> {
-        let server = TestServer::get(&self.url)?;
-        token::create(
-            &server.api_key,
-            &server.secret_key,
-            Some(identity),
-            token::VideoGrant::for_guest(room),
-        )
-    }
 }
 
 pub type Sid = String;

@@ -435,103 +435,18 @@ pub struct NewUserResult {
     pub signup_device_id: Option<String>,
 }
 
-#[derive(Debug)]
-pub struct MoveChannelResult {
-    pub participants_to_update: HashMap<UserId, ChannelsForUser>,
-    pub participants_to_remove: HashSet<UserId>,
-    pub moved_channels: HashSet<ChannelId>,
-}
-
-#[derive(Debug)]
-pub struct RenameChannelResult {
-    pub channel: Channel,
-    pub participants_to_update: HashMap<UserId, Channel>,
-}
-
-#[derive(Debug)]
-pub struct CreateChannelResult {
-    pub channel: Channel,
-    pub participants_to_update: Vec<(UserId, ChannelsForUser)>,
-}
-
-#[derive(Debug)]
-pub struct SetChannelVisibilityResult {
-    pub participants_to_update: HashMap<UserId, ChannelsForUser>,
-    pub participants_to_remove: HashSet<UserId>,
-    pub channels_to_remove: Vec<ChannelId>,
-}
-
-#[derive(Debug)]
-pub struct MembershipUpdated {
-    pub channel_id: ChannelId,
-    pub new_channels: ChannelsForUser,
-    pub removed_channels: Vec<ChannelId>,
-}
-
-#[derive(Debug)]
-pub enum SetMemberRoleResult {
-    InviteUpdated(Channel),
-    MembershipUpdated(MembershipUpdated),
-}
-
-#[derive(Debug)]
-pub struct InviteMemberResult {
-    pub channel: Channel,
-    pub notifications: NotificationBatch,
-}
-
-#[derive(Debug)]
-pub struct RespondToChannelInvite {
-    pub membership_update: Option<MembershipUpdated>,
-    pub notifications: NotificationBatch,
-}
-
-#[derive(Debug)]
-pub struct RemoveChannelMemberResult {
-    pub membership_update: MembershipUpdated,
-    pub notification_id: Option<NotificationId>,
-}
-
 #[derive(FromQueryResult, Debug, PartialEq, Eq, Hash)]
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
     pub visibility: ChannelVisibility,
-    pub role: ChannelRole,
-}
-
-impl Channel {
-    pub fn to_proto(&self) -> proto::Channel {
-        proto::Channel {
-            id: self.id.to_proto(),
-            name: self.name.clone(),
-            visibility: self.visibility.into(),
-            role: self.role.into(),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub struct ChannelMember {
-    pub role: ChannelRole,
-    pub user_id: UserId,
-    pub kind: proto::channel_member::Kind,
-}
-
-impl ChannelMember {
-    pub fn to_proto(&self) -> proto::ChannelMember {
-        proto::ChannelMember {
-            role: self.role.into(),
-            user_id: self.user_id.to_proto(),
-            kind: self.kind.into(),
-        }
-    }
 }
 
 #[derive(Debug, PartialEq)]
 pub struct ChannelsForUser {
     pub channels: ChannelGraph,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
+    pub channels_with_admin_privileges: HashSet<ChannelId>,
     pub unseen_buffer_changes: Vec<proto::UnseenChannelBufferChange>,
     pub channel_messages: Vec<proto::UnseenChannelMessage>,
 }

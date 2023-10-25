@@ -19,7 +19,7 @@ use time::OffsetDateTime;
 use util::{post_inc, ResultExt as _, TryFutureExt};
 
 pub struct ChannelChat {
-    pub channel_id: ChannelId,
+    channel: Arc<Channel>,
     messages: SumTree<ChannelMessage>,
     acknowledged_message_ids: HashSet<u64>,
     channel_store: ModelHandle<ChannelStore>,
@@ -87,7 +87,7 @@ impl Entity for ChannelChat {
     fn release(&mut self, _: &mut AppContext) {
         self.rpc
             .send(proto::LeaveChannelChat {
-                channel_id: self.channel_id,
+                channel_id: self.channel.id,
             })
             .log_err();
     }
@@ -112,7 +112,7 @@ impl ChannelChat {
 
         Ok(cx.add_model(|cx| {
             let mut this = Self {
-                channel_id: channel.id,
+                channel,
                 user_store,
                 channel_store,
                 rpc: client,
@@ -130,11 +130,8 @@ impl ChannelChat {
         }))
     }
 
-    pub fn channel(&self, cx: &AppContext) -> Option<Arc<Channel>> {
-        self.channel_store
-            .read(cx)
-            .channel_for_id(self.channel_id)
-            .cloned()
+    pub fn channel(&self) -> &Arc<Channel> {
+        &self.channel
     }
 
     pub fn client(&self) -> &Arc<Client> {
@@ -156,7 +153,7 @@ impl ChannelChat {
             .current_user()
             .ok_or_else(|| anyhow!("current_user is not present"))?;
 
-        let channel_id = self.channel_id;
+        let channel_id = self.channel.id;
         let pending_id = ChannelMessageId::Pending(post_inc(&mut self.next_pending_message_id));
         let nonce = self.rng.gen();
         self.insert_messages(
@@ -198,7 +195,7 @@ impl ChannelChat {
 
     pub fn remove_message(&mut self, id: u64, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let response = self.rpc.request(proto::RemoveChannelMessage {
-            channel_id: self.channel_id,
+            channel_id: self.channel.id,
             message_id: id,
         });
         cx.spawn(|this, mut cx| async move {
@@ -218,7 +215,7 @@ impl ChannelChat {
 
         let rpc = self.rpc.clone();
         let user_store = self.user_store.clone();
-        let channel_id = self.channel_id;
+        let channel_id = self.channel.id;
         let before_message_id = self.first_loaded_message_id()?;
         Some(cx.spawn(|this, mut cx| {
             async move {
@@ -291,13 +288,13 @@ impl ChannelChat {
             {
                 self.rpc
                     .send(proto::AckChannelMessage {
-                        channel_id: self.channel_id,
+                        channel_id: self.channel.id,
                         message_id: latest_message_id,
                     })
                     .ok();
                 self.last_acknowledged_id = Some(latest_message_id);
                 self.channel_store.update(cx, |store, cx| {
-                    store.acknowledge_message_id(self.channel_id, latest_message_id, cx);
+                    store.acknowledge_message_id(self.channel.id, latest_message_id, cx);
                 });
             }
         }
@@ -306,7 +303,7 @@ impl ChannelChat {
     pub fn rejoin(&mut self, cx: &mut ModelContext<Self>) {
         let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
-        let channel_id = self.channel_id;
+        let channel_id = self.channel.id;
         cx.spawn(|this, mut cx| {
             async move {
                 let response = rpc.request(proto::JoinChannelChat { channel_id }).await?;
@@ -379,7 +376,7 @@ impl ChannelChat {
         if self.acknowledged_message_ids.insert(id) {
             self.rpc
                 .send(proto::AckChannelMessage {
-                    channel_id: self.channel_id,
+                    channel_id: self.channel.id,
                     message_id: id,
                 })
                 .ok();
@@ -415,7 +412,7 @@ impl ChannelChat {
         this.update(&mut cx, |this, cx| {
             this.insert_messages(SumTree::from_item(message, &()), cx);
             cx.emit(ChannelChatEvent::NewMessage {
-                channel_id: this.channel_id,
+                channel_id: this.channel.id,
                 message_id,
             })
         });

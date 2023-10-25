@@ -1,4 +1,4 @@
-use crate::{Channel, ChannelId, ChannelStore};
+use crate::Channel;
 use anyhow::Result;
 use client::{Client, Collaborator, UserStore};
 use collections::HashMap;
@@ -19,11 +19,10 @@ pub(crate) fn init(client: &Arc<Client>) {
 }
 
 pub struct ChannelBuffer {
-    pub channel_id: ChannelId,
+    pub(crate) channel: Arc<Channel>,
     connected: bool,
     collaborators: HashMap<PeerId, Collaborator>,
     user_store: ModelHandle<UserStore>,
-    channel_store: ModelHandle<ChannelStore>,
     buffer: ModelHandle<language::Buffer>,
     buffer_epoch: u64,
     client: Arc<Client>,
@@ -35,7 +34,6 @@ pub enum ChannelBufferEvent {
     CollaboratorsChanged,
     Disconnected,
     BufferEdited,
-    ChannelChanged,
 }
 
 impl Entity for ChannelBuffer {
@@ -48,7 +46,7 @@ impl Entity for ChannelBuffer {
             }
             self.client
                 .send(proto::LeaveChannelBuffer {
-                    channel_id: self.channel_id,
+                    channel_id: self.channel.id,
                 })
                 .log_err();
         }
@@ -60,7 +58,6 @@ impl ChannelBuffer {
         channel: Arc<Channel>,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
-        channel_store: ModelHandle<ChannelStore>,
         mut cx: AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
         let response = client
@@ -93,10 +90,9 @@ impl ChannelBuffer {
                 connected: true,
                 collaborators: Default::default(),
                 acknowledge_task: None,
-                channel_id: channel.id,
+                channel,
                 subscription: Some(subscription.set_model(&cx.handle(), &mut cx.to_async())),
                 user_store,
-                channel_store,
             };
             this.replace_collaborators(response.collaborators, cx);
             this
@@ -183,7 +179,7 @@ impl ChannelBuffer {
                 let operation = language::proto::serialize_operation(operation);
                 self.client
                     .send(proto::UpdateChannelBuffer {
-                        channel_id: self.channel_id,
+                        channel_id: self.channel.id,
                         operations: vec![operation],
                     })
                     .log_err();
@@ -227,26 +223,18 @@ impl ChannelBuffer {
         &self.collaborators
     }
 
-    pub fn channel(&self, cx: &AppContext) -> Option<Arc<Channel>> {
-        self.channel_store
-            .read(cx)
-            .channel_for_id(self.channel_id)
-            .cloned()
+    pub fn channel(&self) -> Arc<Channel> {
+        self.channel.clone()
     }
 
     pub(crate) fn disconnect(&mut self, cx: &mut ModelContext<Self>) {
-        log::info!("channel buffer {} disconnected", self.channel_id);
+        log::info!("channel buffer {} disconnected", self.channel.id);
         if self.connected {
             self.connected = false;
             self.subscription.take();
             cx.emit(ChannelBufferEvent::Disconnected);
             cx.notify()
         }
-    }
-
-    pub(crate) fn channel_changed(&mut self, cx: &mut ModelContext<Self>) {
-        cx.emit(ChannelBufferEvent::ChannelChanged);
-        cx.notify()
     }
 
     pub fn is_connected(&self) -> bool {

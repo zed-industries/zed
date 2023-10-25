@@ -12,7 +12,6 @@ pub trait Client: Send + Sync {
     async fn delete_room(&self, name: String) -> Result<()>;
     async fn remove_participant(&self, room: String, identity: String) -> Result<()>;
     fn room_token(&self, room: &str, identity: &str) -> Result<String>;
-    fn guest_token(&self, room: &str, identity: &str) -> Result<String>;
 }
 
 #[derive(Clone)]
@@ -137,15 +136,6 @@ impl Client for LiveKitClient {
             &self.secret,
             Some(identity),
             token::VideoGrant::to_join(room),
-        )
-    }
-
-    fn guest_token(&self, room: &str, identity: &str) -> Result<String> {
-        token::create(
-            &self.key,
-            &self.secret,
-            Some(identity),
-            token::VideoGrant::for_guest(room),
         )
     }
 }

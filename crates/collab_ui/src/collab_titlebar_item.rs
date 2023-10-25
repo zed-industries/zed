@@ -88,10 +88,8 @@ impl View for CollabTitlebarItem {
             .zip(peer_id)
             .zip(ActiveCall::global(cx).read(cx).room().cloned())
         {
-            if room.read(cx).can_publish() {
-                right_container
-                    .add_children(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
-            }
+            right_container
+                .add_children(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
             right_container.add_child(self.render_leave_call(&theme, cx));
             let muted = room.read(cx).is_muted(cx);
             let speaking = room.read(cx).is_speaking();
@@ -99,14 +97,9 @@ impl View for CollabTitlebarItem {
                 self.render_current_user(&workspace, &theme, &user, peer_id, muted, speaking, cx),
             );
             left_container.add_children(self.render_collaborators(&workspace, &theme, &room, cx));
-            if room.read(cx).can_publish() {
-                right_container.add_child(self.render_toggle_mute(&theme, &room, cx));
-            }
+            right_container.add_child(self.render_toggle_mute(&theme, &room, cx));
             right_container.add_child(self.render_toggle_deafen(&theme, &room, cx));
-            if room.read(cx).can_publish() {
-                right_container
-                    .add_child(self.render_toggle_screen_sharing_button(&theme, &room, cx));
-            }
+            right_container.add_child(self.render_toggle_screen_sharing_button(&theme, &room, cx));
         }
 
         let status = workspace.read(cx).client().status();

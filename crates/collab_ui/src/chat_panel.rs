@@ -263,22 +263,21 @@ impl ChatPanel {
 
     fn set_active_chat(&mut self, chat: ModelHandle<ChannelChat>, cx: &mut ViewContext<Self>) {
         if self.active_chat.as_ref().map(|e| &e.0) != Some(&chat) {
-            let channel_id = chat.read(cx).channel_id;
-            {
-                self.markdown_data.clear();
+            self.markdown_data.clear();
+            let id = {
                 let chat = chat.read(cx);
+                let channel = chat.channel().clone();
                 self.message_list.reset(chat.message_count());
-
-                let channel_name = chat.channel(cx).map(|channel| channel.name.clone());
                 self.input_editor.update(cx, |editor, cx| {
-                    editor.set_channel(channel_id, channel_name, cx);
+                    editor.set_channel(channel.clone(), cx);
                 });
+                channel.id
             };
             let subscription = cx.subscribe(&chat, Self::channel_did_change);
             self.active_chat = Some((chat, subscription));
             self.acknowledge_last_message(cx);
             self.channel_select.update(cx, |select, cx| {
-                if let Some(ix) = self.channel_store.read(cx).index_of_channel(channel_id) {
+                if let Some(ix) = self.channel_store.read(cx).index_of_channel(id) {
                     select.set_selected_index(ix, cx);
                 }
             });
@@ -362,8 +361,7 @@ impl ChatPanel {
                 let is_admin = self
                     .channel_store
                     .read(cx)
-                    .is_channel_admin(active_chat.channel_id);
-
+                    .is_user_admin(active_chat.channel().id);
                 let last_message = active_chat.message(ix.saturating_sub(1));
                 let this_message = active_chat.message(ix).clone();
                 let is_continuation = last_message.id != this_message.id
@@ -678,7 +676,7 @@ impl ChatPanel {
             .active_chat
             .as_ref()
             .and_then(|(chat, _)| {
-                (chat.read(cx).channel_id == selected_channel_id)
+                (chat.read(cx).channel().id == selected_channel_id)
                     .then(|| Task::ready(anyhow::Ok(chat.clone())))
             })
             .unwrap_or_else(|| {
@@ -716,7 +714,7 @@ impl ChatPanel {
 
     fn open_notes(&mut self, _: &OpenChannelNotes, cx: &mut ViewContext<Self>) {
         if let Some((chat, _)) = &self.active_chat {
-            let channel_id = chat.read(cx).channel_id;
+            let channel_id = chat.read(cx).channel().id;
             if let Some(workspace) = self.workspace.upgrade(cx) {
                 ChannelView::open(channel_id, workspace, cx).detach();
             }
@@ -725,7 +723,7 @@ impl ChatPanel {
 
     fn join_call(&mut self, _: &JoinCall, cx: &mut ViewContext<Self>) {
         if let Some((chat, _)) = &self.active_chat {
-            let channel_id = chat.read(cx).channel_id;
+            let channel_id = chat.read(cx).channel().id;
             ActiveCall::global(cx)
                 .update(cx, |call, cx| call.join_channel(channel_id, cx))
                 .detach_and_log_err(cx);

@@ -54,7 +54,7 @@ pub enum Event {
 
 pub struct Room {
     id: u64,
-    pub channel_id: Option<u64>,
+    channel_id: Option<u64>,
     live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
     shared_projects: HashSet<WeakModelHandle<Project>>,
@@ -121,10 +121,6 @@ impl Room {
         }
     }
 
-    pub fn can_publish(&self) -> bool {
-        self.live_kit.as_ref().is_some_and(|room| room.can_publish)
-    }
-
     fn new(
         id: u64,
         channel_id: Option<u64>,
@@ -184,23 +180,20 @@ impl Room {
             });
 
             let connect = room.connect(&connection_info.server_url, &connection_info.token);
-            if connection_info.can_publish {
-                cx.spawn(|this, mut cx| async move {
-                    connect.await?;
+            cx.spawn(|this, mut cx| async move {
+                connect.await?;
 
-                    if !cx.read(Self::mute_on_join) {
-                        this.update(&mut cx, |this, cx| this.share_microphone(cx))
-                            .await?;
-                    }
+                if !cx.read(Self::mute_on_join) {
+                    this.update(&mut cx, |this, cx| this.share_microphone(cx))
+                        .await?;
+                }
 
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
-            }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
 
             Some(LiveKitRoom {
                 room,
-                can_publish: connection_info.can_publish,
                 screen_track: LocalTrack::None,
                 microphone_track: LocalTrack::None,
                 next_publish_id: 0,
@@ -1499,7 +1492,6 @@ struct LiveKitRoom {
     deafened: bool,
     speaking: bool,
     next_publish_id: usize,
-    can_publish: bool,
     _maintain_room: Task<()>,
     _maintain_tracks: [Task<()>; 2],
 }

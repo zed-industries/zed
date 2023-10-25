@@ -11,7 +11,7 @@ use rpc::proto::ChannelEdge;
 use sea_orm::ConnectionTrait;
 use sqlx::migrate::MigrateDatabase;
 use std::sync::{
-    atomic::{AtomicI32, AtomicU32, Ordering::SeqCst},
+    atomic::{AtomicI32, Ordering::SeqCst},
     Arc,
 };
 
@@ -154,21 +154,17 @@ impl Drop for TestDb {
 }
 
 /// The second tuples are (channel_id, parent)
-fn graph(
-    channels: &[(ChannelId, &'static str, ChannelRole)],
-    edges: &[(ChannelId, ChannelId)],
-) -> ChannelGraph {
+fn graph(channels: &[(ChannelId, &'static str)], edges: &[(ChannelId, ChannelId)]) -> ChannelGraph {
     let mut graph = ChannelGraph {
         channels: vec![],
         edges: vec![],
     };
 
-    for (id, name, role) in channels {
+    for (id, name) in channels {
         graph.channels.push(Channel {
             id: *id,
             name: name.to_string(),
             visibility: ChannelVisibility::Members,
-            role: *role,
         })
     }
 
@@ -196,12 +192,4 @@ async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
     .await
     .unwrap()
     .user_id
-}
-
-static TEST_CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
-fn new_test_connection(server: ServerId) -> ConnectionId {
-    ConnectionId {
-        id: TEST_CONNECTION_ID.fetch_add(1, SeqCst),
-        owner_id: server.0 as u32,
-    }
 }
