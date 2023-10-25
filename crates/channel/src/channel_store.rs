@@ -188,13 +188,6 @@ impl ChannelStore {
         self.client.clone()
     }
 
-    pub fn channel_has_children(&self) -> bool {
-        self.channel_index
-            .by_id()
-            .iter()
-            .any(|(_, channel)| channel.parent_path.contains(&channel.id))
-    }
-
     /// Returns the number of unique channels in the store
     pub fn channel_count(&self) -> usize {
         self.channel_index.by_id().len()

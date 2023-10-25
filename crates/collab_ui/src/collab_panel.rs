@@ -472,9 +472,20 @@ impl CollabPanel {
                                 cx,
                             )
                         }
-                        ListEntry::Channel { channel, depth, .. } => {
-                            let channel_row =
-                                this.render_channel(&*channel, *depth, &theme, is_selected, ix, cx);
+                        ListEntry::Channel {
+                            channel,
+                            depth,
+                            has_children,
+                        } => {
+                            let channel_row = this.render_channel(
+                                &*channel,
+                                *depth,
+                                &theme,
+                                is_selected,
+                                *has_children,
+                                ix,
+                                cx,
+                            );
 
                             if is_selected && this.context_menu_on_selected {
                                 Stack::new()
@@ -1867,12 +1878,12 @@ impl CollabPanel {
         depth: usize,
         theme: &theme::Theme,
         is_selected: bool,
+        has_children: bool,
         ix: usize,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let channel_id = channel.id;
         let collab_theme = &theme.collab_panel;
-        let has_children = self.channel_store.read(cx).channel_has_children();
         let is_public = self
             .channel_store
             .read(cx)
