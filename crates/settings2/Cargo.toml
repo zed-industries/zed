@@ -16,7 +16,7 @@ collections = { path = "../collections" }
 gpui2 = { path = "../gpui2" }
 sqlez = { path = "../sqlez" }
 fs = { path = "../fs" }
-feature_flags = { path = "../feature_flags" }
+feature_flags2 = { path = "../feature_flags2" }
 util = { path = "../util" }
 
 anyhow.workspace = true

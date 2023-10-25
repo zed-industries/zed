@@ -1471,7 +1471,7 @@ dependencies = [
  "async-recursion 0.3.2",
  "async-tungstenite",
  "collections",
- "db",
+ "db2",
  "feature_flags2",
  "futures 0.3.28",
  "gpui2",
@@ -7485,7 +7485,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "feature_flags",
+ "feature_flags2",
  "fs",
  "futures 0.3.28",
  "gpui2",
