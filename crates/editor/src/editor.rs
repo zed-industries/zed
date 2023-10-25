@@ -11,7 +11,6 @@ pub mod items;
 mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
-pub mod multi_buffer;
 mod persistence;
 pub mod scroll;
 pub mod selections_collection;
@@ -7219,8 +7218,8 @@ impl Editor {
                     let mut buffer_highlights = this
                         .document_highlights_for_position(selection.head(), &buffer)
                         .filter(|highlight| {
-                            highlight.start.excerpt_id() == selection.head().excerpt_id()
-                                && highlight.end.excerpt_id() == selection.head().excerpt_id()
+                            highlight.start.excerpt_id == selection.head().excerpt_id
+                                && highlight.end.excerpt_id == selection.head().excerpt_id
                         });
                     buffer_highlights
                         .next()
