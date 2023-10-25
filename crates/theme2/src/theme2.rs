@@ -75,7 +75,7 @@ pub struct Theme {
     pub git_ignored: Hsla,
     pub git_renamed: Hsla,
 
-    pub player: [PlayerTheme; 8],
+    pub players: [PlayerTheme; 8],
 }
 
 #[derive(Clone)]

@@ -57,7 +57,7 @@ pub fn one_dark() -> Theme {
         git_conflict: rgba(0xdec184ff).into(),
         git_ignored: rgba(0x555a63ff).into(),
         git_renamed: rgba(0xdec184ff).into(),
-        player: [
+        players: [
             PlayerTheme {
                 cursor: rgba(0x74ade8ff).into(),
                 selection: rgba(0x74ade83d).into(),

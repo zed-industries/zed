@@ -154,7 +154,7 @@ pub struct ThemeColor {
     pub git_ignored: Hsla,
     pub git_renamed: Hsla,
 
-    pub player: [PlayerThemeColors; 8],
+    pub players: [PlayerThemeColors; 8],
 }
 
 impl std::fmt::Debug for ThemeColor {
@@ -245,7 +245,7 @@ impl std::fmt::Debug for ThemeColor {
             .field("git_conflict", &self.git_conflict.to_rgb().to_hex())
             .field("git_ignored", &self.git_ignored.to_rgb().to_hex())
             .field("git_renamed", &self.git_renamed.to_rgb().to_hex())
-            .field("player", &self.player)
+            .field("players", &self.players)
             .finish()
     }
 }

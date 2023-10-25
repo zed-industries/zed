@@ -140,12 +140,12 @@ impl Player {
 
     pub fn cursor_color<S: 'static>(&self, cx: &mut ViewContext<S>) -> Hsla {
         let theme = theme(cx);
-        theme.player[self.index].cursor
+        theme.players[self.index].cursor
     }
 
     pub fn selection_color<S: 'static>(&self, cx: &mut ViewContext<S>) -> Hsla {
         let theme = theme(cx);
-        theme.player[self.index].selection
+        theme.players[self.index].selection
     }
 
     pub fn avatar_src(&self) -> &str {
