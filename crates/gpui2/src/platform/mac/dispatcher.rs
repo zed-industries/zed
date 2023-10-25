@@ -72,6 +72,7 @@ impl PlatformDispatcher for MacDispatcher {
         false
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn advance_clock(&self, _: Duration) {
         unimplemented!()
     }
