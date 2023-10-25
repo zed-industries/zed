@@ -214,7 +214,7 @@ where
     }
 }
 
-pub fn theme(cx: &WindowContext) -> Arc<Theme> {
+pub fn old_theme(cx: &WindowContext) -> Arc<Theme> {
     Arc::new(cx.global::<Theme>().clone())
 }
 

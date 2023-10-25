@@ -1,5 +1,5 @@
 use crate::theme2;
-pub use crate::{theme, ButtonVariant, ElementExt, Theme};
+pub use crate::{old_theme, ButtonVariant, ElementExt, Theme};
 use gpui2::{hsla, rgb, Hsla, WindowContext};
 use strum::EnumIter;
 
@@ -20,7 +20,7 @@ impl std::fmt::Debug for PlayerThemeColors {
 
 impl PlayerThemeColors {
     pub fn new(cx: &WindowContext, ix: usize) -> Self {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         if ix < theme.players.len() {
             Self {
@@ -57,7 +57,7 @@ impl std::fmt::Debug for SyntaxColor {
 
 impl SyntaxColor {
     pub fn new(cx: &WindowContext) -> Self {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         Self {
             comment: theme
@@ -253,7 +253,7 @@ impl std::fmt::Debug for ThemeColor {
 
 impl ThemeColor {
     pub fn new(cx: &WindowContext) -> Self {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
         let theme2 = theme2(cx);
         let transparent = hsla(0.0, 0.0, 0.0, 0.0);
 

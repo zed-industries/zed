@@ -5,7 +5,7 @@ use gpui2::{px, relative, rems, view, Context, Size, View};
 
 use crate::{prelude::*, NotificationsPanel};
 use crate::{
-    static_livestream, theme, user_settings_mut, v_stack, AssistantPanel, Button, ChatMessage,
+    static_livestream, old_theme, user_settings_mut, v_stack, AssistantPanel, Button, ChatMessage,
     ChatPanel, CollabPanel, EditorPane, FakeSettings, Label, LanguageSelector, Pane, PaneGroup,
     Panel, PanelAllowedSides, PanelSide, ProjectPanel, SettingValue, SplitDirection, StatusBar,
     Terminal, TitleBar, Toast, ToastOrigin,
@@ -175,7 +175,7 @@ impl Workspace {
     }
 
     pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
-        let theme = theme(cx).clone();
+        let theme = old_theme(cx).clone();
 
         let color = ThemeColor::new(cx);
 

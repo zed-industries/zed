@@ -4,7 +4,7 @@ use gpui2::{svg, Hsla};
 use strum::EnumIter;
 
 use crate::prelude::*;
-use crate::theme::theme;
+use crate::theme::old_theme;
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
@@ -29,7 +29,7 @@ pub enum IconColor {
 
 impl IconColor {
     pub fn color(self, cx: &WindowContext) -> Hsla {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
         match self {
             IconColor::Default => theme.lowest.base.default.foreground,
             IconColor::Muted => theme.lowest.variant.default.foreground,
