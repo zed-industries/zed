@@ -34,7 +34,7 @@ use std::{
         Arc, Weak,
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use util::{
     channel::{parse_zed_link, ReleaseChannel},
@@ -684,7 +684,7 @@ fn load_embedded_fonts(app: &App) {
 #[cfg(debug_assertions)]
 async fn watch_themes(fs: Arc<dyn Fs>, mut cx: AsyncAppContext) -> Option<()> {
     let mut events = fs
-        .watch("styles/src".as_ref(), Duration::from_millis(100))
+        .watch("styles/src".as_ref(), std::time::Duration::from_millis(100))
         .await;
     while (events.next().await).is_some() {
         let output = Command::new("npm")
@@ -710,7 +710,7 @@ async fn watch_languages(fs: Arc<dyn Fs>, languages: Arc<LanguageRegistry>) -> O
     let mut events = fs
         .watch(
             "crates/zed/src/languages".as_ref(),
-            Duration::from_millis(100),
+            std::time::Duration::from_millis(100),
         )
         .await;
     while (events.next().await).is_some() {
@@ -725,7 +725,7 @@ fn watch_file_types(fs: Arc<dyn Fs>, cx: &mut AppContext) {
         let mut events = fs
             .watch(
                 "assets/icons/file_icons/file_types.json".as_ref(),
-                Duration::from_millis(100),
+                std::time::Duration::from_millis(100),
             )
             .await;
         while (events.next().await).is_some() {
