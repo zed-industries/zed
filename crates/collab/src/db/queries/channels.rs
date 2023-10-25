@@ -1209,24 +1209,29 @@ impl Database {
         admin_id: UserId,
     ) -> Result<Option<MoveChannelResult>> {
         self.transaction(|tx| async move {
-            let Some(new_parent_id) = new_parent_id else {
-                return Err(anyhow!("not supported"))?;
-            };
-
-            let new_parent = self.get_channel_internal(new_parent_id, &*tx).await?;
-            self.check_user_is_channel_admin(&new_parent, admin_id, &*tx)
-                .await?;
             let channel = self.get_channel_internal(channel_id, &*tx).await?;
-
             self.check_user_is_channel_admin(&channel, admin_id, &*tx)
                 .await?;
+
+            let new_parent_path;
+            let new_parent_channel;
+            if let Some(new_parent_id) = new_parent_id {
+                let new_parent = self.get_channel_internal(new_parent_id, &*tx).await?;
+                self.check_user_is_channel_admin(&new_parent, admin_id, &*tx)
+                    .await?;
+
+                new_parent_path = new_parent.path();
+                new_parent_channel = Some(new_parent);
+            } else {
+                new_parent_path = String::new();
+                new_parent_channel = None;
+            };
 
             let previous_participants = self
                 .get_channel_participant_details_internal(&channel, &*tx)
                 .await?;
 
             let old_path = format!("{}{}/", channel.parent_path, channel.id);
-            let new_parent_path = format!("{}{}/", new_parent.parent_path, new_parent.id);
             let new_path = format!("{}{}/", new_parent_path, channel.id);
 
             if old_path == new_path {
@@ -1235,7 +1240,19 @@ impl Database {
 
             let mut model = channel.into_active_model();
             model.parent_path = ActiveValue::Set(new_parent_path);
-            model.update(&*tx).await?;
+            let channel = model.update(&*tx).await?;
+
+            if new_parent_channel.is_none() {
+                channel_member::ActiveModel {
+                    id: ActiveValue::NotSet,
+                    channel_id: ActiveValue::Set(channel_id),
+                    user_id: ActiveValue::Set(admin_id),
+                    accepted: ActiveValue::Set(true),
+                    role: ActiveValue::Set(ChannelRole::Admin),
+                }
+                .insert(&*tx)
+                .await?;
+            }
 
             let descendent_ids =
                 ChannelId::find_by_statement::<QueryIds>(Statement::from_sql_and_values(
@@ -1251,7 +1268,10 @@ impl Database {
                 .await?;
 
             let participants_to_update: HashMap<_, _> = self
-                .participants_to_notify_for_channel_change(&new_parent, &*tx)
+                .participants_to_notify_for_channel_change(
+                    new_parent_channel.as_ref().unwrap_or(&channel),
+                    &*tx,
+                )
                 .await?
                 .into_iter()
                 .collect();

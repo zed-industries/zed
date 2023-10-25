@@ -438,6 +438,18 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
             (livestreaming_id, &[zed_id, projects_id]),
         ],
     );
+
+    // Move the project channel to the root
+    db.move_channel(projects_id, None, user_id).await.unwrap();
+    let result = db.get_channels_for_user(user_id).await.unwrap();
+    assert_channel_tree(
+        result.channels,
+        &[
+            (zed_id, &[]),
+            (projects_id, &[]),
+            (livestreaming_id, &[projects_id]),
+        ],
+    );
 }
 
 test_both_dbs!(
