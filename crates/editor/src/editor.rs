@@ -4451,7 +4451,7 @@ impl Editor {
         context_menu
     }
 
-    pub fn insert_snippet(
+    fn insert_snippet(
         &mut self,
         insertion_ranges: &[Range<usize>],
         snippet: Snippet,
@@ -7575,7 +7575,7 @@ impl Editor {
         })
     }
 
-    pub fn find_all_references(
+    fn find_all_references(
         workspace: &mut Workspace,
         _: &FindAllReferences,
         cx: &mut ViewContext<Workspace>,
@@ -7624,7 +7624,7 @@ impl Editor {
     }
 
     /// Opens a multibuffer with the given project locations in it
-    pub fn open_locations_in_multibuffer(
+    fn open_locations_in_multibuffer(
         workspace: &mut Workspace,
         mut locations: Vec<Location>,
         replica_id: ReplicaId,
@@ -7683,7 +7683,7 @@ impl Editor {
         }
     }
 
-    pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+    fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
         use language::ToOffset as _;
 
         let project = self.project.clone()?;
@@ -8357,7 +8357,7 @@ impl Editor {
         wrap_guides
     }
 
-    pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
+    fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
         let settings = self.buffer.read(cx).settings_at(0, cx);
         let mode = self
             .soft_wrap_mode_override
@@ -8385,7 +8385,7 @@ impl Editor {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
-    pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, cx: &mut ViewContext<Self>) {
+    fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, cx: &mut ViewContext<Self>) {
         if self.soft_wrap_mode_override.is_some() {
             self.soft_wrap_mode_override.take();
         } else {
@@ -8408,7 +8408,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
+    fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 cx.reveal_path(&file.abs_path(cx));
@@ -8416,7 +8416,7 @@ impl Editor {
         }
     }
 
-    pub fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
+    fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 if let Some(path) = file.abs_path(cx).to_str() {
@@ -8426,7 +8426,7 @@ impl Editor {
         }
     }
 
-    pub fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
+    fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 if let Some(path) = file.path().to_str() {
