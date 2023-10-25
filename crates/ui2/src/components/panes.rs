@@ -12,13 +12,91 @@ pub enum SplitDirection {
     Vertical,
 }
 
-#[derive(Element)]
+// #[derive(Element)]
 pub struct Pane<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
     size: Size<Length>,
     fill: Hsla,
     children: SmallVec<[AnyElement<S>; 2]>,
+}
+
+impl<V: 'static + Send + Sync> IntoAnyElement<V> for Pane<V> {
+    fn into_any(self) -> AnyElement<V> {
+        ElementRenderer {
+            id: Some(self.id),
+            render: Some(move |view_state, cx| self.render(view_state, cx)),
+            view_type: PhantomData,
+            element_type: PhantomData,
+        }
+    }
+}
+
+struct ElementRenderer<V, E, F>
+where
+    E: IntoAnyElement<V>,
+    F: FnOnce(&mut V, &mut ViewContext<V>) -> E,
+{
+    id: Option<ElementId>,
+    render: Option<F>,
+    view_type: PhantomData<V>,
+    element_type: PhantomData<E>,
+}
+
+impl<V, E, F> Element for ElementRenderer<V, E, F>
+where
+    V: 'static,
+    E: IntoAnyElement<V>,
+    F: FnOnce(&mut V, &mut ViewContext<V>) -> E,
+{
+    type ViewState = V;
+    type ElementState = AnyElement<V>;
+
+    fn id(&self) -> Option<ElementId> {
+        self.id
+    }
+
+    fn initialize(
+        &mut self,
+        view_state: &mut Self::ViewState,
+        rendered_element: Option<Self::ElementState>,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) -> Self::ElementState {
+        rendered_element.unwrap_or_else(|| {
+            let render = self.render.take().unwrap();
+            (render)(view_state, cx)
+        })
+    }
+
+    fn layout(
+        &mut self,
+        view_state: &mut Self::ViewState,
+        rendered_element: &mut Self::ElementState,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) -> gpui2::LayoutId {
+        rendered_element.layout(view_state, cx)
+    }
+
+    fn paint(
+        &mut self,
+        bounds: gpui2::Bounds<gpui2::Pixels>,
+        view_state: &mut Self::ViewState,
+        rendered_element: &mut Self::ElementState,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) {
+        rendered_element.paint(view_state, cx)
+    }
+}
+
+impl<V, E, F> IntoAnyElement<V> for ElementRenderer<V, E, F>
+where
+    V: 'static,
+    E: IntoAnyElement<V>,
+    F: FnOnce(&mut V, &mut ViewContext<V>) -> E,
+{
+    fn into_any(self) -> AnyElement<V> {
+        self
+    }
 }
 
 impl<S: 'static + Send + Sync> Pane<S> {
