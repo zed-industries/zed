@@ -1,10 +1,11 @@
 use crate::streaming_diff::{Hunk, StreamingDiff};
 use ai::completion::{CompletionProvider, OpenAIRequest};
 use anyhow::Result;
-use editor::{multi_buffer, Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
+use editor::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{Entity, ModelContext, ModelHandle, Task};
 use language::{Rope, TransactionId};
+use multi_buffer;
 use std::{cmp, future, ops::Range, sync::Arc};
 
 pub enum Event {
