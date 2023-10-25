@@ -46,7 +46,7 @@ use serde_derive::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::{borrow::Cow, hash::Hash, mem, sync::Arc};
 use theme::{components::ComponentExt, IconButton, Interactive};
-use util::{iife, ResultExt, TryFutureExt};
+use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
     item::ItemHandle,
@@ -1487,7 +1487,7 @@ impl CollabPanel {
 
         let text = match section {
             Section::ActiveCall => {
-                let channel_name = iife!({
+                let channel_name = maybe!({
                     let channel_id = ActiveCall::global(cx).read(cx).channel_id(cx)?;
 
                     let channel = self.channel_store.read(cx).channel_for_id(channel_id)?;
@@ -1929,7 +1929,7 @@ impl CollabPanel {
             self.selected_channel().map(|channel| channel.0.id) == Some(channel.id);
         let disclosed = has_children.then(|| !self.collapsed_channels.binary_search(&path).is_ok());
 
-        let is_active = iife!({
+        let is_active = maybe!({
             let call_channel = ActiveCall::global(cx)
                 .read(cx)
                 .room()?
@@ -2817,7 +2817,7 @@ impl CollabPanel {
                         }
                     }
                     ListEntry::Channel { channel, .. } => {
-                        let is_active = iife!({
+                        let is_active = maybe!({
                             let call_channel = ActiveCall::global(cx)
                                 .read(cx)
                                 .room()?

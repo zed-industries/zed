@@ -944,7 +944,7 @@ async fn create_room(
         let live_kit_room = live_kit_room.clone();
         let live_kit = session.live_kit_client.as_ref();
 
-        util::async_iife!({
+        util::async_maybe!({
             let live_kit = live_kit?;
 
             let token = live_kit

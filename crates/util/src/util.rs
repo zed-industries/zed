@@ -349,19 +349,19 @@ pub fn unzip_option<T, U>(option: Option<(T, U)>) -> (Option<T>, Option<U>) {
     }
 }
 
-/// Immediately invoked function expression. Good for using the ? operator
+/// Evaluates to an immediately invoked function expression. Good for using the ? operator
 /// in functions which do not return an Option or Result
 #[macro_export]
-macro_rules! try {
+macro_rules! maybe {
     ($block:block) => {
         (|| $block)()
     };
 }
 
-/// Async Immediately invoked function expression. Good for using the ? operator
-/// in functions which do not return an Option or Result. Async version of above
+/// Evaluates to an immediately invoked function expression. Good for using the ? operator
+/// in functions which do not return an Option or Result, but async.
 #[macro_export]
-macro_rules! async_try {
+macro_rules! async_maybe {
     ($block:block) => {
         (|| async move { $block })()
     };
@@ -434,7 +434,7 @@ mod tests {
             None
         }
 
-        let foo = iife!({
+        let foo = maybe!({
             option_returning_function()?;
             Some(())
         });
