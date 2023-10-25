@@ -1,4 +1,4 @@
-use crate::theme2;
+use crate::theme;
 pub use crate::{old_theme, ButtonVariant, ElementExt, Theme};
 use gpui2::{hsla, rgb, Hsla, WindowContext};
 use strum::EnumIter;
@@ -253,8 +253,7 @@ impl std::fmt::Debug for ThemeColor {
 
 impl ThemeColor {
     pub fn new(cx: &WindowContext) -> Self {
-        let theme = old_theme(cx);
-        let theme2 = theme2(cx);
+        let theme2 = theme(cx);
         let transparent = hsla(0.0, 0.0, 0.0, 0.0);
 
         let players = [
