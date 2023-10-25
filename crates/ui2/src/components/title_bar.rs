@@ -88,7 +88,7 @@ impl TitleBar {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
         let settings = user_settings(cx);
 
         // let has_focus = cx.window_is_active();
@@ -105,7 +105,7 @@ impl TitleBar {
             .items_center()
             .justify_between()
             .w_full()
-            .bg(color.background)
+            .bg(theme.background)
             .py_1()
             .child(
                 div()

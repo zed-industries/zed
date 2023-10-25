@@ -55,10 +55,10 @@ impl<S: 'static + Send + Sync> Toolbar<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         div()
-            .bg(color.toolbar)
+            .bg(theme.toolbar)
             .p_2()
             .flex()
             .justify_between()
@@ -97,7 +97,7 @@ mod stories {
             _view: &mut S,
             cx: &mut ViewContext<S>,
         ) -> impl Element<ViewState = S> {
-            let color = ThemeColor::new(cx);
+            let theme = theme(cx);
 
             Story::container(cx)
                 .child(Story::title_for::<_, Toolbar<S>>(cx))
@@ -110,21 +110,21 @@ mod stories {
                                 Symbol(vec![
                                     HighlightedText {
                                         text: "impl ".to_string(),
-                                        color: color.syntax.keyword,
+                                        color: theme.syntax.keyword,
                                     },
                                     HighlightedText {
                                         text: "ToolbarStory".to_string(),
-                                        color: color.syntax.function,
+                                        color: theme.syntax.function,
                                     },
                                 ]),
                                 Symbol(vec![
                                     HighlightedText {
                                         text: "fn ".to_string(),
-                                        color: color.syntax.keyword,
+                                        color: theme.syntax.keyword,
                                     },
                                     HighlightedText {
                                         text: "render".to_string(),
-                                        color: color.syntax.function,
+                                        color: theme.syntax.function,
                                     },
                                 ]),
                             ],

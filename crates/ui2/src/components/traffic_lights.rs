@@ -26,13 +26,13 @@ impl<S: 'static + Send + Sync> TrafficLight<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         let fill = match (self.window_has_focus, self.color) {
-            (true, TrafficLightColor::Red) => color.mac_os_traffic_light_red,
-            (true, TrafficLightColor::Yellow) => color.mac_os_traffic_light_yellow,
-            (true, TrafficLightColor::Green) => color.mac_os_traffic_light_green,
-            (false, _) => color.filled_element,
+            (true, TrafficLightColor::Red) => theme.mac_os_traffic_light_red,
+            (true, TrafficLightColor::Yellow) => theme.mac_os_traffic_light_yellow,
+            (true, TrafficLightColor::Green) => theme.mac_os_traffic_light_green,
+            (false, _) => theme.filled_element,
         };
 
         div().w_3().h_3().rounded_full().bg(fill)
@@ -59,8 +59,6 @@ impl<S: 'static + Send + Sync> TrafficLights<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
-
         div()
             .flex()
             .items_center()

@@ -97,7 +97,7 @@ impl<S: 'static + Send + Sync> Panel<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         let current_size = self.width.unwrap_or(self.initial_width);
 
@@ -115,8 +115,8 @@ impl<S: 'static + Send + Sync> Panel<S> {
             .when(self.current_side == PanelSide::Bottom, |this| {
                 this.border_b().w_full().h(current_size)
             })
-            .bg(color.surface)
-            .border_color(color.border)
+            .bg(theme.surface)
+            .border_color(theme.border)
             .children(self.children.drain(..))
     }
 }

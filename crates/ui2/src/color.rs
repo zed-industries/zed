@@ -1,6 +1,5 @@
-use crate::theme;
 pub use crate::{old_theme, ButtonVariant, ElementExt, Theme};
-use gpui2::{hsla, rgb, Hsla, WindowContext};
+use gpui2::{rgb, Hsla, WindowContext};
 use strum::EnumIter;
 
 #[derive(Clone, Copy)]
@@ -248,75 +247,6 @@ impl std::fmt::Debug for ThemeColor {
             .field("git_renamed", &self.git_renamed.to_rgb().to_hex())
             .field("player", &self.player)
             .finish()
-    }
-}
-
-impl ThemeColor {
-    pub fn new(cx: &WindowContext) -> Self {
-        let theme2 = theme(cx);
-        let transparent = hsla(0.0, 0.0, 0.0, 0.0);
-
-        let players = [
-            PlayerThemeColors::new(cx, 0),
-            PlayerThemeColors::new(cx, 1),
-            PlayerThemeColors::new(cx, 2),
-            PlayerThemeColors::new(cx, 3),
-            PlayerThemeColors::new(cx, 4),
-            PlayerThemeColors::new(cx, 5),
-            PlayerThemeColors::new(cx, 6),
-            PlayerThemeColors::new(cx, 7),
-        ];
-
-        Self {
-            transparent: theme2.transparent,
-            mac_os_traffic_light_red: theme2.mac_os_traffic_light_red,
-            mac_os_traffic_light_yellow: theme2.mac_os_traffic_light_yellow,
-            mac_os_traffic_light_green: theme2.mac_os_traffic_light_green,
-            border: theme2.border,
-            border_variant: theme2.border_variant,
-            border_focused: theme2.border_focused,
-            border_transparent: theme2.border_transparent,
-            elevated_surface: theme2.elevated_surface,
-            surface: theme2.surface,
-            background: theme2.background,
-            filled_element: theme2.filled_element,
-            filled_element_hover: theme2.filled_element_hover,
-            filled_element_active: theme2.filled_element_active,
-            filled_element_selected: theme2.filled_element_selected,
-            filled_element_disabled: theme2.filled_element_disabled,
-            ghost_element: theme2.ghost_element,
-            ghost_element_hover: theme2.ghost_element_hover,
-            ghost_element_active: theme2.ghost_element_active,
-            ghost_element_selected: theme2.ghost_element_selected,
-            ghost_element_disabled: theme2.ghost_element_disabled,
-            text: theme2.text,
-            text_muted: theme2.text_muted,
-            /// TODO: map this to a real value
-            text_placeholder: theme2.text_placeholder,
-            text_disabled: theme2.text_disabled,
-            text_accent: theme2.text_accent,
-            icon_muted: theme2.icon_muted,
-            syntax: SyntaxColor::new(cx),
-
-            status_bar: theme2.status_bar,
-            title_bar: theme2.title_bar,
-            toolbar: theme2.toolbar,
-            tab_bar: theme2.tab_bar,
-            editor: theme2.editor,
-            editor_subheader: theme2.editor_subheader,
-            terminal: theme2.terminal,
-            editor_active_line: theme2.editor_active_line,
-            image_fallback_background: theme2.image_fallback_background,
-
-            git_created: theme2.git_created,
-            git_modified: theme2.git_modified,
-            git_deleted: theme2.git_deleted,
-            git_conflict: theme2.git_conflict,
-            git_ignored: theme2.git_ignored,
-            git_renamed: theme2.git_renamed,
-
-            player: players,
-        }
     }
 }
 

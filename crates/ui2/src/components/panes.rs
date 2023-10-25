@@ -41,8 +41,6 @@ impl<S: 'static + Send + Sync> Pane<S> {
     }
 
     fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
-
         div()
             .id(self.id.clone())
             .flex()
@@ -100,7 +98,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
     }
 
     fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         if !self.panes.is_empty() {
             let el = div()
@@ -125,7 +123,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
                 .gap_px()
                 .w_full()
                 .h_full()
-                .bg(color.editor)
+                .bg(theme.editor)
                 .children(self.groups.iter_mut().map(|group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {

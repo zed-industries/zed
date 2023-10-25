@@ -82,7 +82,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
         let has_fs_conflict = self.fs_status == FileSystemStatus::Conflict;
         let is_deleted = self.fs_status == FileSystemStatus::Deleted;
 
@@ -105,14 +105,14 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
 
         let (tab_bg, tab_hover_bg, tab_active_bg) = match self.current {
             true => (
-                color.ghost_element,
-                color.ghost_element_hover,
-                color.ghost_element_active,
+                theme.ghost_element,
+                theme.ghost_element_hover,
+                theme.ghost_element_active,
             ),
             false => (
-                color.filled_element,
-                color.filled_element_hover,
-                color.filled_element_active,
+                theme.filled_element,
+                theme.filled_element_hover,
+                theme.filled_element_active,
             ),
         };
 

@@ -27,8 +27,6 @@ impl<S: 'static + Send + Sync> AssistantPanel<S> {
     }
 
     fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
-
         Panel::new(self.id.clone(), cx)
             .children(vec![div()
                 .flex()

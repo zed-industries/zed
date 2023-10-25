@@ -177,8 +177,6 @@ impl Workspace {
     pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let theme = old_theme(cx).clone();
 
-        let color = ThemeColor::new(cx);
-
         // HACK: This should happen inside of `debug_toggle_user_settings`, but
         // we don't have `cx.global::<FakeSettings>()` in event handlers at the moment.
         // Need to talk with Nathan/Antonio about this.

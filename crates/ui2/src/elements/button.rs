@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use gpui2::{div, DefiniteLength, Hsla, MouseButton, WindowContext};
 
-use crate::settings::user_settings;
 use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor};
 use crate::{prelude::*, LineHeightStyle};
 
@@ -23,29 +22,29 @@ pub enum ButtonVariant {
 
 impl ButtonVariant {
     pub fn bg_color(&self, cx: &mut WindowContext) -> Hsla {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         match self {
-            ButtonVariant::Ghost => color.ghost_element,
-            ButtonVariant::Filled => color.filled_element,
+            ButtonVariant::Ghost => theme.ghost_element,
+            ButtonVariant::Filled => theme.filled_element,
         }
     }
 
     pub fn bg_color_hover(&self, cx: &mut WindowContext) -> Hsla {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         match self {
-            ButtonVariant::Ghost => color.ghost_element_hover,
-            ButtonVariant::Filled => color.filled_element_hover,
+            ButtonVariant::Ghost => theme.ghost_element_hover,
+            ButtonVariant::Filled => theme.filled_element_hover,
         }
     }
 
     pub fn bg_color_active(&self, cx: &mut WindowContext) -> Hsla {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         match self {
-            ButtonVariant::Ghost => color.ghost_element_active,
-            ButtonVariant::Filled => color.filled_element_active,
+            ButtonVariant::Ghost => theme.ghost_element_active,
+            ButtonVariant::Filled => theme.filled_element_active,
         }
     }
 }
@@ -156,8 +155,6 @@ impl<S: 'static + Send + Sync> Button<S> {
         _view: &mut S,
         cx: &mut ViewContext<S>,
     ) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
-        let settings = user_settings(cx);
         let icon_color = self.icon_color();
 
         let mut button = h_stack()

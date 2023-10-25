@@ -159,18 +159,18 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
     }
 
     fn render_row(row: BufferRow, cx: &WindowContext) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         let line_background = if row.current {
-            color.editor_active_line
+            theme.editor_active_line
         } else {
-            color.transparent
+            theme.transparent
         };
 
         let line_number_color = if row.current {
-            color.text
+            theme.text
         } else {
-            color.syntax.comment
+            theme.syntax.comment
         };
 
         h_stack()
@@ -220,14 +220,14 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
         let rows = self.render_rows(cx);
 
         v_stack()
             .flex_1()
             .w_full()
             .h_full()
-            .bg(color.editor)
+            .bg(theme.editor)
             .children(rows)
     }
 }
@@ -263,7 +263,7 @@ mod stories {
             _view: &mut S,
             cx: &mut ViewContext<S>,
         ) -> impl Element<ViewState = S> {
-            let color = ThemeColor::new(cx);
+            let theme = theme(cx);
 
             Story::container(cx)
                 .child(Story::title_for::<_, Buffer<S>>(cx))
@@ -274,14 +274,14 @@ mod stories {
                     div()
                         .w(rems(64.))
                         .h_96()
-                        .child(hello_world_rust_buffer_example(&color)),
+                        .child(hello_world_rust_buffer_example(&theme)),
                 )
                 .child(Story::label(cx, "Hello World (Rust) with Status"))
                 .child(
                     div()
                         .w(rems(64.))
                         .h_96()
-                        .child(hello_world_rust_buffer_with_status_example(&color)),
+                        .child(hello_world_rust_buffer_with_status_example(&theme)),
                 )
         }
     }

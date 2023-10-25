@@ -22,20 +22,20 @@ pub enum LabelColor {
 
 impl LabelColor {
     pub fn hsla(&self, cx: &WindowContext) -> Hsla {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
         // TODO: Remove
-        let theme = old_theme(cx);
+        let old_theme = old_theme(cx);
 
         match self {
-            Self::Default => color.text,
-            Self::Muted => color.text_muted,
-            Self::Created => theme.middle.positive.default.foreground,
-            Self::Modified => theme.middle.warning.default.foreground,
-            Self::Deleted => theme.middle.negative.default.foreground,
-            Self::Disabled => color.text_disabled,
-            Self::Hidden => theme.middle.variant.default.foreground,
-            Self::Placeholder => color.text_placeholder,
-            Self::Accent => theme.middle.accent.default.foreground,
+            Self::Default => theme.text,
+            Self::Muted => theme.text_muted,
+            Self::Created => old_theme.middle.positive.default.foreground,
+            Self::Modified => old_theme.middle.warning.default.foreground,
+            Self::Deleted => old_theme.middle.negative.default.foreground,
+            Self::Disabled => theme.text_disabled,
+            Self::Hidden => old_theme.middle.variant.default.foreground,
+            Self::Placeholder => theme.text_placeholder,
+            Self::Accent => old_theme.middle.accent.default.foreground,
         }
     }
 }
@@ -84,8 +84,6 @@ impl<S: 'static + Send + Sync> Label<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
-
         div()
             .when(self.strikethrough, |this| {
                 this.relative().child(
@@ -138,9 +136,9 @@ impl<S: 'static + Send + Sync> HighlightedLabel<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
-        let highlight_color = color.text_accent;
+        let highlight_color = theme.text_accent;
 
         let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
 

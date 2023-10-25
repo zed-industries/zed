@@ -69,7 +69,7 @@ impl<S: 'static + Send + Sync> IconButton<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         let icon_color = match (self.state, self.color) {
             (InteractionState::Disabled, _) => IconColor::Disabled,
@@ -78,14 +78,14 @@ impl<S: 'static + Send + Sync> IconButton<S> {
 
         let (bg_color, bg_hover_color, bg_active_color) = match self.variant {
             ButtonVariant::Filled => (
-                color.filled_element,
-                color.filled_element_hover,
-                color.filled_element_active,
+                theme.filled_element,
+                theme.filled_element_hover,
+                theme.filled_element_active,
             ),
             ButtonVariant::Ghost => (
-                color.ghost_element,
-                color.ghost_element_hover,
-                color.ghost_element_active,
+                theme.ghost_element,
+                theme.ghost_element_hover,
+                theme.ghost_element_active,
             ),
         };
 

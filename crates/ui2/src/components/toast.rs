@@ -37,7 +37,7 @@ impl<S: 'static + Send + Sync> Toast<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         let mut div = div();
 
@@ -56,7 +56,7 @@ impl<S: 'static + Send + Sync> Toast<S> {
             .rounded_lg()
             .shadow_md()
             .overflow_hidden()
-            .bg(color.elevated_surface)
+            .bg(theme.elevated_surface)
             .children(self.children.drain(..))
     }
 }

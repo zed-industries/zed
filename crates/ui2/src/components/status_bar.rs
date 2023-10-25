@@ -87,7 +87,7 @@ impl StatusBar {
         view: &mut Workspace,
         cx: &mut ViewContext<Workspace>,
     ) -> impl Element<ViewState = Workspace> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         div()
             .py_0p5()
@@ -96,7 +96,7 @@ impl StatusBar {
             .items_center()
             .justify_between()
             .w_full()
-            .bg(color.status_bar)
+            .bg(theme.status_bar)
             .child(self.left_tools(view, cx))
             .child(self.right_tools(view, cx))
     }
@@ -106,8 +106,6 @@ impl StatusBar {
         workspace: &mut Workspace,
         cx: &WindowContext,
     ) -> impl Element<ViewState = Workspace> {
-        let color = ThemeColor::new(cx);
-
         div()
             .flex()
             .items_center()
@@ -139,8 +137,6 @@ impl StatusBar {
         workspace: &mut Workspace,
         cx: &WindowContext,
     ) -> impl Element<ViewState = Workspace> {
-        let color = ThemeColor::new(cx);
-
         div()
             .flex()
             .items_center()

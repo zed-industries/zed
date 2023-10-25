@@ -31,13 +31,13 @@ impl<S: 'static + Send + Sync> Details<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         v_stack()
             .p_1()
             .gap_0p5()
             .text_xs()
-            .text_color(color.text)
+            .text_color(theme.text)
             .size_full()
             .child(self.text)
             .children(self.meta.map(|m| m))

@@ -47,22 +47,22 @@ impl<S: 'static + Send + Sync> Palette<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         v_stack()
             .id(self.id.clone())
             .w_96()
             .rounded_lg()
-            .bg(color.elevated_surface)
+            .bg(theme.elevated_surface)
             .border()
-            .border_color(color.border)
+            .border_color(theme.border)
             .child(
                 v_stack()
                     .gap_px()
                     .child(v_stack().py_0p5().px_1().child(div().px_2().py_0p5().child(
                         Label::new(self.input_placeholder.clone()).color(LabelColor::Placeholder),
                     )))
-                    .child(div().h_px().w_full().bg(color.filled_element))
+                    .child(div().h_px().w_full().bg(theme.filled_element))
                     .child(
                         v_stack()
                             .id("items")
@@ -92,8 +92,8 @@ impl<S: 'static + Send + Sync> Palette<S> {
                                     .px_2()
                                     .py_0p5()
                                     .rounded_lg()
-                                    .hover(|style| style.bg(color.ghost_element_hover))
-                                    .active(|style| style.bg(color.ghost_element_active))
+                                    .hover(|style| style.bg(theme.ghost_element_hover))
+                                    .active(|style| style.bg(theme.ghost_element_active))
                                     .child(item)
                             })),
                     ),
@@ -136,8 +136,6 @@ impl<S: 'static + Send + Sync> PaletteItem<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
-
         div()
             .flex()
             .flex_row()

@@ -26,8 +26,9 @@ impl<S: 'static + Send + Sync> Breadcrumb<S> {
     }
 
     fn render_separator(&self, cx: &WindowContext) -> Div<S> {
-        let color = ThemeColor::new(cx);
-        div().child(" › ").text_color(color.text_muted)
+        let theme = theme(cx);
+
+        div().child(" › ").text_color(theme.text_muted)
     }
 
     fn render(
@@ -35,7 +36,7 @@ impl<S: 'static + Send + Sync> Breadcrumb<S> {
         view_state: &mut S,
         cx: &mut ViewContext<S>,
     ) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         let symbols_len = self.symbols.len();
 
@@ -43,10 +44,10 @@ impl<S: 'static + Send + Sync> Breadcrumb<S> {
             .id("breadcrumb")
             .px_1()
             .text_sm()
-            .text_color(color.text_muted)
+            .text_color(theme.text_muted)
             .rounded_md()
-            .hover(|style| style.bg(color.ghost_element_hover))
-            .active(|style| style.bg(color.ghost_element_active))
+            .hover(|style| style.bg(theme.ghost_element_hover))
+            .active(|style| style.bg(theme.ghost_element_active))
             .child(self.path.clone().to_str().unwrap().to_string())
             .child(if !self.symbols.is_empty() {
                 self.render_separator(cx)
@@ -106,7 +107,7 @@ mod stories {
             view_state: &mut S,
             cx: &mut ViewContext<S>,
         ) -> impl Element<ViewState = S> {
-            let color = ThemeColor::new(cx);
+            let theme = theme(cx);
 
             Story::container(cx)
                 .child(Story::title_for::<_, Breadcrumb<S>>(cx))
@@ -117,21 +118,21 @@ mod stories {
                         Symbol(vec![
                             HighlightedText {
                                 text: "impl ".to_string(),
-                                color: color.syntax.keyword,
+                                color: theme.syntax.keyword,
                             },
                             HighlightedText {
                                 text: "BreadcrumbStory".to_string(),
-                                color: color.syntax.function,
+                                color: theme.syntax.function,
                             },
                         ]),
                         Symbol(vec![
                             HighlightedText {
                                 text: "fn ".to_string(),
-                                color: color.syntax.keyword,
+                                color: theme.syntax.keyword,
                             },
                             HighlightedText {
                                 text: "render".to_string(),
-                                color: color.syntax.function,
+                                color: theme.syntax.function,
                             },
                         ]),
                     ],

@@ -61,18 +61,18 @@ impl<S: 'static + Send + Sync> Input<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         let (input_bg, input_hover_bg, input_active_bg) = match self.variant {
             InputVariant::Ghost => (
-                color.ghost_element,
-                color.ghost_element_hover,
-                color.ghost_element_active,
+                theme.ghost_element,
+                theme.ghost_element_hover,
+                theme.ghost_element_active,
             ),
             InputVariant::Filled => (
-                color.filled_element,
-                color.filled_element_hover,
-                color.filled_element_active,
+                theme.filled_element,
+                theme.filled_element_hover,
+                theme.filled_element_active,
             ),
         };
 
@@ -94,7 +94,7 @@ impl<S: 'static + Send + Sync> Input<S> {
             .w_full()
             .px_2()
             .border()
-            .border_color(color.transparent)
+            .border_color(theme.transparent)
             .bg(input_bg)
             .hover(|style| style.bg(input_hover_bg))
             .active(|style| style.bg(input_active_bg))

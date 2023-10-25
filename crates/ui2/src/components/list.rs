@@ -93,7 +93,7 @@ impl<S: 'static + Send + Sync> ListHeader<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = self.toggleable.is_toggled();
@@ -103,9 +103,9 @@ impl<S: 'static + Send + Sync> ListHeader<S> {
         h_stack()
             .flex_1()
             .w_full()
-            .bg(color.surface)
+            .bg(theme.surface)
             .when(self.state == InteractionState::Focused, |this| {
-                this.border().border_color(color.border_focused)
+                this.border().border_color(theme.border_focused)
             })
             .relative()
             .child(
@@ -158,8 +158,6 @@ impl<S: 'static + Send + Sync> ListSubHeader<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
-
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
@@ -350,8 +348,6 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
         &mut self,
         cx: &mut ViewContext<S>,
     ) -> Option<impl Element<ViewState = S>> {
-        let color = ThemeColor::new(cx);
-
         let disclosure_control_icon = if let Some(ToggleState::Toggled) = self.toggle {
             IconElement::new(Icon::ChevronDown)
         } else {
@@ -372,9 +368,8 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
-        let color = ThemeColor::new(cx);
         let settings = user_settings(cx);
+        let theme = theme(cx);
 
         let left_content = match self.left_content.clone() {
             Some(LeftContent::Icon(i)) => Some(
@@ -396,9 +391,9 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
         div()
             .relative()
             .group("")
-            .bg(color.surface)
+            .bg(theme.surface)
             .when(self.state == InteractionState::Focused, |this| {
-                this.border().border_color(color.border_focused)
+                this.border().border_color(theme.border_focused)
             })
             .child(
                 sized_item
@@ -410,11 +405,11 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
                             .h_full()
                             .flex()
                             .justify_center()
-                            .group_hover("", |style| style.bg(color.border_focused))
+                            .group_hover("", |style| style.bg(theme.border_focused))
                             .child(
                                 h_stack()
                                     .child(div().w_px().h_full())
-                                    .child(div().w_px().h_full().bg(color.border)),
+                                    .child(div().w_px().h_full().bg(theme.border)),
                             )
                     }))
                     .flex()
@@ -483,19 +478,19 @@ impl<S: 'static + Send + Sync> ListDetailsEntry<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
         let settings = user_settings(cx);
 
         let (item_bg, item_bg_hover, item_bg_active) = match self.seen {
             true => (
-                color.ghost_element,
-                color.ghost_element_hover,
-                color.ghost_element_active,
+                theme.ghost_element,
+                theme.ghost_element_hover,
+                theme.ghost_element_active,
             ),
             false => (
-                color.filled_element,
-                color.filled_element_hover,
-                color.filled_element_active,
+                theme.filled_element,
+                theme.filled_element_hover,
+                theme.filled_element_active,
             ),
         };
 
@@ -540,9 +535,9 @@ impl<S: 'static + Send + Sync> ListSeparator<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
-        div().h_px().w_full().bg(color.border)
+        div().h_px().w_full().bg(theme.border)
     }
 }
 
@@ -580,7 +575,6 @@ impl<S: 'static + Send + Sync> List<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = Toggleable::is_toggled(&self.toggleable);
 

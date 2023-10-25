@@ -18,7 +18,7 @@ impl<S: 'static + Send + Sync + Clone> Terminal<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         let can_navigate_back = true;
         let can_navigate_forward = false;
@@ -32,7 +32,7 @@ impl<S: 'static + Send + Sync + Clone> Terminal<S> {
                 div()
                     .w_full()
                     .flex()
-                    .bg(color.surface)
+                    .bg(theme.surface)
                     .child(
                         div().px_1().flex().flex_none().gap_2().child(
                             div()
@@ -79,7 +79,7 @@ impl<S: 'static + Send + Sync + Clone> Terminal<S> {
                         height: rems(36.).into(),
                     },
                 )
-                .child(crate::static_data::terminal_buffer(&color)),
+                .child(crate::static_data::terminal_buffer(&theme)),
             )
     }
 }

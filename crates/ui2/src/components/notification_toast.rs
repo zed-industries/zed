@@ -29,7 +29,7 @@ impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         h_stack()
             .z_index(5)
@@ -42,7 +42,7 @@ impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
             .px_1p5()
             .rounded_lg()
             .shadow_md()
-            .bg(color.elevated_surface)
+            .bg(theme.elevated_surface)
             .child(div().size_full().child(self.label.clone()))
     }
 }

@@ -28,7 +28,7 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let color = ThemeColor::new(cx);
+        let theme = theme(cx);
 
         let (can_navigate_back, can_navigate_forward) = self.can_navigate;
 
@@ -36,7 +36,7 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
             .id(self.id.clone())
             .w_full()
             .flex()
-            .bg(color.tab_bar)
+            .bg(theme.tab_bar)
             // Left Side
             .child(
                 div()
