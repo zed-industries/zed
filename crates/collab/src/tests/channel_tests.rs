@@ -1016,7 +1016,7 @@ async fn test_channel_link_notifications(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.move_channel(vim_channel, active_channel, cx)
+            channel_store.move_channel(vim_channel, Some(active_channel), cx)
         })
         .await
         .unwrap();
@@ -1051,7 +1051,7 @@ async fn test_channel_link_notifications(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.move_channel(helix_channel, vim_channel, cx)
+            channel_store.move_channel(helix_channel, Some(vim_channel), cx)
         })
         .await
         .unwrap();
@@ -1424,7 +1424,7 @@ async fn test_channel_moving(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.move_channel(channel_d_id, channel_b_id, cx)
+            channel_store.move_channel(channel_d_id, Some(channel_b_id), cx)
         })
         .await
         .unwrap();

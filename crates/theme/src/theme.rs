@@ -250,6 +250,7 @@ pub struct CollabPanel {
     pub add_contact_button: Toggleable<Interactive<IconButton>>,
     pub add_channel_button: Toggleable<Interactive<IconButton>>,
     pub header_row: ContainedText,
+    pub dragged_over_header: ContainerStyle,
     pub subheader_row: Toggleable<Interactive<ContainedText>>,
     pub leave_call: Interactive<ContainedText>,
     pub contact_row: Toggleable<Interactive<ContainerStyle>>,

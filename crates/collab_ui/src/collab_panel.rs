@@ -226,7 +226,7 @@ pub fn init(cx: &mut AppContext) {
             panel
                 .channel_store
                 .update(cx, |channel_store, cx| {
-                    channel_store.move_channel(clipboard.channel_id, selected_channel.id, cx)
+                    channel_store.move_channel(clipboard.channel_id, Some(selected_channel.id), cx)
                 })
                 .detach_and_log_err(cx)
         },
@@ -237,7 +237,7 @@ pub fn init(cx: &mut AppContext) {
             if let Some(clipboard) = panel.channel_clipboard.take() {
                 panel.channel_store.update(cx, |channel_store, cx| {
                     channel_store
-                        .move_channel(clipboard.channel_id, action.to, cx)
+                        .move_channel(clipboard.channel_id, Some(action.to), cx)
                         .detach_and_log_err(cx)
                 })
             }
@@ -287,9 +287,16 @@ pub struct CollabPanel {
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
-    drag_target_channel: Option<ChannelId>,
+    drag_target_channel: ChannelDragTarget,
     workspace: WeakViewHandle<Workspace>,
     context_menu_on_selected: bool,
+}
+
+#[derive(PartialEq, Eq)]
+enum ChannelDragTarget {
+    None,
+    Root,
+    Channel(ChannelId),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -577,7 +584,7 @@ impl CollabPanel {
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
                 context_menu_on_selected: true,
-                drag_target_channel: None,
+                drag_target_channel: ChannelDragTarget::None,
                 list_state,
             };
 
@@ -1450,6 +1457,7 @@ impl CollabPanel {
         let mut channel_link = None;
         let mut channel_tooltip_text = None;
         let mut channel_icon = None;
+        let mut is_dragged_over = false;
 
         let text = match section {
             Section::ActiveCall => {
@@ -1533,26 +1541,37 @@ impl CollabPanel {
                     cx,
                 ),
             ),
-            Section::Channels => Some(
-                MouseEventHandler::new::<AddChannel, _>(0, cx, |state, _| {
-                    render_icon_button(
-                        theme
-                            .collab_panel
-                            .add_contact_button
-                            .style_for(is_selected, state),
-                        "icons/plus.svg",
-                    )
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, this, cx| this.new_root_channel(cx))
-                .with_tooltip::<AddChannel>(
-                    0,
-                    "Create a channel",
-                    None,
-                    tooltip_style.clone(),
-                    cx,
-                ),
-            ),
+            Section::Channels => {
+                if cx
+                    .global::<DragAndDrop<Workspace>>()
+                    .currently_dragged::<Channel>(cx.window())
+                    .is_some()
+                    && self.drag_target_channel == ChannelDragTarget::Root
+                {
+                    is_dragged_over = true;
+                }
+
+                Some(
+                    MouseEventHandler::new::<AddChannel, _>(0, cx, |state, _| {
+                        render_icon_button(
+                            theme
+                                .collab_panel
+                                .add_contact_button
+                                .style_for(is_selected, state),
+                            "icons/plus.svg",
+                        )
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_click(MouseButton::Left, |_, this, cx| this.new_root_channel(cx))
+                    .with_tooltip::<AddChannel>(
+                        0,
+                        "Create a channel",
+                        None,
+                        tooltip_style.clone(),
+                        cx,
+                    ),
+                )
+            }
             _ => None,
         };
 
@@ -1623,8 +1642,36 @@ impl CollabPanel {
                 .constrained()
                 .with_height(theme.collab_panel.row_height)
                 .contained()
-                .with_style(header_style.container)
+                .with_style(if is_dragged_over {
+                    theme.collab_panel.dragged_over_header
+                } else {
+                    header_style.container
+                })
         });
+
+        result = result
+            .on_move(move |_, this, cx| {
+                if cx
+                    .global::<DragAndDrop<Workspace>>()
+                    .currently_dragged::<Channel>(cx.window())
+                    .is_some()
+                {
+                    this.drag_target_channel = ChannelDragTarget::Root;
+                    cx.notify()
+                }
+            })
+            .on_up(MouseButton::Left, move |_, this, cx| {
+                if let Some((_, dragged_channel)) = cx
+                    .global::<DragAndDrop<Workspace>>()
+                    .currently_dragged::<Channel>(cx.window())
+                {
+                    this.channel_store
+                        .update(cx, |channel_store, cx| {
+                            channel_store.move_channel(dragged_channel.id, None, cx)
+                        })
+                        .detach_and_log_err(cx)
+                }
+            });
 
         if can_collapse {
             result = result
@@ -1917,13 +1964,7 @@ impl CollabPanel {
             .global::<DragAndDrop<Workspace>>()
             .currently_dragged::<Channel>(cx.window())
             .is_some()
-            && self
-                .drag_target_channel
-                .as_ref()
-                .filter(|channel_id| {
-                    channel.parent_path.contains(channel_id) || channel.id == **channel_id
-                })
-                .is_some()
+            && self.drag_target_channel == ChannelDragTarget::Channel(channel_id)
         {
             is_dragged_over = true;
         }
@@ -2126,7 +2167,7 @@ impl CollabPanel {
                 )
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
-            if this.drag_target_channel.take().is_none() {
+            if this.drag_target_channel == ChannelDragTarget::None {
                 if is_active {
                     this.open_channel_notes(&OpenChannelNotes { channel_id }, cx)
                 } else {
@@ -2147,7 +2188,7 @@ impl CollabPanel {
             {
                 this.channel_store
                     .update(cx, |channel_store, cx| {
-                        channel_store.move_channel(dragged_channel.id, channel_id, cx)
+                        channel_store.move_channel(dragged_channel.id, Some(channel_id), cx)
                     })
                     .detach_and_log_err(cx)
             }
@@ -2160,7 +2201,7 @@ impl CollabPanel {
                     .currently_dragged::<Channel>(cx.window())
                 {
                     if channel.id != dragged_channel.id {
-                        this.drag_target_channel = Some(channel.id);
+                        this.drag_target_channel = ChannelDragTarget::Channel(channel.id);
                     }
                     cx.notify()
                 }

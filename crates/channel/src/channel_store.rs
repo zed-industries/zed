@@ -501,7 +501,7 @@ impl ChannelStore {
     pub fn move_channel(
         &mut self,
         channel_id: ChannelId,
-        to: ChannelId,
+        to: Option<ChannelId>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();

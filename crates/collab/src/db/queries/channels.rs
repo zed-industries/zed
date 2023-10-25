@@ -1205,20 +1205,20 @@ impl Database {
     pub async fn move_channel(
         &self,
         channel_id: ChannelId,
-        new_parent_id: ChannelId,
+        new_parent_id: Option<ChannelId>,
         admin_id: UserId,
     ) -> Result<Option<MoveChannelResult>> {
-        // check you're an admin of source and target (and maybe current channel)
-        // change parent_path on current channel
-        // change parent_path on all children
-
         self.transaction(|tx| async move {
+            let Some(new_parent_id) = new_parent_id else {
+                return Err(anyhow!("not supported"))?;
+            };
+
             let new_parent = self.get_channel_internal(new_parent_id, &*tx).await?;
+            self.check_user_is_channel_admin(&new_parent, admin_id, &*tx)
+                .await?;
             let channel = self.get_channel_internal(channel_id, &*tx).await?;
 
             self.check_user_is_channel_admin(&channel, admin_id, &*tx)
-                .await?;
-            self.check_user_is_channel_admin(&new_parent, admin_id, &*tx)
                 .await?;
 
             let previous_participants = self
@@ -1226,16 +1226,16 @@ impl Database {
                 .await?;
 
             let old_path = format!("{}{}/", channel.parent_path, channel.id);
-            let new_parent_path = format!("{}{}/", new_parent.parent_path, new_parent_id);
+            let new_parent_path = format!("{}{}/", new_parent.parent_path, new_parent.id);
             let new_path = format!("{}{}/", new_parent_path, channel.id);
 
             if old_path == new_path {
                 return Ok(None);
             }
 
-            let mut channel = channel.into_active_model();
-            channel.parent_path = ActiveValue::Set(new_parent_path);
-            channel.save(&*tx).await?;
+            let mut model = channel.into_active_model();
+            model.parent_path = ActiveValue::Set(new_parent_path);
+            model.update(&*tx).await?;
 
             let descendent_ids =
                 ChannelId::find_by_statement::<QueryIds>(Statement::from_sql_and_values(
@@ -1250,7 +1250,7 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
-            let participants_to_update: HashMap<UserId, ChannelsForUser> = self
+            let participants_to_update: HashMap<_, _> = self
                 .participants_to_notify_for_channel_change(&new_parent, &*tx)
                 .await?
                 .into_iter()

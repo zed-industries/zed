@@ -1130,7 +1130,7 @@ message GetChannelMessagesById {
 
 message MoveChannel {
     uint64 channel_id = 1;
-    uint64 to = 2;
+    optional uint64 to = 2;
 }
 
 message JoinChannelBuffer {

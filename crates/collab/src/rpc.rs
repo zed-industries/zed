@@ -2476,7 +2476,7 @@ async fn move_channel(
     session: Session,
 ) -> Result<()> {
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let to = ChannelId::from_proto(request.to);
+    let to = request.to.map(ChannelId::from_proto);
 
     let result = session
         .db()

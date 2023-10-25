@@ -424,7 +424,7 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
 
     // Move to same parent should be a no-op
     assert!(db
-        .move_channel(projects_id, zed_id, user_id)
+        .move_channel(projects_id, Some(zed_id), user_id)
         .await
         .unwrap()
         .is_none());
