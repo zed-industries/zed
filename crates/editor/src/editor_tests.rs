@@ -6718,6 +6718,102 @@ fn test_combine_syntax_and_fuzzy_match_highlights() {
 }
 
 #[gpui::test]
+async fn go_to_prev_overlapping_diagnostic(
+    deterministic: Arc<Deterministic>,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let project = cx.update_editor(|editor, _| editor.project.clone().unwrap());
+
+    cx.set_state(indoc! {"
+        ˇfn func(abc def: i32) -> u32 {
+        }
+    "});
+
+    cx.update(|cx| {
+        project.update(cx, |project, cx| {
+            project
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path("/root/file").unwrap(),
+                        version: None,
+                        diagnostics: vec![
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 11),
+                                    lsp::Position::new(0, 12),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 12),
+                                    lsp::Position::new(0, 15),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 25),
+                                    lsp::Position::new(0, 28),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                        ],
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+
+    deterministic.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    cx.update_editor(|editor, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    cx.update_editor(|editor, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    cx.update_editor(|editor, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+}
+
+#[gpui::test]
 async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -6780,6 +6876,46 @@ async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppCon
     cx.update_editor(|editor, cx| {
         //Wrap around the top of the buffer
         for _ in 0..2 {
+            editor.go_to_prev_hunk(&GoToPrevHunk, cx);
+        }
+    });
+
+    cx.assert_editor_state(
+        &r#"
+        use some::modified;
+
+
+        fn main() {
+        ˇ    println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        editor.go_to_prev_hunk(&GoToPrevHunk, cx);
+    });
+
+    cx.assert_editor_state(
+        &r#"
+        use some::modified;
+
+        ˇ
+        fn main() {
+            println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        for _ in 0..3 {
             editor.go_to_prev_hunk(&GoToPrevHunk, cx);
         }
     });
