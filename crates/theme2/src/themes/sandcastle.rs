@@ -40,7 +40,7 @@ pub fn sandcastle() -> Theme {
             string: rgba(0xff00ffff).into(),
             function: rgba(0xff00ffff).into(),
             keyword: rgba(0xff00ffff).into(),
-            highlights: Vec::new(),
+            highlights: vec![],
         },
         status_bar: rgba(0x333944ff).into(),
         title_bar: rgba(0x333944ff).into(),

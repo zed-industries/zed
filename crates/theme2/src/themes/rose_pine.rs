@@ -40,7 +40,7 @@ pub fn rose_pine() -> Theme {
             string: rgba(0xf5c177ff).into(),
             function: rgba(0xebbcbaff).into(),
             keyword: rgba(0x30738fff).into(),
-            highlights: Vec::new(),
+            highlights: vec![],
         },
         status_bar: rgba(0x292738ff).into(),
         title_bar: rgba(0x292738ff).into(),

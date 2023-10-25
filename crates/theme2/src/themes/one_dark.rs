@@ -40,7 +40,7 @@ pub fn one_dark() -> Theme {
             string: rgba(0xa1c181ff).into(),
             function: rgba(0x73ade9ff).into(),
             keyword: rgba(0xb477cfff).into(),
-            highlights: Vec::new(),
+            highlights: vec![],
         },
         status_bar: rgba(0x3b414dff).into(),
         title_bar: rgba(0x3b414dff).into(),

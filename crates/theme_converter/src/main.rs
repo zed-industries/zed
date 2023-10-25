@@ -1,10 +1,10 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::fmt;
+use std::fmt::{self, Debug};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use gpui2::{hsla, rgb, serde_json, AssetSource, Hsla, SharedString};
+use gpui2::{hsla, rgb, serde_json, AssetSource, Hsla, Rgba, SharedString};
 use log::LevelFilter;
 use rust_embed::RustEmbed;
 use serde::de::Visitor;
@@ -28,7 +28,7 @@ fn main() -> Result<()> {
 
     let theme = convert_theme(legacy_theme)?;
 
-    println!("{:?}", ThemePrinter(theme));
+    println!("{:#?}", ThemePrinter(theme));
 
     Ok(())
 }
@@ -97,13 +97,13 @@ pub struct SyntaxColor {
     pub keyword: Hsla,
 }
 
-impl std::fmt::Debug for SyntaxColor {
+impl Debug for SyntaxColor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SyntaxColor")
-            .field("comment", &self.comment.to_rgb().to_hex())
-            .field("string", &self.string.to_rgb().to_hex())
-            .field("function", &self.function.to_rgb().to_hex())
-            .field("keyword", &self.keyword.to_rgb().to_hex())
+            .field("comment", &HslaPrinter(self.comment))
+            .field("string", &HslaPrinter(self.string))
+            .field("function", &HslaPrinter(self.function))
+            .field("keyword", &HslaPrinter(self.keyword))
             .finish()
     }
 }
@@ -365,104 +365,111 @@ where
 
 pub struct ThemePrinter(theme2::Theme);
 
-impl std::fmt::Debug for ThemePrinter {
+struct HslaPrinter(Hsla);
+
+impl Debug for HslaPrinter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", IntoPrinter(&Rgba::from(self.0)))
+    }
+}
+
+struct IntoPrinter<'a, D: Debug>(&'a D);
+
+impl<'a, D: Debug> Debug for IntoPrinter<'a, D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}.into()", self.0)
+    }
+}
+
+impl Debug for ThemePrinter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Theme")
             .field("metadata", &ThemeMetadataPrinter(self.0.metadata.clone()))
-            .field("transparent", &self.0.transparent.to_rgb().to_hex())
+            .field("transparent", &HslaPrinter(self.0.transparent))
             .field(
                 "mac_os_traffic_light_red",
-                &self.0.mac_os_traffic_light_red.to_rgb().to_hex(),
+                &HslaPrinter(self.0.mac_os_traffic_light_red),
             )
             .field(
                 "mac_os_traffic_light_yellow",
-                &self.0.mac_os_traffic_light_yellow.to_rgb().to_hex(),
+                &HslaPrinter(self.0.mac_os_traffic_light_yellow),
             )
             .field(
                 "mac_os_traffic_light_green",
-                &self.0.mac_os_traffic_light_green.to_rgb().to_hex(),
+                &HslaPrinter(self.0.mac_os_traffic_light_green),
             )
-            .field("border", &self.0.border.to_rgb().to_hex())
-            .field("border_variant", &self.0.border_variant.to_rgb().to_hex())
-            .field("border_focused", &self.0.border_focused.to_rgb().to_hex())
+            .field("border", &HslaPrinter(self.0.border))
+            .field("border_variant", &HslaPrinter(self.0.border_variant))
+            .field("border_focused", &HslaPrinter(self.0.border_focused))
             .field(
                 "border_transparent",
-                &self.0.border_transparent.to_rgb().to_hex(),
+                &HslaPrinter(self.0.border_transparent),
             )
-            .field(
-                "elevated_surface",
-                &self.0.elevated_surface.to_rgb().to_hex(),
-            )
-            .field("surface", &self.0.surface.to_rgb().to_hex())
-            .field("background", &self.0.background.to_rgb().to_hex())
-            .field("filled_element", &self.0.filled_element.to_rgb().to_hex())
+            .field("elevated_surface", &HslaPrinter(self.0.elevated_surface))
+            .field("surface", &HslaPrinter(self.0.surface))
+            .field("background", &HslaPrinter(self.0.background))
+            .field("filled_element", &HslaPrinter(self.0.filled_element))
             .field(
                 "filled_element_hover",
-                &self.0.filled_element_hover.to_rgb().to_hex(),
+                &HslaPrinter(self.0.filled_element_hover),
             )
             .field(
                 "filled_element_active",
-                &self.0.filled_element_active.to_rgb().to_hex(),
+                &HslaPrinter(self.0.filled_element_active),
             )
             .field(
                 "filled_element_selected",
-                &self.0.filled_element_selected.to_rgb().to_hex(),
+                &HslaPrinter(self.0.filled_element_selected),
             )
             .field(
                 "filled_element_disabled",
-                &self.0.filled_element_disabled.to_rgb().to_hex(),
+                &HslaPrinter(self.0.filled_element_disabled),
             )
-            .field("ghost_element", &self.0.ghost_element.to_rgb().to_hex())
+            .field("ghost_element", &HslaPrinter(self.0.ghost_element))
             .field(
                 "ghost_element_hover",
-                &self.0.ghost_element_hover.to_rgb().to_hex(),
+                &HslaPrinter(self.0.ghost_element_hover),
             )
             .field(
                 "ghost_element_active",
-                &self.0.ghost_element_active.to_rgb().to_hex(),
+                &HslaPrinter(self.0.ghost_element_active),
             )
             .field(
                 "ghost_element_selected",
-                &self.0.ghost_element_selected.to_rgb().to_hex(),
+                &HslaPrinter(self.0.ghost_element_selected),
             )
             .field(
                 "ghost_element_disabled",
-                &self.0.ghost_element_disabled.to_rgb().to_hex(),
+                &HslaPrinter(self.0.ghost_element_disabled),
             )
-            .field("text", &self.0.text.to_rgb().to_hex())
-            .field("text_muted", &self.0.text_muted.to_rgb().to_hex())
-            .field(
-                "text_placeholder",
-                &self.0.text_placeholder.to_rgb().to_hex(),
-            )
-            .field("text_disabled", &self.0.text_disabled.to_rgb().to_hex())
-            .field("text_accent", &self.0.text_accent.to_rgb().to_hex())
-            .field("icon_muted", &self.0.icon_muted.to_rgb().to_hex())
+            .field("text", &HslaPrinter(self.0.text))
+            .field("text_muted", &HslaPrinter(self.0.text_muted))
+            .field("text_placeholder", &HslaPrinter(self.0.text_placeholder))
+            .field("text_disabled", &HslaPrinter(self.0.text_disabled))
+            .field("text_accent", &HslaPrinter(self.0.text_accent))
+            .field("icon_muted", &HslaPrinter(self.0.icon_muted))
             .field("syntax", &SyntaxThemePrinter(self.0.syntax.clone()))
-            .field("status_bar", &self.0.status_bar.to_rgb().to_hex())
-            .field("title_bar", &self.0.title_bar.to_rgb().to_hex())
-            .field("toolbar", &self.0.toolbar.to_rgb().to_hex())
-            .field("tab_bar", &self.0.tab_bar.to_rgb().to_hex())
-            .field("editor", &self.0.editor.to_rgb().to_hex())
-            .field(
-                "editor_subheader",
-                &self.0.editor_subheader.to_rgb().to_hex(),
-            )
+            .field("status_bar", &HslaPrinter(self.0.status_bar))
+            .field("title_bar", &HslaPrinter(self.0.title_bar))
+            .field("toolbar", &HslaPrinter(self.0.toolbar))
+            .field("tab_bar", &HslaPrinter(self.0.tab_bar))
+            .field("editor", &HslaPrinter(self.0.editor))
+            .field("editor_subheader", &HslaPrinter(self.0.editor_subheader))
             .field(
                 "editor_active_line",
-                &self.0.editor_active_line.to_rgb().to_hex(),
+                &HslaPrinter(self.0.editor_active_line),
             )
-            .field("terminal", &self.0.terminal.to_rgb().to_hex())
+            .field("terminal", &HslaPrinter(self.0.terminal))
             .field(
                 "image_fallback_background",
-                &self.0.image_fallback_background.to_rgb().to_hex(),
+                &HslaPrinter(self.0.image_fallback_background),
             )
-            .field("git_created", &self.0.git_created.to_rgb().to_hex())
-            .field("git_modified", &self.0.git_modified.to_rgb().to_hex())
-            .field("git_deleted", &self.0.git_deleted.to_rgb().to_hex())
-            .field("git_conflict", &self.0.git_conflict.to_rgb().to_hex())
-            .field("git_ignored", &self.0.git_ignored.to_rgb().to_hex())
-            .field("git_renamed", &self.0.git_renamed.to_rgb().to_hex())
+            .field("git_created", &HslaPrinter(self.0.git_created))
+            .field("git_modified", &HslaPrinter(self.0.git_modified))
+            .field("git_deleted", &HslaPrinter(self.0.git_deleted))
+            .field("git_conflict", &HslaPrinter(self.0.git_conflict))
+            .field("git_ignored", &HslaPrinter(self.0.git_ignored))
+            .field("git_renamed", &HslaPrinter(self.0.git_renamed))
             .field("players", &self.0.players.map(PlayerThemePrinter))
             .finish()
     }
@@ -470,10 +477,10 @@ impl std::fmt::Debug for ThemePrinter {
 
 pub struct ThemeMetadataPrinter(ThemeMetadata);
 
-impl std::fmt::Debug for ThemeMetadataPrinter {
+impl Debug for ThemeMetadataPrinter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ThemeMetadata")
-            .field("name", &self.0.name)
+            .field("name", &IntoPrinter(&self.0.name))
             .field("is_light", &self.0.is_light)
             .finish()
     }
@@ -481,25 +488,33 @@ impl std::fmt::Debug for ThemeMetadataPrinter {
 
 pub struct SyntaxThemePrinter(SyntaxTheme);
 
-impl std::fmt::Debug for SyntaxThemePrinter {
+impl Debug for SyntaxThemePrinter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SyntaxTheme")
-            .field("comment", &self.0.comment.to_rgb().to_hex())
-            .field("string", &self.0.string.to_rgb().to_hex())
-            .field("function", &self.0.function.to_rgb().to_hex())
-            .field("keyword", &self.0.keyword.to_rgb().to_hex())
-            .field("highlights", &self.0.highlights)
+            .field("comment", &HslaPrinter(self.0.comment))
+            .field("string", &HslaPrinter(self.0.string))
+            .field("function", &HslaPrinter(self.0.function))
+            .field("keyword", &HslaPrinter(self.0.keyword))
+            .field("highlights", &VecPrinter(&self.0.highlights))
             .finish()
+    }
+}
+
+pub struct VecPrinter<'a, T>(&'a Vec<T>);
+
+impl<'a, T: Debug> Debug for VecPrinter<'a, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "vec!{:?}", &self.0)
     }
 }
 
 pub struct PlayerThemePrinter(PlayerTheme);
 
-impl std::fmt::Debug for PlayerThemePrinter {
+impl Debug for PlayerThemePrinter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PlayerTheme")
-            .field("cursor", &self.0.cursor.to_rgb().to_hex())
-            .field("selection", &self.0.selection.to_rgb().to_hex())
+            .field("cursor", &HslaPrinter(self.0.cursor))
+            .field("selection", &HslaPrinter(self.0.selection))
             .finish()
     }
 }

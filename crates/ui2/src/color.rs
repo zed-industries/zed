@@ -8,15 +8,6 @@ pub struct PlayerThemeColors {
     pub selection: Hsla,
 }
 
-impl std::fmt::Debug for PlayerThemeColors {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PlayerThemeColors")
-            .field("cursor", &self.cursor.to_rgb().to_hex())
-            .field("selection", &self.selection.to_rgb().to_hex())
-            .finish()
-    }
-}
-
 impl PlayerThemeColors {
     pub fn new(cx: &WindowContext, ix: usize) -> Self {
         let theme = old_theme(cx);
@@ -35,23 +26,12 @@ impl PlayerThemeColors {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct SyntaxColor {
     pub comment: Hsla,
     pub string: Hsla,
     pub function: Hsla,
     pub keyword: Hsla,
-}
-
-impl std::fmt::Debug for SyntaxColor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SyntaxColor")
-            .field("comment", &self.comment.to_rgb().to_hex())
-            .field("string", &self.string.to_rgb().to_hex())
-            .field("function", &self.function.to_rgb().to_hex())
-            .field("keyword", &self.keyword.to_rgb().to_hex())
-            .finish()
-    }
 }
 
 impl SyntaxColor {
@@ -155,99 +135,6 @@ pub struct ThemeColor {
     pub git_renamed: Hsla,
 
     pub players: [PlayerThemeColors; 8],
-}
-
-impl std::fmt::Debug for ThemeColor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ThemeColor")
-            .field("transparent", &self.transparent.to_rgb().to_hex())
-            .field(
-                "mac_os_traffic_light_red",
-                &self.mac_os_traffic_light_red.to_rgb().to_hex(),
-            )
-            .field(
-                "mac_os_traffic_light_yellow",
-                &self.mac_os_traffic_light_yellow.to_rgb().to_hex(),
-            )
-            .field(
-                "mac_os_traffic_light_green",
-                &self.mac_os_traffic_light_green.to_rgb().to_hex(),
-            )
-            .field("border", &self.border.to_rgb().to_hex())
-            .field("border_variant", &self.border_variant.to_rgb().to_hex())
-            .field("border_focused", &self.border_focused.to_rgb().to_hex())
-            .field(
-                "border_transparent",
-                &self.border_transparent.to_rgb().to_hex(),
-            )
-            .field("elevated_surface", &self.elevated_surface.to_rgb().to_hex())
-            .field("surface", &self.surface.to_rgb().to_hex())
-            .field("background", &self.background.to_rgb().to_hex())
-            .field("filled_element", &self.filled_element.to_rgb().to_hex())
-            .field(
-                "filled_element_hover",
-                &self.filled_element_hover.to_rgb().to_hex(),
-            )
-            .field(
-                "filled_element_active",
-                &self.filled_element_active.to_rgb().to_hex(),
-            )
-            .field(
-                "filled_element_selected",
-                &self.filled_element_selected.to_rgb().to_hex(),
-            )
-            .field(
-                "filled_element_disabled",
-                &self.filled_element_disabled.to_rgb().to_hex(),
-            )
-            .field("ghost_element", &self.ghost_element.to_rgb().to_hex())
-            .field(
-                "ghost_element_hover",
-                &self.ghost_element_hover.to_rgb().to_hex(),
-            )
-            .field(
-                "ghost_element_active",
-                &self.ghost_element_active.to_rgb().to_hex(),
-            )
-            .field(
-                "ghost_element_selected",
-                &self.ghost_element_selected.to_rgb().to_hex(),
-            )
-            .field(
-                "ghost_element_disabled",
-                &self.ghost_element_disabled.to_rgb().to_hex(),
-            )
-            .field("text", &self.text.to_rgb().to_hex())
-            .field("text_muted", &self.text_muted.to_rgb().to_hex())
-            .field("text_placeholder", &self.text_placeholder.to_rgb().to_hex())
-            .field("text_disabled", &self.text_disabled.to_rgb().to_hex())
-            .field("text_accent", &self.text_accent.to_rgb().to_hex())
-            .field("icon_muted", &self.icon_muted.to_rgb().to_hex())
-            .field("syntax", &self.syntax)
-            .field("status_bar", &self.status_bar.to_rgb().to_hex())
-            .field("title_bar", &self.title_bar.to_rgb().to_hex())
-            .field("toolbar", &self.toolbar.to_rgb().to_hex())
-            .field("tab_bar", &self.tab_bar.to_rgb().to_hex())
-            .field("editor", &self.editor.to_rgb().to_hex())
-            .field("editor_subheader", &self.editor_subheader.to_rgb().to_hex())
-            .field(
-                "editor_active_line",
-                &self.editor_active_line.to_rgb().to_hex(),
-            )
-            .field("terminal", &self.terminal.to_rgb().to_hex())
-            .field(
-                "image_fallback_background",
-                &self.image_fallback_background.to_rgb().to_hex(),
-            )
-            .field("git_created", &self.git_created.to_rgb().to_hex())
-            .field("git_modified", &self.git_modified.to_rgb().to_hex())
-            .field("git_deleted", &self.git_deleted.to_rgb().to_hex())
-            .field("git_conflict", &self.git_conflict.to_rgb().to_hex())
-            .field("git_ignored", &self.git_ignored.to_rgb().to_hex())
-            .field("git_renamed", &self.git_renamed.to_rgb().to_hex())
-            .field("players", &self.players)
-            .finish()
-    }
 }
 
 /// Colors used exclusively for syntax highlighting.
