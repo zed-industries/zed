@@ -5,8 +5,18 @@ mod themes;
 pub use registry::*;
 pub use settings::*;
 
-use gpui2::{HighlightStyle, Hsla, SharedString};
+use gpui2::{AppContext, HighlightStyle, Hsla, SharedString};
+use settings2::Settings;
 use std::sync::Arc;
+
+pub fn init(cx: &mut AppContext) {
+    cx.set_global(ThemeRegistry::default());
+    ThemeSettings::register(cx);
+}
+
+pub fn active_theme<'a>(cx: &'a AppContext) -> &'a Arc<Theme> {
+    &ThemeSettings::get_global(cx).active_theme
+}
 
 pub struct Theme {
     pub metadata: ThemeMetadata,
@@ -102,14 +112,3 @@ pub struct ThemeMetadata {
 pub struct Editor {
     pub syntax: Arc<SyntaxTheme>,
 }
-
-// #[derive(Default)]
-// pub struct SyntaxTheme {
-//     pub highlights: Vec<(String, HighlightStyle)>,
-// }
-
-// impl SyntaxTheme {
-//     pub fn new(highlights: Vec<(String, HighlightStyle)>) -> Self {
-//         Self { highlights }
-//     }
-// }

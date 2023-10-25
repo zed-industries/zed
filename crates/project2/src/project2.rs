@@ -58,7 +58,7 @@ use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
 use serde::Serialize;
-use settings2::SettingsStore;
+use settings2::{SettingsStore, Settings};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
@@ -562,7 +562,7 @@ impl SearchMatchCandidate {
 
 impl Project {
     pub fn init_settings(cx: &mut AppContext) {
-        settings2::register::<ProjectSettings>(cx);
+        ProjectSettings::register(cx);
     }
 
     pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
@@ -674,7 +674,7 @@ impl Project {
                 },
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
-                current_lsp_settings: settings2::get::<ProjectSettings>(cx).lsp.clone(),
+                current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 node: Some(node),
                 prettier_instances: HashMap::default(),
             }
@@ -775,7 +775,7 @@ impl Project {
                 },
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
-                current_lsp_settings: settings2::get::<ProjectSettings>(cx).lsp.clone(),
+                current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 node: None,
                 prettier_instances: HashMap::default(),
             };
@@ -914,7 +914,7 @@ impl Project {
         let mut language_servers_to_restart = Vec::new();
         let languages = self.languages.to_vec();
 
-        let new_lsp_settings = settings2::get::<ProjectSettings>(cx).lsp.clone();
+        let new_lsp_settings = ProjectSettings::get_global(cx).lsp.clone();
         let current_lsp_settings = &self.current_lsp_settings;
         for (worktree_id, started_lsp_name) in self.language_server_ids.keys() {
             let language = languages.iter().find_map(|l| {
@@ -2493,7 +2493,7 @@ impl Project {
         self.buffers_needing_diff.insert(buffer.downgrade());
         let first_insertion = self.buffers_needing_diff.len() == 1;
 
-        let settings = settings2::get::<ProjectSettings>(cx);
+        let settings = ProjectSettings::get_global(cx);
         let delay = if let Some(delay) = settings.git.gutter_debounce {
             delay
         } else {
@@ -2789,7 +2789,7 @@ impl Project {
             None => return,
         };
 
-        let project_settings = settings2::get::<ProjectSettings>(cx);
+        let project_settings = ProjectSettings::get_global(cx);
         let lsp = project_settings.lsp.get(&adapter.name.0);
         let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
 

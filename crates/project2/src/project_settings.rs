@@ -2,7 +2,7 @@ use collections::HashMap;
 use gpui2::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings2::Setting;
+use settings2::Settings;
 use std::sync::Arc;
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -33,7 +33,7 @@ pub struct LspSettings {
     pub initialization_options: Option<serde_json::Value>,
 }
 
-impl Setting for ProjectSettings {
+impl Settings for ProjectSettings {
     const KEY: Option<&'static str> = None;
 
     type FileContent = Self;

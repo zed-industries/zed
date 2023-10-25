@@ -8,10 +8,11 @@ use schemars::{
     JsonSchema,
 };
 use serde::{Deserialize, Serialize};
+use settings2::Settings;
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 
 pub fn init(cx: &mut AppContext) {
-    settings2::register::<AllLanguageSettings>(cx);
+    AllLanguageSettings::register(cx);
 }
 
 pub fn language_settings<'a>(
@@ -28,7 +29,7 @@ pub fn all_language_settings<'a>(
     cx: &'a AppContext,
 ) -> &'a AllLanguageSettings {
     let location = file.map(|f| (f.worktree_id(), f.path().as_ref()));
-    settings2::get_local(location, cx)
+    AllLanguageSettings::get(location, cx)
 }
 
 #[derive(Debug, Clone)]
@@ -254,7 +255,7 @@ impl InlayHintKind {
     }
 }
 
-impl settings2::Setting for AllLanguageSettings {
+impl settings2::Settings for AllLanguageSettings {
     const KEY: Option<&'static str> = None;
 
     type FileContent = AllLanguageSettingsContent;

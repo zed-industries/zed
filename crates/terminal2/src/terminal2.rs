@@ -33,6 +33,7 @@ use mappings::mouse::{
 
 use procinfo::LocalProcessInfo;
 use serde::{Deserialize, Serialize};
+use settings2::Settings;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use util::truncate_and_trailoff;
 
@@ -126,7 +127,7 @@ impl EventListener for ZedListener {
 }
 
 pub fn init(cx: &mut AppContext) {
-    settings2::register::<TerminalSettings>(cx);
+    TerminalSettings::register(cx);
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -1190,7 +1191,7 @@ impl Terminal {
         origin: Point<Pixels>,
         cx: &mut MainThread<ModelContext<Self>>,
     ) {
-        let setting = settings2::get::<TerminalSettings>(cx);
+        let setting = TerminalSettings::get_global(cx);
 
         let position = e.position - origin;
         if self.mouse_mode(e.modifiers.shift) {

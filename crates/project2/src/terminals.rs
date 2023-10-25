@@ -1,5 +1,6 @@
 use crate::Project;
 use gpui2::{AnyWindowHandle, Context, Handle, ModelContext, WeakHandle};
+use settings2::Settings;
 use std::path::{Path, PathBuf};
 use terminal2::{
     terminal_settings::{self, TerminalSettings, VenvSettingsContent},
@@ -25,7 +26,7 @@ impl Project {
                 "creating terminals as a guest is not supported yet"
             ));
         } else {
-            let settings = settings2::get::<TerminalSettings>(cx);
+            let settings = TerminalSettings::get_global(cx);
             let python_settings = settings.detect_venv.clone();
             let shell = settings.shell.clone();
 

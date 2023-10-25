@@ -14,11 +14,11 @@ use gpui2::{
     WindowOptions,
 };
 use log::LevelFilter;
+use settings2::{default_settings, Settings, SettingsStore};
 use simplelog::SimpleLogger;
 use story_selector::ComponentStory;
-use theme2::ThemeRegistry;
+use theme2::{ThemeRegistry, ThemeSettings};
 use ui::{prelude::*, themed};
-use util::ResultExt;
 
 use crate::assets::Assets;
 use crate::story_selector::StorySelector;
@@ -56,14 +56,22 @@ fn main() {
     gpui2::App::production(asset_source).run(move |cx| {
         load_embedded_fonts(cx).unwrap();
 
+        let mut store = SettingsStore::default();
+        store
+            .set_default_settings(default_settings().as_ref(), cx)
+            .unwrap();
+        cx.set_global(store);
+
+        theme2::init(cx);
+
         let selector =
             story_selector.unwrap_or(StorySelector::Component(ComponentStory::Workspace));
 
-        let theme_registry = cx.default_global::<ThemeRegistry>();
+        let theme_registry = cx.global::<ThemeRegistry>();
 
-        if let Some(new_theme) = theme_registry.get(&theme_name).log_err() {
-            cx.set_global(new_theme);
-        }
+        let mut theme_settings = ThemeSettings::get_global(cx).clone();
+        theme_settings.active_theme = theme_registry.get(&theme_name).unwrap();
+        ThemeSettings::override_global(theme_settings, cx);
 
         cx.set_global(theme.clone());
         ui::settings::init(cx);

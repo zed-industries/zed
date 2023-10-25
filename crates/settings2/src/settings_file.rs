@@ -1,30 +1,10 @@
-use crate::{settings_store::SettingsStore, Setting};
+use crate::{settings_store::SettingsStore, Settings};
 use anyhow::Result;
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
 use gpui2::{AppContext, Executor};
-use std::{
-    io::ErrorKind,
-    path::{Path, PathBuf},
-    str,
-    sync::Arc,
-    time::Duration,
-};
+use std::{io::ErrorKind, path::PathBuf, str, sync::Arc, time::Duration};
 use util::{paths, ResultExt};
-
-pub fn register<T: Setting>(cx: &mut AppContext) {
-    cx.update_global(|store: &mut SettingsStore, cx| {
-        store.register_setting::<T>(cx);
-    });
-}
-
-pub fn get<'a, T: Setting>(cx: &'a AppContext) -> &'a T {
-    cx.global::<SettingsStore>().get(None)
-}
-
-pub fn get_local<'a, T: Setting>(location: Option<(usize, &Path)>, cx: &'a AppContext) -> &'a T {
-    cx.global::<SettingsStore>().get(location)
-}
 
 pub const EMPTY_THEME_NAME: &'static str = "empty-theme";
 
@@ -119,7 +99,7 @@ async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
     }
 }
 
-pub fn update_settings_file<T: Setting>(
+pub fn update_settings_file<T: Settings>(
     fs: Arc<dyn Fs>,
     cx: &mut AppContext,
     update: impl 'static + Send + FnOnce(&mut T::FileContent),

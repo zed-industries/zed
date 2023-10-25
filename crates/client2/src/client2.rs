@@ -24,6 +24,7 @@ use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings2::Settings;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -78,7 +79,7 @@ pub struct SignOut;
 pub struct Reconnect;
 
 pub fn init_settings(cx: &mut AppContext) {
-    settings2::register::<TelemetrySettings>(cx);
+    TelemetrySettings::register(cx);
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
@@ -371,7 +372,7 @@ pub struct TelemetrySettingsContent {
     pub metrics: Option<bool>,
 }
 
-impl settings2::Setting for TelemetrySettings {
+impl settings2::Settings for TelemetrySettings {
     const KEY: Option<&'static str> = Some("telemetry");
 
     type FileContent = TelemetrySettingsContent;

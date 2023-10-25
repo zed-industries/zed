@@ -18,7 +18,7 @@ use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
 /// A value that can be defined as a user setting.
 ///
 /// Settings can be loaded from a combination of multiple JSON files.
-pub trait Setting: 'static + Send + Sync {
+pub trait Settings: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
     /// be deserialized. If this is `None`, then the setting will be deserialized
     /// from the root object.
@@ -75,6 +75,36 @@ pub trait Setting: 'static + Send + Sync {
 
     fn missing_default() -> anyhow::Error {
         anyhow::anyhow!("missing default")
+    }
+
+    fn register(cx: &mut AppContext)
+    where
+        Self: Sized,
+    {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.register_setting::<Self>(cx);
+        });
+    }
+
+    fn get<'a>(path: Option<(usize, &Path)>, cx: &'a AppContext) -> &'a Self
+    where
+        Self: Sized,
+    {
+        cx.global::<SettingsStore>().get(path)
+    }
+
+    fn get_global<'a>(cx: &'a AppContext) -> &'a Self
+    where
+        Self: Sized,
+    {
+        cx.global::<SettingsStore>().get(None)
+    }
+
+    fn override_global<'a>(settings: Self, cx: &'a mut AppContext)
+    where
+        Self: Sized,
+    {
+        cx.global_mut::<SettingsStore>().override_global(settings)
     }
 }
 
@@ -138,7 +168,7 @@ struct DeserializedSetting(Box<dyn Any>);
 
 impl SettingsStore {
     /// Add a new type of setting to the store.
-    pub fn register_setting<T: Setting>(&mut self, cx: &mut AppContext) {
+    pub fn register_setting<T: Settings>(&mut self, cx: &mut AppContext) {
         let setting_type_id = TypeId::of::<T>();
         let entry = self.setting_values.entry(setting_type_id);
         if matches!(entry, hash_map::Entry::Occupied(_)) {
@@ -177,7 +207,7 @@ impl SettingsStore {
     ///
     /// Panics if the given setting type has not been registered, or if there is no
     /// value for this setting.
-    pub fn get<T: Setting>(&self, path: Option<(usize, &Path)>) -> &T {
+    pub fn get<T: Settings>(&self, path: Option<(usize, &Path)>) -> &T {
         self.setting_values
             .get(&TypeId::of::<T>())
             .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
@@ -189,7 +219,7 @@ impl SettingsStore {
     /// Override the global value for a setting.
     ///
     /// The given value will be overwritten if the user settings file changes.
-    pub fn override_global<T: Setting>(&mut self, value: T) {
+    pub fn override_global<T: Settings>(&mut self, value: T) {
         self.setting_values
             .get_mut(&TypeId::of::<T>())
             .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
@@ -218,7 +248,7 @@ impl SettingsStore {
     /// This is only for tests. Normally, settings are only loaded from
     /// JSON files.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn update_user_settings<T: Setting>(
+    pub fn update_user_settings<T: Settings>(
         &mut self,
         cx: &mut AppContext,
         update: impl FnOnce(&mut T::FileContent),
@@ -230,7 +260,7 @@ impl SettingsStore {
 
     /// Update the value of a setting in a JSON file, returning the new text
     /// for that JSON file.
-    pub fn new_text_for_update<T: Setting>(
+    pub fn new_text_for_update<T: Settings>(
         &self,
         old_text: String,
         update: impl FnOnce(&mut T::FileContent),
@@ -245,7 +275,7 @@ impl SettingsStore {
 
     /// Update the value of a setting in a JSON file, returning a list
     /// of edits to apply to the JSON file.
-    pub fn edits_for_update<T: Setting>(
+    pub fn edits_for_update<T: Settings>(
         &self,
         text: &str,
         update: impl FnOnce(&mut T::FileContent),
@@ -287,7 +317,7 @@ impl SettingsStore {
     }
 
     /// Configure the tab sized when updating JSON files.
-    pub fn set_json_tab_size_callback<T: Setting>(
+    pub fn set_json_tab_size_callback<T: Settings>(
         &mut self,
         get_tab_size: fn(&T) -> Option<usize>,
     ) {
@@ -544,7 +574,7 @@ impl Debug for SettingsStore {
     }
 }
 
-impl<T: Setting> AnySettingValue for SettingValue<T> {
+impl<T: Settings> AnySettingValue for SettingValue<T> {
     fn key(&self) -> Option<&'static str> {
         T::KEY
     }

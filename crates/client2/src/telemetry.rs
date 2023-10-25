@@ -3,6 +3,7 @@ use gpui2::{serde_json, AppContext, AppMetadata, Executor, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
+use settings2::Settings;
 use std::{env, io::Write, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{Pid, PidExt, ProcessExt, System, SystemExt};
 use tempfile::NamedTempFile;
@@ -191,7 +192,7 @@ impl Telemetry {
                 };
 
                 let telemetry_settings = if let Ok(telemetry_settings) =
-                    cx.update(|cx| *settings2::get::<TelemetrySettings>(cx))
+                    cx.update(|cx| *TelemetrySettings::get_global(cx))
                 {
                     telemetry_settings
                 } else {
@@ -211,7 +212,7 @@ impl Telemetry {
         is_staff: bool,
         cx: &AppContext,
     ) {
-        if !settings2::get::<TelemetrySettings>(cx).metrics {
+        if !TelemetrySettings::get_global(cx).metrics {
             return;
         }
 

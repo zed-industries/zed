@@ -219,5 +219,5 @@ pub fn old_theme(cx: &WindowContext) -> Arc<Theme> {
 }
 
 pub fn theme(cx: &WindowContext) -> Arc<theme2::Theme> {
-    cx.global::<Arc<theme2::Theme>>().clone()
+    theme2::active_theme(cx).clone()
 }

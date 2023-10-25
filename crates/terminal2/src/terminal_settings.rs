@@ -98,7 +98,7 @@ impl TerminalSettings {
     // }
 }
 
-impl settings2::Setting for TerminalSettings {
+impl settings2::Settings for TerminalSettings {
     const KEY: Option<&'static str> = Some("terminal");
 
     type FileContent = TerminalSettingsContent;

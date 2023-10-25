@@ -19,7 +19,7 @@ itertools = "0.11.0"
 log.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
-settings = { path = "../settings" }
+settings2 = { path = "../settings2" }
 simplelog = "0.9"
 smallvec.workspace = true
 strum = { version = "0.25.0", features = ["derive"] }

@@ -19,7 +19,9 @@ use log::LevelFilter;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use settings2::{default_settings, handle_settings_file_changes, watch_config_file, SettingsStore};
+use settings2::{
+    default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
+};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
@@ -123,7 +125,7 @@ fn main() {
 
         // cx.set_global(client.clone());
 
-        // theme::init(Assets, cx);
+        theme2::init(cx);
         // context_menu::init(cx);
         // project::Project::init(&client, cx);
         // client::init(&client, cx);
@@ -506,7 +508,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
 }
 
 fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
-    let telemetry_settings = *settings2::get::<client2::TelemetrySettings>(cx);
+    let telemetry_settings = *client2::TelemetrySettings::get_global(cx);
 
     cx.executor()
         .spawn(async move {

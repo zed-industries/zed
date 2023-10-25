@@ -8,7 +8,7 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings2::SettingsJsonSchemaParams;
+use settings2::{Settings, SettingsJsonSchemaParams};
 use std::sync::Arc;
 use util::ResultExt as _;
 
@@ -20,7 +20,7 @@ pub struct ThemeSettings {
     pub buffer_font: Font,
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
-    pub theme: Arc<Theme>,
+    pub active_theme: Arc<Theme>,
 }
 
 #[derive(Default)]
@@ -75,7 +75,7 @@ impl ThemeSettings {
 
 pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
     if let Some(adjusted_size) = cx.default_global::<AdjustedBufferFontSize>().0 {
-        let buffer_font_size = settings2::get::<ThemeSettings>(cx).buffer_font_size;
+        let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
         let delta = adjusted_size - buffer_font_size;
         size + delta
     } else {
@@ -85,7 +85,7 @@ pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
 }
 
 pub fn adjust_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
-    let buffer_font_size = settings2::get::<ThemeSettings>(cx).buffer_font_size;
+    let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
     let adjusted_size = cx
         .default_global::<AdjustedBufferFontSize>()
         .0
@@ -102,7 +102,7 @@ pub fn reset_font_size(cx: &mut AppContext) {
     }
 }
 
-impl settings2::Setting for ThemeSettings {
+impl settings2::Settings for ThemeSettings {
     const KEY: Option<&'static str> = None;
 
     type FileContent = ThemeSettingsContent;
@@ -123,7 +123,7 @@ impl settings2::Setting for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
-            theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
+            active_theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
         };
 
         for value in user_values.into_iter().copied().cloned() {
@@ -136,11 +136,14 @@ impl settings2::Setting for ThemeSettings {
 
             if let Some(value) = &value.theme {
                 if let Some(theme) = themes.get(value).log_err() {
-                    this.theme = theme;
+                    this.active_theme = theme;
                 }
             }
 
-            merge(&mut this.buffer_font_size, value.buffer_font_size.map(Into::into));
+            merge(
+                &mut this.buffer_font_size,
+                value.buffer_font_size.map(Into::into),
+            );
             merge(&mut this.buffer_line_height, value.buffer_line_height);
         }
 
