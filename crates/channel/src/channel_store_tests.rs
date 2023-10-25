@@ -20,12 +20,14 @@ fn test_update_channels(cx: &mut AppContext) {
                     name: "b".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     role: proto::ChannelRole::Admin.into(),
+                    parent_path: Vec::new(),
                 },
                 proto::Channel {
                     id: 2,
                     name: "a".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     role: proto::ChannelRole::Member.into(),
+                    parent_path: Vec::new(),
                 },
             ],
             ..Default::default()
@@ -51,22 +53,14 @@ fn test_update_channels(cx: &mut AppContext) {
                     name: "x".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     role: proto::ChannelRole::Admin.into(),
+                    parent_path: vec![1],
                 },
                 proto::Channel {
                     id: 4,
                     name: "y".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     role: proto::ChannelRole::Member.into(),
-                },
-            ],
-            insert_edge: vec![
-                proto::ChannelEdge {
-                    parent_id: 1,
-                    channel_id: 3,
-                },
-                proto::ChannelEdge {
-                    parent_id: 2,
-                    channel_id: 4,
+                    parent_path: vec![2],
                 },
             ],
             ..Default::default()
@@ -98,28 +92,21 @@ fn test_dangling_channel_paths(cx: &mut AppContext) {
                     name: "a".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     role: proto::ChannelRole::Admin.into(),
+                    parent_path: vec![],
                 },
                 proto::Channel {
                     id: 1,
                     name: "b".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     role: proto::ChannelRole::Admin.into(),
+                    parent_path: vec![0],
                 },
                 proto::Channel {
                     id: 2,
                     name: "c".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     role: proto::ChannelRole::Admin.into(),
-                },
-            ],
-            insert_edge: vec![
-                proto::ChannelEdge {
-                    parent_id: 0,
-                    channel_id: 1,
-                },
-                proto::ChannelEdge {
-                    parent_id: 1,
-                    channel_id: 2,
+                    parent_path: vec![0, 1],
                 },
             ],
             ..Default::default()
@@ -170,6 +157,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
             name: "the-channel".to_string(),
             visibility: proto::ChannelVisibility::Members as i32,
             role: proto::ChannelRole::Member.into(),
+            parent_path: vec![],
         }],
         ..Default::default()
     });
@@ -197,7 +185,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
 
     // Join a channel and populate its existing messages.
     let channel = channel_store.update(cx, |store, cx| {
-        let channel_id = store.channel_dag_entries().next().unwrap().1.id;
+        let channel_id = store.ordered_channels().next().unwrap().1.id;
         store.open_channel_chat(channel_id, cx)
     });
     let join_channel = server.receive::<proto::JoinChannelChat>().await.unwrap();
@@ -384,7 +372,7 @@ fn assert_channels(
 ) {
     let actual = channel_store.read_with(cx, |store, _| {
         store
-            .channel_dag_entries()
+            .ordered_channels()
             .map(|(depth, channel)| (depth, channel.name.to_string(), channel.role))
             .collect::<Vec<_>>()
     });

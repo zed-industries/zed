@@ -1,14 +1,11 @@
-use std::{ops::Deref, sync::Arc};
-
 use crate::{Channel, ChannelId};
 use collections::BTreeMap;
 use rpc::proto;
-
-use super::ChannelPath;
+use std::sync::Arc;
 
 #[derive(Default, Debug)]
 pub struct ChannelIndex {
-    paths: Vec<ChannelPath>,
+    channels_ordered: Vec<ChannelId>,
     channels_by_id: BTreeMap<ChannelId, Arc<Channel>>,
 }
 
@@ -17,8 +14,12 @@ impl ChannelIndex {
         &self.channels_by_id
     }
 
+    pub fn ordered_channels(&self) -> &[ChannelId] {
+        &self.channels_ordered
+    }
+
     pub fn clear(&mut self) {
-        self.paths.clear();
+        self.channels_ordered.clear();
         self.channels_by_id.clear();
     }
 
@@ -26,13 +27,13 @@ impl ChannelIndex {
     pub fn delete_channels(&mut self, channels: &[ChannelId]) {
         self.channels_by_id
             .retain(|channel_id, _| !channels.contains(channel_id));
-        self.paths
-            .retain(|path| !path.iter().any(|channel_id| channels.contains(channel_id)));
+        self.channels_ordered
+            .retain(|channel_id| !channels.contains(channel_id));
     }
 
     pub fn bulk_insert(&mut self) -> ChannelPathsInsertGuard {
         ChannelPathsInsertGuard {
-            paths: &mut self.paths,
+            channels_ordered: &mut self.channels_ordered,
             channels_by_id: &mut self.channels_by_id,
         }
     }
@@ -75,42 +76,15 @@ impl ChannelIndex {
     }
 }
 
-impl Deref for ChannelIndex {
-    type Target = [ChannelPath];
-
-    fn deref(&self) -> &Self::Target {
-        &self.paths
-    }
-}
-
 /// A guard for ensuring that the paths index maintains its sort and uniqueness
 /// invariants after a series of insertions
 #[derive(Debug)]
 pub struct ChannelPathsInsertGuard<'a> {
-    paths: &'a mut Vec<ChannelPath>,
+    channels_ordered: &'a mut Vec<ChannelId>,
     channels_by_id: &'a mut BTreeMap<ChannelId, Arc<Channel>>,
 }
 
 impl<'a> ChannelPathsInsertGuard<'a> {
-    /// Remove the given edge from this index. This will not remove the channel.
-    /// If this operation would result in a dangling edge, re-insert it.
-    pub fn delete_edge(&mut self, parent_id: ChannelId, channel_id: ChannelId) {
-        self.paths.retain(|path| {
-            !path
-                .windows(2)
-                .any(|window| window == [parent_id, channel_id])
-        });
-
-        // Ensure that there is at least one channel path in the index
-        if !self
-            .paths
-            .iter()
-            .any(|path| path.iter().any(|id| id == &channel_id))
-        {
-            self.insert_root(channel_id);
-        }
-    }
-
     pub fn note_changed(&mut self, channel_id: ChannelId, epoch: u64, version: &clock::Global) {
         insert_note_changed(&mut self.channels_by_id, channel_id, epoch, &version);
     }
@@ -141,6 +115,7 @@ impl<'a> ChannelPathsInsertGuard<'a> {
                     name: channel_proto.name,
                     unseen_note_version: None,
                     unseen_message_id: None,
+                    parent_path: channel_proto.parent_path,
                 }),
             );
             self.insert_root(channel_proto.id);
@@ -148,74 +123,35 @@ impl<'a> ChannelPathsInsertGuard<'a> {
         ret
     }
 
-    pub fn insert_edge(&mut self, channel_id: ChannelId, parent_id: ChannelId) {
-        let mut parents = Vec::new();
-        let mut descendants = Vec::new();
-        let mut ixs_to_remove = Vec::new();
-
-        for (ix, path) in self.paths.iter().enumerate() {
-            if path
-                .windows(2)
-                .any(|window| window[0] == parent_id && window[1] == channel_id)
-            {
-                // We already have this edge in the index
-                return;
-            }
-            if path.ends_with(&[parent_id]) {
-                parents.push(path);
-            } else if let Some(position) = path.iter().position(|id| id == &channel_id) {
-                if position == 0 {
-                    ixs_to_remove.push(ix);
-                }
-                descendants.push(path.split_at(position).1);
-            }
-        }
-
-        let mut new_paths = Vec::new();
-        for parent in parents.iter() {
-            if descendants.is_empty() {
-                let mut new_path = Vec::with_capacity(parent.len() + 1);
-                new_path.extend_from_slice(parent);
-                new_path.push(channel_id);
-                new_paths.push(ChannelPath::new(new_path.into()));
-            } else {
-                for descendant in descendants.iter() {
-                    let mut new_path = Vec::with_capacity(parent.len() + descendant.len());
-                    new_path.extend_from_slice(parent);
-                    new_path.extend_from_slice(descendant);
-                    new_paths.push(ChannelPath::new(new_path.into()));
-                }
-            }
-        }
-
-        for ix in ixs_to_remove.into_iter().rev() {
-            self.paths.swap_remove(ix);
-        }
-        self.paths.extend(new_paths)
-    }
-
     fn insert_root(&mut self, channel_id: ChannelId) {
-        self.paths.push(ChannelPath::new(Arc::from([channel_id])));
+        self.channels_ordered.push(channel_id);
     }
 }
 
 impl<'a> Drop for ChannelPathsInsertGuard<'a> {
     fn drop(&mut self) {
-        self.paths.sort_by(|a, b| {
-            let a = channel_path_sorting_key(a, &self.channels_by_id);
-            let b = channel_path_sorting_key(b, &self.channels_by_id);
+        self.channels_ordered.sort_by(|a, b| {
+            let a = channel_path_sorting_key(*a, &self.channels_by_id);
+            let b = channel_path_sorting_key(*b, &self.channels_by_id);
             a.cmp(b)
         });
-        self.paths.dedup();
+        self.channels_ordered.dedup();
     }
 }
 
 fn channel_path_sorting_key<'a>(
-    path: &'a [ChannelId],
+    id: ChannelId,
     channels_by_id: &'a BTreeMap<ChannelId, Arc<Channel>>,
-) -> impl 'a + Iterator<Item = Option<&'a str>> {
-    path.iter()
-        .map(|id| Some(channels_by_id.get(id)?.name.as_str()))
+) -> impl Iterator<Item = &str> {
+    let (parent_path, name) = channels_by_id
+        .get(&id)
+        .map_or((&[] as &[_], None), |channel| {
+            (channel.parent_path.as_slice(), Some(channel.name.as_str()))
+        });
+    parent_path
+        .iter()
+        .filter_map(|id| Some(channels_by_id.get(id)?.name.as_str()))
+        .chain(name)
 }
 
 fn insert_note_changed(

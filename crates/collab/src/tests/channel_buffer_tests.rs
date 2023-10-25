@@ -3,7 +3,7 @@ use crate::{
     tests::TestServer,
 };
 use call::ActiveCall;
-use channel::{Channel, ACKNOWLEDGE_DEBOUNCE_INTERVAL};
+use channel::ACKNOWLEDGE_DEBOUNCE_INTERVAL;
 use client::ParticipantIndex;
 use client::{Collaborator, UserId};
 use collab_ui::channel_view::ChannelView;
@@ -11,10 +11,7 @@ use collections::HashMap;
 use editor::{Anchor, Editor, ToOffset};
 use futures::future;
 use gpui::{executor::Deterministic, ModelHandle, TestAppContext, ViewContext};
-use rpc::{
-    proto::{self, PeerId},
-    RECEIVE_TIMEOUT,
-};
+use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
 use serde_json::json;
 use std::{ops::Range, sync::Arc};
 
@@ -411,10 +408,7 @@ async fn test_channel_buffer_disconnect(
     deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
 
     channel_buffer_a.update(cx_a, |buffer, cx| {
-        assert_eq!(
-            buffer.channel(cx).unwrap().as_ref(),
-            &channel(channel_id, "the-channel", proto::ChannelRole::Admin)
-        );
+        assert_eq!(buffer.channel(cx).unwrap().name, "the-channel");
         assert!(!buffer.is_connected());
     });
 
@@ -439,17 +433,6 @@ async fn test_channel_buffer_disconnect(
         assert!(buffer.channel(cx).is_none());
         assert!(!buffer.is_connected());
     });
-}
-
-fn channel(id: u64, name: &'static str, role: proto::ChannelRole) -> Channel {
-    Channel {
-        id,
-        role,
-        name: name.to_string(),
-        visibility: proto::ChannelVisibility::Members,
-        unseen_note_version: None,
-        unseen_message_id: None,
-    }
 }
 
 #[gpui::test]

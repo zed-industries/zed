@@ -7,7 +7,6 @@ mod message_tests;
 use super::*;
 use gpui::executor::Background;
 use parking_lot::Mutex;
-use rpc::proto::ChannelEdge;
 use sea_orm::ConnectionTrait;
 use sqlx::migrate::MigrateDatabase;
 use std::sync::{
@@ -153,33 +152,17 @@ impl Drop for TestDb {
     }
 }
 
-/// The second tuples are (channel_id, parent)
-fn graph(
-    channels: &[(ChannelId, &'static str, ChannelRole)],
-    edges: &[(ChannelId, ChannelId)],
-) -> ChannelGraph {
-    let mut graph = ChannelGraph {
-        channels: vec![],
-        edges: vec![],
-    };
-
-    for (id, name, role) in channels {
-        graph.channels.push(Channel {
+fn channel_tree(channels: &[(ChannelId, &[ChannelId], &'static str, ChannelRole)]) -> Vec<Channel> {
+    channels
+        .iter()
+        .map(|(id, parent_path, name, role)| Channel {
             id: *id,
             name: name.to_string(),
             visibility: ChannelVisibility::Members,
             role: *role,
+            parent_path: parent_path.to_vec(),
         })
-    }
-
-    for (channel, parent) in edges {
-        graph.edges.push(ChannelEdge {
-            channel_id: channel.to_proto(),
-            parent_id: parent.to_proto(),
-        })
-    }
-
-    graph
+        .collect()
 }
 
 static GITHUB_USER_ID: AtomicI32 = AtomicI32::new(5);

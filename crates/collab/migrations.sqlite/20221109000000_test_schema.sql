@@ -193,8 +193,11 @@ CREATE TABLE "channels" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "name" VARCHAR NOT NULL,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "visibility" VARCHAR NOT NULL
+    "visibility" VARCHAR NOT NULL,
+    "parent_path" TEXT
 );
+
+CREATE INDEX "index_channels_on_parent_path" ON "channels" ("parent_path");
 
 CREATE TABLE IF NOT EXISTS "channel_chat_participants" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -223,12 +226,6 @@ CREATE TABLE "channel_message_mentions" (
     "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     PRIMARY KEY(message_id, start_offset)
 );
-
-CREATE TABLE "channel_paths" (
-    "id_path" TEXT NOT NULL PRIMARY KEY,
-    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE
-);
-CREATE INDEX "index_channel_paths_on_channel_id" ON "channel_paths" ("channel_id");
 
 CREATE TABLE "channel_members" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
