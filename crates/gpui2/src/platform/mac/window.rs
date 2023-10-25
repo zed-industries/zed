@@ -1667,8 +1667,6 @@ extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
 }
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
-    let files = external_paths_from_event(dragging_info);
-
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     if send_new_event(

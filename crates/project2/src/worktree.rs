@@ -2052,6 +2052,7 @@ impl LocalSnapshot {
         ignore_stack
     }
 
+    #[allow(dead_code)] // todo!("remove this when we use it")
     #[cfg(test)]
     pub(crate) fn expanded_entries(&self) -> impl Iterator<Item = &Entry> {
         self.entries_by_path
