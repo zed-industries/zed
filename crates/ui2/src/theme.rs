@@ -178,9 +178,7 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> Self::ElementState {
-        cx.default_global::<ThemeStack>()
-            .0
-            .push(self.theme.clone());
+        cx.default_global::<ThemeStack>().0.push(self.theme.clone());
         let element_state = self.child.initialize(view_state, element_state, cx);
         cx.default_global::<ThemeStack>().0.pop();
         element_state
@@ -195,9 +193,7 @@ where
     where
         Self: Sized,
     {
-        cx.default_global::<ThemeStack>()
-            .0
-            .push(self.theme.clone());
+        cx.default_global::<ThemeStack>().0.push(self.theme.clone());
         let layout_id = self.child.layout(view_state, element_state, cx);
         cx.default_global::<ThemeStack>().0.pop();
         layout_id
@@ -212,9 +208,7 @@ where
     ) where
         Self: Sized,
     {
-        cx.default_global::<ThemeStack>()
-            .0
-            .push(self.theme.clone());
+        cx.default_global::<ThemeStack>().0.push(self.theme.clone());
         self.child.paint(bounds, view_state, frame_state, cx);
         cx.default_global::<ThemeStack>().0.pop();
     }
@@ -222,4 +216,8 @@ where
 
 pub fn theme(cx: &WindowContext) -> Arc<Theme> {
     Arc::new(cx.global::<Theme>().clone())
+}
+
+pub fn theme2(cx: &WindowContext) -> Arc<theme2::Theme> {
+    cx.global::<Arc<theme2::Theme>>().clone()
 }

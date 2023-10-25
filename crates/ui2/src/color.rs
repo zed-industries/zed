@@ -1,3 +1,4 @@
+use crate::theme2;
 pub use crate::{theme, ButtonVariant, ElementExt, Theme};
 use gpui2::{hsla, rgb, Hsla, WindowContext};
 use strum::EnumIter;
@@ -253,6 +254,7 @@ impl std::fmt::Debug for ThemeColor {
 impl ThemeColor {
     pub fn new(cx: &WindowContext) -> Self {
         let theme = theme(cx);
+        let theme2 = theme2(cx);
         let transparent = hsla(0.0, 0.0, 0.0, 0.0);
 
         let players = [
@@ -267,52 +269,52 @@ impl ThemeColor {
         ];
 
         Self {
-            transparent,
-            mac_os_traffic_light_red: rgb::<Hsla>(0xEC695E),
-            mac_os_traffic_light_yellow: rgb::<Hsla>(0xF4BF4F),
-            mac_os_traffic_light_green: rgb::<Hsla>(0x62C554),
-            border: theme.lowest.base.default.border,
-            border_variant: theme.lowest.variant.default.border,
-            border_focused: theme.lowest.accent.default.border,
-            border_transparent: transparent,
-            elevated_surface: theme.lowest.base.default.background,
-            surface: theme.middle.base.default.background,
-            background: theme.lowest.base.default.background,
-            filled_element: theme.lowest.base.default.background,
-            filled_element_hover: hsla(0.0, 0.0, 100.0, 0.12),
-            filled_element_active: hsla(0.0, 0.0, 100.0, 0.16),
-            filled_element_selected: theme.lowest.accent.default.background,
-            filled_element_disabled: transparent,
-            ghost_element: transparent,
-            ghost_element_hover: hsla(0.0, 0.0, 100.0, 0.08),
-            ghost_element_active: hsla(0.0, 0.0, 100.0, 0.12),
-            ghost_element_selected: theme.lowest.accent.default.background,
-            ghost_element_disabled: transparent,
-            text: theme.lowest.base.default.foreground,
-            text_muted: theme.lowest.variant.default.foreground,
+            transparent: theme2.transparent,
+            mac_os_traffic_light_red: theme2.mac_os_traffic_light_red,
+            mac_os_traffic_light_yellow: theme2.mac_os_traffic_light_yellow,
+            mac_os_traffic_light_green: theme2.mac_os_traffic_light_green,
+            border: theme2.border,
+            border_variant: theme2.border_variant,
+            border_focused: theme2.border_focused,
+            border_transparent: theme2.border_transparent,
+            elevated_surface: theme2.elevated_surface,
+            surface: theme2.surface,
+            background: theme2.background,
+            filled_element: theme2.filled_element,
+            filled_element_hover: theme2.filled_element_hover,
+            filled_element_active: theme2.filled_element_active,
+            filled_element_selected: theme2.filled_element_selected,
+            filled_element_disabled: theme2.filled_element_disabled,
+            ghost_element: theme2.ghost_element,
+            ghost_element_hover: theme2.ghost_element_hover,
+            ghost_element_active: theme2.ghost_element_active,
+            ghost_element_selected: theme2.ghost_element_selected,
+            ghost_element_disabled: theme2.ghost_element_disabled,
+            text: theme2.text,
+            text_muted: theme2.text_muted,
             /// TODO: map this to a real value
-            text_placeholder: theme.lowest.negative.default.foreground,
-            text_disabled: theme.lowest.base.disabled.foreground,
-            text_accent: theme.lowest.accent.default.foreground,
-            icon_muted: theme.lowest.variant.default.foreground,
+            text_placeholder: theme2.text_placeholder,
+            text_disabled: theme2.text_disabled,
+            text_accent: theme2.text_accent,
+            icon_muted: theme2.icon_muted,
             syntax: SyntaxColor::new(cx),
 
-            status_bar: theme.lowest.base.default.background,
-            title_bar: theme.lowest.base.default.background,
-            toolbar: theme.highest.base.default.background,
-            tab_bar: theme.middle.base.default.background,
-            editor: theme.highest.base.default.background,
-            editor_subheader: theme.middle.base.default.background,
-            terminal: theme.highest.base.default.background,
-            editor_active_line: theme.highest.on.default.background,
-            image_fallback_background: theme.lowest.base.default.background,
+            status_bar: theme2.status_bar,
+            title_bar: theme2.title_bar,
+            toolbar: theme2.toolbar,
+            tab_bar: theme2.tab_bar,
+            editor: theme2.editor,
+            editor_subheader: theme2.editor_subheader,
+            terminal: theme2.terminal,
+            editor_active_line: theme2.editor_active_line,
+            image_fallback_background: theme2.image_fallback_background,
 
-            git_created: theme.lowest.positive.default.foreground,
-            git_modified: theme.lowest.accent.default.foreground,
-            git_deleted: theme.lowest.negative.default.foreground,
-            git_conflict: theme.lowest.warning.default.foreground,
-            git_ignored: theme.lowest.base.disabled.foreground,
-            git_renamed: theme.lowest.warning.default.foreground,
+            git_created: theme2.git_created,
+            git_modified: theme2.git_modified,
+            git_deleted: theme2.git_deleted,
+            git_conflict: theme2.git_conflict,
+            git_ignored: theme2.git_ignored,
+            git_renamed: theme2.git_renamed,
 
             player: players,
         }
