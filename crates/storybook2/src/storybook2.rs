@@ -10,13 +10,15 @@ use std::sync::Arc;
 
 use clap::Parser;
 use gpui2::{
-    div, px, size, view, AnyView, AppContext, Bounds, Context, Element, ViewContext,
-    WindowBounds, WindowOptions,
+    div, px, size, view, AnyView, AppContext, Bounds, Context, Element, ViewContext, WindowBounds,
+    WindowOptions,
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 use story_selector::ComponentStory;
+use theme2::ThemeRegistry;
 use ui::{prelude::*, themed};
+use util::ResultExt;
 
 use crate::assets::Assets;
 use crate::story_selector::StorySelector;
@@ -48,7 +50,7 @@ fn main() {
 
     let story_selector = args.story.clone();
     let theme_name = args.theme.unwrap_or("One Dark".to_string());
-    let theme = themes::load_theme(theme_name).unwrap();
+    let theme = themes::load_theme(theme_name.clone()).unwrap();
 
     let asset_source = Arc::new(Assets);
     gpui2::App::production(asset_source).run(move |cx| {
@@ -56,6 +58,12 @@ fn main() {
 
         let selector =
             story_selector.unwrap_or(StorySelector::Component(ComponentStory::Workspace));
+
+        let theme_registry = cx.default_global::<ThemeRegistry>();
+
+        if let Some(new_theme) = theme_registry.get(&theme_name).log_err() {
+            cx.set_global(new_theme);
+        }
 
         cx.set_global(theme.clone());
         ui::settings::init(cx);

@@ -9364,6 +9364,7 @@ dependencies = [
  "smallvec",
  "strum",
  "theme",
+ "theme2",
 ]
 
 [[package]]
