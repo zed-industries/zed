@@ -4,13 +4,13 @@ use std::fmt;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use gpui2::Hsla;
-use gpui2::{serde_json, AssetSource, SharedString};
+use gpui2::{hsla, rgb, serde_json, AssetSource, Hsla, SharedString};
 use log::LevelFilter;
 use rust_embed::RustEmbed;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer};
 use simplelog::SimpleLogger;
+use theme2::{PlayerTheme, SyntaxTheme};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -24,7 +24,11 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let theme = load_theme(args.theme)?;
+    let legacy_theme = load_theme(args.theme)?;
+
+    let theme = convert_theme(legacy_theme)?;
+
+    println!("{:?}", ThemePrinter(theme));
 
     Ok(())
 }
@@ -54,10 +58,165 @@ impl AssetSource for Assets {
     }
 }
 
-fn convert_theme(theme: LegacyTheme) -> Result<theme2::Theme> {
-    let theme = theme2::Theme {
+#[derive(Clone, Copy)]
+pub struct PlayerThemeColors {
+    pub cursor: Hsla,
+    pub selection: Hsla,
+}
 
+impl PlayerThemeColors {
+    pub fn new(theme: &LegacyTheme, ix: usize) -> Self {
+        if ix < theme.players.len() {
+            Self {
+                cursor: theme.players[ix].cursor,
+                selection: theme.players[ix].selection,
+            }
+        } else {
+            Self {
+                cursor: rgb::<Hsla>(0xff00ff),
+                selection: rgb::<Hsla>(0xff00ff),
+            }
+        }
     }
+}
+
+impl From<PlayerThemeColors> for PlayerTheme {
+    fn from(value: PlayerThemeColors) -> Self {
+        Self {
+            cursor: value.cursor,
+            selection: value.selection,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct SyntaxColor {
+    pub comment: Hsla,
+    pub string: Hsla,
+    pub function: Hsla,
+    pub keyword: Hsla,
+}
+
+impl std::fmt::Debug for SyntaxColor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SyntaxColor")
+            .field("comment", &self.comment.to_rgb().to_hex())
+            .field("string", &self.string.to_rgb().to_hex())
+            .field("function", &self.function.to_rgb().to_hex())
+            .field("keyword", &self.keyword.to_rgb().to_hex())
+            .finish()
+    }
+}
+
+impl SyntaxColor {
+    pub fn new(theme: &LegacyTheme) -> Self {
+        Self {
+            comment: theme
+                .syntax
+                .get("comment")
+                .cloned()
+                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
+            string: theme
+                .syntax
+                .get("string")
+                .cloned()
+                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
+            function: theme
+                .syntax
+                .get("function")
+                .cloned()
+                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
+            keyword: theme
+                .syntax
+                .get("keyword")
+                .cloned()
+                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
+        }
+    }
+}
+
+impl From<SyntaxColor> for SyntaxTheme {
+    fn from(value: SyntaxColor) -> Self {
+        Self {
+            comment: value.comment,
+            string: value.string,
+            keyword: value.keyword,
+            function: value.function,
+            highlights: Vec::new(),
+        }
+    }
+}
+
+fn convert_theme(theme: LegacyTheme) -> Result<theme2::Theme> {
+    let transparent = hsla(0.0, 0.0, 0.0, 0.0);
+
+    let players: [PlayerTheme; 8] = [
+        PlayerThemeColors::new(&theme, 0).into(),
+        PlayerThemeColors::new(&theme, 1).into(),
+        PlayerThemeColors::new(&theme, 2).into(),
+        PlayerThemeColors::new(&theme, 3).into(),
+        PlayerThemeColors::new(&theme, 4).into(),
+        PlayerThemeColors::new(&theme, 5).into(),
+        PlayerThemeColors::new(&theme, 6).into(),
+        PlayerThemeColors::new(&theme, 7).into(),
+    ];
+
+    let theme = theme2::Theme {
+        metadata: theme2::ThemeMetadata {
+            name: theme.name.clone().into(),
+            is_light: theme.is_light,
+        },
+        transparent,
+        mac_os_traffic_light_red: rgb::<Hsla>(0xEC695E),
+        mac_os_traffic_light_yellow: rgb::<Hsla>(0xF4BF4F),
+        mac_os_traffic_light_green: rgb::<Hsla>(0x62C554),
+        border: theme.lowest.base.default.border,
+        border_variant: theme.lowest.variant.default.border,
+        border_focused: theme.lowest.accent.default.border,
+        border_transparent: transparent,
+        elevated_surface: theme.lowest.base.default.background,
+        surface: theme.middle.base.default.background,
+        background: theme.lowest.base.default.background,
+        filled_element: theme.lowest.base.default.background,
+        filled_element_hover: hsla(0.0, 0.0, 100.0, 0.12),
+        filled_element_active: hsla(0.0, 0.0, 100.0, 0.16),
+        filled_element_selected: theme.lowest.accent.default.background,
+        filled_element_disabled: transparent,
+        ghost_element: transparent,
+        ghost_element_hover: hsla(0.0, 0.0, 100.0, 0.08),
+        ghost_element_active: hsla(0.0, 0.0, 100.0, 0.12),
+        ghost_element_selected: theme.lowest.accent.default.background,
+        ghost_element_disabled: transparent,
+        text: theme.lowest.base.default.foreground,
+        text_muted: theme.lowest.variant.default.foreground,
+        /// TODO: map this to a real value
+        text_placeholder: theme.lowest.negative.default.foreground,
+        text_disabled: theme.lowest.base.disabled.foreground,
+        text_accent: theme.lowest.accent.default.foreground,
+        icon_muted: theme.lowest.variant.default.foreground,
+        syntax: SyntaxColor::new(&theme).into(),
+
+        status_bar: theme.lowest.base.default.background,
+        title_bar: theme.lowest.base.default.background,
+        toolbar: theme.highest.base.default.background,
+        tab_bar: theme.middle.base.default.background,
+        editor: theme.highest.base.default.background,
+        editor_subheader: theme.middle.base.default.background,
+        terminal: theme.highest.base.default.background,
+        editor_active_line: theme.highest.on.default.background,
+        image_fallback_background: theme.lowest.base.default.background,
+
+        git_created: theme.lowest.positive.default.foreground,
+        git_modified: theme.lowest.accent.default.foreground,
+        git_deleted: theme.lowest.negative.default.foreground,
+        git_conflict: theme.lowest.warning.default.foreground,
+        git_ignored: theme.lowest.base.disabled.foreground,
+        git_renamed: theme.lowest.warning.default.foreground,
+
+        players,
+    };
+
+    Ok(theme)
 }
 
 #[derive(Deserialize)]
@@ -202,4 +361,132 @@ where
         }
     }
     deserializer.deserialize_map(SyntaxVisitor)
+}
+
+pub struct ThemePrinter(theme2::Theme);
+
+impl std::fmt::Debug for ThemePrinter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Theme")
+            .field("transparent", &self.0.transparent.to_rgb().to_hex())
+            .field(
+                "mac_os_traffic_light_red",
+                &self.0.mac_os_traffic_light_red.to_rgb().to_hex(),
+            )
+            .field(
+                "mac_os_traffic_light_yellow",
+                &self.0.mac_os_traffic_light_yellow.to_rgb().to_hex(),
+            )
+            .field(
+                "mac_os_traffic_light_green",
+                &self.0.mac_os_traffic_light_green.to_rgb().to_hex(),
+            )
+            .field("border", &self.0.border.to_rgb().to_hex())
+            .field("border_variant", &self.0.border_variant.to_rgb().to_hex())
+            .field("border_focused", &self.0.border_focused.to_rgb().to_hex())
+            .field(
+                "border_transparent",
+                &self.0.border_transparent.to_rgb().to_hex(),
+            )
+            .field(
+                "elevated_surface",
+                &self.0.elevated_surface.to_rgb().to_hex(),
+            )
+            .field("surface", &self.0.surface.to_rgb().to_hex())
+            .field("background", &self.0.background.to_rgb().to_hex())
+            .field("filled_element", &self.0.filled_element.to_rgb().to_hex())
+            .field(
+                "filled_element_hover",
+                &self.0.filled_element_hover.to_rgb().to_hex(),
+            )
+            .field(
+                "filled_element_active",
+                &self.0.filled_element_active.to_rgb().to_hex(),
+            )
+            .field(
+                "filled_element_selected",
+                &self.0.filled_element_selected.to_rgb().to_hex(),
+            )
+            .field(
+                "filled_element_disabled",
+                &self.0.filled_element_disabled.to_rgb().to_hex(),
+            )
+            .field("ghost_element", &self.0.ghost_element.to_rgb().to_hex())
+            .field(
+                "ghost_element_hover",
+                &self.0.ghost_element_hover.to_rgb().to_hex(),
+            )
+            .field(
+                "ghost_element_active",
+                &self.0.ghost_element_active.to_rgb().to_hex(),
+            )
+            .field(
+                "ghost_element_selected",
+                &self.0.ghost_element_selected.to_rgb().to_hex(),
+            )
+            .field(
+                "ghost_element_disabled",
+                &self.0.ghost_element_disabled.to_rgb().to_hex(),
+            )
+            .field("text", &self.0.text.to_rgb().to_hex())
+            .field("text_muted", &self.0.text_muted.to_rgb().to_hex())
+            .field(
+                "text_placeholder",
+                &self.0.text_placeholder.to_rgb().to_hex(),
+            )
+            .field("text_disabled", &self.0.text_disabled.to_rgb().to_hex())
+            .field("text_accent", &self.0.text_accent.to_rgb().to_hex())
+            .field("icon_muted", &self.0.icon_muted.to_rgb().to_hex())
+            .field("syntax", &SyntaxThemePrinter(self.0.syntax.clone()))
+            .field("status_bar", &self.0.status_bar.to_rgb().to_hex())
+            .field("title_bar", &self.0.title_bar.to_rgb().to_hex())
+            .field("toolbar", &self.0.toolbar.to_rgb().to_hex())
+            .field("tab_bar", &self.0.tab_bar.to_rgb().to_hex())
+            .field("editor", &self.0.editor.to_rgb().to_hex())
+            .field(
+                "editor_subheader",
+                &self.0.editor_subheader.to_rgb().to_hex(),
+            )
+            .field(
+                "editor_active_line",
+                &self.0.editor_active_line.to_rgb().to_hex(),
+            )
+            .field("terminal", &self.0.terminal.to_rgb().to_hex())
+            .field(
+                "image_fallback_background",
+                &self.0.image_fallback_background.to_rgb().to_hex(),
+            )
+            .field("git_created", &self.0.git_created.to_rgb().to_hex())
+            .field("git_modified", &self.0.git_modified.to_rgb().to_hex())
+            .field("git_deleted", &self.0.git_deleted.to_rgb().to_hex())
+            .field("git_conflict", &self.0.git_conflict.to_rgb().to_hex())
+            .field("git_ignored", &self.0.git_ignored.to_rgb().to_hex())
+            .field("git_renamed", &self.0.git_renamed.to_rgb().to_hex())
+            .field("player", &self.0.players.map(PlayerThemePrinter))
+            .finish()
+    }
+}
+
+pub struct SyntaxThemePrinter(SyntaxTheme);
+
+impl std::fmt::Debug for SyntaxThemePrinter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SyntaxTheme")
+            .field("comment", &self.0.comment.to_rgb().to_hex())
+            .field("string", &self.0.string.to_rgb().to_hex())
+            .field("function", &self.0.function.to_rgb().to_hex())
+            .field("keyword", &self.0.keyword.to_rgb().to_hex())
+            .finish()
+    }
+}
+
+pub struct PlayerThemePrinter(PlayerTheme);
+
+impl std::fmt::Debug for PlayerThemePrinter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlayerTheme")
+            .field("cursor", &self.0.cursor.to_rgb().to_hex())
+            .field("selection", &self.0.selection.to_rgb().to_hex())
+            .finish()
+    }
 }
