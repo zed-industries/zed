@@ -39,9 +39,9 @@ impl App {
         Self::new(current_platform(), asset_source, http_client)
     }
 
-    #[cfg(any(test, feature = "test"))]
-    pub fn test() -> Self {
-        let platform = Arc::new(super::TestPlatform::new());
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(seed: u64) -> Self {
+        let platform = Arc::new(crate::TestPlatform::new(seed));
         let asset_source = Arc::new(());
         let http_client = util::http::FakeHttpClient::with_404_response();
         Self::new(platform, asset_source, http_client)

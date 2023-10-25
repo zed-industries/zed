@@ -1,7 +1,7 @@
 mod keystroke;
 #[cfg(target_os = "macos")]
 mod mac;
-#[cfg(any(test, feature = "test"))]
+#[cfg(any(test, feature = "test-support"))]
 mod test;
 
 use crate::{
@@ -30,7 +30,7 @@ use std::{
 pub use keystroke::*;
 #[cfg(target_os = "macos")]
 pub use mac::*;
-#[cfg(any(test, feature = "test"))]
+#[cfg(any(test, feature = "test-support"))]
 pub use test::*;
 pub use time::UtcOffset;
 
@@ -161,6 +161,9 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch(&self, runnable: Runnable);
     fn dispatch_on_main_thread(&self, runnable: Runnable);
     fn dispatch_after(&self, duration: Duration, runnable: Runnable);
+    fn poll(&self) -> bool;
+    #[cfg(any(test, feature = "test-support"))]
+    fn advance_clock(&self, duration: Duration);
 }
 
 pub trait PlatformTextSystem: Send + Sync {

@@ -12,10 +12,10 @@ pub use util::*;
 //     timer.race(future).await
 // }
 
-#[cfg(any(test, feature = "test"))]
+#[cfg(any(test, feature = "test-support"))]
 pub struct CwdBacktrace<'a>(pub &'a backtrace::Backtrace);
 
-#[cfg(any(test, feature = "test"))]
+#[cfg(any(test, feature = "test-support"))]
 impl<'a> std::fmt::Debug for CwdBacktrace<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use backtrace::{BacktraceFmt, BytesOrWideString};
