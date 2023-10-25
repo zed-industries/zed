@@ -1,12 +1,16 @@
 mod async_context;
 mod entity_map;
 mod model_context;
+#[cfg(any(test, feature = "test-support"))]
+mod test_context;
 
 pub use async_context::*;
 pub use entity_map::*;
 pub use model_context::*;
 use refineable::Refineable;
 use smallvec::SmallVec;
+#[cfg(any(test, feature = "test-support"))]
+pub use test_context::*;
 
 use crate::{
     current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AppMetadata, AssetSource,
