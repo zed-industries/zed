@@ -17,6 +17,7 @@ fs = { path = "../fs" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 menu = { path = "../menu" }
+multi_buffer = { path = "../multi_buffer" }
 search = { path = "../search" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
