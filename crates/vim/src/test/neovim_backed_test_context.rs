@@ -1,7 +1,10 @@
 use editor::scroll::VERTICAL_SCROLL_MARGIN;
 use indoc::indoc;
 use settings::SettingsStore;
-use std::ops::{Deref, DerefMut};
+use std::{
+    ops::{Deref, DerefMut},
+    panic, thread,
+};
 
 use collections::{HashMap, HashSet};
 use gpui::{geometry::vector::vec2f, ContextHandle};
@@ -59,12 +62,22 @@ pub struct NeovimBackedTestContext<'a> {
 
 impl<'a> NeovimBackedTestContext<'a> {
     pub async fn new(cx: &'a mut gpui::TestAppContext) -> NeovimBackedTestContext<'a> {
-        let function_name = cx.function_name.clone();
-        let cx = VimTestContext::new(cx, true).await;
+        // rust stores the name of the test on the current thread.
+        // We use this to automatically name a file that will store
+        // the neovim connection's requests/responses so that we can
+        // run without neovim on CI.
+        let thread = thread::current();
+        let test_name = thread
+            .name()
+            .expect("thread is not named")
+            .split(":")
+            .last()
+            .unwrap()
+            .to_string();
         Self {
-            cx,
+            cx: VimTestContext::new(cx, true).await,
             exemptions: Default::default(),
-            neovim: NeovimConnection::new(function_name).await,
+            neovim: NeovimConnection::new(test_name).await,
 
             last_set_state: None,
             recent_keystrokes: Default::default(),
