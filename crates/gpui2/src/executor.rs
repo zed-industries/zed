@@ -207,8 +207,8 @@ impl Executor {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub async fn simulate_random_delay(&self) {
-        todo!("simulate_random_delay")
+    pub fn simulate_random_delay(&self) -> impl Future<Output = ()> {
+        self.dispatcher.as_test().unwrap().simulate_random_delay()
     }
 
     pub fn num_cpus(&self) -> usize {

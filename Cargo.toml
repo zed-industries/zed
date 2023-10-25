@@ -34,6 +34,7 @@ members = [
     "crates/feedback",
     "crates/file_finder",
     "crates/fs",
+    "crates/fs2",
     "crates/fsevent",
     "crates/fuzzy",
     "crates/fuzzy2",

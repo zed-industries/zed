@@ -4,7 +4,10 @@ use collections::{BTreeMap, HashMap, VecDeque};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use std::{
+    future::Future,
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 use util::post_inc;
@@ -42,6 +45,34 @@ impl TestDispatcher {
         TestDispatcher {
             id: TestDispatcherId(0),
             state: Arc::new(Mutex::new(state)),
+        }
+    }
+
+    pub fn advance_clock(&self, by: Duration) {
+        self.state.lock().time += by;
+    }
+
+    pub fn simulate_random_delay(&self) -> impl Future<Output = ()> {
+        pub struct YieldNow {
+            count: usize,
+        }
+
+        impl Future for YieldNow {
+            type Output = ();
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+                if self.count > 0 {
+                    self.count -= 1;
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                } else {
+                    Poll::Ready(())
+                }
+            }
+        }
+
+        YieldNow {
+            count: self.state.lock().random.gen_range(0..10),
         }
     }
 }
@@ -131,8 +162,8 @@ impl PlatformDispatcher for TestDispatcher {
         true
     }
 
-    fn advance_clock(&self, by: Duration) {
-        self.state.lock().time += by;
+    fn as_test(&self) -> Option<&TestDispatcher> {
+        Some(self)
     }
 }
 
