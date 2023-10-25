@@ -4,7 +4,7 @@ use collections::HashMap;
 
 use gpui::{AppContext, AssetSource};
 use serde_derive::Deserialize;
-use util::{iife, paths::PathExt};
+use util::{maybe, paths::PathExt};
 
 #[derive(Deserialize, Debug)]
 struct TypeConfig {
@@ -42,12 +42,12 @@ impl FileAssociations {
     }
 
     pub fn get_icon(path: &Path, cx: &AppContext) -> Arc<str> {
-        iife!({
+        maybe!({
             let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
 
             // FIXME: Associate a type with the languages and have the file's langauge
             //        override these associations
-            iife!({
+            maybe!({
                 let suffix = path.icon_suffix()?;
 
                 this.suffixes
@@ -61,7 +61,7 @@ impl FileAssociations {
     }
 
     pub fn get_folder_icon(expanded: bool, cx: &AppContext) -> Arc<str> {
-        iife!({
+        maybe!({
             let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
 
             let key = if expanded {
@@ -78,7 +78,7 @@ impl FileAssociations {
     }
 
     pub fn get_chevron_icon(expanded: bool, cx: &AppContext) -> Arc<str> {
-        iife!({
+        maybe!({
             let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
 
             let key = if expanded {
