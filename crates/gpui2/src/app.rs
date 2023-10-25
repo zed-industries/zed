@@ -39,72 +39,11 @@ pub struct App(Arc<Mutex<AppContext>>);
 
 impl App {
     pub fn production(asset_source: Arc<dyn AssetSource>) -> Self {
-        let http_client = http::client();
-        Self::new(current_platform(), asset_source, http_client)
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn test(seed: u64) -> Self {
-        let platform = Arc::new(crate::TestPlatform::new(seed));
-        let asset_source = Arc::new(());
-        let http_client = util::http::FakeHttpClient::with_404_response();
-        Self::new(platform, asset_source, http_client)
-    }
-
-    fn new(
-        platform: Arc<dyn Platform>,
-        asset_source: Arc<dyn AssetSource>,
-        http_client: Arc<dyn HttpClient>,
-    ) -> Self {
-        let executor = platform.executor();
-        assert!(
-            executor.is_main_thread(),
-            "must construct App on main thread"
-        );
-
-        let text_system = Arc::new(TextSystem::new(platform.text_system()));
-        let mut entities = EntityMap::new();
-        let unit_entity = entities.insert(entities.reserve(), ());
-        let app_metadata = AppMetadata {
-            os_name: platform.os_name(),
-            os_version: platform.os_version().ok(),
-            app_version: platform.app_version().ok(),
-        };
-
-        Self(Arc::new_cyclic(|this| {
-            Mutex::new(AppContext {
-                this: this.clone(),
-                text_system,
-                platform: MainThreadOnly::new(platform, executor.clone()),
-                app_metadata,
-                flushing_effects: false,
-                pending_updates: 0,
-                next_frame_callbacks: Default::default(),
-                executor,
-                svg_renderer: SvgRenderer::new(asset_source.clone()),
-                asset_source,
-                image_cache: ImageCache::new(http_client),
-                text_style_stack: Vec::new(),
-                globals_by_type: HashMap::default(),
-                unit_entity,
-                entities,
-                windows: SlotMap::with_key(),
-                keymap: Arc::new(RwLock::new(Keymap::default())),
-                global_action_listeners: HashMap::default(),
-                action_builders: HashMap::default(),
-                pending_effects: VecDeque::new(),
-                pending_notifications: HashSet::default(),
-                pending_global_notifications: HashSet::default(),
-                observers: SubscriberSet::new(),
-                event_listeners: SubscriberSet::new(),
-                release_listeners: SubscriberSet::new(),
-                global_observers: SubscriberSet::new(),
-                quit_observers: SubscriberSet::new(),
-                layout_id_buffer: Default::default(),
-                propagate_event: true,
-                active_drag: None,
-            })
-        }))
+        Self(AppContext::new(
+            current_platform(),
+            asset_source,
+            http::client(),
+        ))
     }
 
     pub fn run<F>(self, on_finish_launching: F)
@@ -210,6 +149,62 @@ pub struct AppContext {
 }
 
 impl AppContext {
+    pub(crate) fn new(
+        platform: Arc<dyn Platform>,
+        asset_source: Arc<dyn AssetSource>,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Arc<Mutex<Self>> {
+        let executor = platform.executor();
+        assert!(
+            executor.is_main_thread(),
+            "must construct App on main thread"
+        );
+
+        let text_system = Arc::new(TextSystem::new(platform.text_system()));
+        let mut entities = EntityMap::new();
+        let unit_entity = entities.insert(entities.reserve(), ());
+        let app_metadata = AppMetadata {
+            os_name: platform.os_name(),
+            os_version: platform.os_version().ok(),
+            app_version: platform.app_version().ok(),
+        };
+
+        Arc::new_cyclic(|this| {
+            Mutex::new(AppContext {
+                this: this.clone(),
+                text_system,
+                platform: MainThreadOnly::new(platform, executor.clone()),
+                app_metadata,
+                flushing_effects: false,
+                pending_updates: 0,
+                next_frame_callbacks: Default::default(),
+                executor,
+                svg_renderer: SvgRenderer::new(asset_source.clone()),
+                asset_source,
+                image_cache: ImageCache::new(http_client),
+                text_style_stack: Vec::new(),
+                globals_by_type: HashMap::default(),
+                unit_entity,
+                entities,
+                windows: SlotMap::with_key(),
+                keymap: Arc::new(RwLock::new(Keymap::default())),
+                global_action_listeners: HashMap::default(),
+                action_builders: HashMap::default(),
+                pending_effects: VecDeque::new(),
+                pending_notifications: HashSet::default(),
+                pending_global_notifications: HashSet::default(),
+                observers: SubscriberSet::new(),
+                event_listeners: SubscriberSet::new(),
+                release_listeners: SubscriberSet::new(),
+                global_observers: SubscriberSet::new(),
+                quit_observers: SubscriberSet::new(),
+                layout_id_buffer: Default::default(),
+                propagate_event: true,
+                active_drag: None,
+            })
+        })
+    }
+
     pub fn quit(&mut self) {
         let mut futures = Vec::new();
 

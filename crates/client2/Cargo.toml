@@ -13,7 +13,7 @@ test-support = ["collections/test-support", "gpui2/test-support", "rpc/test-supp
 
 [dependencies]
 collections = { path = "../collections" }
-db = { path = "../db" }
+db2 = { path = "../db2" }
 gpui2 = { path = "../gpui2" }
 util = { path = "../util" }
 rpc = { path = "../rpc" }

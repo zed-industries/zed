@@ -162,8 +162,11 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch_on_main_thread(&self, runnable: Runnable);
     fn dispatch_after(&self, duration: Duration, runnable: Runnable);
     fn poll(&self) -> bool;
+
     #[cfg(any(test, feature = "test-support"))]
-    fn advance_clock(&self, duration: Duration);
+    fn as_test(&self) -> Option<&TestDispatcher> {
+        None
+    }
 }
 
 pub trait PlatformTextSystem: Send + Sync {

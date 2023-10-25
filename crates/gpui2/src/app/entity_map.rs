@@ -68,6 +68,7 @@ impl EntityMap {
 
     /// Move an entity to the stack.
     pub fn lease<'a, T>(&mut self, handle: &'a Handle<T>) -> Lease<'a, T> {
+        self.assert_valid_context(handle);
         let entity = Some(
             self.entities
                 .remove(handle.entity_id)
@@ -87,7 +88,15 @@ impl EntityMap {
     }
 
     pub fn read<T: 'static>(&self, handle: &Handle<T>) -> &T {
+        self.assert_valid_context(handle);
         self.entities[handle.entity_id].downcast_ref().unwrap()
+    }
+
+    fn assert_valid_context(&self, handle: &AnyHandle) {
+        debug_assert!(
+            Weak::ptr_eq(&handle.entity_map, &Arc::downgrade(&self.ref_counts)),
+            "used a handle with the wrong context"
+        );
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, AnyBox)> {

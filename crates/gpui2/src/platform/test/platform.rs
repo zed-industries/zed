@@ -1,5 +1,5 @@
-use crate::{DisplayId, Executor, Platform, PlatformTextSystem, TestDispatcher};
-use rand::prelude::*;
+use crate::{DisplayId, Executor, Platform, PlatformTextSystem};
+use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
 pub struct TestPlatform {
@@ -7,11 +7,8 @@ pub struct TestPlatform {
 }
 
 impl TestPlatform {
-    pub fn new(seed: u64) -> Self {
-        let rng = StdRng::seed_from_u64(seed);
-        TestPlatform {
-            executor: Executor::new(Arc::new(TestDispatcher::new(rng))),
-        }
+    pub fn new(executor: Executor) -> Self {
+        TestPlatform { executor }
     }
 }
 
@@ -136,18 +133,18 @@ impl Platform for TestPlatform {
     }
 
     fn os_name(&self) -> &'static str {
-        unimplemented!()
+        "test"
     }
 
-    fn os_version(&self) -> anyhow::Result<crate::SemanticVersion> {
-        unimplemented!()
+    fn os_version(&self) -> Result<crate::SemanticVersion> {
+        Err(anyhow!("os_version called on TestPlatform"))
     }
 
-    fn app_version(&self) -> anyhow::Result<crate::SemanticVersion> {
-        unimplemented!()
+    fn app_version(&self) -> Result<crate::SemanticVersion> {
+        Err(anyhow!("app_version called on TestPlatform"))
     }
 
-    fn app_path(&self) -> anyhow::Result<std::path::PathBuf> {
+    fn app_path(&self) -> Result<std::path::PathBuf> {
         unimplemented!()
     }
 
@@ -155,7 +152,7 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn path_for_auxiliary_executable(&self, _name: &str) -> anyhow::Result<std::path::PathBuf> {
+    fn path_for_auxiliary_executable(&self, _name: &str) -> Result<std::path::PathBuf> {
         unimplemented!()
     }
 
@@ -175,20 +172,15 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn write_credentials(
-        &self,
-        _url: &str,
-        _username: &str,
-        _password: &[u8],
-    ) -> anyhow::Result<()> {
+    fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Result<()> {
         unimplemented!()
     }
 
-    fn read_credentials(&self, _url: &str) -> anyhow::Result<Option<(String, Vec<u8>)>> {
+    fn read_credentials(&self, _url: &str) -> Result<Option<(String, Vec<u8>)>> {
         unimplemented!()
     }
 
-    fn delete_credentials(&self, _url: &str) -> anyhow::Result<()> {
+    fn delete_credentials(&self, _url: &str) -> Result<()> {
         unimplemented!()
     }
 }

@@ -71,11 +71,6 @@ impl PlatformDispatcher for MacDispatcher {
     fn poll(&self) -> bool {
         false
     }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn advance_clock(&self, _: Duration) {
-        unimplemented!()
-    }
 }
 
 extern "C" fn trampoline(runnable: *mut c_void) {

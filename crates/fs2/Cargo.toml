@@ -1,0 +1,41 @@
+[package]
+name = "fs2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/fs2.rs"
+
+[dependencies]
+collections = { path = "../collections" }
+rope = { path = "../rope" }
+text = { path = "../text" }
+util = { path = "../util" }
+sum_tree = { path = "../sum_tree" }
+
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+tempfile = "3"
+fsevent = { path = "../fsevent" }
+lazy_static.workspace = true
+parking_lot.workspace = true
+smol.workspace = true
+regex.workspace = true
+git2.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_json.workspace = true
+log.workspace = true
+libc = "0.2"
+time.workspace = true
+
+gpui2 = { path = "../gpui2", optional = true}
+
+[dev-dependencies]
+gpui2 = { path = "../gpui2", features = ["test-support"] }
+rand.workspace = true
+
+[features]
+test-support = ["gpui2/test-support"]

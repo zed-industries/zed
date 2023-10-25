@@ -1471,7 +1471,7 @@ dependencies = [
  "async-recursion 0.3.2",
  "async-tungstenite",
  "collections",
- "db",
+ "db2",
  "feature_flags2",
  "futures 0.3.28",
  "gpui2",
@@ -2989,6 +2989,35 @@ dependencies = [
  "io-lifetimes 0.5.3",
  "rustix 0.33.7",
  "winapi 0.3.9",
+]
+
+[[package]]
+name = "fs2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "fsevent",
+ "futures 0.3.28",
+ "git2",
+ "gpui2",
+ "lazy_static",
+ "libc",
+ "log",
+ "parking_lot 0.11.2",
+ "rand 0.8.5",
+ "regex",
+ "rope",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "smol",
+ "sum_tree",
+ "tempfile",
+ "text",
+ "time",
+ "util",
 ]
 
 [[package]]
@@ -7485,7 +7514,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "feature_flags",
+ "feature_flags2",
  "fs",
  "futures 0.3.28",
  "gpui2",
