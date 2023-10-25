@@ -1,5 +1,4 @@
-use crate::{DisplayId, Executor, Platform, PlatformTextSystem, TestDispatcher};
-use rand::prelude::*;
+use crate::{DisplayId, Executor, Platform, PlatformTextSystem};
 use std::sync::Arc;
 
 pub struct TestPlatform {
@@ -7,11 +6,8 @@ pub struct TestPlatform {
 }
 
 impl TestPlatform {
-    pub fn new(seed: u64) -> Self {
-        let rng = StdRng::seed_from_u64(seed);
-        TestPlatform {
-            executor: Executor::new(Arc::new(TestDispatcher::new(rng))),
-        }
+    pub fn new(executor: Executor) -> Self {
+        TestPlatform { executor }
     }
 }
 

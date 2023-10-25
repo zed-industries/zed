@@ -1,6 +1,6 @@
 use crate::{
     AnyWindowHandle, AppContext, AsyncAppContext, Context, Executor, Handle, MainThread,
-    ModelContext, Result, Task, WindowContext,
+    ModelContext, Result, Task, TestDispatcher, TestPlatform, WindowContext,
 };
 use parking_lot::Mutex;
 use std::{any::Any, future::Future, sync::Arc};
@@ -37,6 +37,17 @@ impl Context for TestAppContext {
 }
 
 impl TestAppContext {
+    pub fn new(dispatcher: TestDispatcher) -> Self {
+        let executor = Executor::new(Arc::new(dispatcher));
+        let platform = Arc::new(TestPlatform::new(executor.clone()));
+        let asset_source = Arc::new(());
+        let http_client = util::http::FakeHttpClient::with_404_response();
+        Self {
+            app: AppContext::new(platform, asset_source, http_client),
+            executor,
+        }
+    }
+
     pub fn refresh(&mut self) -> Result<()> {
         let mut lock = self.app.lock();
         lock.refresh();
@@ -47,27 +58,27 @@ impl TestAppContext {
         &self.executor
     }
 
-    pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> Result<R> {
+    pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> R {
         let mut lock = self.app.lock();
-        Ok(f(&mut *lock))
+        f(&mut *lock)
     }
 
     pub fn read_window<R>(
         &self,
         handle: AnyWindowHandle,
-        update: impl FnOnce(&WindowContext) -> R,
-    ) -> Result<R> {
+        read: impl FnOnce(&WindowContext) -> R,
+    ) -> R {
         let mut app_context = self.app.lock();
-        app_context.read_window(handle.id, update)
+        app_context.read_window(handle.id, read).unwrap()
     }
 
     pub fn update_window<R>(
         &self,
         handle: AnyWindowHandle,
         update: impl FnOnce(&mut WindowContext) -> R,
-    ) -> Result<R> {
+    ) -> R {
         let mut app = self.app.lock();
-        app.update_window(handle.id, update)
+        app.update_window(handle.id, update).unwrap()
     }
 
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static) -> Task<R>
@@ -94,22 +105,22 @@ impl TestAppContext {
     pub fn run_on_main<R>(
         &self,
         f: impl FnOnce(&mut MainThread<AppContext>) -> R + Send + 'static,
-    ) -> Result<Task<R>>
+    ) -> Task<R>
     where
         R: Send + 'static,
     {
         let mut app_context = self.app.lock();
-        Ok(app_context.run_on_main(f))
+        app_context.run_on_main(f)
     }
 
-    pub fn has_global<G: 'static>(&self) -> Result<bool> {
+    pub fn has_global<G: 'static>(&self) -> bool {
         let lock = self.app.lock();
-        Ok(lock.has_global::<G>())
+        lock.has_global::<G>()
     }
 
-    pub fn read_global<G: 'static, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> Result<R> {
+    pub fn read_global<G: 'static, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> R {
         let lock = self.app.lock();
-        Ok(read(lock.global(), &lock))
+        read(lock.global(), &lock)
     }
 
     pub fn try_read_global<G: 'static, R>(
@@ -123,9 +134,9 @@ impl TestAppContext {
     pub fn update_global<G: 'static, R>(
         &mut self,
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
-    ) -> Result<R> {
+    ) -> R {
         let mut lock = self.app.lock();
-        Ok(lock.update_global(update))
+        lock.update_global(update)
     }
 
     fn to_async(&self) -> AsyncAppContext {

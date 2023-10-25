@@ -139,11 +139,15 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{font, App};
+    use crate::{font, TestAppContext, TestDispatcher};
+    use rand::prelude::*;
 
     #[test]
     fn test_wrap_line() {
-        App::test(0).run(|cx| {
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        let cx = TestAppContext::new(dispatcher);
+
+        cx.update(|cx| {
             let text_system = cx.text_system().clone();
             let mut wrapper = LineWrapper::new(
                 text_system.font_id(&font("Courier")).unwrap(),
