@@ -18,6 +18,7 @@
 //! Work in Progress!
 //!
 
+// TODO: Fix warnings instead of supressing.
 #![allow(dead_code, unused_variables)]
 
 mod color;
