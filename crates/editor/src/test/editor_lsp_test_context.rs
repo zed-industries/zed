@@ -6,17 +6,17 @@ use std::{
 
 use anyhow::Result;
 
+use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
 use gpui::{json, ViewContext, ViewHandle};
 use indoc::indoc;
 use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageQueries};
 use lsp::{notification, request};
+use multi_buffer::ToPointUtf16;
 use project::Project;
 use smol::stream::StreamExt;
 use workspace::{AppState, Workspace, WorkspaceHandle};
-
-use crate::{multi_buffer::ToPointUtf16, Editor, ToPoint};
 
 use super::editor_test_context::EditorTestContext;
 
