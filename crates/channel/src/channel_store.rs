@@ -9,11 +9,10 @@ use db::RELEASE_CHANNEL;
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use rpc::{
-    proto::{self, ChannelEdge, ChannelPermission, ChannelRole, ChannelVisibility},
+    proto::{self, ChannelVisibility},
     TypedEnvelope,
 };
-use serde_derive::{Deserialize, Serialize};
-use std::{borrow::Cow, hash::Hash, mem, ops::Deref, sync::Arc, time::Duration};
+use std::{mem, sync::Arc, time::Duration};
 use util::ResultExt;
 
 pub fn init(client: &Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut AppContext) {
@@ -27,10 +26,9 @@ pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub type ChannelId = u64;
 
 pub struct ChannelStore {
-    channel_index: ChannelIndex,
+    pub channel_index: ChannelIndex,
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
-    channels_with_admin_privileges: HashSet<ChannelId>,
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
     opened_buffers: HashMap<ChannelId, OpenedModelHandle<ChannelBuffer>>,
@@ -43,15 +41,15 @@ pub struct ChannelStore {
     _update_channels: Task<()>,
 }
 
-pub type ChannelData = (Channel, ChannelPath);
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
     pub visibility: proto::ChannelVisibility,
+    pub role: proto::ChannelRole,
     pub unseen_note_version: Option<(u64, clock::Global)>,
     pub unseen_message_id: Option<u64>,
+    pub parent_path: Vec<u64>,
 }
 
 impl Channel {
@@ -72,10 +70,11 @@ impl Channel {
 
         slug.trim_matches(|c| c == '-').to_string()
     }
-}
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
-pub struct ChannelPath(Arc<[ChannelId]>);
+    pub fn can_edit_notes(&self) -> bool {
+        self.role == proto::ChannelRole::Member || self.role == proto::ChannelRole::Admin
+    }
+}
 
 pub struct ChannelMembership {
     pub user: Arc<User>,
@@ -161,7 +160,6 @@ impl ChannelStore {
             channel_invitations: Vec::default(),
             channel_index: ChannelIndex::default(),
             channel_participants: Default::default(),
-            channels_with_admin_privileges: Default::default(),
             outgoing_invites: Default::default(),
             opened_buffers: Default::default(),
             opened_chats: Default::default(),
@@ -190,16 +188,6 @@ impl ChannelStore {
         self.client.clone()
     }
 
-    pub fn has_children(&self, channel_id: ChannelId) -> bool {
-        self.channel_index.iter().any(|path| {
-            if let Some(ix) = path.iter().position(|id| *id == channel_id) {
-                path.len() > ix + 1
-            } else {
-                false
-            }
-        })
-    }
-
     /// Returns the number of unique channels in the store
     pub fn channel_count(&self) -> usize {
         self.channel_index.by_id().len()
@@ -219,20 +207,19 @@ impl ChannelStore {
     }
 
     /// Iterate over all entries in the channel DAG
-    pub fn channel_dag_entries(&self) -> impl '_ + Iterator<Item = (usize, &Arc<Channel>)> {
-        self.channel_index.iter().map(move |path| {
-            let id = path.last().unwrap();
-            let channel = self.channel_for_id(*id).unwrap();
-            (path.len() - 1, channel)
-        })
+    pub fn ordered_channels(&self) -> impl '_ + Iterator<Item = (usize, &Arc<Channel>)> {
+        self.channel_index
+            .ordered_channels()
+            .iter()
+            .filter_map(move |id| {
+                let channel = self.channel_index.by_id().get(id)?;
+                Some((channel.parent_path.len(), channel))
+            })
     }
 
-    pub fn channel_dag_entry_at(&self, ix: usize) -> Option<(&Arc<Channel>, &ChannelPath)> {
-        let path = self.channel_index.get(ix)?;
-        let id = path.last().unwrap();
-        let channel = self.channel_for_id(*id).unwrap();
-
-        Some((channel, path))
+    pub fn channel_at_index(&self, ix: usize) -> Option<&Arc<Channel>> {
+        let channel_id = self.channel_index.ordered_channels().get(ix)?;
+        self.channel_index.by_id().get(channel_id)
     }
 
     pub fn channel_at(&self, ix: usize) -> Option<&Arc<Channel>> {
@@ -269,10 +256,11 @@ impl ChannelStore {
     ) -> Task<Result<ModelHandle<ChannelBuffer>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
+        let channel_store = cx.handle();
         self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_buffers,
-            |channel, cx| ChannelBuffer::new(channel, client, user_store, cx),
+            |channel, cx| ChannelBuffer::new(channel, client, user_store, channel_store, cx),
             cx,
         )
     }
@@ -449,16 +437,11 @@ impl ChannelStore {
             .spawn(async move { task.await.map_err(|error| anyhow!("{}", error)) })
     }
 
-    pub fn is_user_admin(&self, channel_id: ChannelId) -> bool {
-        self.channel_index.iter().any(|path| {
-            if let Some(ix) = path.iter().position(|id| *id == channel_id) {
-                path[..=ix]
-                    .iter()
-                    .any(|id| self.channels_with_admin_privileges.contains(id))
-            } else {
-                false
-            }
-        })
+    pub fn is_channel_admin(&self, channel_id: ChannelId) -> bool {
+        let Some(channel) = self.channel_for_id(channel_id) else {
+            return false;
+        };
+        channel.role == proto::ChannelRole::Admin
     }
 
     pub fn channel_participants(&self, channel_id: ChannelId) -> &[Arc<User>] {
@@ -485,24 +468,19 @@ impl ChannelStore {
                 .ok_or_else(|| anyhow!("missing channel in response"))?;
             let channel_id = channel.id;
 
-            let parent_edge = if let Some(parent_id) = parent_id {
-                vec![ChannelEdge {
-                    channel_id: channel.id,
-                    parent_id,
-                }]
-            } else {
-                vec![]
-            };
+            // let parent_edge = if let Some(parent_id) = parent_id {
+            //     vec![ChannelEdge {
+            //         channel_id: channel.id,
+            //         parent_id,
+            //     }]
+            // } else {
+            //     vec![]
+            // };
 
             this.update(&mut cx, |this, cx| {
                 let task = this.update_channels(
                     proto::UpdateChannels {
                         channels: vec![channel],
-                        insert_edge: parent_edge,
-                        channel_permissions: vec![ChannelPermission {
-                            channel_id,
-                            role: ChannelRole::Admin.into(),
-                        }],
                         ..Default::default()
                     },
                     cx,
@@ -520,53 +498,16 @@ impl ChannelStore {
         })
     }
 
-    pub fn link_channel(
-        &mut self,
-        channel_id: ChannelId,
-        to: ChannelId,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        let client = self.client.clone();
-        cx.spawn(|_, _| async move {
-            let _ = client
-                .request(proto::LinkChannel { channel_id, to })
-                .await?;
-
-            Ok(())
-        })
-    }
-
-    pub fn unlink_channel(
-        &mut self,
-        channel_id: ChannelId,
-        from: ChannelId,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        let client = self.client.clone();
-        cx.spawn(|_, _| async move {
-            let _ = client
-                .request(proto::UnlinkChannel { channel_id, from })
-                .await?;
-
-            Ok(())
-        })
-    }
-
     pub fn move_channel(
         &mut self,
         channel_id: ChannelId,
-        from: ChannelId,
-        to: ChannelId,
+        to: Option<ChannelId>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(|_, _| async move {
             let _ = client
-                .request(proto::MoveChannel {
-                    channel_id,
-                    from,
-                    to,
-                })
+                .request(proto::MoveChannel { channel_id, to })
                 .await?;
 
             Ok(())
@@ -800,6 +741,11 @@ impl ChannelStore {
     }
 
     fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        self.channel_index.clear();
+        self.channel_invitations.clear();
+        self.channel_participants.clear();
+        self.channel_index.clear();
+        self.outgoing_invites.clear();
         self.disconnect_channel_buffers_task.take();
 
         for chat in self.opened_chats.values() {
@@ -819,7 +765,7 @@ impl ChannelStore {
                     let channel_buffer = buffer.read(cx);
                     let buffer = channel_buffer.buffer().read(cx);
                     buffer_versions.push(proto::ChannelBufferVersion {
-                        channel_id: channel_buffer.channel().id,
+                        channel_id: channel_buffer.channel_id,
                         epoch: channel_buffer.epoch(),
                         version: language::proto::serialize_version(&buffer.version()),
                     });
@@ -846,13 +792,13 @@ impl ChannelStore {
                         };
 
                         channel_buffer.update(cx, |channel_buffer, cx| {
-                            let channel_id = channel_buffer.channel().id;
+                            let channel_id = channel_buffer.channel_id;
                             if let Some(remote_buffer) = response
                                 .buffers
                                 .iter_mut()
                                 .find(|buffer| buffer.channel_id == channel_id)
                             {
-                                let channel_id = channel_buffer.channel().id;
+                                let channel_id = channel_buffer.channel_id;
                                 let remote_version =
                                     language::proto::deserialize_version(&remote_buffer.version);
 
@@ -909,12 +855,6 @@ impl ChannelStore {
     }
 
     fn handle_disconnect(&mut self, wait_for_reconnect: bool, cx: &mut ModelContext<Self>) {
-        self.channel_index.clear();
-        self.channel_invitations.clear();
-        self.channel_participants.clear();
-        self.channels_with_admin_privileges.clear();
-        self.channel_index.clear();
-        self.outgoing_invites.clear();
         cx.notify();
 
         self.disconnect_channel_buffers_task.get_or_insert_with(|| {
@@ -958,9 +898,11 @@ impl ChannelStore {
                     Arc::new(Channel {
                         id: channel.id,
                         visibility: channel.visibility(),
+                        role: channel.role(),
                         name: channel.name,
                         unseen_note_version: None,
                         unseen_message_id: None,
+                        parent_path: channel.parent_path,
                     }),
                 ),
             }
@@ -968,8 +910,6 @@ impl ChannelStore {
 
         let channels_changed = !payload.channels.is_empty()
             || !payload.delete_channels.is_empty()
-            || !payload.insert_edge.is_empty()
-            || !payload.delete_edge.is_empty()
             || !payload.unseen_channel_messages.is_empty()
             || !payload.unseen_channel_buffer_changes.is_empty();
 
@@ -977,12 +917,17 @@ impl ChannelStore {
             if !payload.delete_channels.is_empty() {
                 self.channel_index.delete_channels(&payload.delete_channels);
                 self.channel_participants
-                    .retain(|channel_id, _| !payload.delete_channels.contains(channel_id));
-                self.channels_with_admin_privileges
-                    .retain(|channel_id| !payload.delete_channels.contains(channel_id));
+                    .retain(|channel_id, _| !&payload.delete_channels.contains(channel_id));
 
                 for channel_id in &payload.delete_channels {
                     let channel_id = *channel_id;
+                    if payload
+                        .channels
+                        .iter()
+                        .any(|channel| channel.id == channel_id)
+                    {
+                        continue;
+                    }
                     if let Some(OpenedModelHandle::Open(buffer)) =
                         self.opened_buffers.remove(&channel_id)
                     {
@@ -995,7 +940,16 @@ impl ChannelStore {
 
             let mut index = self.channel_index.bulk_insert();
             for channel in payload.channels {
-                index.insert(channel)
+                let id = channel.id;
+                let channel_changed = index.insert(channel);
+
+                if channel_changed {
+                    if let Some(OpenedModelHandle::Open(buffer)) = self.opened_buffers.get(&id) {
+                        if let Some(buffer) = buffer.upgrade(cx) {
+                            buffer.update(cx, ChannelBuffer::channel_changed);
+                        }
+                    }
+                }
             }
 
             for unseen_buffer_change in payload.unseen_channel_buffer_changes {
@@ -1012,24 +966,6 @@ impl ChannelStore {
                     unseen_channel_message.channel_id,
                     unseen_channel_message.message_id,
                 );
-            }
-
-            for edge in payload.insert_edge {
-                index.insert_edge(edge.channel_id, edge.parent_id);
-            }
-
-            for edge in payload.delete_edge {
-                index.delete_edge(edge.parent_id, edge.channel_id);
-            }
-        }
-
-        for permission in payload.channel_permissions {
-            if permission.role() == proto::ChannelRole::Admin {
-                self.channels_with_admin_privileges
-                    .insert(permission.channel_id);
-            } else {
-                self.channels_with_admin_privileges
-                    .remove(&permission.channel_id);
             }
         }
 
@@ -1077,46 +1013,5 @@ impl ChannelStore {
             });
             anyhow::Ok(())
         }))
-    }
-}
-
-impl Deref for ChannelPath {
-    type Target = [ChannelId];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl ChannelPath {
-    pub fn new(path: Arc<[ChannelId]>) -> Self {
-        debug_assert!(path.len() >= 1);
-        Self(path)
-    }
-
-    pub fn parent_id(&self) -> Option<ChannelId> {
-        self.0.len().checked_sub(2).map(|i| self.0[i])
-    }
-
-    pub fn channel_id(&self) -> ChannelId {
-        self.0[self.0.len() - 1]
-    }
-}
-
-impl From<ChannelPath> for Cow<'static, ChannelPath> {
-    fn from(value: ChannelPath) -> Self {
-        Cow::Owned(value)
-    }
-}
-
-impl<'a> From<&'a ChannelPath> for Cow<'a, ChannelPath> {
-    fn from(value: &'a ChannelPath) -> Self {
-        Cow::Borrowed(value)
-    }
-}
-
-impl Default for ChannelPath {
-    fn default() -> Self {
-        ChannelPath(Arc::from([]))
     }
 }

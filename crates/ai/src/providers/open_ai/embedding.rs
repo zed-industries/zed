@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use gpui::executor::Background;
-use gpui::serde_json;
+use gpui::{serde_json, AppContext};
 use isahc::http::StatusCode;
 use isahc::prelude::Configurable;
 use isahc::{AsyncBody, Response};
@@ -17,10 +17,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tiktoken_rs::{cl100k_base, CoreBPE};
 use util::http::{HttpClient, Request};
+use util::ResultExt;
 
 use crate::embedding::{Embedding, EmbeddingProvider};
 use crate::models::LanguageModel;
 use crate::providers::open_ai::OpenAILanguageModel;
+
+use super::OPENAI_API_URL;
 
 lazy_static! {
     static ref OPENAI_API_KEY: Option<String> = env::var("OPENAI_API_KEY").ok();
@@ -135,12 +138,24 @@ impl OpenAIEmbeddingProvider {
 
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbeddingProvider {
+    fn retrieve_credentials(&self, cx: &AppContext) -> Option<String> {
+        let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
+            Some(api_key)
+        } else if let Some((_, api_key)) = cx
+            .platform()
+            .read_credentials(OPENAI_API_URL)
+            .log_err()
+            .flatten()
+        {
+            String::from_utf8(api_key).log_err()
+        } else {
+            None
+        };
+        api_key
+    }
     fn base_model(&self) -> Box<dyn LanguageModel> {
         let model: Box<dyn LanguageModel> = Box::new(self.model.clone());
         model
-    }
-    fn is_authenticated(&self) -> bool {
-        OPENAI_API_KEY.as_ref().is_some()
     }
     fn max_tokens_per_batch(&self) -> usize {
         50000
@@ -164,7 +179,11 @@ impl EmbeddingProvider for OpenAIEmbeddingProvider {
     //     (output, tokens.len())
     // }
 
-    async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
+    async fn embed_batch(
+        &self,
+        spans: Vec<String>,
+        api_key: Option<String>,
+    ) -> Result<Vec<Embedding>> {
         const BACKOFF_SECONDS: [usize; 4] = [3, 5, 15, 45];
         const MAX_RETRIES: usize = 4;
 

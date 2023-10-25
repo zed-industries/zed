@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use editor::{
     char_kind,
-    display_map::DisplaySnapshot,
+    display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
     Bias, CharKind, DisplayPoint,
 };
@@ -20,6 +20,7 @@ pub enum Object {
     Quotes,
     BackQuotes,
     DoubleQuotes,
+    VerticalBars,
     Parentheses,
     SquareBrackets,
     CurlyBrackets,
@@ -40,6 +41,7 @@ actions!(
         Quotes,
         BackQuotes,
         DoubleQuotes,
+        VerticalBars,
         Parentheses,
         SquareBrackets,
         CurlyBrackets,
@@ -64,6 +66,7 @@ pub fn init(cx: &mut AppContext) {
     });
     cx.add_action(|_: &mut Workspace, _: &CurlyBrackets, cx: _| object(Object::CurlyBrackets, cx));
     cx.add_action(|_: &mut Workspace, _: &AngleBrackets, cx: _| object(Object::AngleBrackets, cx));
+    cx.add_action(|_: &mut Workspace, _: &VerticalBars, cx: _| object(Object::VerticalBars, cx));
 }
 
 fn object(object: Object, cx: &mut WindowContext) {
@@ -79,9 +82,11 @@ fn object(object: Object, cx: &mut WindowContext) {
 impl Object {
     pub fn is_multiline(self) -> bool {
         match self {
-            Object::Word { .. } | Object::Quotes | Object::BackQuotes | Object::DoubleQuotes => {
-                false
-            }
+            Object::Word { .. }
+            | Object::Quotes
+            | Object::BackQuotes
+            | Object::VerticalBars
+            | Object::DoubleQuotes => false,
             Object::Sentence
             | Object::Parentheses
             | Object::AngleBrackets
@@ -96,6 +101,7 @@ impl Object {
             Object::Quotes
             | Object::BackQuotes
             | Object::DoubleQuotes
+            | Object::VerticalBars
             | Object::Parentheses
             | Object::SquareBrackets
             | Object::CurlyBrackets
@@ -111,6 +117,7 @@ impl Object {
             | Object::Quotes
             | Object::BackQuotes
             | Object::DoubleQuotes
+            | Object::VerticalBars
             | Object::Parentheses
             | Object::SquareBrackets
             | Object::CurlyBrackets
@@ -141,6 +148,9 @@ impl Object {
             }
             Object::DoubleQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"')
+            }
+            Object::VerticalBars => {
+                surrounding_markers(map, relative_to, around, self.is_multiline(), '|', '|')
             }
             Object::Parentheses => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '(', ')')
@@ -427,110 +437,151 @@ fn surrounding_markers(
     relative_to: DisplayPoint,
     around: bool,
     search_across_lines: bool,
-    start_marker: char,
-    end_marker: char,
+    open_marker: char,
+    close_marker: char,
 ) -> Option<Range<DisplayPoint>> {
-    let mut matched_ends = 0;
-    let mut start = None;
-    for (char, mut point) in map.reverse_chars_at(relative_to) {
-        if char == start_marker {
-            if matched_ends > 0 {
-                matched_ends -= 1;
-            } else {
-                if around {
-                    start = Some(point)
-                } else {
-                    *point.column_mut() += char.len_utf8() as u32;
-                    start = Some(point)
+    let point = relative_to.to_offset(map, Bias::Left);
+
+    let mut matched_closes = 0;
+    let mut opening = None;
+
+    if let Some((ch, range)) = movement::chars_after(map, point).next() {
+        if ch == open_marker {
+            if open_marker == close_marker {
+                let mut total = 0;
+                for (ch, _) in movement::chars_before(map, point) {
+                    if ch == '\n' {
+                        break;
+                    }
+                    if ch == open_marker {
+                        total += 1;
+                    }
                 }
-                break;
+                if total % 2 == 0 {
+                    opening = Some(range)
+                }
+            } else {
+                opening = Some(range)
             }
-        } else if char == end_marker {
-            matched_ends += 1;
-        } else if char == '\n' && !search_across_lines {
-            break;
         }
     }
 
-    let mut matched_starts = 0;
-    let mut end = None;
-    for (char, mut point) in map.chars_at(relative_to) {
-        if char == end_marker {
-            if start.is_none() {
+    if opening.is_none() {
+        for (ch, range) in movement::chars_before(map, point) {
+            if ch == '\n' && !search_across_lines {
                 break;
             }
 
-            if matched_starts > 0 {
-                matched_starts -= 1;
-            } else {
-                if around {
-                    *point.column_mut() += char.len_utf8() as u32;
-                    end = Some(point);
-                } else {
-                    end = Some(point);
+            if ch == open_marker {
+                if matched_closes == 0 {
+                    opening = Some(range);
+                    break;
                 }
-
-                break;
+                matched_closes -= 1;
+            } else if ch == close_marker {
+                matched_closes += 1
             }
-        }
-
-        if char == start_marker {
-            if start.is_none() {
-                if around {
-                    start = Some(point);
-                } else {
-                    *point.column_mut() += char.len_utf8() as u32;
-                    start = Some(point);
-                }
-            } else {
-                matched_starts += 1;
-            }
-        }
-
-        if char == '\n' && !search_across_lines {
-            break;
         }
     }
 
-    let (Some(mut start), Some(mut end)) = (start, end) else {
+    if opening.is_none() {
+        for (ch, range) in movement::chars_after(map, point) {
+            if ch == open_marker {
+                opening = Some(range);
+                break;
+            } else if ch == close_marker {
+                break;
+            }
+        }
+    }
+
+    let Some(mut opening) = opening else {
         return None;
     };
 
-    if !around {
-        // if a block starts with a newline, move the start to after the newline.
-        let mut was_newline = false;
-        for (char, point) in map.chars_at(start) {
-            if was_newline {
-                start = point;
-            } else if char == '\n' {
-                was_newline = true;
-                continue;
-            }
+    let mut matched_opens = 0;
+    let mut closing = None;
+
+    for (ch, range) in movement::chars_after(map, opening.end) {
+        if ch == '\n' && !search_across_lines {
             break;
         }
-        // if a block ends with a newline, then whitespace, then the delimeter,
-        // move the end to after the newline.
-        let mut new_end = end;
-        for (char, point) in map.reverse_chars_at(end) {
-            if char == '\n' {
-                end = new_end;
+
+        if ch == close_marker {
+            if matched_opens == 0 {
+                closing = Some(range);
                 break;
             }
-            if !char.is_whitespace() {
-                break;
-            }
-            new_end = point
+            matched_opens -= 1;
+        } else if ch == open_marker {
+            matched_opens += 1;
         }
     }
 
-    Some(start..end)
+    let Some(mut closing) = closing else {
+        return None;
+    };
+
+    if around && !search_across_lines {
+        let mut found = false;
+
+        for (ch, range) in movement::chars_after(map, closing.end) {
+            if ch.is_whitespace() && ch != '\n' {
+                found = true;
+                closing.end = range.end;
+            } else {
+                break;
+            }
+        }
+
+        if !found {
+            for (ch, range) in movement::chars_before(map, opening.start) {
+                if ch.is_whitespace() && ch != '\n' {
+                    opening.start = range.start
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    if !around && search_across_lines {
+        if let Some((ch, range)) = movement::chars_after(map, opening.end).next() {
+            if ch == '\n' {
+                opening.end = range.end
+            }
+        }
+
+        for (ch, range) in movement::chars_before(map, closing.start) {
+            if !ch.is_whitespace() {
+                break;
+            }
+            if ch != '\n' {
+                closing.start = range.start
+            }
+        }
+    }
+
+    let result = if around {
+        opening.start..closing.end
+    } else {
+        opening.end..closing.start
+    };
+
+    Some(
+        map.clip_point(result.start.to_display_point(map), Bias::Left)
+            ..map.clip_point(result.end.to_display_point(map), Bias::Right),
+    )
 }
 
 #[cfg(test)]
 mod test {
     use indoc::indoc;
 
-    use crate::test::{ExemptionFeatures, NeovimBackedTestContext};
+    use crate::{
+        state::Mode,
+        test::{ExemptionFeatures, NeovimBackedTestContext, VimTestContext},
+    };
 
     const WORD_LOCATIONS: &'static str = indoc! {"
         The quick ˇbrowˇnˇ•••
@@ -765,13 +816,6 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for (start, end) in SURROUNDING_OBJECTS {
-            if ((start == &'\'' || start == &'`' || start == &'"')
-                && !ExemptionFeatures::QuotesSeekForward.supported())
-                || (start == &'<' && !ExemptionFeatures::AngleBracketsFreezeNeovim.supported())
-            {
-                continue;
-            }
-
             let marked_string = SURROUNDING_MARKER_STRING
                 .replace('`', &start.to_string())
                 .replace('\'', &end.to_string());
@@ -785,6 +829,63 @@ mod test {
             cx.assert_binding_matches_all(["c", "a", &end.to_string()], &marked_string)
                 .await;
         }
+    }
+    #[gpui::test]
+    async fn test_singleline_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_wrap(12).await;
+
+        cx.set_shared_state(indoc! {
+            "helˇlo \"world\"!"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "i", "\""]).await;
+        cx.assert_shared_state(indoc! {
+            "hello \"«worldˇ»\"!"
+        })
+        .await;
+
+        cx.set_shared_state(indoc! {
+            "hello \"wˇorld\"!"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "i", "\""]).await;
+        cx.assert_shared_state(indoc! {
+            "hello \"«worldˇ»\"!"
+        })
+        .await;
+
+        cx.set_shared_state(indoc! {
+            "hello \"wˇorld\"!"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "a", "\""]).await;
+        cx.assert_shared_state(indoc! {
+            "hello« \"world\"ˇ»!"
+        })
+        .await;
+
+        cx.set_shared_state(indoc! {
+            "hello \"wˇorld\" !"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "a", "\""]).await;
+        cx.assert_shared_state(indoc! {
+            "hello «\"world\" ˇ»!"
+        })
+        .await;
+
+        cx.set_shared_state(indoc! {
+            "hello \"wˇorld\"•
+            goodbye"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "a", "\""]).await;
+        cx.assert_shared_state(indoc! {
+            "hello «\"world\" ˇ»
+            goodbye"
+        })
+        .await;
     }
 
     #[gpui::test]
@@ -827,6 +928,66 @@ mod test {
                  return false
             }"})
             .await;
+
+        cx.set_shared_state(indoc! {
+            "func empty(a string) bool {
+                 if a == \"\" ˇ{
+                     return true
+                 }
+                 return false
+            }"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "i", "{"]).await;
+        cx.assert_shared_state(indoc! {"
+            func empty(a string) bool {
+                 if a == \"\" {
+            «         return true
+            ˇ»     }
+                 return false
+            }"})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_vertical_bars(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            indoc! {"
+            fn boop() {
+                baz(ˇ|a, b| { bar(|j, k| { })})
+            }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["c", "i", "|"]);
+        cx.assert_state(
+            indoc! {"
+            fn boop() {
+                baz(|ˇ| { bar(|j, k| { })})
+            }"
+            },
+            Mode::Insert,
+        );
+        cx.simulate_keystrokes(["escape", "1", "8", "|"]);
+        cx.assert_state(
+            indoc! {"
+            fn boop() {
+                baz(|| { bar(ˇ|j, k| { })})
+            }"
+            },
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(["v", "a", "|"]);
+        cx.assert_state(
+            indoc! {"
+            fn boop() {
+                baz(|| { bar(«|j, k| ˇ»{ })})
+            }"
+            },
+            Mode::Visual,
+        );
     }
 
     #[gpui::test]
@@ -834,12 +995,6 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for (start, end) in SURROUNDING_OBJECTS {
-            if ((start == &'\'' || start == &'`' || start == &'"')
-                && !ExemptionFeatures::QuotesSeekForward.supported())
-                || (start == &'<' && !ExemptionFeatures::AngleBracketsFreezeNeovim.supported())
-            {
-                continue;
-            }
             let marked_string = SURROUNDING_MARKER_STRING
                 .replace('`', &start.to_string())
                 .replace('\'', &end.to_string());

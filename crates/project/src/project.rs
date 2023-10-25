@@ -53,7 +53,7 @@ use lsp::{
 use lsp_command::*;
 use node_runtime::NodeRuntime;
 use postage::watch;
-use prettier::{LocateStart, Prettier, PRETTIER_SERVER_FILE, PRETTIER_SERVER_JS};
+use prettier::{LocateStart, Prettier};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
@@ -79,16 +79,15 @@ use std::{
     time::{Duration, Instant},
 };
 use terminals::Terminals;
-use text::{Anchor, LineEnding, Rope};
+use text::Anchor;
 use util::{
-    debug_panic, defer,
-    http::HttpClient,
-    merge_json_value_into,
-    paths::{DEFAULT_PRETTIER_DIR, LOCAL_SETTINGS_RELATIVE_PATH},
-    post_inc, ResultExt, TryFutureExt as _,
+    debug_panic, defer, http::HttpClient, merge_json_value_into,
+    paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
 };
 
 pub use fs::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use worktree::*;
 
 pub trait Item {
@@ -834,16 +833,6 @@ impl Project {
                 .await;
         }
         project
-    }
-
-    /// Enables a prettier mock that avoids interacting with node runtime, prettier LSP wrapper, or any real file changes.
-    /// Instead, if appends the suffix to every input, this suffix is returned by this method.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn enable_test_prettier(&mut self, plugins: &[&'static str]) -> &'static str {
-        self.node = Some(node_runtime::FakeNodeRuntime::with_prettier_support(
-            plugins,
-        ));
-        Prettier::FORMAT_SUFFIX
     }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
@@ -8489,6 +8478,18 @@ impl Project {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    fn install_default_formatters(
+        &self,
+        _worktree: Option<WorktreeId>,
+        _new_language: &Language,
+        _language_settings: &LanguageSettings,
+        _cx: &mut ModelContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        return Task::ready(Ok(()));
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
     fn install_default_formatters(
         &self,
         worktree: Option<WorktreeId>,
@@ -8519,7 +8520,7 @@ impl Project {
             return Task::ready(Ok(()));
         };
 
-        let default_prettier_dir = DEFAULT_PRETTIER_DIR.as_path();
+        let default_prettier_dir = util::paths::DEFAULT_PRETTIER_DIR.as_path();
         let already_running_prettier = self
             .prettier_instances
             .get(&(worktree, default_prettier_dir.to_path_buf()))
@@ -8528,10 +8529,10 @@ impl Project {
         let fs = Arc::clone(&self.fs);
         cx.background()
             .spawn(async move {
-                let prettier_wrapper_path = default_prettier_dir.join(PRETTIER_SERVER_FILE);
+                let prettier_wrapper_path = default_prettier_dir.join(prettier::PRETTIER_SERVER_FILE);
                 // method creates parent directory if it doesn't exist
-                fs.save(&prettier_wrapper_path, &Rope::from(PRETTIER_SERVER_JS), LineEnding::Unix).await
-                .with_context(|| format!("writing {PRETTIER_SERVER_FILE} file at {prettier_wrapper_path:?}"))?;
+                fs.save(&prettier_wrapper_path, &text::Rope::from(prettier::PRETTIER_SERVER_JS), text::LineEnding::Unix).await
+                .with_context(|| format!("writing {} file at {prettier_wrapper_path:?}", prettier::PRETTIER_SERVER_FILE))?;
 
                 let packages_to_versions = future::try_join_all(
                     prettier_plugins

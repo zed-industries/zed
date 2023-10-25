@@ -35,9 +35,9 @@ use gpui::{
         CursorStyle, ModifiersChangedEvent, MouseButton, PathPromptOptions, Platform, PromptLevel,
         WindowBounds, WindowOptions,
     },
-    AnyModelHandle, AnyViewHandle, AnyWeakViewHandle, AnyWindowHandle, AppContext, AsyncAppContext,
-    Entity, ModelContext, ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle, WindowContext, WindowHandle,
+    AnyModelHandle, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity,
+    ModelContext, ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle, WindowContext, WindowHandle,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use itertools::Itertools;
@@ -4238,6 +4238,10 @@ async fn join_channel_internal(
         })
         .await?;
 
+    let Some(room) = room else {
+        return anyhow::Ok(true);
+    };
+
     room.update(cx, |room, _| room.room_update_completed())
         .await;
 
@@ -4295,12 +4299,14 @@ pub fn join_channel(
         }
 
         if let Err(err) = result {
-            let prompt = active_window.unwrap().prompt(
-                PromptLevel::Critical,
-                &format!("Failed to join channel: {}", err),
-                &["Ok"],
-                &mut cx,
-            );
+            let prompt = active_window.unwrap().update(&mut cx, |_, cx| {
+                cx.prompt(
+                    PromptLevel::Critical,
+                    &format!("Failed to join channel: {}", err),
+                    &["Ok"],
+                )
+            });
+
             if let Some(mut prompt) = prompt {
                 prompt.next().await;
             } else {
@@ -4313,17 +4319,39 @@ pub fn join_channel(
     })
 }
 
-pub fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<AnyWindowHandle> {
+pub async fn get_any_active_workspace(
+    app_state: Arc<AppState>,
+    mut cx: AsyncAppContext,
+) -> Result<ViewHandle<Workspace>> {
+    // find an existing workspace to focus and show call controls
+    let active_window = activate_any_workspace_window(&mut cx);
+    if active_window.is_none() {
+        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, cx))
+            .await;
+    }
+
+    let Some(active_window) = activate_any_workspace_window(&mut cx) else {
+        return Err(anyhow!("could not open zed"))?;
+    };
+
+    Ok(active_window)
+}
+
+pub fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<ViewHandle<Workspace>> {
     for window in cx.windows() {
-        let found = window.update(cx, |cx| {
-            let is_workspace = cx.root_view().clone().downcast::<Workspace>().is_some();
-            if is_workspace {
-                cx.activate_window();
-            }
-            is_workspace
-        });
-        if found == Some(true) {
-            return Some(window);
+        if let Some(workspace) = window
+            .update(cx, |cx| {
+                cx.root_view()
+                    .clone()
+                    .downcast::<Workspace>()
+                    .map(|workspace| {
+                        cx.activate_window();
+                        workspace
+                    })
+            })
+            .flatten()
+        {
+            return Some(workspace);
         }
     }
     None

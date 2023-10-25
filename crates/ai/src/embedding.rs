@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use gpui::AppContext;
 use ordered_float::OrderedFloat;
 use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::ToSql;
@@ -70,8 +71,12 @@ impl Embedding {
 #[async_trait]
 pub trait EmbeddingProvider: Sync + Send {
     fn base_model(&self) -> Box<dyn LanguageModel>;
-    fn is_authenticated(&self) -> bool;
-    async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>>;
+    fn retrieve_credentials(&self, cx: &AppContext) -> Option<String>;
+    async fn embed_batch(
+        &self,
+        spans: Vec<String>,
+        api_key: Option<String>,
+    ) -> Result<Vec<Embedding>>;
     fn max_tokens_per_batch(&self) -> usize;
     fn rate_limit_expiration(&self) -> Option<Instant>;
 }

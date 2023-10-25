@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::{cmp, sync::Arc};
+use std::sync::Arc;
 
 use collections::HashMap;
 use editor::{
@@ -263,21 +263,13 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
 
                         if let Some(range) = object.range(map, head, around) {
                             if !range.is_empty() {
-                                let expand_both_ways =
-                                    if object.always_expands_both_ways() || selection.is_empty() {
-                                        true
-                                        // contains only one character
-                                    } else if let Some((_, start)) =
-                                        map.reverse_chars_at(selection.end).next()
-                                    {
-                                        selection.start == start
-                                    } else {
-                                        false
-                                    };
+                                let expand_both_ways = object.always_expands_both_ways()
+                                    || selection.is_empty()
+                                    || movement::right(map, selection.start) == selection.end;
 
                                 if expand_both_ways {
-                                    selection.start = cmp::min(selection.start, range.start);
-                                    selection.end = cmp::max(selection.end, range.end);
+                                    selection.start = range.start;
+                                    selection.end = range.end;
                                 } else if selection.reversed {
                                     selection.start = range.start;
                                 } else {

@@ -369,6 +369,30 @@ pub fn find_boundary(
     map.clip_point(offset.to_display_point(map), Bias::Right)
 }
 
+pub fn chars_after(
+    map: &DisplaySnapshot,
+    mut offset: usize,
+) -> impl Iterator<Item = (char, Range<usize>)> + '_ {
+    map.buffer_snapshot.chars_at(offset).map(move |ch| {
+        let before = offset;
+        offset = offset + ch.len_utf8();
+        (ch, before..offset)
+    })
+}
+
+pub fn chars_before(
+    map: &DisplaySnapshot,
+    mut offset: usize,
+) -> impl Iterator<Item = (char, Range<usize>)> + '_ {
+    map.buffer_snapshot
+        .reversed_chars_at(offset)
+        .map(move |ch| {
+            let after = offset;
+            offset = offset - ch.len_utf8();
+            (ch, offset..after)
+        })
+}
+
 pub fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
@@ -707,7 +731,9 @@ mod tests {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 surrounding_word(&snapshot, display_points[1]),
-                display_points[0]..display_points[2]
+                display_points[0]..display_points[2],
+                "{}",
+                marked_text.to_string()
             );
         }
 
@@ -717,7 +743,7 @@ mod tests {
         assert("loremˇ ˇ  ˇipsum", cx);
         assert("lorem\nˇˇˇ\nipsum", cx);
         assert("lorem\nˇˇipsumˇ", cx);
-        assert("lorem,ˇˇ ˇipsum", cx);
+        assert("loremˇ,ˇˇ ipsum", cx);
         assert("ˇloremˇˇ, ipsum", cx);
     }
 

@@ -32,6 +32,9 @@ pub enum OpenRequest {
     JoinChannel {
         channel_id: u64,
     },
+    OpenChannelNotes {
+        channel_id: u64,
+    },
 }
 
 pub struct OpenListener {
@@ -85,7 +88,11 @@ impl OpenListener {
             if let Some(slug) = parts.next() {
                 if let Some(id_str) = slug.split("-").last() {
                     if let Ok(channel_id) = id_str.parse::<u64>() {
-                        return Some(OpenRequest::JoinChannel { channel_id });
+                        if Some("notes") == parts.next() {
+                            return Some(OpenRequest::OpenChannelNotes { channel_id });
+                        } else {
+                            return Some(OpenRequest::JoinChannel { channel_id });
+                        }
                     }
                 }
             }

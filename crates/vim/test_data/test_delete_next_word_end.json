@@ -1,11 +1,3 @@
-{"Put":{"state":"Teˇst Test"}}
-{"Key":"d"}
-{"Key":"e"}
-{"Get":{"state":"Teˇ Test","mode":"Normal"}}
-{"Put":{"state":"Tˇest test"}}
-{"Key":"d"}
-{"Key":"e"}
-{"Get":{"state":"Tˇ test","mode":"Normal"}}
 {"Put":{"state":"Test teˇst\ntest"}}
 {"Key":"d"}
 {"Key":"e"}

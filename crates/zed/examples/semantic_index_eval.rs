@@ -55,7 +55,7 @@ fn parse_eval() -> anyhow::Result<Vec<RepoEval>> {
         .as_path()
         .parent()
         .unwrap()
-        .join("crates/semantic_index/eval");
+        .join("zed/crates/semantic_index/eval");
 
     let mut repo_evals: Vec<RepoEval> = Vec::new();
     for entry in fs::read_dir(eval_folder)? {

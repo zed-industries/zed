@@ -5117,7 +5117,6 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
     project.update(cx, |project, _| {
-        project.enable_test_prettier(&[]);
         project.languages().add(Arc::new(language));
     });
     let buffer = project
@@ -7864,10 +7863,9 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     fs.insert_file("/file.rs", Default::default()).await;
 
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-    let prettier_format_suffix = project.update(cx, |project, _| {
-        let suffix = project.enable_test_prettier(&[test_plugin]);
+    let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
+    project.update(cx, |project, _| {
         project.languages().add(Arc::new(language));
-        suffix
     });
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))

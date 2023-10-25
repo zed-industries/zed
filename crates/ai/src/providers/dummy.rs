@@ -6,6 +6,7 @@ use crate::{
     models::{LanguageModel, TruncationDirection},
 };
 use async_trait::async_trait;
+use gpui::AppContext;
 use serde::Serialize;
 
 pub struct DummyLanguageModel {}
@@ -58,16 +59,20 @@ pub struct DummyEmbeddingProvider {}
 
 #[async_trait]
 impl EmbeddingProvider for DummyEmbeddingProvider {
+    fn retrieve_credentials(&self, _cx: &AppContext) -> Option<String> {
+        Some("Dummy Credentials".to_string())
+    }
     fn base_model(&self) -> Box<dyn LanguageModel> {
         Box::new(DummyLanguageModel {})
-    }
-    fn is_authenticated(&self) -> bool {
-        true
     }
     fn rate_limit_expiration(&self) -> Option<Instant> {
         None
     }
-    async fn embed_batch(&self, spans: Vec<String>) -> anyhow::Result<Vec<Embedding>> {
+    async fn embed_batch(
+        &self,
+        spans: Vec<String>,
+        api_key: Option<String>,
+    ) -> anyhow::Result<Vec<Embedding>> {
         // 1024 is the OpenAI Embeddings size for ada models.
         // the model we will likely be starting with.
         let dummy_vec = Embedding::from(vec![0.32 as f32; 1536]);

@@ -11,7 +11,7 @@ use ai::{
 };
 use anyhow::Result;
 use async_trait::async_trait;
-use gpui::{executor::Deterministic, Task, TestAppContext};
+use gpui::{executor::Deterministic, AppContext, Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry, ToOffset};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
@@ -232,7 +232,7 @@ async fn test_embedding_batching(cx: &mut TestAppContext, mut rng: StdRng) {
 
     let embedding_provider = Arc::new(FakeEmbeddingProvider::default());
 
-    let mut queue = EmbeddingQueue::new(embedding_provider.clone(), cx.background());
+    let mut queue = EmbeddingQueue::new(embedding_provider.clone(), cx.background(), None);
     for file in &files {
         queue.push(file.clone());
     }
@@ -1288,8 +1288,8 @@ impl EmbeddingProvider for FakeEmbeddingProvider {
     fn base_model(&self) -> Box<dyn LanguageModel> {
         Box::new(DummyLanguageModel {})
     }
-    fn is_authenticated(&self) -> bool {
-        true
+    fn retrieve_credentials(&self, _cx: &AppContext) -> Option<String> {
+        Some("Fake Credentials".to_string())
     }
     fn max_tokens_per_batch(&self) -> usize {
         1000
@@ -1299,7 +1299,11 @@ impl EmbeddingProvider for FakeEmbeddingProvider {
         None
     }
 
-    async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
+    async fn embed_batch(
+        &self,
+        spans: Vec<String>,
+        _api_key: Option<String>,
+    ) -> Result<Vec<Embedding>> {
         self.embedding_count
             .fetch_add(spans.len(), atomic::Ordering::SeqCst);
 

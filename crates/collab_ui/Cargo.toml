@@ -61,6 +61,7 @@ postage.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 time.workspace = true
+smallvec.workspace = true
 
 [dev-dependencies]
 call = { path = "../call", features = ["test-support"] }
