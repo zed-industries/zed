@@ -145,8 +145,10 @@ impl Executor {
             match future.as_mut().poll(&mut cx) {
                 Poll::Ready(result) => return result,
                 Poll::Pending => {
-                    // todo!("call tick on test dispatcher")
-                    parker.park();
+                    if !self.dispatcher.poll() {
+                        // todo!("forbid_parking")
+                        parker.park();
+                    }
                 }
             }
         }

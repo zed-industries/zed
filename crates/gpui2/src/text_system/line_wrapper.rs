@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_wrap_line() {
-        App::test().run(|cx| {
+        App::test(0).run(|cx| {
             let text_system = cx.text_system().clone();
             let mut wrapper = LineWrapper::new(
                 text_system.font_id(&font("Courier")).unwrap(),
