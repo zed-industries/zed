@@ -1,5 +1,5 @@
 use crate::{
-    themes::{one_dark, sandcastle},
+    themes::{one_dark, rose_pine, rose_pine_dawn, rose_pine_moon, sandcastle},
     Theme, ThemeMetadata,
 };
 use anyhow::{anyhow, Result};
@@ -40,7 +40,13 @@ impl Default for ThemeRegistry {
             themes: HashMap::default(),
         };
 
-        this.insert_themes([one_dark(), sandcastle()]);
+        this.insert_themes([
+            one_dark(),
+            rose_pine(),
+            rose_pine_dawn(),
+            rose_pine_moon(),
+            sandcastle(),
+        ]);
 
         this
     }

@@ -10,7 +10,7 @@ use rust_embed::RustEmbed;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer};
 use simplelog::SimpleLogger;
-use theme2::{PlayerTheme, SyntaxTheme};
+use theme2::{PlayerTheme, SyntaxTheme, ThemeMetadata};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -368,6 +368,7 @@ pub struct ThemePrinter(theme2::Theme);
 impl std::fmt::Debug for ThemePrinter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Theme")
+            .field("metadata", &ThemeMetadataPrinter(self.0.metadata.clone()))
             .field("transparent", &self.0.transparent.to_rgb().to_hex())
             .field(
                 "mac_os_traffic_light_red",
@@ -462,7 +463,18 @@ impl std::fmt::Debug for ThemePrinter {
             .field("git_conflict", &self.0.git_conflict.to_rgb().to_hex())
             .field("git_ignored", &self.0.git_ignored.to_rgb().to_hex())
             .field("git_renamed", &self.0.git_renamed.to_rgb().to_hex())
-            .field("player", &self.0.players.map(PlayerThemePrinter))
+            .field("players", &self.0.players.map(PlayerThemePrinter))
+            .finish()
+    }
+}
+
+pub struct ThemeMetadataPrinter(ThemeMetadata);
+
+impl std::fmt::Debug for ThemeMetadataPrinter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ThemeMetadata")
+            .field("name", &self.0.name)
+            .field("is_light", &self.0.is_light)
             .finish()
     }
 }
@@ -476,6 +488,7 @@ impl std::fmt::Debug for SyntaxThemePrinter {
             .field("string", &self.0.string.to_rgb().to_hex())
             .field("function", &self.0.function.to_rgb().to_hex())
             .field("keyword", &self.0.keyword.to_rgb().to_hex())
+            .field("highlights", &self.0.highlights)
             .finish()
     }
 }
