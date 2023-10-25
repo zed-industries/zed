@@ -296,7 +296,7 @@ impl AssistantPanel {
         };
 
         let selection = editor.read(cx).selections.newest_anchor().clone();
-        if selection.start.excerpt_id() != selection.end.excerpt_id() {
+        if selection.start.excerpt_id != selection.end.excerpt_id {
             return;
         }
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);

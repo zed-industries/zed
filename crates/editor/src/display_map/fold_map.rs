@@ -91,7 +91,7 @@ impl<'a> FoldMapWriter<'a> {
 
             // For now, ignore any ranges that span an excerpt boundary.
             let fold = Fold(buffer.anchor_after(range.start)..buffer.anchor_before(range.end));
-            if fold.0.start.excerpt_id() != fold.0.end.excerpt_id() {
+            if fold.0.start.excerpt_id != fold.0.end.excerpt_id {
                 continue;
             }
 
