@@ -1,4 +1,7 @@
-use crate::{themes::one_dark, Theme, ThemeMetadata};
+use crate::{
+    themes::{one_dark, sandcastle},
+    Theme, ThemeMetadata,
+};
 use anyhow::{anyhow, Result};
 use gpui2::SharedString;
 use std::{collections::HashMap, sync::Arc};
@@ -37,7 +40,7 @@ impl Default for ThemeRegistry {
             themes: HashMap::default(),
         };
 
-        this.insert_themes([one_dark()]);
+        this.insert_themes([one_dark(), sandcastle()]);
 
         this
     }
