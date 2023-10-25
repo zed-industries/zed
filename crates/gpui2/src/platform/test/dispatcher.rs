@@ -75,6 +75,10 @@ impl TestDispatcher {
             count: self.state.lock().random.gen_range(0..10),
         }
     }
+
+    pub fn run_until_parked(&self) {
+        while self.poll() {}
+    }
 }
 
 impl Clone for TestDispatcher {

@@ -1222,62 +1222,57 @@ pub fn copy_recursive<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui2::{Executor, TestDispatcher};
-    use rand::prelude::*;
+    use gpui2::Executor;
     use serde_json::json;
 
-    #[test]
-    fn test_fake_fs() {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let executor = Executor::new(Arc::new(dispatcher));
+    #[gpui2::test]
+    async fn test_fake_fs(executor: Executor) {
         let fs = FakeFs::new(executor.clone());
-        executor.block(async move {
-            fs.insert_tree(
-                "/root",
-                json!({
-                    "dir1": {
-                        "a": "A",
-                        "b": "B"
-                    },
-                    "dir2": {
-                        "c": "C",
-                        "dir3": {
-                            "d": "D"
-                        }
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dir1": {
+                    "a": "A",
+                    "b": "B"
+                },
+                "dir2": {
+                    "c": "C",
+                    "dir3": {
+                        "d": "D"
                     }
-                }),
-            )
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from("/root/dir1/a"),
+                PathBuf::from("/root/dir1/b"),
+                PathBuf::from("/root/dir2/c"),
+                PathBuf::from("/root/dir2/dir3/d"),
+            ]
+        );
+
+        fs.insert_symlink("/root/dir2/link-to-dir3", "./dir3".into())
             .await;
 
-            assert_eq!(
-                fs.files(),
-                vec![
-                    PathBuf::from("/root/dir1/a"),
-                    PathBuf::from("/root/dir1/b"),
-                    PathBuf::from("/root/dir2/c"),
-                    PathBuf::from("/root/dir2/dir3/d"),
-                ]
-            );
-
-            fs.insert_symlink("/root/dir2/link-to-dir3", "./dir3".into())
-                .await;
-
-            assert_eq!(
-                fs.canonicalize("/root/dir2/link-to-dir3".as_ref())
-                    .await
-                    .unwrap(),
-                PathBuf::from("/root/dir2/dir3"),
-            );
-            assert_eq!(
-                fs.canonicalize("/root/dir2/link-to-dir3/d".as_ref())
-                    .await
-                    .unwrap(),
-                PathBuf::from("/root/dir2/dir3/d"),
-            );
-            assert_eq!(
-                fs.load("/root/dir2/link-to-dir3/d".as_ref()).await.unwrap(),
-                "D",
-            );
-        });
+        assert_eq!(
+            fs.canonicalize("/root/dir2/link-to-dir3".as_ref())
+                .await
+                .unwrap(),
+            PathBuf::from("/root/dir2/dir3"),
+        );
+        assert_eq!(
+            fs.canonicalize("/root/dir2/link-to-dir3/d".as_ref())
+                .await
+                .unwrap(),
+            PathBuf::from("/root/dir2/dir3/d"),
+        );
+        assert_eq!(
+            fs.load("/root/dir2/link-to-dir3/d".as_ref()).await.unwrap(),
+            "D",
+        );
     }
 }

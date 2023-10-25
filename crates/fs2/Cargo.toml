@@ -35,7 +35,6 @@ gpui2 = { path = "../gpui2", optional = true}
 
 [dev-dependencies]
 gpui2 = { path = "../gpui2", features = ["test-support"] }
-rand.workspace = true
 
 [features]
 test-support = ["gpui2/test-support"]
