@@ -16,7 +16,7 @@ actions!(branches, [OpenRecent]);
 
 pub fn init(cx: &mut AppContext) {
     Picker::<BranchListDelegate>::init(cx);
-    cx.add_async_action(toggle);
+    cx.add_action(toggle);
 }
 pub type BranchList = Picker<BranchListDelegate>;
 
@@ -24,30 +24,29 @@ pub fn build_branch_list(
     workspace: ViewHandle<Workspace>,
     cx: &mut ViewContext<BranchList>,
 ) -> Result<BranchList> {
-    Ok(Picker::new(BranchListDelegate::new(workspace, 29, cx)?, cx)
-        .with_theme(|theme| theme.picker.clone()))
+    let delegate = workspace.read_with(cx, |workspace, cx| {
+        BranchListDelegate::new(workspace, cx.handle(), 29, cx)
+    })?;
+
+    Ok(Picker::new(delegate, cx).with_theme(|theme| theme.picker.clone()))
 }
 
 fn toggle(
-    _: &mut Workspace,
+    workspace: &mut Workspace,
     _: &OpenRecent,
     cx: &mut ViewContext<Workspace>,
-) -> Option<Task<Result<()>>> {
-    Some(cx.spawn(|workspace, mut cx| async move {
-        workspace.update(&mut cx, |workspace, cx| {
-            // Modal branch picker has a longer trailoff than a popover one.
-            let delegate = BranchListDelegate::new(cx.handle(), 70, cx)?;
-            workspace.toggle_modal(cx, |_, cx| {
-                cx.add_view(|cx| {
-                    Picker::new(delegate, cx)
-                        .with_theme(|theme| theme.picker.clone())
-                        .with_max_size(800., 1200.)
-                })
-            });
-            Ok::<_, anyhow::Error>(())
-        })??;
-        Ok(())
-    }))
+) -> Result<()> {
+    // Modal branch picker has a longer trailoff than a popover one.
+    let delegate = BranchListDelegate::new(workspace, cx.handle(), 70, cx)?;
+    workspace.toggle_modal(cx, |_, cx| {
+        cx.add_view(|cx| {
+            Picker::new(delegate, cx)
+                .with_theme(|theme| theme.picker.clone())
+                .with_max_size(800., 1200.)
+        })
+    });
+
+    Ok(())
 }
 
 pub struct BranchListDelegate {
@@ -62,15 +61,16 @@ pub struct BranchListDelegate {
 
 impl BranchListDelegate {
     fn new(
-        workspace: ViewHandle<Workspace>,
+        workspace: &Workspace,
+        handle: ViewHandle<Workspace>,
         branch_name_trailoff_after: usize,
         cx: &AppContext,
     ) -> Result<Self> {
-        let project = workspace.read(cx).project().read(&cx);
-
+        let project = workspace.project().read(&cx);
         let Some(worktree) = project.visible_worktrees(cx).next() else {
             bail!("Cannot update branch list as there are no visible worktrees")
         };
+
         let mut cwd = worktree.read(cx).abs_path().to_path_buf();
         cwd.push(".git");
         let Some(repo) = project.fs().open_repo(&cwd) else {
@@ -79,13 +79,14 @@ impl BranchListDelegate {
         let all_branches = repo.lock().branches()?;
         Ok(Self {
             matches: vec![],
-            workspace,
+            workspace: handle,
             all_branches,
             selected_index: 0,
             last_query: Default::default(),
             branch_name_trailoff_after,
         })
     }
+
     fn display_error_toast(&self, message: String, cx: &mut ViewContext<BranchList>) {
         const GIT_CHECKOUT_FAILURE_ID: usize = 2048;
         self.workspace.update(cx, |model, ctx| {
