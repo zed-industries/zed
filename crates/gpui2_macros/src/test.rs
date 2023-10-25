@@ -3,8 +3,8 @@ use proc_macro2::Ident;
 use quote::{format_ident, quote};
 use std::mem;
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned as _, AttributeArgs, DeriveInput, FnArg,
-    GenericParam, Generics, ItemFn, Lit, Meta, NestedMeta, Type, WhereClause,
+    parse_macro_input, parse_quote, spanned::Spanned as _, AttributeArgs, FnArg,
+    ItemFn, Lit, Meta, NestedMeta, Type,
 };
 
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
@@ -106,13 +106,13 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                             let cx_varname = format_ident!("cx_{}", ix);
                             cx_vars.extend(quote!(
                                 let mut #cx_varname = gpui2::TestAppContext::new(
-                                    std::sync::Arc::new(dispatcher.clone())
+                                    dispatcher.clone()
                                 );
                             ));
                             cx_teardowns.extend(quote!(
                                 #cx_varname.remove_all_windows();
                                 dispatcher.run_until_parked();
-                                #cx_varname.update(|cx| cx.clear_globals());
+                                #cx_varname.clear_globals();
                                 dispatcher.run_until_parked();
                             ));
                             inner_fn_args.extend(quote!(&mut #cx_varname,));
@@ -170,7 +170,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 let cx_varname_lock = format_ident!("cx_{}_lock", ix);
                                 cx_vars.extend(quote!(
                                     let mut #cx_varname = gpui2::TestAppContext::new(
-                                        std::sync::Arc::new(dispatcher.clone())
+                                       dispatcher.clone()
                                     );
                                     let mut #cx_varname_lock = cx_varname.app.lock();
                                 ));
@@ -178,7 +178,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 cx_teardowns.extend(quote!(
                                     #cx_varname.remove_all_windows();
                                     dispatcher.run_until_parked();
-                                    #cx_varname.update(|cx| cx.clear_globals());
+                                    #cx_varname.clear_globals();
                                     dispatcher.run_until_parked();
                                 ));
                                 continue;
@@ -187,13 +187,13 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 let cx_varname = format_ident!("cx_{}", ix);
                                 cx_vars.extend(quote!(
                                     let mut #cx_varname = gpui2::TestAppContext::new(
-                                        std::sync::Arc::new(dispatcher.clone())
+                                        dispatcher.clone()
                                     );
                                 ));
                                 cx_teardowns.extend(quote!(
                                     #cx_varname.remove_all_windows();
                                     dispatcher.run_until_parked();
-                                    #cx_varname.update(|cx| cx.clear_globals());
+                                    #cx_varname.clear_globals();
                                     dispatcher.run_until_parked();
                                 ));
                                 inner_fn_args.extend(quote!(&mut #cx_varname,));
@@ -239,16 +239,6 @@ fn parse_int(literal: &Lit) -> Result<usize, TokenStream> {
         int.base10_parse()
     } else {
         Err(syn::Error::new(literal.span(), "must be an integer"))
-    };
-
-    result.map_err(|err| TokenStream::from(err.into_compile_error()))
-}
-
-fn parse_bool(literal: &Lit) -> Result<bool, TokenStream> {
-    let result = if let Lit::Bool(result) = &literal {
-        Ok(result.value)
-    } else {
-        Err(syn::Error::new(literal.span(), "must be a boolean"))
     };
 
     result.map_err(|err| TokenStream::from(err.into_compile_error()))

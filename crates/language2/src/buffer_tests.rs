@@ -1,3 +1,7 @@
+use crate::Buffer;
+use gpui2::{Context, TestAppContext};
+use text::{Point, ToPoint};
+
 // use crate::language_settings::{
 //     AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent,
 // };
@@ -219,28 +223,29 @@
 //     );
 // }
 
-// #[gpui::test]
-// async fn test_apply_diff(cx: &mut gpui::TestAppContext) {
-//     let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
-//     let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, text));
-//     let anchor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(3, 3)));
+// #[gpui::test] todo!()
+#[gpui2::test]
+async fn test_apply_diff(cx: &mut TestAppContext) {
+    let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
+    let buffer = cx.entity(|cx| Buffer::new(0, cx.entity_id().as_u64(), text));
+    let anchor = buffer.update(cx, |buffer, _| buffer.anchor_before(Point::new(3, 3)));
 
-//     let text = "a\nccc\ndddd\nffffff\n";
-//     let diff = buffer.read_with(cx, |b, cx| b.diff(text.into(), cx)).await;
-//     buffer.update(cx, |buffer, cx| {
-//         buffer.apply_diff(diff, cx).unwrap();
-//         assert_eq!(buffer.text(), text);
-//         assert_eq!(anchor.to_point(buffer), Point::new(2, 3));
-//     });
+    let text = "a\nccc\ndddd\nffffff\n";
+    let diff = buffer.update(cx, |b, cx| b.diff(text.into(), cx)).await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx).unwrap();
+        assert_eq!(buffer.text(), text);
+        assert_eq!(anchor.to_point(buffer), Point::new(2, 3));
+    });
 
-//     let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
-//     let diff = buffer.read_with(cx, |b, cx| b.diff(text.into(), cx)).await;
-//     buffer.update(cx, |buffer, cx| {
-//         buffer.apply_diff(diff, cx).unwrap();
-//         assert_eq!(buffer.text(), text);
-//         assert_eq!(anchor.to_point(buffer), Point::new(4, 4));
-//     });
-// }
+    let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
+    let diff = buffer.update(cx, |b, cx| b.diff(text.into(), cx)).await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx).unwrap();
+        assert_eq!(buffer.text(), text);
+        assert_eq!(anchor.to_point(buffer), Point::new(4, 4));
+    });
+}
 
 // #[gpui::test(iterations = 10)]
 // async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
