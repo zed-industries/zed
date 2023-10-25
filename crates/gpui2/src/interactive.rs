@@ -1033,13 +1033,13 @@ impl Deref for MouseExitEvent {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct DroppedFiles(pub(crate) SmallVec<[PathBuf; 2]>);
+pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
 
 #[derive(Debug, Clone)]
 pub enum FileDropEvent {
     Entered {
         position: Point<Pixels>,
-        files: DroppedFiles,
+        files: ExternalPaths,
     },
     Pending {
         position: Point<Pixels>,

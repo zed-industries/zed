@@ -1,6 +1,6 @@
 use crate::{
     px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
-    Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, DroppedFiles,
+    Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, ExternalPaths,
     Edges, Effect, Element, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId,
     GlobalElementId, GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch,
     KeyMatcher, Keystroke, LayoutId, MainThread, MainThreadOnly, Modifiers, MonochromeSprite,
@@ -903,7 +903,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                         drag_handle_view: None,
                         cursor_offset: position,
                         state: Box::new(files),
-                        state_type: TypeId::of::<DroppedFiles>(),
+                        state_type: TypeId::of::<ExternalPaths>(),
                     });
                     InputEvent::MouseDown(MouseDownEvent {
                         position,

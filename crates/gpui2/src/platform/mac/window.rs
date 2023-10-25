@@ -1,6 +1,6 @@
 use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
-    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, DroppedFiles, Executor,
+    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, ExternalPaths, Executor,
     FileDropEvent, GlobalPixels, InputEvent, KeyDownEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, Scene, Size,
@@ -1679,7 +1679,7 @@ extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -
     }
 }
 
-fn external_paths_from_event(dragging_info: *mut Object) -> DroppedFiles {
+fn external_paths_from_event(dragging_info: *mut Object) -> ExternalPaths {
     let mut paths = SmallVec::new();
     let pasteboard: id = unsafe { msg_send![dragging_info, draggingPasteboard] };
     let filenames = unsafe { NSPasteboard::propertyListForType(pasteboard, NSFilenamesPboardType) };
@@ -1690,7 +1690,7 @@ fn external_paths_from_event(dragging_info: *mut Object) -> DroppedFiles {
         };
         paths.push(PathBuf::from(path))
     }
-    DroppedFiles(paths)
+    ExternalPaths(paths)
 }
 
 extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {

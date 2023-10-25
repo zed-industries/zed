@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui2::{hsla, red, AnyElement, DroppedFiles, ElementId, Hsla, Length, Size};
+use gpui2::{hsla, red, AnyElement, ElementId, ExternalPaths, Hsla, Length, Size};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -49,18 +49,24 @@ impl<S: 'static + Send + Sync> Pane<S> {
             .w(self.size.width)
             .h(self.size.height)
             .relative()
-            .children(cx.stack(0, |_| self.children.drain(..)))
-            .child(cx.stack(1, |_| {
+            .child(
+                div()
+                    .z_index(0)
+                    .size_full()
+                    .children(self.children.drain(..)),
+            )
+            .child(
                 // TODO kb! Figure out why we can't we see the red background when we drag a file over this div.
                 div()
+                    .z_index(1)
                     .id("drag-target")
-                    .drag_over::<DroppedFiles>(|d| d.bg(red()))
-                    .on_drop(|_, files: DroppedFiles, _| {
+                    .drag_over::<ExternalPaths>(|d| d.bg(red()))
+                    .on_drop(|_, files: ExternalPaths, _| {
                         dbg!("dropped files!", files);
                     })
                     .absolute()
-                    .inset_0()
-            }))
+                    .inset_0(),
+            )
     }
 }
 
