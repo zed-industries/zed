@@ -9,7 +9,7 @@ use cli::{
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
 use db2::kvp::KEY_VALUE_STORE;
-use fs::RealFs;
+use fs2::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui2::{App, AppContext, AsyncAppContext, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};

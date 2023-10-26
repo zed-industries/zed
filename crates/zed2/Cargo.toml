@@ -37,7 +37,7 @@ db2 = { path = "../db2" }
 # feedback = { path = "../feedback" }
 # file_finder = { path = "../file_finder" }
 # search = { path = "../search" }
-fs = { path = "../fs" }
+fs2 = { path = "../fs2" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 # go_to_line = { path = "../go_to_line" }

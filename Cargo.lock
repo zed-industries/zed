@@ -10745,7 +10745,7 @@ dependencies = [
  "db2",
  "env_logger 0.9.3",
  "feature_flags",
- "fs",
+ "fs2",
  "fsevent",
  "futures 0.3.28",
  "fuzzy",
