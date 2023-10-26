@@ -47,10 +47,9 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl #impl_generics gpui2::Element for #type_name #ty_generics
+        impl #impl_generics gpui2::Element<#state_type> for #type_name #ty_generics
         #where_clause
         {
-            type ViewState = #state_type;
             type ElementState = gpui2::AnyElement<#state_type>;
 
             fn id(&self) -> Option<gpui2::ElementId> {
@@ -59,9 +58,9 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
 
             fn initialize(
                 &mut self,
-                view_state: &mut Self::ViewState,
+                view_state: &mut #state_type,
                 _: Option<Self::ElementState>,
-                cx: &mut gpui2::ViewContext<Self::ViewState>
+                cx: &mut gpui2::ViewContext<#state_type>
             ) -> Self::ElementState {
                 use gpui2::IntoAnyElement;
 
@@ -72,9 +71,9 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
 
             fn layout(
                 &mut self,
-                view_state: &mut Self::ViewState,
+                view_state: &mut #state_type,
                 rendered_element: &mut Self::ElementState,
-                cx: &mut gpui2::ViewContext<Self::ViewState>,
+                cx: &mut gpui2::ViewContext<#state_type>,
             ) -> gpui2::LayoutId {
                 rendered_element.layout(view_state, cx)
             }
@@ -82,9 +81,9 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
             fn paint(
                 &mut self,
                 bounds: gpui2::Bounds<gpui2::Pixels>,
-                view_state: &mut Self::ViewState,
+                view_state: &mut #state_type,
                 rendered_element: &mut Self::ElementState,
-                cx: &mut gpui2::ViewContext<Self::ViewState>,
+                cx: &mut gpui2::ViewContext<#state_type>,
             ) {
                 rendered_element.paint(view_state, cx)
             }

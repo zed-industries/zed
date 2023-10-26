@@ -86,7 +86,7 @@ impl StatusBar {
         &mut self,
         view: &mut Workspace,
         cx: &mut ViewContext<Workspace>,
-    ) -> impl Element<ViewState = Workspace> {
+    ) -> impl Element<Workspace> {
         let theme = theme(cx);
 
         div()
@@ -101,11 +101,7 @@ impl StatusBar {
             .child(self.right_tools(view, cx))
     }
 
-    fn left_tools(
-        &self,
-        workspace: &mut Workspace,
-        cx: &WindowContext,
-    ) -> impl Element<ViewState = Workspace> {
+    fn left_tools(&self, workspace: &mut Workspace, cx: &WindowContext) -> impl Element<Workspace> {
         div()
             .flex()
             .items_center()
@@ -136,7 +132,7 @@ impl StatusBar {
         &self,
         workspace: &mut Workspace,
         cx: &WindowContext,
-    ) -> impl Element<ViewState = Workspace> {
+    ) -> impl Element<Workspace> {
         div()
             .flex()
             .items_center()

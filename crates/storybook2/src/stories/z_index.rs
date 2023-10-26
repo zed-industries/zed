@@ -19,7 +19,7 @@ impl<S: 'static + Send + Sync> ZIndexStory<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         Story::container(cx)
             .child(Story::title(cx, "z-index"))
             .child(
@@ -86,23 +86,23 @@ trait Styles: Styled + Sized {
     }
 }
 
-impl<S: 'static + Send + Sync> Styles for Div<S> {}
+impl<V: 'static + Send + Sync> Styles for Div<V> {}
 
 #[derive(Element)]
-struct ZIndexExample<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+struct ZIndexExample<V: 'static + Send + Sync> {
+    view_type: PhantomData<V>,
     z_index: u32,
 }
 
-impl<S: 'static + Send + Sync> ZIndexExample<S> {
+impl<V: 'static + Send + Sync> ZIndexExample<V> {
     pub fn new(z_index: u32) -> Self {
         Self {
-            state_type: PhantomData,
+            view_type: PhantomData,
             z_index,
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div()
             .relative()
             .size_full()

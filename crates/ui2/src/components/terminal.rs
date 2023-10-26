@@ -17,7 +17,7 @@ impl<S: 'static + Send + Sync + Clone> Terminal<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         let theme = theme(cx);
 
         let can_navigate_back = true;
@@ -109,7 +109,7 @@ mod stories {
             &mut self,
             _view: &mut S,
             cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        ) -> impl Element<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Terminal<S>>(cx))
                 .child(Story::label(cx, "Default"))

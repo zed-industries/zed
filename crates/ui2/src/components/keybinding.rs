@@ -34,7 +34,7 @@ impl<S: 'static + Send + Sync> Keybinding<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         div()
             .flex()
             .gap_2()
@@ -68,7 +68,7 @@ impl<S: 'static + Send + Sync> Key<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         let theme = theme(cx);
 
         div()
@@ -189,7 +189,7 @@ mod stories {
             &mut self,
             _view: &mut S,
             cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        ) -> impl Element<S> {
             let all_modifier_permutations = ModifierKey::iter().permutations(2);
 
             Story::container(cx)

@@ -17,7 +17,7 @@ impl<S: 'static + Send + Sync + Clone> RecentProjects<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(vec![
@@ -60,7 +60,7 @@ mod stories {
             &mut self,
             _view: &mut S,
             cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        ) -> impl Element<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, RecentProjects<S>>(cx))
                 .child(Story::label(cx, "Default"))

@@ -176,7 +176,7 @@ impl<S: 'static + Send + Sync> IconElement<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         let fill = self.color.color(cx);
         let svg_size = match self.size {
             IconSize::Small => ui_size(cx, 12. / 14.),
@@ -218,7 +218,7 @@ mod stories {
             &mut self,
             _view: &mut S,
             cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        ) -> impl Element<S> {
             let icons = Icon::iter();
 
             Story::container(cx)

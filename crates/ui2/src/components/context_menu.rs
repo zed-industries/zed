@@ -42,7 +42,7 @@ impl<S: 'static + Send + Sync> ContextMenu<S> {
             items: items.into_iter().collect(),
         }
     }
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -89,7 +89,7 @@ mod stories {
             &mut self,
             _view: &mut S,
             cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        ) -> impl Element<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, ContextMenu<S>>(cx))
                 .child(Story::label(cx, "Default"))

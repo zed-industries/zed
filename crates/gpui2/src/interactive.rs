@@ -19,8 +19,8 @@ use std::{
 
 const DRAG_THRESHOLD: f64 = 2.;
 
-pub trait StatelessInteractive: Element {
-    fn stateless_interaction(&mut self) -> &mut StatelessInteraction<Self::ViewState>;
+pub trait StatelessInteractive<V: 'static>: Element<V> {
+    fn stateless_interaction(&mut self) -> &mut StatelessInteraction<V>;
 
     fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
@@ -48,10 +48,7 @@ pub trait StatelessInteractive: Element {
     fn on_mouse_down(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut Self::ViewState, &MouseDownEvent, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
+        handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + Send + Sync + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -72,10 +69,7 @@ pub trait StatelessInteractive: Element {
     fn on_mouse_up(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut Self::ViewState, &MouseUpEvent, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
+        handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + Send + Sync + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -96,10 +90,7 @@ pub trait StatelessInteractive: Element {
     fn on_mouse_down_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut Self::ViewState, &MouseDownEvent, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
+        handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + Send + Sync + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -120,10 +111,7 @@ pub trait StatelessInteractive: Element {
     fn on_mouse_up_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut Self::ViewState, &MouseUpEvent, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
+        handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + Send + Sync + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -143,10 +131,7 @@ pub trait StatelessInteractive: Element {
 
     fn on_mouse_move(
         mut self,
-        handler: impl Fn(&mut Self::ViewState, &MouseMoveEvent, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
+        handler: impl Fn(&mut V, &MouseMoveEvent, &mut ViewContext<V>) + Send + Sync + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -163,10 +148,7 @@ pub trait StatelessInteractive: Element {
 
     fn on_scroll_wheel(
         mut self,
-        handler: impl Fn(&mut Self::ViewState, &ScrollWheelEvent, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
+        handler: impl Fn(&mut V, &ScrollWheelEvent, &mut ViewContext<V>) + Send + Sync + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -194,10 +176,7 @@ pub trait StatelessInteractive: Element {
 
     fn on_action<A: 'static>(
         mut self,
-        listener: impl Fn(&mut Self::ViewState, &A, DispatchPhase, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
+        listener: impl Fn(&mut V, &A, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -215,12 +194,8 @@ pub trait StatelessInteractive: Element {
 
     fn on_key_down(
         mut self,
-        listener: impl Fn(
-                &mut Self::ViewState,
-                &KeyDownEvent,
-                DispatchPhase,
-                &mut ViewContext<Self::ViewState>,
-            ) + Send
+        listener: impl Fn(&mut V, &KeyDownEvent, DispatchPhase, &mut ViewContext<V>)
+            + Send
             + Sync
             + 'static,
     ) -> Self
@@ -240,7 +215,7 @@ pub trait StatelessInteractive: Element {
 
     fn on_key_up(
         mut self,
-        listener: impl Fn(&mut Self::ViewState, &KeyUpEvent, DispatchPhase, &mut ViewContext<Self::ViewState>)
+        listener: impl Fn(&mut V, &KeyUpEvent, DispatchPhase, &mut ViewContext<V>)
             + Send
             + Sync
             + 'static,
@@ -289,10 +264,7 @@ pub trait StatelessInteractive: Element {
 
     fn on_drop<S: 'static>(
         mut self,
-        listener: impl Fn(&mut Self::ViewState, S, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
+        listener: impl Fn(&mut V, S, &mut ViewContext<V>) + Send + Sync + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -307,8 +279,8 @@ pub trait StatelessInteractive: Element {
     }
 }
 
-pub trait StatefulInteractive: StatelessInteractive {
-    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<Self::ViewState>;
+pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
+    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<V>;
 
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
@@ -335,10 +307,7 @@ pub trait StatefulInteractive: StatelessInteractive {
 
     fn on_click(
         mut self,
-        listener: impl Fn(&mut Self::ViewState, &ClickEvent, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
+        listener: impl Fn(&mut V, &ClickEvent, &mut ViewContext<V>) + Send + Sync + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -351,20 +320,14 @@ pub trait StatefulInteractive: StatelessInteractive {
 
     fn on_drag<S, R, E>(
         mut self,
-        listener: impl Fn(
-                &mut Self::ViewState,
-                &mut ViewContext<Self::ViewState>,
-            ) -> Drag<S, R, Self::ViewState, E>
-            + Send
-            + Sync
-            + 'static,
+        listener: impl Fn(&mut V, &mut ViewContext<V>) -> Drag<S, R, V, E> + Send + Sync + 'static,
     ) -> Self
     where
         Self: Sized,
         S: Any + Send + Sync,
-        R: Fn(&mut Self::ViewState, &mut ViewContext<Self::ViewState>) -> E,
+        R: Fn(&mut V, &mut ViewContext<V>) -> E,
         R: 'static + Send + Sync,
-        E: Element<ViewState = Self::ViewState>,
+        E: Element<V>,
     {
         debug_assert!(
             self.stateful_interaction().drag_listener.is_none(),
@@ -907,7 +870,8 @@ pub struct ClickEvent {
 pub struct Drag<S, R, V, E>
 where
     R: Fn(&mut V, &mut ViewContext<V>) -> E,
-    E: Element<ViewState = V>,
+    V: 'static,
+    E: Element<V>,
 {
     pub state: S,
     pub render_drag_handle: R,
@@ -917,7 +881,8 @@ where
 impl<S, R, V, E> Drag<S, R, V, E>
 where
     R: Fn(&mut V, &mut ViewContext<V>) -> E,
-    E: Element<ViewState = V>,
+    V: 'static,
+    E: Element<V>,
 {
     pub fn new(state: S, render_drag_handle: R) -> Self {
         Drag {

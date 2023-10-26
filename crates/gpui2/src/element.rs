@@ -3,36 +3,35 @@ use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, mem};
 
-pub trait Element: IntoAnyElement<Self::ViewState> {
-    type ViewState: 'static;
+pub trait Element<V: 'static>: IntoAnyElement<V> {
     type ElementState: 'static;
 
     fn id(&self) -> Option<ElementId>;
 
     fn initialize(
         &mut self,
-        view_state: &mut Self::ViewState,
+        view_state: &mut V,
         element_state: Option<Self::ElementState>,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     ) -> Self::ElementState;
     // where
-    //     Self::ViewState: Any + Send + Sync;
+    //     V: Any + Send + Sync;
 
     fn layout(
         &mut self,
-        view_state: &mut Self::ViewState,
+        view_state: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     ) -> LayoutId;
     // where
-    //     Self::ViewState: Any + Send + Sync;
+    //     V: Any + Send + Sync;
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        view_state: &mut Self::ViewState,
+        view_state: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     );
 
     // where
@@ -42,10 +41,10 @@ pub trait Element: IntoAnyElement<Self::ViewState> {
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
 
-pub trait ParentElement: Element {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]>;
+pub trait ParentElement<V: 'static>: Element<V> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]>;
 
-    fn child(mut self, child: impl IntoAnyElement<Self::ViewState>) -> Self
+    fn child(mut self, child: impl IntoAnyElement<V>) -> Self
     where
         Self: Sized,
     {
@@ -53,10 +52,7 @@ pub trait ParentElement: Element {
         self
     }
 
-    fn children(
-        mut self,
-        iter: impl IntoIterator<Item = impl IntoAnyElement<Self::ViewState>>,
-    ) -> Self
+    fn children(mut self, iter: impl IntoIterator<Item = impl IntoAnyElement<V>>) -> Self
     where
         Self: Sized,
     {
@@ -72,7 +68,7 @@ trait ElementObject<V> {
     fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
 }
 
-struct RenderedElement<E: Element> {
+struct RenderedElement<V: 'static, E: Element<V>> {
     element: E,
     phase: ElementRenderPhase<E::ElementState>,
 }
@@ -94,7 +90,7 @@ enum ElementRenderPhase<V> {
 /// Internal struct that wraps an element to store Layout and ElementState after the element is rendered.
 /// It's allocated as a trait object to erase the element type and wrapped in AnyElement<E::State> for
 /// improved usability.
-impl<E: Element> RenderedElement<E> {
+impl<V, E: Element<V>> RenderedElement<V, E> {
     fn new(element: E) -> Self {
         RenderedElement {
             element,
@@ -103,13 +99,13 @@ impl<E: Element> RenderedElement<E> {
     }
 }
 
-impl<E> ElementObject<E::ViewState> for RenderedElement<E>
+impl<V, E> ElementObject<V> for RenderedElement<V, E>
 where
-    E: Element,
+    E: Element<V>,
     // E::ViewState: Any + Send + Sync,
     E::ElementState: Any + Send + Sync,
 {
-    fn initialize(&mut self, view_state: &mut E::ViewState, cx: &mut ViewContext<E::ViewState>) {
+    fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
         let frame_state = if let Some(id) = self.element.id() {
             cx.with_element_state(id, |element_state, cx| {
                 let element_state = self.element.initialize(view_state, element_state, cx);
@@ -124,7 +120,7 @@ where
         self.phase = ElementRenderPhase::Initialized { frame_state };
     }
 
-    fn layout(&mut self, state: &mut E::ViewState, cx: &mut ViewContext<E::ViewState>) -> LayoutId {
+    fn layout(&mut self, state: &mut V, cx: &mut ViewContext<V>) -> LayoutId {
         let layout_id;
         let mut frame_state;
         match mem::take(&mut self.phase) {
@@ -154,7 +150,7 @@ where
         layout_id
     }
 
-    fn paint(&mut self, view_state: &mut E::ViewState, cx: &mut ViewContext<E::ViewState>) {
+    fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
         self.phase = match mem::take(&mut self.phase) {
             ElementRenderPhase::LayoutRequested {
                 layout_id,
@@ -185,8 +181,9 @@ pub struct AnyElement<V>(Box<dyn ElementObject<V> + Send + Sync>);
 impl<V> AnyElement<V> {
     pub fn new<E>(element: E) -> Self
     where
+        V: 'static,
         E: 'static + Send + Sync,
-        E: Element<ViewState = V>,
+        E: Element<V>,
         E::ElementState: Any + Send + Sync,
     {
         AnyElement(Box::new(RenderedElement::new(element)))

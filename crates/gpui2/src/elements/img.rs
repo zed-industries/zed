@@ -65,12 +65,11 @@ where
     }
 }
 
-impl<V, I, F> Element for Img<V, I, F>
+impl<V, I, F> Element<V> for Img<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
-    type ViewState = V;
     type ElementState = DivState;
 
     fn id(&self) -> Option<crate::ElementId> {
@@ -90,7 +89,7 @@ where
         &mut self,
         view_state: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     ) -> LayoutId {
         self.base.layout(view_state, element_state, cx)
     }
@@ -143,7 +142,7 @@ where
     }
 }
 
-impl<V, I, F> StatelessInteractive for Img<V, I, F>
+impl<V, I, F> StatelessInteractive<V> for Img<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
@@ -153,21 +152,21 @@ where
     }
 }
 
-impl<V, F> StatefulInteractive for Img<V, StatefulInteraction<V>, F>
+impl<V, F> StatefulInteractive<V> for Img<V, StatefulInteraction<V>, F>
 where
     F: ElementFocus<V>,
 {
-    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
+    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<V> {
         self.base.stateful_interaction()
     }
 }
 
-impl<V, I> Focusable for Img<V, I, FocusEnabled<V>>
+impl<V, I> Focusable<V> for Img<V, I, FocusEnabled<V>>
 where
     V: 'static,
     I: ElementInteraction<V>,
 {
-    fn focus_listeners(&mut self) -> &mut FocusListeners<Self::ViewState> {
+    fn focus_listeners(&mut self) -> &mut FocusListeners<V> {
         self.base.focus_listeners()
     }
 

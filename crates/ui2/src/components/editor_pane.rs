@@ -49,7 +49,7 @@ impl EditorPane {
         )
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<Self> {
         v_stack()
             .w_full()
             .h_full()

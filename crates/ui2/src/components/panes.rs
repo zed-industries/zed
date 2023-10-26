@@ -118,7 +118,7 @@ impl<S: 'static + Send + Sync> Pane<S> {
         self
     }
 
-    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         div()
             .id(self.id.clone())
             .flex()
@@ -148,8 +148,8 @@ impl<S: 'static + Send + Sync> Pane<S> {
     }
 }
 
-impl<S: 'static + Send + Sync> ParentElement for Pane<S> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
+impl<S: 'static + Send + Sync> ParentElement<S> for Pane<S> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
         &mut self.children
     }
 }
@@ -181,7 +181,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
         }
     }
 
-    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         let theme = theme(cx);
 
         if !self.panes.is_empty() {
