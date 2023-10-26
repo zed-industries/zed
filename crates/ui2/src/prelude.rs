@@ -26,13 +26,17 @@ pub enum FileSystemStatus {
     Deleted,
 }
 
-impl FileSystemStatus {
-    pub fn to_string(&self) -> String {
-        match self {
-            Self::None => "None".to_string(),
-            Self::Conflict => "Conflict".to_string(),
-            Self::Deleted => "Deleted".to_string(),
-        }
+impl std::fmt::Display for FileSystemStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::None => "None",
+                Self::Conflict => "Conflict",
+                Self::Deleted => "Deleted",
+            }
+        )
     }
 }
 
@@ -48,17 +52,6 @@ pub enum GitStatus {
 }
 
 impl GitStatus {
-    pub fn to_string(&self) -> String {
-        match self {
-            Self::None => "None".to_string(),
-            Self::Created => "Created".to_string(),
-            Self::Modified => "Modified".to_string(),
-            Self::Deleted => "Deleted".to_string(),
-            Self::Conflict => "Conflict".to_string(),
-            Self::Renamed => "Renamed".to_string(),
-        }
-    }
-
     pub fn hsla(&self, cx: &WindowContext) -> Hsla {
         let theme = theme(cx);
 
@@ -70,6 +63,23 @@ impl GitStatus {
             Self::Conflict => theme.git_conflict,
             Self::Renamed => theme.git_renamed,
         }
+    }
+}
+
+impl std::fmt::Display for GitStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::None => "None",
+                Self::Created => "Created",
+                Self::Modified => "Modified",
+                Self::Deleted => "Deleted",
+                Self::Conflict => "Conflict",
+                Self::Renamed => "Renamed",
+            }
+        )
     }
 }
 
