@@ -170,7 +170,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                     let mut #cx_varname = gpui2::TestAppContext::new(
                                        dispatcher.clone()
                                     );
-                                    let mut #cx_varname_lock = cx_varname.app.lock();
+                                    let mut #cx_varname_lock = #cx_varname.app.lock();
                                 ));
                                 inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
                                 cx_teardowns.extend(quote!(

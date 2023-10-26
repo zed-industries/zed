@@ -7,8 +7,8 @@ use std::{any::Any, future::Future, sync::Arc};
 
 #[derive(Clone)]
 pub struct TestAppContext {
-    pub(crate) app: Arc<Mutex<AppContext>>,
-    pub(crate) executor: Executor,
+    pub app: Arc<Mutex<AppContext>>,
+    pub executor: Executor,
 }
 
 impl Context for TestAppContext {
