@@ -210,6 +210,7 @@ impl Prettier {
             .spawn(async move { node.binary_path().await })
             .await?;
         let server = LanguageServer::new(
+            Arc::new(parking_lot::Mutex::new(None)),
             server_id,
             LanguageServerBinary {
                 path: node_path,
