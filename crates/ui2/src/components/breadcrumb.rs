@@ -31,11 +31,7 @@ impl<S: 'static + Send + Sync> Breadcrumb<S> {
         div().child(" › ").text_color(theme.text_muted)
     }
 
-    fn render(
-        &mut self,
-        view_state: &mut S,
-        cx: &mut ViewContext<S>,
-    ) -> impl Element<S> {
+    fn render(&mut self, view_state: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         let symbols_len = self.symbols.len();
@@ -106,7 +102,7 @@ mod stories {
             &mut self,
             view_state: &mut S,
             cx: &mut ViewContext<S>,
-        ) -> impl Element<S> {
+        ) -> impl IntoAnyElement<S> {
             let theme = theme(cx);
 
             Story::container(cx)

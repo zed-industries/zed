@@ -42,7 +42,7 @@ impl<S: 'static + Send + Sync> Modal<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         v_stack()

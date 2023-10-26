@@ -60,7 +60,7 @@ impl<S: 'static + Send + Sync> Input<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         let (input_bg, input_hover_bg, input_active_bg) = match self.variant {
@@ -132,11 +132,7 @@ mod stories {
             }
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Input<S>>(cx))
                 .child(Story::label(cx, "Default"))

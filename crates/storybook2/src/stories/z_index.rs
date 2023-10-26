@@ -19,7 +19,7 @@ impl<S: 'static + Send + Sync> ZIndexStory<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         Story::container(cx)
             .child(Story::title(cx, "z-index"))
             .child(
@@ -102,7 +102,7 @@ impl<V: 'static + Send + Sync> ZIndexExample<V> {
         }
     }
 
-    fn render(&mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(&mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl IntoAnyElement<V> {
         div()
             .relative()
             .size_full()

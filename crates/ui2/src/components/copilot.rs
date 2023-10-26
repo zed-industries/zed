@@ -16,7 +16,7 @@ impl<S: 'static + Send + Sync + Clone> CopilotModal<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         div().id(self.id.clone()).child(
             Modal::new("some-id")
                 .title("Connect Copilot to Zed")
@@ -47,11 +47,7 @@ mod stories {
             }
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, CopilotModal<S>>(cx))
                 .child(Story::label(cx, "Default"))

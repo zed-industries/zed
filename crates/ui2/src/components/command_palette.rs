@@ -17,7 +17,7 @@ impl<S: 'static + Send + Sync> CommandPalette<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(example_editor_actions())
@@ -49,11 +49,7 @@ mod stories {
             }
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, CommandPalette<S>>(cx))
                 .child(Story::label(cx, "Default"))

@@ -30,7 +30,7 @@ impl<S: 'static + Send + Sync> Details<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -66,11 +66,7 @@ mod stories {
             }
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Details<S>>(cx))
                 .child(Story::label(cx, "Default"))

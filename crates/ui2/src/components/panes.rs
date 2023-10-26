@@ -101,7 +101,7 @@ impl<V: 'static + Send + Sync> PaneGroup<V> {
         }
     }
 
-    fn render(&mut self, view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(&mut self, view: &mut V, cx: &mut ViewContext<V>) -> impl IntoAnyElement<V> {
         let theme = theme(cx);
 
         if !self.panes.is_empty() {

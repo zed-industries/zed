@@ -27,7 +27,7 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         let (can_navigate_back, can_navigate_forward) = self.can_navigate;
@@ -112,11 +112,7 @@ mod stories {
             }
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, TabBar<S>>(cx))
                 .child(Story::label(cx, "Default"))

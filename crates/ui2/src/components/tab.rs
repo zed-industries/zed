@@ -81,7 +81,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
         let has_fs_conflict = self.fs_status == FileSystemStatus::Conflict;
         let is_deleted = self.fs_status == FileSystemStatus::Deleted;
@@ -188,11 +188,7 @@ mod stories {
             }
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             let git_statuses = GitStatus::iter();
             let fs_statuses = FileSystemStatus::iter();
 

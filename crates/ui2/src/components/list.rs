@@ -92,7 +92,7 @@ impl<S: 'static + Send + Sync> ListHeader<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
@@ -157,7 +157,7 @@ impl<S: 'static + Send + Sync> ListSubHeader<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
@@ -230,7 +230,7 @@ impl<S: 'static + Send + Sync> From<ListSubHeader<S>> for ListItem<S> {
 }
 
 impl<S: 'static + Send + Sync> ListItem<S> {
-    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         match self {
             ListItem::Entry(entry) => div().child(entry.render(view, cx)),
             ListItem::Separator(separator) => div().child(separator.render(view, cx)),
@@ -344,10 +344,7 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
         }
     }
 
-    fn disclosure_control(
-        &mut self,
-        cx: &mut ViewContext<S>,
-    ) -> Option<impl Element<S>> {
+    fn disclosure_control(&mut self, cx: &mut ViewContext<S>) -> Option<impl IntoAnyElement<S>> {
         let disclosure_control_icon = if let Some(ToggleState::Toggled) = self.toggle {
             IconElement::new(Icon::ChevronDown)
         } else {
@@ -367,7 +364,7 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let settings = user_settings(cx);
         let theme = theme(cx);
 
@@ -477,7 +474,7 @@ impl<S: 'static + Send + Sync> ListDetailsEntry<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
         let settings = user_settings(cx);
 
@@ -534,7 +531,7 @@ impl<S: 'static + Send + Sync> ListSeparator<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         div().h_px().w_full().bg(theme.border)
@@ -574,7 +571,7 @@ impl<S: 'static + Send + Sync> List<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = Toggleable::is_toggled(&self.toggleable);
 

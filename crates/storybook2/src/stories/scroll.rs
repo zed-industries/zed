@@ -1,6 +1,7 @@
 use crate::themes::rose_pine;
 use gpui2::{
-    div, px, view, Context, Element, ParentElement, SharedString, Styled, View, WindowContext,
+    div, px, view, Context, IntoAnyElement, ParentElement, SharedString, Styled, View,
+    WindowContext,
 };
 use ui::ElementExt;
 
@@ -16,7 +17,7 @@ impl ScrollStory {
     }
 }
 
-fn checkerboard<S>(depth: usize) -> impl Element<S>
+fn checkerboard<S>(depth: usize) -> impl IntoAnyElement<S>
 where
     S: 'static + Send + Sync,
 {

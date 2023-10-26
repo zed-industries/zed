@@ -150,11 +150,7 @@ impl<S: 'static + Send + Sync> Button<S> {
         self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 
-    pub fn render(
-        &mut self,
-        _view: &mut S,
-        cx: &mut ViewContext<S>,
-    ) -> impl Element<S> {
+    pub fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let icon_color = self.icon_color();
 
         let mut button = h_stack()
@@ -211,7 +207,7 @@ impl<S: 'static + Send + Sync> ButtonGroup<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let mut el = h_stack().text_size(ui_size(cx, 1.));
 
         for button in &mut self.buttons {
@@ -246,11 +242,7 @@ mod stories {
             }
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             let states = InteractionState::iter();
 
             Story::container(cx)

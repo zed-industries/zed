@@ -176,7 +176,7 @@ impl<S: 'static + Send + Sync> IconElement<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let fill = self.color.color(cx);
         let svg_size = match self.size {
             IconSize::Small => ui_size(cx, 12. / 14.),
@@ -214,11 +214,7 @@ mod stories {
             }
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             let icons = Icon::iter();
 
             Story::container(cx)
