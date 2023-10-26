@@ -42,7 +42,8 @@ impl ContextMenu {
             items: items.into_iter().collect(),
         }
     }
-    fn render<S: 'static>(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -53,7 +54,7 @@ impl ContextMenu {
             .child(
                 List::new(
                     self.items
-                        .drain(..)
+                        .into_iter()
                         .map(ContextMenuItem::to_list_item)
                         .collect(),
                 )

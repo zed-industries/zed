@@ -58,7 +58,7 @@ impl<S: 'static> Modal<S> {
                     .child(div().children(self.title.clone().map(|t| Label::new(t))))
                     .child(IconButton::new("close", Icon::Close)),
             )
-            .child(v_stack().p_1().children(self.children.drain(..)))
+            .child(v_stack().p_1().children(self.children))
             .when(
                 self.primary_action.is_some() || self.secondary_action.is_some(),
                 |this| {

@@ -22,7 +22,7 @@ impl ChatPanel {
         self
     }
 
-    fn render<S: 'static>(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div()
             .id(self.element_id.clone())
             .flex()
@@ -60,7 +60,7 @@ impl ChatPanel {
                             .flex_col()
                             .gap_3()
                             .overflow_y_scroll()
-                            .children(self.messages.drain(..)),
+                            .children(self.messages),
                     )
                     // Composer
                     .child(div().flex().my_2().child(Input::new("Message #design"))),

@@ -92,7 +92,7 @@ impl<S: 'static> Panel<S> {
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         let current_size = self.width.unwrap_or(self.initial_width);
@@ -113,7 +113,7 @@ impl<S: 'static> Panel<S> {
             })
             .bg(theme.surface)
             .border_color(theme.border)
-            .children(self.children.drain(..))
+            .children(self.children)
     }
 }
 

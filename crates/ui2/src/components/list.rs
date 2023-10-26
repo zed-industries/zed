@@ -471,7 +471,7 @@ impl<S: 'static> ListDetailsEntry<S> {
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
         let settings = user_settings(cx);
 
@@ -504,14 +504,13 @@ impl<S: 'static> ListDetailsEntry<S> {
             .child(Label::new(self.label.clone()).color(label_color))
             .children(
                 self.meta
-                    .take()
                     .map(|meta| Label::new(meta).color(LabelColor::Muted)),
             )
             .child(
                 h_stack()
                     .gap_1()
                     .justify_end()
-                    .children(self.actions.take().unwrap_or_default().into_iter()),
+                    .children(self.actions.unwrap_or_default()),
             )
     }
 }
@@ -564,13 +563,13 @@ impl<S: 'static> List<S> {
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = Toggleable::is_toggled(&self.toggleable);
 
         let list_content = match (self.items.is_empty(), is_toggled) {
             (_, false) => div(),
-            (false, _) => div().children(self.items.drain(..)),
+            (false, _) => div().children(self.items),
             (true, _) => {
                 div().child(Label::new(self.empty_message.clone()).color(LabelColor::Muted))
             }
@@ -578,11 +577,7 @@ impl<S: 'static> List<S> {
 
         v_stack()
             .py_1()
-            .children(
-                self.header
-                    .take()
-                    .map(|header| header.toggleable(self.toggleable)),
-            )
+            .children(self.header.map(|header| header.toggleable(self.toggleable)))
             .child(list_content)
     }
 }

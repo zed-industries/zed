@@ -42,7 +42,7 @@ impl Palette {
         self
     }
 
-    fn render<S: 'static>(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -81,7 +81,7 @@ impl Palette {
                                 .into_iter()
                                 .flatten(),
                             )
-                            .children(self.items.drain(..).enumerate().map(|(index, item)| {
+                            .children(self.items.into_iter().enumerate().map(|(index, item)| {
                                 h_stack()
                                     .id(index)
                                     .justify_between()

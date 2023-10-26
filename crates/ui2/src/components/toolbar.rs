@@ -54,7 +54,7 @@ impl<S: 'static> Toolbar<S> {
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         div()
@@ -62,8 +62,8 @@ impl<S: 'static> Toolbar<S> {
             .p_2()
             .flex()
             .justify_between()
-            .child(div().flex().children(self.left_items.drain(..)))
-            .child(div().flex().children(self.right_items.drain(..)))
+            .child(div().flex().children(self.left_items))
+            .child(div().flex().children(self.right_items))
     }
 }
 
