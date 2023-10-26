@@ -624,6 +624,140 @@ type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 type BackgroundHighlight = (fn(&Theme) -> Color, Vec<Range<Anchor>>);
 type InlayBackgroundHighlight = (fn(&Theme) -> Color, Vec<InlayHighlight>);
 
+trait CodeCompletionsProvider {
+    fn show_completions(&mut self, _: &mut Editor, cx: &mut ViewContext<Editor>);
+    fn is_empty(&self, cx: &AppContext) -> bool;
+    fn clear(&mut self, cx: &mut AppContext);
+}
+
+struct CodeCompletions {
+    completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
+    project: ModelHandle<Project>,
+    next_completion_id: CompletionId,
+}
+
+impl CodeCompletions {}
+impl Entity for CodeCompletions {
+    type Event = ();
+}
+
+impl CodeCompletionsProvider for ModelHandle<CodeCompletions> {
+    fn show_completions(&mut self, editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+        if editor.pending_rename.is_some() {
+            return;
+        }
+        let position = editor.selections.newest_anchor().head();
+        let (buffer, buffer_position) = if let Some(output) = editor
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(position.clone(), cx)
+        {
+            output
+        } else {
+            return;
+        };
+
+        let query = Editor::completion_query(&editor.buffer.read(cx).read(cx), position.clone());
+
+        let completions = self.update(cx, |provider, cx| {
+            provider.project.update(cx, |project, cx| {
+                project.completions(&buffer, buffer_position, cx)
+            })
+        });
+        let id = self.update(cx, |this, cx| post_inc(&mut this.next_completion_id));
+        let that = self.clone();
+        let task = cx.spawn(move |this, mut cx| {
+            async move {
+                let menu = if let Some(completions) = completions.await.log_err() {
+                    let mut menu = CompletionsMenu {
+                        id,
+                        initial_position: position,
+                        match_candidates: completions
+                            .iter()
+                            .enumerate()
+                            .map(|(id, completion)| {
+                                StringMatchCandidate::new(
+                                    id,
+                                    completion.label.text[completion.label.filter_range.clone()]
+                                        .into(),
+                                )
+                            })
+                            .collect(),
+                        buffer,
+                        completions: Arc::new(RwLock::new(completions.into())),
+                        matches: Vec::new().into(),
+                        selected_item: 0,
+                        list: Default::default(),
+                    };
+                    menu.filter(query.as_deref(), cx.background()).await;
+                    if menu.matches.is_empty() {
+                        None
+                    } else {
+                        _ = this.update(&mut cx, |editor, cx| {
+                            menu.pre_resolve_completion_documentation(editor.project.clone(), cx);
+                        });
+                        Some(menu)
+                    }
+                } else {
+                    None
+                };
+
+                that.update(&mut cx, |provider, _| {
+                    provider
+                        .completion_tasks
+                        .retain(|(task_id, _)| *task_id > id);
+                });
+                this.update(&mut cx, |this, cx| {
+                    let mut context_menu = this.context_menu.write();
+                    match context_menu.as_ref() {
+                        None => {}
+
+                        Some(ContextMenu::Completions(prev_menu)) => {
+                            if prev_menu.id > id {
+                                return;
+                            }
+                        }
+
+                        _ => return,
+                    }
+
+                    if this.focused && menu.is_some() {
+                        let menu = menu.unwrap();
+                        *context_menu = Some(ContextMenu::Completions(menu));
+                        drop(context_menu);
+                        this.discard_copilot_suggestion(cx);
+                        cx.notify();
+                    } else if this
+                        .completions_provider
+                        .as_ref()
+                        .map(|provider| provider.is_empty(cx))
+                        .unwrap_or(true)
+                    {
+                        // If there are no more completion tasks and the last menu was
+                        // empty, we should hide it. If it was already hidden, we should
+                        // also show the copilot suggestion when available.
+                        drop(context_menu);
+                        if this.hide_context_menu(cx).is_none() {
+                            this.update_visible_copilot_suggestion(cx);
+                        }
+                    }
+                })?;
+
+                Ok::<_, anyhow::Error>(())
+            }
+            .log_err()
+        });
+        self.update(cx, |this, cx| this.completion_tasks.push((id, task)));
+    }
+
+    fn is_empty(&self, cx: &AppContext) -> bool {
+        self.read(cx).completion_tasks.is_empty()
+    }
+
+    fn clear(&mut self, cx: &mut AppContext) {
+        self.update(cx, |this, _| this.completion_tasks.clear())
+    }
+}
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
@@ -638,12 +772,12 @@ pub struct Editor {
     autoclose_regions: Vec<AutocloseRegion>,
     snippet_stack: InvalidationStack<SnippetState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
+    project: Option<ModelHandle<Project>>,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
     override_text_style: Option<Box<OverrideTextStyle>>,
-    project: Option<ModelHandle<Project>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     focused: bool,
     blink_manager: ModelHandle<BlinkManager>,
@@ -658,8 +792,6 @@ pub struct Editor {
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
-    completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
-    next_completion_id: CompletionId,
     available_code_actions: Option<(ModelHandle<Buffer>, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
@@ -682,6 +814,7 @@ pub struct Editor {
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<Vector2F>,
+    completions_provider: Option<Box<dyn CodeCompletionsProvider>>,
 }
 
 pub struct EditorSnapshot {
@@ -1924,6 +2057,15 @@ impl Editor {
             cx,
         );
 
+        let completions_provider = if let Some(ref project) = project {
+            Some(Box::new(cx.add_model(|cx| CodeCompletions {
+                completion_tasks: vec![],
+                project: project.clone(),
+                next_completion_id: 0,
+            })) as _)
+        } else {
+            None
+        };
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -1958,8 +2100,6 @@ impl Editor {
             context_menu: RwLock::new(None),
             mouse_context_menu: cx
                 .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
-            completion_tasks: Default::default(),
-            next_completion_id: 0,
             next_inlay_id: 0,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
@@ -1999,6 +2139,7 @@ impl Editor {
                     });
                 }),
             ],
+            completions_provider,
         };
 
         this._subscriptions.extend(project_subscriptions);
@@ -3554,107 +3695,11 @@ impl Editor {
     }
 
     fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
-        if self.pending_rename.is_some() {
-            return;
+        let mut provider = std::mem::take(&mut self.completions_provider);
+        if let Some(provider) = &mut provider {
+            provider.show_completions(self, cx)
         }
-
-        let project = if let Some(project) = self.project.clone() {
-            project
-        } else {
-            return;
-        };
-
-        let position = self.selections.newest_anchor().head();
-        let (buffer, buffer_position) = if let Some(output) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(position.clone(), cx)
-        {
-            output
-        } else {
-            return;
-        };
-
-        let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
-        let completions = project.update(cx, |project, cx| {
-            project.completions(&buffer, buffer_position, cx)
-        });
-
-        let id = post_inc(&mut self.next_completion_id);
-        let task = cx.spawn(|this, mut cx| {
-            async move {
-                let menu = if let Some(completions) = completions.await.log_err() {
-                    let mut menu = CompletionsMenu {
-                        id,
-                        initial_position: position,
-                        match_candidates: completions
-                            .iter()
-                            .enumerate()
-                            .map(|(id, completion)| {
-                                StringMatchCandidate::new(
-                                    id,
-                                    completion.label.text[completion.label.filter_range.clone()]
-                                        .into(),
-                                )
-                            })
-                            .collect(),
-                        buffer,
-                        completions: Arc::new(RwLock::new(completions.into())),
-                        matches: Vec::new().into(),
-                        selected_item: 0,
-                        list: Default::default(),
-                    };
-                    menu.filter(query.as_deref(), cx.background()).await;
-                    if menu.matches.is_empty() {
-                        None
-                    } else {
-                        _ = this.update(&mut cx, |editor, cx| {
-                            menu.pre_resolve_completion_documentation(editor.project.clone(), cx);
-                        });
-                        Some(menu)
-                    }
-                } else {
-                    None
-                };
-
-                this.update(&mut cx, |this, cx| {
-                    this.completion_tasks.retain(|(task_id, _)| *task_id > id);
-
-                    let mut context_menu = this.context_menu.write();
-                    match context_menu.as_ref() {
-                        None => {}
-
-                        Some(ContextMenu::Completions(prev_menu)) => {
-                            if prev_menu.id > id {
-                                return;
-                            }
-                        }
-
-                        _ => return,
-                    }
-
-                    if this.focused && menu.is_some() {
-                        let menu = menu.unwrap();
-                        *context_menu = Some(ContextMenu::Completions(menu));
-                        drop(context_menu);
-                        this.discard_copilot_suggestion(cx);
-                        cx.notify();
-                    } else if this.completion_tasks.is_empty() {
-                        // If there are no more completion tasks and the last menu was
-                        // empty, we should hide it. If it was already hidden, we should
-                        // also show the copilot suggestion when available.
-                        drop(context_menu);
-                        if this.hide_context_menu(cx).is_none() {
-                            this.update_visible_copilot_suggestion(cx);
-                        }
-                    }
-                })?;
-
-                Ok::<_, anyhow::Error>(())
-            }
-            .log_err()
-        });
-        self.completion_tasks.push((id, task));
+        self.completions_provider = provider;
     }
 
     pub fn confirm_completion(
@@ -3807,7 +3852,9 @@ impl Editor {
             this.update(&mut cx, |this, cx| {
                 if this.focused {
                     if let Some((buffer, actions)) = this.available_code_actions.clone() {
-                        this.completion_tasks.clear();
+                        this.completions_provider
+                            .as_mut()
+                            .map(|provider| provider.clear(cx));
                         this.discard_copilot_suggestion(cx);
                         *this.context_menu.write() =
                             Some(ContextMenu::CodeActions(CodeActionsMenu {
@@ -4287,7 +4334,11 @@ impl Editor {
         let cursor = selection.head();
 
         if self.context_menu.read().is_some()
-            || !self.completion_tasks.is_empty()
+            || !self
+                .completions_provider
+                .as_ref()
+                .map(|provider| provider.is_empty(cx))
+                .unwrap_or_default()
             || selection.start != selection.end
         {
             self.discard_copilot_suggestion(cx);
@@ -4443,7 +4494,9 @@ impl Editor {
 
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<ContextMenu> {
         cx.notify();
-        self.completion_tasks.clear();
+        if let Some(ref mut provider) = self.completions_provider {
+            provider.clear(cx);
+        }
         let context_menu = self.context_menu.write().take();
         if context_menu.is_some() {
             self.update_visible_copilot_suggestion(cx);
