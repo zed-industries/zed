@@ -42,7 +42,7 @@ impl<S: 'static + Send + Sync> Modal<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -80,8 +80,8 @@ impl<S: 'static + Send + Sync> Modal<S> {
     }
 }
 
-impl<S: 'static + Send + Sync> ParentElement for Modal<S> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
+impl<S: 'static + Send + Sync> ParentElement<S> for Modal<S> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
         &mut self.children
     }
 }

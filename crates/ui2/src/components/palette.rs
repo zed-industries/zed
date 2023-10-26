@@ -46,7 +46,7 @@ impl<S: 'static + Send + Sync> Palette<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -135,7 +135,7 @@ impl<S: 'static + Send + Sync> PaletteItem<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         div()
             .flex()
             .flex_row()
@@ -176,7 +176,7 @@ mod stories {
             &mut self,
             _view: &mut S,
             cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        ) -> impl Element<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Palette<S>>(cx))
                 .child(Story::label(cx, "Default"))

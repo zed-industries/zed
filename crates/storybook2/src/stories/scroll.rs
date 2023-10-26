@@ -16,7 +16,7 @@ impl ScrollStory {
     }
 }
 
-fn checkerboard<S>(depth: usize) -> impl Element<ViewState = S>
+fn checkerboard<S>(depth: usize) -> impl Element<S>
 where
     S: 'static + Send + Sync,
 {

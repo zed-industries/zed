@@ -54,7 +54,7 @@ impl<S: 'static + Send + Sync> Toolbar<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         let theme = theme(cx);
 
         div()
@@ -96,7 +96,7 @@ mod stories {
             &mut self,
             _view: &mut S,
             cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        ) -> impl Element<S> {
             let theme = theme(cx);
 
             Story::container(cx)

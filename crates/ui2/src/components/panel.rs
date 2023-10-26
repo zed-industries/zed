@@ -96,7 +96,7 @@ impl<S: 'static + Send + Sync> Panel<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         let theme = theme(cx);
 
         let current_size = self.width.unwrap_or(self.initial_width);
@@ -121,8 +121,8 @@ impl<S: 'static + Send + Sync> Panel<S> {
     }
 }
 
-impl<S: 'static + Send + Sync> ParentElement for Panel<S> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
+impl<S: 'static + Send + Sync> ParentElement<S> for Panel<S> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
         &mut self.children
     }
 }
@@ -152,7 +152,7 @@ mod stories {
             &mut self,
             _view: &mut S,
             cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        ) -> impl Element<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Panel<S>>(cx))
                 .child(Story::label(cx, "Default"))

@@ -36,7 +36,7 @@ impl<S: 'static + Send + Sync> Toast<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
         let theme = theme(cx);
 
         let mut div = div();
@@ -61,8 +61,8 @@ impl<S: 'static + Send + Sync> Toast<S> {
     }
 }
 
-impl<S: 'static + Send + Sync> ParentElement for Toast<S> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
+impl<S: 'static + Send + Sync> ParentElement<S> for Toast<S> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
         &mut self.children
     }
 }
@@ -90,11 +90,7 @@ mod stories {
             }
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Toast<S>>(cx))
                 .child(Story::label(cx, "Default"))

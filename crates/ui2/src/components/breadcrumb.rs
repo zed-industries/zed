@@ -35,7 +35,7 @@ impl<S: 'static + Send + Sync> Breadcrumb<S> {
         &mut self,
         view_state: &mut S,
         cx: &mut ViewContext<S>,
-    ) -> impl Element<ViewState = S> {
+    ) -> impl Element<S> {
         let theme = theme(cx);
 
         let symbols_len = self.symbols.len();
@@ -106,7 +106,7 @@ mod stories {
             &mut self,
             view_state: &mut S,
             cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        ) -> impl Element<S> {
             let theme = theme(cx);
 
             Story::container(cx)
