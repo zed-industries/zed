@@ -81,6 +81,8 @@ const NSDragOperationCopy: NSDragOperation = 1;
 
 #[ctor]
 unsafe fn build_classes() {
+    ::util::gpui2_loaded();
+
     WINDOW_CLASS = build_window_class("GPUIWindow", class!(NSWindow));
     PANEL_CLASS = build_window_class("GPUIPanel", class!(NSPanel));
     VIEW_CLASS = {
