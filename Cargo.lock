@@ -9488,7 +9488,6 @@ dependencies = [
  "serde",
  "smallvec",
  "strum",
- "theme",
  "theme2",
 ]
 
