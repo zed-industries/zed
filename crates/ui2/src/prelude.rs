@@ -3,7 +3,6 @@ pub use gpui2::{
     StatelessInteractive, Styled, ViewContext, WindowContext,
 };
 
-pub use crate::color::*;
 pub use crate::elevation::*;
 use crate::settings::user_settings;
 pub use crate::{old_theme, theme, ButtonVariant, ElementExt, Theme};
