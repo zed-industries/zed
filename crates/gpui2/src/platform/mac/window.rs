@@ -1,6 +1,6 @@
 use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
-    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, ExternalPaths, Executor,
+    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, Executor, ExternalPaths,
     FileDropEvent, GlobalPixels, InputEvent, KeyDownEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, Scene, Size,

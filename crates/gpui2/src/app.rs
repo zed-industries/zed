@@ -224,6 +224,8 @@ impl AppContext {
         {
             log::error!("timed out waiting on app_will_quit");
         }
+
+        self.globals_by_type.clear();
     }
 
     pub fn app_metadata(&self) -> AppMetadata {

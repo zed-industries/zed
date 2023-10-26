@@ -48,12 +48,8 @@ impl TestAppContext {
         }
     }
 
-    pub fn remove_all_windows(&self) {
-        // todo!("use app quit instead")
-    }
-
-    pub fn clear_globals(&self) {
-        // todo!("use app quit instead")
+    pub fn quit(&self) {
+        self.app.lock().quit();
     }
 
     pub fn refresh(&mut self) -> Result<()> {

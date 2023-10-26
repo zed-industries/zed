@@ -3,8 +3,8 @@ use proc_macro2::Ident;
 use quote::{format_ident, quote};
 use std::mem;
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned as _, AttributeArgs, FnArg,
-    ItemFn, Lit, Meta, NestedMeta, Type,
+    parse_macro_input, parse_quote, spanned::Spanned as _, AttributeArgs, FnArg, ItemFn, Lit, Meta,
+    NestedMeta, Type,
 };
 
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
@@ -110,9 +110,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 );
                             ));
                             cx_teardowns.extend(quote!(
-                                #cx_varname.remove_all_windows();
-                                dispatcher.run_until_parked();
-                                #cx_varname.clear_globals();
+                                #cx_varname.quit();
                                 dispatcher.run_until_parked();
                             ));
                             inner_fn_args.extend(quote!(&mut #cx_varname,));
@@ -176,9 +174,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 ));
                                 inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
                                 cx_teardowns.extend(quote!(
-                                    #cx_varname.remove_all_windows();
-                                    dispatcher.run_until_parked();
-                                    #cx_varname.clear_globals();
+                                    #cx_varname.quit();
                                     dispatcher.run_until_parked();
                                 ));
                                 continue;
@@ -191,9 +187,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                     );
                                 ));
                                 cx_teardowns.extend(quote!(
-                                    #cx_varname.remove_all_windows();
-                                    dispatcher.run_until_parked();
-                                    #cx_varname.clear_globals();
+                                    #cx_varname.quit();
                                     dispatcher.run_until_parked();
                                 ));
                                 inner_fn_args.extend(quote!(&mut #cx_varname,));
