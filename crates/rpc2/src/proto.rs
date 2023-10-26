@@ -616,7 +616,7 @@ pub fn split_worktree_update(
 mod tests {
     use super::*;
 
-    #[gpui::test]
+    #[gpui2::test]
     async fn test_buffer_size() {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         let mut sink = MessageStream::new(tx.sink_map_err(|_| anyhow!("")));
@@ -648,7 +648,7 @@ mod tests {
         assert!(stream.encoding_buffer.capacity() <= MAX_BUFFER_LEN);
     }
 
-    #[gpui::test]
+    #[gpui2::test]
     fn test_converting_peer_id_from_and_to_u64() {
         let peer_id = PeerId {
             owner_id: 10,

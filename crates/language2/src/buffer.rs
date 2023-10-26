@@ -226,7 +226,7 @@ pub trait File: Send + Sync {
 
     fn as_any(&self) -> &dyn Any;
 
-    fn to_proto(&self) -> rpc::proto::File;
+    fn to_proto(&self) -> rpc2::proto::File;
 }
 
 pub trait LocalFile: File {
@@ -375,7 +375,7 @@ impl Buffer {
             file,
         );
         this.text.set_line_ending(proto::deserialize_line_ending(
-            rpc::proto::LineEnding::from_i32(message.line_ending)
+            rpc2::proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);

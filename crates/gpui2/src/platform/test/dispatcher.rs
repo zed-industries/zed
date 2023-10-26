@@ -1,6 +1,6 @@
 use crate::PlatformDispatcher;
 use async_task::Runnable;
-use collections::{BTreeMap, HashMap, VecDeque};
+use collections::{HashMap, VecDeque};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use std::{
@@ -24,7 +24,7 @@ struct TestDispatcherState {
     random: StdRng,
     foreground: HashMap<TestDispatcherId, VecDeque<Runnable>>,
     background: Vec<Runnable>,
-    delayed: BTreeMap<Instant, Runnable>,
+    delayed: Vec<(Instant, Runnable)>,
     time: Instant,
     is_main_thread: bool,
     next_id: TestDispatcherId,
@@ -36,7 +36,7 @@ impl TestDispatcher {
             random,
             foreground: HashMap::default(),
             background: Vec::new(),
-            delayed: BTreeMap::new(),
+            delayed: Vec::new(),
             time: Instant::now(),
             is_main_thread: true,
             next_id: TestDispatcherId(1),
@@ -112,17 +112,20 @@ impl PlatformDispatcher for TestDispatcher {
     fn dispatch_after(&self, duration: std::time::Duration, runnable: Runnable) {
         let mut state = self.state.lock();
         let next_time = state.time + duration;
-        state.delayed.insert(next_time, runnable);
+        let ix = match state.delayed.binary_search_by_key(&next_time, |e| e.0) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        state.delayed.insert(ix, (next_time, runnable));
     }
 
     fn poll(&self) -> bool {
         let mut state = self.state.lock();
 
-        while let Some((deadline, _)) = state.delayed.first_key_value() {
+        while let Some((deadline, _)) = state.delayed.first() {
             if *deadline > state.time {
                 break;
             }
-            let (_, runnable) = state.delayed.pop_first().unwrap();
+            let (_, runnable) = state.delayed.remove(0);
             state.background.push(runnable);
         }
 
@@ -134,8 +137,10 @@ impl PlatformDispatcher for TestDispatcher {
         let background_len = state.background.len();
 
         if foreground_len == 0 && background_len == 0 {
+            eprintln!("no runnables to poll");
             return false;
         }
+        eprintln!("runnables {} {}", foreground_len, background_len);
 
         let main_thread = state.random.gen_ratio(
             foreground_len as u32,
@@ -145,6 +150,7 @@ impl PlatformDispatcher for TestDispatcher {
         state.is_main_thread = main_thread;
 
         let runnable = if main_thread {
+            eprintln!("running next main thread");
             let state = &mut *state;
             let runnables = state
                 .foreground
@@ -155,6 +161,7 @@ impl PlatformDispatcher for TestDispatcher {
             runnables.pop_front().unwrap()
         } else {
             let ix = state.random.gen_range(0..background_len);
+            eprintln!("running background thread {ix}");
             state.background.swap_remove(ix)
         };
 
