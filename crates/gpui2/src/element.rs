@@ -8,6 +8,8 @@ pub trait Element<V: 'static>: IntoAnyElement<V> {
 
     fn id(&self) -> Option<ElementId>;
 
+    /// Called to initialize this element for the current frame. If this
+    /// element had state in a previous frame, it will be passed in for the 3rd argument.
     fn initialize(
         &mut self,
         view_state: &mut V,
@@ -41,7 +43,7 @@ pub trait Element<V: 'static>: IntoAnyElement<V> {
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
 
-pub trait ParentElement<V: 'static>: Element<V> {
+pub trait ParentElement<V: 'static> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]>;
 
     fn child(mut self, child: impl IntoAnyElement<V>) -> Self

@@ -23,56 +23,54 @@ pub struct Pane<S: 'static + Send + Sync> {
 
 impl<V: 'static + Send + Sync> IntoAnyElement<V> for Pane<V> {
     fn into_any(self) -> AnyElement<V> {
-        ElementRenderer {
-            id: Some(self.id),
-            render: Some(move |view_state, cx| self.render(view_state, cx)),
+        let render = move |view_state, cx| self.render(view_state, cx);
+
+        AnyElement::new(ElementRenderer {
+            render: Some(render),
             view_type: PhantomData,
             element_type: PhantomData,
-        }
+        })
     }
 }
 
 struct ElementRenderer<V, E, F>
 where
-    E: IntoAnyElement<V>,
-    F: FnOnce(&mut V, &mut ViewContext<V>) -> E,
+    V: 'static + Send + Sync,
+    E: 'static + IntoAnyElement<V> + Send + Sync,
+    F: FnOnce(&mut V, &mut ViewContext<V>) -> E + 'static + Send + Sync,
 {
-    id: Option<ElementId>,
     render: Option<F>,
     view_type: PhantomData<V>,
     element_type: PhantomData<E>,
 }
 
-impl<V, E, F> Element for ElementRenderer<V, E, F>
+impl<V, E, F> Element<V> for ElementRenderer<V, E, F>
 where
-    V: 'static,
-    E: IntoAnyElement<V>,
-    F: FnOnce(&mut V, &mut ViewContext<V>) -> E,
+    V: 'static + Send + Sync,
+    E: 'static + IntoAnyElement<V> + Send + Sync,
+    F: FnOnce(&mut V, &mut ViewContext<V>) -> E + 'static + Send + Sync,
 {
-    type ViewState = V;
     type ElementState = AnyElement<V>;
 
     fn id(&self) -> Option<ElementId> {
-        self.id
+        None
     }
 
     fn initialize(
         &mut self,
-        view_state: &mut Self::ViewState,
-        rendered_element: Option<Self::ElementState>,
-        cx: &mut ViewContext<Self::ViewState>,
+        view_state: &mut V,
+        _element_state: Option<Self::ElementState>,
+        cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
-        rendered_element.unwrap_or_else(|| {
-            let render = self.render.take().unwrap();
-            (render)(view_state, cx)
-        })
+        let render = self.render.take().unwrap();
+        (render)(view_state, cx).into_any()
     }
 
     fn layout(
         &mut self,
-        view_state: &mut Self::ViewState,
+        view_state: &mut V,
         rendered_element: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     ) -> gpui2::LayoutId {
         rendered_element.layout(view_state, cx)
     }
@@ -80,9 +78,9 @@ where
     fn paint(
         &mut self,
         bounds: gpui2::Bounds<gpui2::Pixels>,
-        view_state: &mut Self::ViewState,
+        view_state: &mut V,
         rendered_element: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     ) {
         rendered_element.paint(view_state, cx)
     }
@@ -90,16 +88,16 @@ where
 
 impl<V, E, F> IntoAnyElement<V> for ElementRenderer<V, E, F>
 where
-    V: 'static,
-    E: IntoAnyElement<V>,
-    F: FnOnce(&mut V, &mut ViewContext<V>) -> E,
+    V: 'static + Send + Sync,
+    E: 'static + IntoAnyElement<V> + Send + Sync,
+    F: FnOnce(&mut V, &mut ViewContext<V>) -> E + 'static + Send + Sync,
 {
     fn into_any(self) -> AnyElement<V> {
-        self
+        AnyElement::new(self)
     }
 }
 
-impl<S: 'static + Send + Sync> Pane<S> {
+impl<V: 'static + Send + Sync> Pane<V> {
     pub fn new(id: impl Into<ElementId>, size: Size<Length>) -> Self {
         // Fill is only here for debugging purposes, remove before release
 
@@ -118,7 +116,7 @@ impl<S: 'static + Send + Sync> Pane<S> {
         self
     }
 
-    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Div<V, StatefulInteraction<V>> IntoAnyElement<V> {
         div()
             .id(self.id.clone())
             .flex()
@@ -127,12 +125,7 @@ impl<S: 'static + Send + Sync> Pane<S> {
             .w(self.size.width)
             .h(self.size.height)
             .relative()
-            .child(
-                div()
-                    .z_index(0)
-                    .size_full()
-                    .children(self.children.drain(..)),
-            )
+            .child(div().z_index(0).size_full().children(self.children))
             .child(
                 // TODO kb! Figure out why we can't we see the red background when we drag a file over this div.
                 div()
@@ -162,8 +155,8 @@ pub struct PaneGroup<S: 'static + Send + Sync> {
     split_direction: SplitDirection,
 }
 
-impl<S: 'static + Send + Sync> PaneGroup<S> {
-    pub fn new_groups(groups: Vec<PaneGroup<S>>, split_direction: SplitDirection) -> Self {
+impl<V: 'static + Send + Sync> PaneGroup<V> {
+    pub fn new_groups(groups: Vec<PaneGroup<V>>, split_direction: SplitDirection) -> Self {
         Self {
             state_type: PhantomData,
             groups,
@@ -172,7 +165,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
         }
     }
 
-    pub fn new_panes(panes: Vec<Pane<S>>, split_direction: SplitDirection) -> Self {
+    pub fn new_panes(panes: Vec<Pane<V>>, split_direction: SplitDirection) -> Self {
         Self {
             state_type: PhantomData,
             groups: Vec::new(),
@@ -181,7 +174,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
         }
     }
 
-    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<S> {
+    fn render(&mut self, view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let theme = theme(cx);
 
         if !self.panes.is_empty() {
@@ -191,7 +184,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
                 .gap_px()
                 .w_full()
                 .h_full()
-                .children(self.panes.iter_mut().map(|pane| pane.render(view, cx)));
+                .children(self.panes.drain(..).map(|pane| pane.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
                 return el;
@@ -208,7 +201,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
                 .w_full()
                 .h_full()
                 .bg(theme.editor)
-                .children(self.groups.iter_mut().map(|group| group.render(view, cx)));
+                .children(self.groups.iter_mut().map(| group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
                 return el;
