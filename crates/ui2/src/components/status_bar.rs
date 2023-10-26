@@ -28,13 +28,22 @@ impl Default for ToolGroup {
     }
 }
 
-#[derive(Element)]
-#[element(view_state = "Workspace")]
+#[derive(IntoAnyElement)]
+#[element(view_type = "Workspace")]
 pub struct StatusBar {
     left_tools: Option<ToolGroup>,
     right_tools: Option<ToolGroup>,
     bottom_tools: Option<ToolGroup>,
 }
+
+// impl IntoAnyElement<Workspace> for StatusBar {
+//     fn into_any(self) -> gpui2::AnyElement<Workspace> {
+//         (move |workspace: &mut Workspace, cx: &mut ViewContext<'_, '_, Workspace>| {
+//             self.render(workspace, cx)
+//         })
+//         .into_any()
+//     }
+// }
 
 impl StatusBar {
     pub fn new() -> Self {
@@ -83,7 +92,7 @@ impl StatusBar {
     }
 
     fn render(
-        &mut self,
+        self,
         view: &mut Workspace,
         cx: &mut ViewContext<Workspace>,
     ) -> impl IntoAnyElement<Workspace> {

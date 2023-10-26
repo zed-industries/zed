@@ -12,6 +12,7 @@ pub enum SplitDirection {
     Vertical,
 }
 
+#[derive(IntoAnyElement)]
 pub struct Pane<V: 'static> {
     id: ElementId,
     size: Size<Length>,
@@ -19,12 +20,12 @@ pub struct Pane<V: 'static> {
     children: SmallVec<[AnyElement<V>; 2]>,
 }
 
-impl<V: 'static> IntoAnyElement<V> for Pane<V> {
-    fn into_any(self) -> AnyElement<V> {
-        (move |view_state: &mut V, cx: &mut ViewContext<'_, '_, V>| self.render(view_state, cx))
-            .into_any()
-    }
-}
+// impl<V: 'static> IntoAnyElement<V> for Pane<V> {
+//     fn into_any(self) -> AnyElement<V> {
+//         (move |view_state: &mut V, cx: &mut ViewContext<'_, '_, V>| self.render(view_state, cx))
+//             .into_any()
+//     }
+// }
 
 impl<V: 'static> Pane<V> {
     pub fn new(id: impl Into<ElementId>, size: Size<Length>) -> Self {
