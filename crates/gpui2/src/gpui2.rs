@@ -17,6 +17,8 @@ mod styled;
 mod subscription;
 mod svg_renderer;
 mod taffy;
+#[cfg(any(test, feature = "test-support"))]
+mod test;
 mod text_system;
 mod util;
 mod view;
@@ -48,6 +50,8 @@ pub use styled::*;
 pub use subscription::*;
 pub use svg_renderer::*;
 pub use taffy::{AvailableSpace, LayoutId};
+#[cfg(any(test, feature = "test-support"))]
+pub use test::*;
 pub use text_system::*;
 pub use util::arc_cow::ArcCow;
 pub use view::*;

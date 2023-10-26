@@ -17,7 +17,6 @@
 // TODO: Fix warnings instead of supressing.
 #![allow(dead_code, unused_variables)]
 
-mod color;
 mod components;
 mod element_ext;
 mod elements;

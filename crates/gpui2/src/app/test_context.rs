@@ -48,6 +48,14 @@ impl TestAppContext {
         }
     }
 
+    pub fn remove_all_windows(&self) {
+        // todo!("use app quit instead")
+    }
+
+    pub fn clear_globals(&self) {
+        // todo!("use app quit instead")
+    }
+
     pub fn refresh(&mut self) -> Result<()> {
         let mut lock = self.app.lock();
         lock.refresh();
