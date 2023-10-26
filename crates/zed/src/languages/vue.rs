@@ -98,7 +98,10 @@ impl super::LspAdapter for VueLspAdapter {
                 )
                 .await?;
         }
-        assert!(fs::metadata(&server_path).await.is_ok());
+        ensure!(
+            fs::metadata(&server_path).await.is_ok(),
+            "@vue/language-server package installation failed"
+        );
         if fs::metadata(&ts_path).await.is_err() {
             self.node
                 .npm_install_packages(
@@ -108,7 +111,10 @@ impl super::LspAdapter for VueLspAdapter {
                 .await?;
         }
 
-        assert!(fs::metadata(&ts_path).await.is_ok());
+        ensure!(
+            fs::metadata(&ts_path).await.is_ok(),
+            "typescript for Vue package installation failed"
+        );
         *self.typescript_install_path.lock() = Some(ts_path);
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
