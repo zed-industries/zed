@@ -38,7 +38,7 @@ use std::{
     path::{Path, PathBuf},
     str,
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
 };
@@ -115,6 +115,7 @@ pub struct CachedLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub language_ids: HashMap<String, String>,
     pub adapter: Arc<dyn LspAdapter>,
+    pub reinstall_attempt_count: AtomicU64,
 }
 
 impl CachedLspAdapter {
@@ -133,6 +134,7 @@ impl CachedLspAdapter {
             disk_based_diagnostics_progress_token,
             language_ids,
             adapter,
+            reinstall_attempt_count: AtomicU64::new(0),
         })
     }
 
