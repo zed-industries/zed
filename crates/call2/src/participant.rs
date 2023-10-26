@@ -56,6 +56,10 @@ pub struct RemoteVideoTrack {
     pub(crate) live_kit_track: Arc<live_kit_client::RemoteVideoTrack>,
 }
 
+unsafe impl Send for RemoteVideoTrack {}
+// todo!("remove this sync because it's not legit")
+unsafe impl Sync for RemoteVideoTrack {}
+
 impl fmt::Debug for RemoteVideoTrack {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RemoteVideoTrack").finish()

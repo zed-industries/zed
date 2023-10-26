@@ -100,10 +100,15 @@ impl EntityMap {
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, AnyBox)> {
-        let dropped_entity_ids = mem::take(&mut self.ref_counts.write().dropped_entity_ids);
+        let mut ref_counts = self.ref_counts.write();
+        let dropped_entity_ids = mem::take(&mut ref_counts.dropped_entity_ids);
+
         dropped_entity_ids
             .into_iter()
-            .map(|entity_id| (entity_id, self.entities.remove(entity_id).unwrap()))
+            .map(|entity_id| {
+                ref_counts.counts.remove(entity_id);
+                (entity_id, self.entities.remove(entity_id).unwrap())
+            })
             .collect()
     }
 }
@@ -212,7 +217,6 @@ impl Drop for AnyHandle {
             if prev_count == 1 {
                 // We were the last reference to this entity, so we can remove it.
                 let mut entity_map = RwLockUpgradableReadGuard::upgrade(entity_map);
-                entity_map.counts.remove(self.entity_id);
                 entity_map.dropped_entity_ids.push(self.entity_id);
             }
         }
