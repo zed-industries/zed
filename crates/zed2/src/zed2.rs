@@ -3,7 +3,8 @@ mod only_instance;
 mod open_listener;
 
 pub use assets::*;
-use gpui2::AsyncAppContext;
+use client2::{Client, UserStore};
+use gpui2::{AsyncAppContext, Handle};
 pub use only_instance::*;
 pub use open_listener::*;
 
@@ -44,7 +45,10 @@ pub fn connect_to_cli(
     Ok((async_request_rx, response_tx))
 }
 
-pub struct AppState;
+pub struct AppState {
+    pub client: Arc<Client>,
+    pub user_store: Handle<UserStore>,
+}
 
 pub async fn handle_cli_connection(
     (mut requests, _responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),

@@ -22,6 +22,7 @@ use live_kit_client::{
 };
 use postage::{sink::Sink, stream::Stream, watch};
 use project2::Project;
+use settings2::Settings;
 use std::{future::Future, mem, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt, TryFutureExt};
 
@@ -72,7 +73,7 @@ pub struct Room {
     user_store: Handle<UserStore>,
     follows_by_leader_id_project_id: HashMap<(PeerId, u64), Vec<PeerId>>,
     client_subscriptions: Vec<client2::Subscription>,
-    subscriptions: Vec<gpui2::Subscription>,
+    _subscriptions: Vec<gpui2::Subscription>,
     room_update_completed_tx: watch::Sender<Option<()>>,
     room_update_completed_rx: watch::Receiver<Option<()>>,
     pending_room_update: Option<Task<()>>,
@@ -193,8 +194,10 @@ impl Room {
             None
         };
 
-        let maintain_connection =
-            cx.spawn(|this, cx| Self::maintain_connection(this, client.clone(), cx).log_err());
+        let maintain_connection = cx.spawn({
+            let client = client.clone();
+            move |this, cx| Self::maintain_connection(this, client.clone(), cx).log_err()
+        });
 
         Audio::play_sound(Sound::Joined, cx);
 
@@ -215,7 +218,7 @@ impl Room {
             client_subscriptions: vec![
                 client.add_message_handler(cx.weak_handle(), Self::handle_room_updated)
             ],
-            subscriptions: vec![
+            _subscriptions: vec![
                 cx.on_release(Self::released),
                 cx.on_app_quit(Self::app_will_quit),
             ],
@@ -237,7 +240,7 @@ impl Room {
         user_store: Handle<UserStore>,
         cx: &mut AppContext,
     ) -> Task<Result<Handle<Self>>> {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(move |mut cx| async move {
             let response = client.request(proto::CreateRoom {}).await?;
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
             let room = cx.entity(|cx| {
@@ -281,7 +284,7 @@ impl Room {
         user_store: Handle<UserStore>,
         cx: &mut AppContext,
     ) -> Task<Result<Handle<Self>>> {
-        cx.spawn(|cx| async move {
+        cx.spawn(move |cx| async move {
             Self::from_join_response(
                 client.request(proto::JoinChannel { channel_id }).await?,
                 client,
@@ -298,7 +301,7 @@ impl Room {
         cx: &mut AppContext,
     ) -> Task<Result<Handle<Self>>> {
         let id = call.room_id;
-        cx.spawn(|cx| async move {
+        cx.spawn(move |cx| async move {
             Self::from_join_response(
                 client.request(proto::JoinRoom { id }).await?,
                 client,
@@ -332,7 +335,7 @@ impl Room {
     }
 
     pub fn mute_on_join(cx: &AppContext) -> bool {
-        settings2::get::<CallSettings>(cx).mute_on_join || client2::IMPERSONATE_LOGIN.is_some()
+        CallSettings::get_global(cx).mute_on_join || client2::IMPERSONATE_LOGIN.is_some()
     }
 
     fn from_join_response(
@@ -356,7 +359,7 @@ impl Room {
             room.leave_when_empty = room.channel_id.is_none();
             room.apply_room_update(room_proto, cx)?;
             anyhow::Ok(())
-        })?;
+        })??;
         Ok(room)
     }
 
@@ -1067,7 +1070,7 @@ impl Room {
         let client = self.client.clone();
         let room_id = self.id;
         self.pending_call_count += 1;
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             let result = client
                 .request(proto::Call {
                     room_id,
@@ -1096,7 +1099,7 @@ impl Room {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
         cx.emit(Event::RemoteProjectJoined { project_id: id });
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             let project =
                 Project::remote(id, client, user_store, language_registry, fs, cx.clone()).await?;
 
@@ -1132,7 +1135,7 @@ impl Room {
 
             project.update(&mut cx, |project, cx| {
                 project.shared(response.project_id, cx)
-            })?;
+            })??;
 
             // If the user's location is in this project, it changes from UnsharedProject to SharedProject.
             this.update(&mut cx, |this, cx| {
@@ -1192,7 +1195,7 @@ impl Room {
         };
 
         cx.notify();
-        cx.executor().spawn_on_main(|| async move {
+        cx.executor().spawn_on_main(move || async move {
             client
                 .request(proto::UpdateParticipantLocation {
                     room_id,
@@ -1258,7 +1261,7 @@ impl Room {
             return Task::ready(Err(anyhow!("live-kit was not initialized")));
         };
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             let publish_track = async {
                 let track = LocalAudioTrack::create();
                 this.upgrade()
@@ -1340,7 +1343,7 @@ impl Room {
             return Task::ready(Err(anyhow!("live-kit was not initialized")));
         };
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             let publish_track = async {
                 let displays = displays.await?;
                 let display = displays
@@ -1449,9 +1452,10 @@ impl Room {
                     .room
                     .remote_audio_track_publications(&participant.user.id.to_string())
                 {
+                    let deafened = live_kit.deafened;
                     tasks.push(
                         cx.executor()
-                            .spawn_on_main(|| track.set_enabled(!live_kit.deafened)),
+                            .spawn_on_main(move || track.set_enabled(!deafened)),
                     );
                 }
             }

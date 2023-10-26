@@ -17,13 +17,14 @@ use gpui2::{
 };
 use postage::watch;
 use project2::Project;
+use settings2::Settings;
 use std::sync::Arc;
 
 pub use participant::ParticipantLocation;
 pub use room::Room;
 
 pub fn init(client: Arc<Client>, user_store: Handle<UserStore>, cx: &mut AppContext) {
-    settings2::register::<CallSettings>(cx);
+    CallSettings::register(cx);
 
     let active_call = cx.entity(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(active_call);
@@ -105,7 +106,7 @@ impl ActiveCall {
         };
         this.update(&mut cx, |this, _| {
             *this.incoming_call.0.borrow_mut() = Some(call);
-        });
+        })?;
 
         Ok(proto::Ack {})
     }
@@ -124,7 +125,7 @@ impl ActiveCall {
             {
                 incoming_call.take();
             }
-        });
+        })?;
         Ok(())
     }
 
@@ -150,7 +151,7 @@ impl ActiveCall {
         };
 
         let invite = if let Some(room) = room {
-            cx.spawn(|_, mut cx| async move {
+            cx.spawn(move |_, mut cx| async move {
                 let room = room.await.map_err(|err| anyhow!("{:?}", err))?;
 
                 let initial_project_id = if let Some(initial_project) = initial_project {
@@ -173,7 +174,7 @@ impl ActiveCall {
             let client = self.client.clone();
             let user_store = self.user_store.clone();
             let room = cx
-                .spawn(|this, mut cx| async move {
+                .spawn(move |this, mut cx| async move {
                     let create_room = async {
                         let room = cx
                             .update(|cx| {
@@ -205,10 +206,10 @@ impl ActiveCall {
             })
         };
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             let result = invite.await;
             if result.is_ok() {
-                this.update(&mut cx, |this, cx| this.report_call_event("invite", cx));
+                this.update(&mut cx, |this, cx| this.report_call_event("invite", cx))?;
             } else {
                 // TODO: Resport collaboration error
             }
@@ -216,7 +217,7 @@ impl ActiveCall {
             this.update(&mut cx, |this, cx| {
                 this.pending_invites.remove(&called_user_id);
                 cx.notify();
-            });
+            })?;
             result
         })
     }
@@ -267,7 +268,7 @@ impl ActiveCall {
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.report_call_event("accept incoming", cx)
-            });
+            })?;
             Ok(())
         })
     }
@@ -307,7 +308,7 @@ impl ActiveCall {
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.report_call_event("join channel", cx)
-            });
+            })?;
             Ok(room)
         })
     }
@@ -434,7 +435,7 @@ pub fn report_call_event_for_room(
     cx: &AppContext,
 ) {
     let telemetry = client.telemetry();
-    let telemetry_settings = *settings2::get::<TelemetrySettings>(cx);
+    let telemetry_settings = *TelemetrySettings::get_global(cx);
     let event = ClickhouseEvent::Call {
         operation,
         room_id: Some(room_id),
@@ -452,7 +453,8 @@ pub fn report_call_event_for_channel(
     let room = ActiveCall::global(cx).read(cx).room();
 
     let telemetry = client.telemetry();
-    let telemetry_settings = *settings2::get::<TelemetrySettings>(cx);
+
+    let telemetry_settings = *TelemetrySettings::get_global(cx);
 
     let event = ClickhouseEvent::Call {
         operation,

@@ -58,7 +58,7 @@ use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
 use serde::Serialize;
-use settings2::{SettingsStore, Settings};
+use settings2::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};

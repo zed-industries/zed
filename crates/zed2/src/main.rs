@@ -2,16 +2,17 @@
 #![allow(non_snake_case)]
 
 use crate::open_listener::{OpenListener, OpenRequest};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
+use client2::UserStore;
 use db2::kvp::KEY_VALUE_STORE;
 use fs::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui2::{App, AppContext, AsyncAppContext, SemanticVersion, Task};
+use gpui2::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
 use language2::LanguageRegistry;
 use log::LevelFilter;
@@ -119,8 +120,8 @@ fn main() {
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
 
-        languages2::init(languages.clone(), node_runtime.clone(), cx);
-        // let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
+        language2::init(cx);
+        let user_store = cx.entity(|cx| UserStore::new(client.clone(), http.clone(), cx));
         // let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         cx.set_global(client.clone());
@@ -167,7 +168,7 @@ fn main() {
         // client.telemetry().start(installation_id, session_id, cx);
 
         // todo!("app_state")
-        let app_state = Arc::new(AppState);
+        let app_state = Arc::new(AppState { client, user_store });
         // let app_state = Arc::new(AppState {
         //     languages,
         //     client: client.clone(),

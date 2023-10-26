@@ -150,6 +150,10 @@ pub struct Room {
     _delegate: RoomDelegate,
 }
 
+// SAFETY: LiveKit objects are thread-safe: https://github.com/livekit/client-sdk-swift#thread-safety
+unsafe impl Send for Room {}
+unsafe impl Sync for Room {}
+
 impl Room {
     pub fn new() -> Arc<Self> {
         Arc::new_cyclic(|weak_room| {
