@@ -2646,8 +2646,8 @@ impl language2::File for File {
         self
     }
 
-    fn to_proto(&self) -> rpc::proto::File {
-        rpc::proto::File {
+    fn to_proto(&self) -> rpc2::proto::File {
+        rpc2::proto::File {
             worktree_id: self.worktree.entity_id().as_u64(),
             entry_id: self.entry_id.to_proto(),
             path: self.path.to_string_lossy().into(),
@@ -2713,7 +2713,7 @@ impl File {
     }
 
     pub fn from_proto(
-        proto: rpc::proto::File,
+        proto: rpc2::proto::File,
         worktree: Handle<Worktree>,
         cx: &AppContext,
     ) -> Result<Self> {

@@ -5,7 +5,7 @@ use feature_flags2::FeatureFlagAppExt;
 use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
 use gpui2::{AsyncAppContext, EventEmitter, Handle, ImageData, ModelContext, Task};
 use postage::{sink::Sink, watch};
-use rpc::proto::{RequestMessage, UsersResponse};
+use rpc2::proto::{RequestMessage, UsersResponse};
 use std::sync::{Arc, Weak};
 use text::ReplicaId;
 use util::http::HttpClient;

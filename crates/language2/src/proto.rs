@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use lsp2::{DiagnosticSeverity, LanguageServerId};
-use rpc::proto;
+use rpc2::proto;
 use std::{ops::Range, sync::Arc};
 use text::*;
 

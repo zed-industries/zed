@@ -21,7 +21,7 @@ use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
 use rand::prelude::*;
-use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
+use rpc2::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings2::Settings;
@@ -43,7 +43,7 @@ use util::channel::ReleaseChannel;
 use util::http::HttpClient;
 use util::{ResultExt, TryFutureExt};
 
-pub use rpc::*;
+pub use rpc2::*;
 pub use telemetry::ClickhouseEvent;
 pub use user::*;
 
@@ -975,7 +975,7 @@ impl Client {
                 "Authorization",
                 format!("{} {}", credentials.user_id, credentials.access_token),
             )
-            .header("x-zed-protocol-version", rpc::PROTOCOL_VERSION);
+            .header("x-zed-protocol-version", rpc2::PROTOCOL_VERSION);
 
         let http = self.http.clone();
         cx.executor().spawn(async move {
@@ -1025,7 +1025,7 @@ impl Client {
             // zed server to encrypt the user's access token, so that it can'be intercepted by
             // any other app running on the user's device.
             let (public_key, private_key) =
-                rpc::auth::keypair().expect("failed to generate keypair for auth");
+                rpc2::auth::keypair().expect("failed to generate keypair for auth");
             let public_key_string =
                 String::try_from(public_key).expect("failed to serialize public key for auth");
 

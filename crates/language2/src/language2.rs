@@ -1862,111 +1862,112 @@ pub fn range_from_lsp(range: lsp2::Range) -> Range<Unclipped<PointUtf16>> {
     start..end
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use gpui::TestAppContext;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui2::TestAppContext;
 
-//     #[gpui::test(iterations = 10)]
-//     async fn test_first_line_pattern(cx: &mut TestAppContext) {
-//         let mut languages = LanguageRegistry::test();
-//         languages.set_executor(cx.background());
-//         let languages = Arc::new(languages);
-//         languages.register(
-//             "/javascript",
-//             LanguageConfig {
-//                 name: "JavaScript".into(),
-//                 path_suffixes: vec!["js".into()],
-//                 first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
-//                 ..Default::default()
-//             },
-//             tree_sitter_typescript::language_tsx(),
-//             vec![],
-//             |_| Default::default(),
-//         );
+    #[gpui2::test(iterations = 10)]
+    async fn test_first_line_pattern(cx: &mut TestAppContext) {
+        let mut languages = LanguageRegistry::test();
 
-//         languages
-//             .language_for_file("the/script", None)
-//             .await
-//             .unwrap_err();
-//         languages
-//             .language_for_file("the/script", Some(&"nothing".into()))
-//             .await
-//             .unwrap_err();
-//         assert_eq!(
-//             languages
-//                 .language_for_file("the/script", Some(&"#!/bin/env node".into()))
-//                 .await
-//                 .unwrap()
-//                 .name()
-//                 .as_ref(),
-//             "JavaScript"
-//         );
-//     }
+        languages.set_executor(cx.executor().clone());
+        let languages = Arc::new(languages);
+        languages.register(
+            "/javascript",
+            LanguageConfig {
+                name: "JavaScript".into(),
+                path_suffixes: vec!["js".into()],
+                first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
+                ..Default::default()
+            },
+            tree_sitter_typescript::language_tsx(),
+            vec![],
+            |_| Default::default(),
+        );
 
-//     #[gpui::test(iterations = 10)]
-//     async fn test_language_loading(cx: &mut TestAppContext) {
-//         let mut languages = LanguageRegistry::test();
-//         languages.set_executor(cx.background());
-//         let languages = Arc::new(languages);
-//         languages.register(
-//             "/JSON",
-//             LanguageConfig {
-//                 name: "JSON".into(),
-//                 path_suffixes: vec!["json".into()],
-//                 ..Default::default()
-//             },
-//             tree_sitter_json::language(),
-//             vec![],
-//             |_| Default::default(),
-//         );
-//         languages.register(
-//             "/rust",
-//             LanguageConfig {
-//                 name: "Rust".into(),
-//                 path_suffixes: vec!["rs".into()],
-//                 ..Default::default()
-//             },
-//             tree_sitter_rust::language(),
-//             vec![],
-//             |_| Default::default(),
-//         );
-//         assert_eq!(
-//             languages.language_names(),
-//             &[
-//                 "JSON".to_string(),
-//                 "Plain Text".to_string(),
-//                 "Rust".to_string(),
-//             ]
-//         );
+        languages
+            .language_for_file("the/script", None)
+            .await
+            .unwrap_err();
+        languages
+            .language_for_file("the/script", Some(&"nothing".into()))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            languages
+                .language_for_file("the/script", Some(&"#!/bin/env node".into()))
+                .await
+                .unwrap()
+                .name()
+                .as_ref(),
+            "JavaScript"
+        );
+    }
 
-//         let rust1 = languages.language_for_name("Rust");
-//         let rust2 = languages.language_for_name("Rust");
+    #[gpui2::test(iterations = 10)]
+    async fn test_language_loading(cx: &mut TestAppContext) {
+        let mut languages = LanguageRegistry::test();
+        languages.set_executor(cx.executor().clone());
+        let languages = Arc::new(languages);
+        languages.register(
+            "/JSON",
+            LanguageConfig {
+                name: "JSON".into(),
+                path_suffixes: vec!["json".into()],
+                ..Default::default()
+            },
+            tree_sitter_json::language(),
+            vec![],
+            |_| Default::default(),
+        );
+        languages.register(
+            "/rust",
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
+            tree_sitter_rust::language(),
+            vec![],
+            |_| Default::default(),
+        );
+        assert_eq!(
+            languages.language_names(),
+            &[
+                "JSON".to_string(),
+                "Plain Text".to_string(),
+                "Rust".to_string(),
+            ]
+        );
 
-//         // Ensure language is still listed even if it's being loaded.
-//         assert_eq!(
-//             languages.language_names(),
-//             &[
-//                 "JSON".to_string(),
-//                 "Plain Text".to_string(),
-//                 "Rust".to_string(),
-//             ]
-//         );
+        let rust1 = languages.language_for_name("Rust");
+        let rust2 = languages.language_for_name("Rust");
 
-//         let (rust1, rust2) = futures::join!(rust1, rust2);
-//         assert!(Arc::ptr_eq(&rust1.unwrap(), &rust2.unwrap()));
+        // Ensure language is still listed even if it's being loaded.
+        assert_eq!(
+            languages.language_names(),
+            &[
+                "JSON".to_string(),
+                "Plain Text".to_string(),
+                "Rust".to_string(),
+            ]
+        );
 
-//         // Ensure language is still listed even after loading it.
-//         assert_eq!(
-//             languages.language_names(),
-//             &[
-//                 "JSON".to_string(),
-//                 "Plain Text".to_string(),
-//                 "Rust".to_string(),
-//             ]
-//         );
+        let (rust1, rust2) = futures::join!(rust1, rust2);
+        assert!(Arc::ptr_eq(&rust1.unwrap(), &rust2.unwrap()));
 
-//         // Loading an unknown language returns an error.
-//         assert!(languages.language_for_name("Unknown").await.is_err());
-//     }
-// }
+        // Ensure language is still listed even after loading it.
+        assert_eq!(
+            languages.language_names(),
+            &[
+                "JSON".to_string(),
+                "Plain Text".to_string(),
+                "Rust".to_string(),
+            ]
+        );
+
+        // Loading an unknown language returns an error.
+        assert!(languages.language_for_name("Unknown").await.is_err());
+    }
+}
