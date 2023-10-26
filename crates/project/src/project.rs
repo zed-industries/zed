@@ -91,6 +91,8 @@ pub use fs::*;
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use worktree::*;
 
+const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
+
 pub trait Item {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
@@ -2722,6 +2724,10 @@ impl Project {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
+        if adapter.reinstall_attempt_count.load(SeqCst) > MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
+            return;
+        }
+
         let key = (worktree_id, adapter.name.clone());
         if self.language_server_ids.contains_key(&key) {
             return;
@@ -2772,26 +2778,34 @@ impl Project {
                     }
 
                     Err(err) => {
-                        log::error!("failed to start language server {:?}: {}", server_name, err);
+                        log::error!("failed to start language server {server_name:?}: {err}");
                         log::error!("server stderr: {:?}", stderr_capture.lock().take());
 
-                        if let Some(this) = this.upgrade(&cx) {
-                            if let Some(container_dir) = container_dir {
-                                let installation_test_binary = adapter
-                                    .installation_test_binary(container_dir.to_path_buf())
-                                    .await;
+                        let this = this.upgrade(&cx)?;
+                        let container_dir = container_dir?;
 
-                                this.update(&mut cx, |_, cx| {
-                                    Self::check_errored_server(
-                                        language,
-                                        adapter,
-                                        server_id,
-                                        installation_test_binary,
-                                        cx,
-                                    )
-                                });
-                            }
+                        let attempt_count = adapter.reinstall_attempt_count.fetch_add(1, SeqCst);
+                        if attempt_count >= MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
+                            let max = MAX_SERVER_REINSTALL_ATTEMPT_COUNT;
+                            log::error!(
+                                "Hit {max} max reinstallation attempts for {server_name:?}"
+                            );
+                            return None;
                         }
+
+                        let installation_test_binary = adapter
+                            .installation_test_binary(container_dir.to_path_buf())
+                            .await;
+
+                        this.update(&mut cx, |_, cx| {
+                            Self::check_errored_server(
+                                language,
+                                adapter,
+                                server_id,
+                                installation_test_binary,
+                                cx,
+                            )
+                        });
 
                         None
                     }
