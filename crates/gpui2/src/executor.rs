@@ -146,7 +146,10 @@ impl Executor {
                 Poll::Ready(result) => return result,
                 Poll::Pending => {
                     if !self.dispatcher.poll() {
-                        // todo!("forbid_parking")
+                        #[cfg(any(test, feature = "test-support"))]
+                        if let Some(_) = self.dispatcher.as_test() {
+                            panic!("blocked with nothing left to run")
+                        }
                         parker.park();
                     }
                 }
@@ -207,8 +210,23 @@ impl Executor {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn finish_waiting(&self) {
+        todo!("finish_waiting")
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_random_delay(&self) -> impl Future<Output = ()> {
         self.dispatcher.as_test().unwrap().simulate_random_delay()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn advance_clock(&self, duration: Duration) {
+        self.dispatcher.as_test().unwrap().advance_clock(duration)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn run_until_parked(&self) {
+        self.dispatcher.as_test().unwrap().run_until_parked()
     }
 
     pub fn num_cpus(&self) -> usize {

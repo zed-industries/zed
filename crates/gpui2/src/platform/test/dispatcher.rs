@@ -8,7 +8,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use util::post_inc;
 
@@ -24,8 +24,8 @@ struct TestDispatcherState {
     random: StdRng,
     foreground: HashMap<TestDispatcherId, VecDeque<Runnable>>,
     background: Vec<Runnable>,
-    delayed: Vec<(Instant, Runnable)>,
-    time: Instant,
+    delayed: Vec<(Duration, Runnable)>,
+    time: Duration,
     is_main_thread: bool,
     next_id: TestDispatcherId,
 }
@@ -37,7 +37,7 @@ impl TestDispatcher {
             foreground: HashMap::default(),
             background: Vec::new(),
             delayed: Vec::new(),
-            time: Instant::now(),
+            time: Duration::ZERO,
             is_main_thread: true,
             next_id: TestDispatcherId(1),
         };
@@ -49,7 +49,21 @@ impl TestDispatcher {
     }
 
     pub fn advance_clock(&self, by: Duration) {
-        self.state.lock().time += by;
+        let new_now = self.state.lock().time + by;
+        loop {
+            self.run_until_parked();
+            let state = self.state.lock();
+            let next_due_time = state.delayed.first().map(|(time, _)| *time);
+            drop(state);
+            if let Some(due_time) = next_due_time {
+                if due_time <= new_now {
+                    self.state.lock().time = due_time;
+                    continue;
+                }
+            }
+            break;
+        }
+        self.state.lock().time = new_now;
     }
 
     pub fn simulate_random_delay(&self) -> impl Future<Output = ()> {
@@ -137,10 +151,8 @@ impl PlatformDispatcher for TestDispatcher {
         let background_len = state.background.len();
 
         if foreground_len == 0 && background_len == 0 {
-            eprintln!("no runnables to poll");
             return false;
         }
-        eprintln!("runnables {} {}", foreground_len, background_len);
 
         let main_thread = state.random.gen_ratio(
             foreground_len as u32,
@@ -150,7 +162,6 @@ impl PlatformDispatcher for TestDispatcher {
         state.is_main_thread = main_thread;
 
         let runnable = if main_thread {
-            eprintln!("running next main thread");
             let state = &mut *state;
             let runnables = state
                 .foreground
@@ -161,7 +172,6 @@ impl PlatformDispatcher for TestDispatcher {
             runnables.pop_front().unwrap()
         } else {
             let ix = state.random.gen_range(0..background_len);
-            eprintln!("running background thread {ix}");
             state.background.swap_remove(ix)
         };
 

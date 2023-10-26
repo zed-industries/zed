@@ -173,14 +173,14 @@ impl Platform for TestPlatform {
     }
 
     fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Result<()> {
-        unimplemented!()
+        Ok(())
     }
 
     fn read_credentials(&self, _url: &str) -> Result<Option<(String, Vec<u8>)>> {
-        unimplemented!()
+        Ok(None)
     }
 
     fn delete_credentials(&self, _url: &str) -> Result<()> {
-        unimplemented!()
+        Ok(())
     }
 }
