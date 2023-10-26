@@ -246,7 +246,9 @@ where
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
         let render = self.take().unwrap();
-        (render)(view_state, cx).render()
+        let mut rendered_element = (render)(view_state, cx).render();
+        rendered_element.initialize(view_state, cx);
+        rendered_element
     }
 
     fn layout(
