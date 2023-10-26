@@ -79,7 +79,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         self.app.event_listeners.insert(
             handle.entity_id,
             Box::new(move |event, cx| {
-                let event = event.downcast_ref().expect("invalid event type");
+                let event: &E::Event = event.downcast_ref().expect("invalid event type");
                 if let Some((this, handle)) = this.upgrade().zip(handle.upgrade()) {
                     this.update(cx, |this, cx| on_event(this, handle, event, cx));
                     true

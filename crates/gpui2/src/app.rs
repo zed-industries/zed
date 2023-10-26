@@ -403,7 +403,7 @@ impl AppContext {
     fn apply_emit_effect(&mut self, emitter: EntityId, event: Box<dyn Any>) {
         self.event_listeners
             .clone()
-            .retain(&emitter, |handler| handler(&event, self));
+            .retain(&emitter, |handler| handler(event.as_ref(), self));
     }
 
     fn apply_focus_changed_effect(&mut self, window_id: WindowId, focused: Option<FocusId>) {
