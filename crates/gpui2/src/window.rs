@@ -1,14 +1,14 @@
 use crate::{
     px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect,
-    Element, EntityId, EventEmitter, ExternalPaths, FileDropEvent, FocusEvent, FontId,
-    GlobalElementId, GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch,
-    KeyMatcher, Keystroke, LayoutId, MainThread, MainThreadOnly, ModelContext, Modifiers,
-    MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
-    Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, WeakHandle,
-    WeakView, WindowOptions, SUBPIXEL_VARIANTS,
+    EntityId, EventEmitter, ExternalPaths, FileDropEvent, FocusEvent, FontId, GlobalElementId,
+    GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher,
+    Keystroke, LayoutId, MainThread, MainThreadOnly, ModelContext, Modifiers, MonochromeSprite,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakHandle, WeakView,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -150,7 +150,7 @@ pub struct Window {
     sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
     content_size: Size<Pixels>,
-    layout_engine: TaffyLayoutEngine,
+    pub(crate) layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView>,
     pub(crate) element_id_stack: GlobalElementId,
     prev_frame_element_states: HashMap<GlobalElementId, AnyBox>,
@@ -799,29 +799,23 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub(crate) fn draw(&mut self) {
-        let unit_entity = self.unit_entity.clone();
-        let mut root_view = self.window.root_view.take().unwrap();
-        let mut root_view_cx = ViewContext::mutable(
-            &mut self.app,
-            &mut self.window,
-            self.unit_entity.downgrade(),
-        );
+        let root_view = self.window.root_view.take().unwrap();
 
-        root_view_cx.start_frame();
+        self.start_frame();
 
-        root_view_cx.stack(0, |cx| {
+        self.stack(0, |cx| {
             let available_space = cx.window.content_size.map(Into::into);
-            draw_any_view(&mut root_view, available_space, cx);
+            root_view.draw(available_space, cx);
         });
 
         if let Some(mut active_drag) = self.app.active_drag.take() {
-            root_view_cx.stack(1, |cx| {
+            self.stack(1, |cx| {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
                 cx.with_element_offset(Some(offset), |cx| {
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                     if let Some(drag_handle_view) = &mut active_drag.drag_handle_view {
-                        draw_any_view(drag_handle_view, available_space, cx);
+                        drag_handle_view.draw(available_space, cx);
                     }
                     cx.active_drag = Some(active_drag);
                 });
@@ -839,23 +833,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             cx.window.dirty = false;
         })
         .detach();
-
-        fn draw_any_view(
-            view: &mut AnyView,
-            available_space: Size<AvailableSpace>,
-            cx: &mut ViewContext<()>,
-        ) {
-            cx.with_optional_element_state(view.id(), |element_state, cx| {
-                let mut element_state = view.initialize(&mut (), element_state, cx);
-                let layout_id = view.layout(&mut (), &mut element_state, cx);
-                cx.window
-                    .layout_engine
-                    .compute_layout(layout_id, available_space);
-                let bounds = cx.window.layout_engine.layout_bounds(layout_id);
-                view.paint(bounds, &mut (), &mut element_state, cx);
-                ((), element_state)
-            });
-        }
     }
 
     fn start_frame(&mut self) {
@@ -1202,6 +1179,39 @@ impl Context for WindowContext<'_, '_> {
     }
 }
 
+impl VisualContext for WindowContext<'_, '_> {
+    type ViewContext<'a, 'w, V> = ViewContext<'a, 'w, V>;
+
+    fn build_view<E, V>(
+        &mut self,
+        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
+        render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    ) -> Self::Result<View<V>>
+    where
+        E: crate::Component<V>,
+        V: 'static + Send,
+    {
+        let slot = self.app.entities.reserve();
+        let view = View::for_handle(slot.clone(), render);
+        let mut cx = ViewContext::mutable(&mut *self.app, &mut *self.window, view.downgrade());
+        let entity = build_view_state(&mut cx);
+        self.entities.insert(slot, entity);
+        view
+    }
+
+    fn update_view<T: 'static, R>(
+        &mut self,
+        view: &View<T>,
+        update: impl FnOnce(&mut T, &mut Self::ViewContext<'_, '_, T>) -> R,
+    ) -> Self::Result<R> {
+        let mut lease = self.app.entities.lease(&view.state);
+        let mut cx = ViewContext::mutable(&mut *self.app, &mut *self.window, view.downgrade());
+        let result = update(&mut *lease, &mut cx);
+        cx.app.entities.end_lease(lease);
+        result
+    }
+}
+
 impl<'a, 'w> std::ops::Deref for WindowContext<'a, 'w> {
     type Target = AppContext;
 
@@ -1388,7 +1398,7 @@ impl<T> BorrowWindow for T where T: BorrowMut<AppContext> + BorrowMut<Window> {}
 
 pub struct ViewContext<'a, 'w, V> {
     window_cx: WindowContext<'a, 'w>,
-    view: View<V>,
+    view: WeakView<V>,
 }
 
 impl<V> Borrow<AppContext> for ViewContext<'_, '_, V> {
@@ -1416,7 +1426,11 @@ impl<V> BorrowMut<Window> for ViewContext<'_, '_, V> {
 }
 
 impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
-    pub(crate) fn mutable(app: &'a mut AppContext, window: &'w mut Window, view: View<V>) -> Self {
+    pub(crate) fn mutable(
+        app: &'a mut AppContext,
+        window: &'w mut Window,
+        view: WeakView<V>,
+    ) -> Self {
         Self {
             window_cx: WindowContext::mutable(app, window),
             view,
@@ -1424,11 +1438,11 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     }
 
     pub fn view(&self) -> WeakView<V> {
-        self.view.downgrade()
+        self.view.clone()
     }
 
     pub fn handle(&self) -> WeakHandle<V> {
-        self.view.state.downgrade()
+        self.view.state.clone()
     }
 
     pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -1442,7 +1456,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     where
         V: Any + Send,
     {
-        let view = self.view();
+        let view = self.view().upgrade().unwrap();
         self.window_cx.on_next_frame(move |cx| view.update(cx, f));
     }
 
@@ -1481,7 +1495,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
             + Send
             + 'static,
     ) -> Subscription {
-        let this = self.view();
+        let view = self.view();
         let handle = handle.downgrade();
         let window_handle = self.window.handle;
         self.app.event_listeners.insert(
@@ -1490,7 +1504,8 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
                 cx.update_window(window_handle.id, |cx| {
                     if let Some(handle) = handle.upgrade() {
                         let event = event.downcast_ref().expect("invalid event type");
-                        this.update(cx, |this, cx| on_event(this, handle, event, cx))
+                        view.update(cx, |this, cx| on_event(this, handle, event, cx))
+                            .is_ok()
                     } else {
                         false
                     }
@@ -1506,7 +1521,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     ) -> Subscription {
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
-            self.view.entity_id,
+            self.view.state.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
                 // todo!("are we okay with silently swallowing the error?")
@@ -1523,15 +1538,14 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     where
         V: Any + Send,
     {
-        let this = self.view();
+        let view = self.view();
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
             handle.entity_id,
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
-                // todo!("are we okay with silently swallowing the error?")
                 let _ = cx.update_window(window_handle.id, |cx| {
-                    this.update(cx, |this, cx| on_release(this, entity, cx))
+                    view.update(cx, |this, cx| on_release(this, entity, cx))
                 });
             }),
         )
@@ -1540,7 +1554,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn notify(&mut self) {
         self.window_cx.notify();
         self.window_cx.app.push_effect(Effect::Notify {
-            emitter: self.view.entity_id,
+            emitter: self.view.state.entity_id,
         });
     }
 
@@ -1654,22 +1668,22 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
             let cx = unsafe { mem::transmute::<&mut Self, &mut MainThread<Self>>(self) };
             Task::ready(Ok(f(view, cx)))
         } else {
-            let handle = self.view().upgrade().unwrap();
-            self.window_cx.run_on_main(move |cx| handle.update(cx, f))
+            let view = self.view().upgrade().unwrap();
+            self.window_cx.run_on_main(move |cx| view.update(cx, f))
         }
     }
 
     pub fn spawn<Fut, R>(
         &mut self,
-        f: impl FnOnce(WeakHandle<V>, AsyncWindowContext) -> Fut + Send + 'static,
+        f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut + Send + 'static,
     ) -> Task<R>
     where
         R: Send + 'static,
         Fut: Future<Output = R> + Send + 'static,
     {
-        let handle = self.view();
+        let view = self.view();
         self.window_cx.spawn(move |_, cx| {
-            let result = f(handle, cx);
+            let result = f(view, cx);
             async move { result.await }
         })
     }
@@ -1720,7 +1734,7 @@ where
     V::Event: Any + Send,
 {
     pub fn emit(&mut self, event: V::Event) {
-        let emitter = self.view.entity_id;
+        let emitter = self.view.state.entity_id;
         self.app.push_effect(Effect::Emit {
             emitter,
             event: Box::new(event),
@@ -1748,6 +1762,30 @@ impl<'a, 'w, V> Context for ViewContext<'a, 'w, V> {
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
     ) -> R {
         self.window_cx.update_entity(handle, update)
+    }
+}
+
+impl<V: 'static> VisualContext for ViewContext<'_, '_, V> {
+    type ViewContext<'a, 'w, V2> = ViewContext<'a, 'w, V2>;
+
+    fn build_view<E, V2>(
+        &mut self,
+        build_entity: impl FnOnce(&mut Self::ViewContext<'_, '_, V2>) -> V2,
+        render: impl Fn(&mut V2, &mut ViewContext<'_, '_, V2>) -> E + Send + 'static,
+    ) -> Self::Result<View<V2>>
+    where
+        E: crate::Component<V2>,
+        V2: 'static + Send,
+    {
+        self.window_cx.build_view(build_entity, render)
+    }
+
+    fn update_view<V2: 'static, R>(
+        &mut self,
+        view: &View<V2>,
+        update: impl FnOnce(&mut V2, &mut Self::ViewContext<'_, '_, V2>) -> R,
+    ) -> Self::Result<R> {
+        self.window_cx.update_view(view, update)
     }
 }
 

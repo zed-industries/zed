@@ -1,4 +1,4 @@
-use gpui2::{div, view, white, Context, ParentElement, Styled, View, WindowContext};
+use gpui2::{div, white, ParentElement, Styled, View, VisualContext, WindowContext};
 
 pub struct TextStory {
     text: View<()>,
@@ -6,7 +6,7 @@ pub struct TextStory {
 
 impl TextStory {
     pub fn view(cx: &mut WindowContext) -> View<()> {
-        view(cx.entity(|cx| ()), |_, cx| {
+        cx.build_view(|cx| (), |_, cx| {
             div()
                 .size_full()
                 .bg(white())

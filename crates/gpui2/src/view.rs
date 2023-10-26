@@ -1,7 +1,9 @@
 use crate::{
-    AnyBox, AnyElement, BorrowWindow, Bounds, Component, Element, ElementId, EntityId, Handle,
-    LayoutId, Pixels, ViewContext, WeakHandle, WindowContext,
+    AnyBox, AnyElement, AvailableSpace, BorrowWindow, Bounds, Component, Element, ElementId,
+    EntityId, Handle, LayoutId, Pixels, Size, ViewContext, VisualContext, WeakHandle,
+    WindowContext,
 };
+use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use std::{
     marker::PhantomData,
@@ -13,18 +15,20 @@ pub struct View<V> {
     render: Arc<Mutex<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyElement<V> + Send + 'static>>,
 }
 
-pub fn view<V, E>(
-    state: Handle<V>,
-    render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
-) -> View<V>
-where
-    E: Component<V>,
-{
-    View {
-        state,
-        render: Arc::new(Mutex::new(
-            move |state: &mut V, cx: &mut ViewContext<'_, '_, V>| render(state, cx).render(),
-        )),
+impl<V: 'static> View<V> {
+    pub fn for_handle<E>(
+        state: Handle<V>,
+        render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    ) -> View<V>
+    where
+        E: Component<V>,
+    {
+        View {
+            state,
+            render: Arc::new(Mutex::new(
+                move |state: &mut V, cx: &mut ViewContext<'_, '_, V>| render(state, cx).render(),
+            )),
+        }
     }
 }
 
@@ -42,17 +46,15 @@ impl<V: 'static> View<V> {
 }
 
 impl<V: 'static> View<V> {
-    pub fn update<R>(
+    pub fn update<C, R>(
         &self,
-        cx: &mut WindowContext,
-        f: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
-    ) -> R {
-        let this = self.clone();
-        let mut lease = cx.app.entities.lease(&self.state);
-        let mut cx = ViewContext::mutable(&mut *cx.app, &mut *cx.window, this);
-        let result = f(&mut *lease, &mut cx);
-        cx.app.entities.end_lease(lease);
-        result
+        cx: &mut C,
+        f: impl FnOnce(&mut V, &mut C::ViewContext<'_, '_, V>) -> R,
+    ) -> C::Result<R>
+    where
+        C: VisualContext,
+    {
+        cx.update_view(self, f)
     }
 }
 
@@ -115,15 +117,33 @@ impl<V: 'static> Element<()> for View<V> {
 }
 
 pub struct WeakView<V> {
-    state: WeakHandle<V>,
+    pub(crate) state: WeakHandle<V>,
     render: Weak<Mutex<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyElement<V> + Send + 'static>>,
 }
 
-impl<V> WeakView<V> {
+impl<V: 'static> WeakView<V> {
     pub fn upgrade(&self) -> Option<View<V>> {
         let state = self.state.upgrade()?;
         let render = self.render.upgrade()?;
         Some(View { state, render })
+    }
+
+    pub fn update<R>(
+        &self,
+        cx: &mut WindowContext,
+        f: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
+    ) -> Result<R> {
+        let view = self.upgrade().context("error upgrading view")?;
+        Ok(view.update(cx, f))
+    }
+}
+
+impl<V> Clone for WeakView<V> {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            render: self.render.clone(),
+        }
     }
 }
 
@@ -219,6 +239,18 @@ impl<V: 'static> ViewObject for View<V> {
 
 #[derive(Clone)]
 pub struct AnyView(Arc<dyn ViewObject>);
+
+impl AnyView {
+    pub(crate) fn draw(&self, available_space: Size<AvailableSpace>, cx: &mut WindowContext) {
+        let mut rendered_element = self.0.initialize(cx);
+        let layout_id = self.0.layout(&mut rendered_element, cx);
+        cx.window
+            .layout_engine
+            .compute_layout(layout_id, available_space);
+        let bounds = cx.window.layout_engine.layout_bounds(layout_id);
+        self.0.paint(bounds, &mut rendered_element, cx);
+    }
+}
 
 impl<ParentV: 'static> Component<ParentV> for AnyView {
     fn render(self) -> AnyElement<ParentV> {

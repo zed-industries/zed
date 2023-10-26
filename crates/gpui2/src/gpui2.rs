@@ -87,6 +87,25 @@ pub trait Context {
     ) -> Self::Result<R>;
 }
 
+pub trait VisualContext: Context {
+    type ViewContext<'a, 'w, V>;
+
+    fn build_view<E, V>(
+        &mut self,
+        build_entity: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
+        render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    ) -> Self::Result<View<V>>
+    where
+        E: Component<V>,
+        V: 'static + Send;
+
+    fn update_view<V: 'static, R>(
+        &mut self,
+        view: &View<V>,
+        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, '_, V>) -> R,
+    ) -> Self::Result<R>;
+}
+
 pub enum GlobalKey {
     Numeric(usize),
     View(EntityId),
@@ -145,6 +164,49 @@ impl<C: Context> Context for MainThread<C> {
                 >(cx)
             };
             update(entity, cx)
+        })
+    }
+}
+
+impl<C: VisualContext> VisualContext for MainThread<C> {
+    type ViewContext<'a, 'w, V> = MainThread<C::ViewContext<'a, 'w, V>>;
+
+    fn build_view<E, V>(
+        &mut self,
+        build_entity: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
+        render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    ) -> Self::Result<View<V>>
+    where
+        E: Component<V>,
+        V: 'static + Send,
+    {
+        self.0.build_view(
+            |cx| {
+                let cx = unsafe {
+                    mem::transmute::<
+                        &mut C::ViewContext<'_, '_, V>,
+                        &mut MainThread<C::ViewContext<'_, '_, V>>,
+                    >(cx)
+                };
+                build_entity(cx)
+            },
+            render,
+        )
+    }
+
+    fn update_view<V: 'static, R>(
+        &mut self,
+        view: &View<V>,
+        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, '_, V>) -> R,
+    ) -> Self::Result<R> {
+        self.0.update_view(view, |view_state, cx| {
+            let cx = unsafe {
+                mem::transmute::<
+                    &mut C::ViewContext<'_, '_, V>,
+                    &mut MainThread<C::ViewContext<'_, '_, V>>,
+                >(cx)
+            };
+            update(view_state, cx)
         })
     }
 }

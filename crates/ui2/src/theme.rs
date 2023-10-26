@@ -1,6 +1,6 @@
 use gpui2::{
-    AnyElement, Bounds, Component, Element, Hsla, LayoutId, Pixels, Result, ViewContext,
-    WindowContext,
+    AnyElement, AppContext, Bounds, Component, Element, Hsla, LayoutId, Pixels, Result,
+    ViewContext, WindowContext,
 };
 use serde::{de::Visitor, Deserialize, Deserializer};
 use std::collections::HashMap;
@@ -220,6 +220,6 @@ pub fn old_theme(cx: &WindowContext) -> Arc<Theme> {
     Arc::new(cx.global::<Theme>().clone())
 }
 
-pub fn theme(cx: &WindowContext) -> Arc<theme2::Theme> {
+pub fn theme(cx: &AppContext) -> Arc<theme2::Theme> {
     theme2::active_theme(cx).clone()
 }

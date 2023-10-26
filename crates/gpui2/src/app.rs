@@ -129,8 +129,6 @@ pub struct AppContext {
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) globals_by_type: HashMap<TypeId, AnyBox>,
-    pub(crate) unit_entity: Handle<()>,
-    pub(crate) unit_view: View<()>,
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) keymap: Arc<Mutex<Keymap>>,
@@ -162,8 +160,8 @@ impl AppContext {
         );
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
-        let mut entities = EntityMap::new();
-        let unit_entity = entities.insert(entities.reserve(), ());
+        let entities = EntityMap::new();
+
         let app_metadata = AppMetadata {
             os_name: platform.os_name(),
             os_version: platform.os_version().ok(),
@@ -185,7 +183,6 @@ impl AppContext {
                 image_cache: ImageCache::new(http_client),
                 text_style_stack: Vec::new(),
                 globals_by_type: HashMap::default(),
-                unit_entity,
                 entities,
                 windows: SlotMap::with_key(),
                 keymap: Arc::new(Mutex::new(Keymap::default())),

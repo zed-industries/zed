@@ -5,7 +5,7 @@ use crate::stories::*;
 use anyhow::anyhow;
 use clap::builder::PossibleValue;
 use clap::ValueEnum;
-use gpui2::{view, AnyView, Context};
+use gpui2::{AnyView, VisualContext};
 use strum::{EnumIter, EnumString, IntoEnumIterator};
 use ui::prelude::*;
 
@@ -27,16 +27,18 @@ pub enum ElementStory {
 impl ElementStory {
     pub fn story(&self, cx: &mut WindowContext) -> AnyView {
         match self {
-            Self::Avatar => view(cx.entity(|cx| ()), |_, _| ui::AvatarStory.render()).into_any(),
-            Self::Button => view(cx.entity(|cx| ()), |_, _| ui::ButtonStory.render()).into_any(),
-            Self::Details => view(cx.entity(|cx| ()), |_, _| ui::DetailsStory.render()).into_any(),
+            Self::Avatar => { cx.build_view(|cx| (), |_, _| ui::AvatarStory.render()) }.into_any(),
+            Self::Button => { cx.build_view(|cx| (), |_, _| ui::ButtonStory.render()) }.into_any(),
+            Self::Details => {
+                { cx.build_view(|cx| (), |_, _| ui::DetailsStory.render()) }.into_any()
+            }
             Self::Focus => FocusStory::view(cx).into_any(),
-            Self::Icon => view(cx.entity(|cx| ()), |_, _| ui::IconStory.render()).into_any(),
-            Self::Input => view(cx.entity(|cx| ()), |_, _| ui::InputStory.render()).into_any(),
-            Self::Label => view(cx.entity(|cx| ()), |_, _| ui::LabelStory.render()).into_any(),
+            Self::Icon => { cx.build_view(|cx| (), |_, _| ui::IconStory.render()) }.into_any(),
+            Self::Input => { cx.build_view(|cx| (), |_, _| ui::InputStory.render()) }.into_any(),
+            Self::Label => { cx.build_view(|cx| (), |_, _| ui::LabelStory.render()) }.into_any(),
             Self::Scroll => ScrollStory::view(cx).into_any(),
             Self::Text => TextStory::view(cx).into_any(),
-            Self::ZIndex => view(cx.entity(|cx| ()), |_, _| ZIndexStory.render()).into_any(),
+            Self::ZIndex => { cx.build_view(|cx| (), |_, _| ZIndexStory.render()) }.into_any(),
         }
     }
 }
@@ -76,65 +78,67 @@ impl ComponentStory {
     pub fn story(&self, cx: &mut WindowContext) -> AnyView {
         match self {
             Self::AssistantPanel => {
-                view(cx.entity(|cx| ()), |_, _| ui::AssistantPanelStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::AssistantPanelStory.render()) }.into_any()
             }
-            Self::Buffer => view(cx.entity(|cx| ()), |_, _| ui::BufferStory.render()).into_any(),
+            Self::Buffer => { cx.build_view(|cx| (), |_, _| ui::BufferStory.render()) }.into_any(),
             Self::Breadcrumb => {
-                view(cx.entity(|cx| ()), |_, _| ui::BreadcrumbStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::BreadcrumbStory.render()) }.into_any()
             }
             Self::ChatPanel => {
-                view(cx.entity(|cx| ()), |_, _| ui::ChatPanelStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::ChatPanelStory.render()) }.into_any()
             }
             Self::CollabPanel => {
-                view(cx.entity(|cx| ()), |_, _| ui::CollabPanelStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::CollabPanelStory.render()) }.into_any()
             }
             Self::CommandPalette => {
-                view(cx.entity(|cx| ()), |_, _| ui::CommandPaletteStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::CommandPaletteStory.render()) }.into_any()
             }
             Self::ContextMenu => {
-                view(cx.entity(|cx| ()), |_, _| ui::ContextMenuStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::ContextMenuStory.render()) }.into_any()
             }
             Self::Facepile => {
-                view(cx.entity(|cx| ()), |_, _| ui::FacepileStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::FacepileStory.render()) }.into_any()
             }
             Self::Keybinding => {
-                view(cx.entity(|cx| ()), |_, _| ui::KeybindingStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::KeybindingStory.render()) }.into_any()
             }
-            Self::LanguageSelector => view(cx.entity(|cx| ()), |_, _| {
-                ui::LanguageSelectorStory.render()
-            })
-            .into_any(),
+            Self::LanguageSelector => {
+                { cx.build_view(|cx| (), |_, _| ui::LanguageSelectorStory.render()) }.into_any()
+            }
             Self::MultiBuffer => {
-                view(cx.entity(|cx| ()), |_, _| ui::MultiBufferStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::MultiBufferStory.render()) }.into_any()
             }
-            Self::NotificationsPanel => view(cx.entity(|cx| ()), |_, _| {
-                ui::NotificationsPanelStory.render()
-            })
-            .into_any(),
-            Self::Palette => view(cx.entity(|cx| ()), |_, _| ui::PaletteStory.render()).into_any(),
-            Self::Panel => view(cx.entity(|cx| ()), |_, _| ui::PanelStory.render()).into_any(),
+            Self::NotificationsPanel => {
+                { cx.build_view(|cx| (), |_, _| ui::NotificationsPanelStory.render()) }.into_any()
+            }
+            Self::Palette => {
+                { cx.build_view(|cx| (), |_, _| ui::PaletteStory.render()) }.into_any()
+            }
+            Self::Panel => { cx.build_view(|cx| (), |_, _| ui::PanelStory.render()) }.into_any(),
             Self::ProjectPanel => {
-                view(cx.entity(|cx| ()), |_, _| ui::ProjectPanelStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::ProjectPanelStory.render()) }.into_any()
             }
             Self::RecentProjects => {
-                view(cx.entity(|cx| ()), |_, _| ui::RecentProjectsStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::RecentProjectsStory.render()) }.into_any()
             }
-            Self::Tab => view(cx.entity(|cx| ()), |_, _| ui::TabStory.render()).into_any(),
-            Self::TabBar => view(cx.entity(|cx| ()), |_, _| ui::TabBarStory.render()).into_any(),
+            Self::Tab => { cx.build_view(|cx| (), |_, _| ui::TabStory.render()) }.into_any(),
+            Self::TabBar => { cx.build_view(|cx| (), |_, _| ui::TabBarStory.render()) }.into_any(),
             Self::Terminal => {
-                view(cx.entity(|cx| ()), |_, _| ui::TerminalStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::TerminalStory.render()) }.into_any()
             }
             Self::ThemeSelector => {
-                view(cx.entity(|cx| ()), |_, _| ui::ThemeSelectorStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::ThemeSelectorStory.render()) }.into_any()
             }
             Self::TitleBar => ui::TitleBarStory::view(cx).into_any(),
-            Self::Toast => view(cx.entity(|cx| ()), |_, _| ui::ToastStory.render()).into_any(),
-            Self::Toolbar => view(cx.entity(|cx| ()), |_, _| ui::ToolbarStory.render()).into_any(),
+            Self::Toast => { cx.build_view(|cx| (), |_, _| ui::ToastStory.render()) }.into_any(),
+            Self::Toolbar => {
+                { cx.build_view(|cx| (), |_, _| ui::ToolbarStory.render()) }.into_any()
+            }
             Self::TrafficLights => {
-                view(cx.entity(|cx| ()), |_, _| ui::TrafficLightsStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::TrafficLightsStory.render()) }.into_any()
             }
             Self::Copilot => {
-                view(cx.entity(|cx| ()), |_, _| ui::CopilotModalStory.render()).into_any()
+                { cx.build_view(|cx| (), |_, _| ui::CopilotModalStory.render()) }.into_any()
             }
             Self::Workspace => ui::WorkspaceStory::view(cx).into_any(),
         }
