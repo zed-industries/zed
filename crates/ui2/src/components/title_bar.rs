@@ -87,7 +87,7 @@ impl TitleBar {
         )
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
         let theme = theme(cx);
         let settings = user_settings(cx);
 
@@ -204,7 +204,7 @@ mod stories {
             )
         }
 
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
             Story::container(cx)
                 .child(Story::title_for::<_, TitleBar>(cx))
                 .child(Story::label(cx, "Default"))

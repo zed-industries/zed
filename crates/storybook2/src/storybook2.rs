@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use gpui2::{
-    div, px, size, view, AnyView, AppContext, Bounds, Context, Element, ViewContext, WindowBounds,
+    div, px, size, view, AnyView, AppContext, Bounds, Context, ViewContext, WindowBounds,
     WindowOptions,
 };
 use log::LevelFilter;
@@ -107,7 +107,7 @@ impl StoryWrapper {
         Self { story, theme }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
         themed(self.theme.clone(), cx, |cx| {
             div()
                 .flex()

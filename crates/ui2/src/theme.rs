@@ -1,5 +1,5 @@
 use gpui2::{
-    AnyElement, Bounds, Element, Hsla, IntoAnyElement, LayoutId, Pixels, Result, ViewContext,
+    AnyElement, Bounds, Component, Element, Hsla, LayoutId, Pixels, Result, ViewContext,
     WindowContext,
 };
 use serde::{de::Visitor, Deserialize, Deserializer};
@@ -132,10 +132,11 @@ where
     deserializer.deserialize_map(SyntaxVisitor)
 }
 
-pub fn themed<E, F>(theme: Theme, cx: &mut ViewContext<E::ViewState>, build_child: F) -> Themed<E>
+pub fn themed<V, E, F>(theme: Theme, cx: &mut ViewContext<V>, build_child: F) -> Themed<E>
 where
-    E: Element,
-    F: FnOnce(&mut ViewContext<E::ViewState>) -> E,
+    V: 'static,
+    E: Element<V>,
+    F: FnOnce(&mut ViewContext<V>) -> E,
 {
     cx.default_global::<ThemeStack>().0.push(theme.clone());
     let child = build_child(cx);
@@ -148,12 +149,13 @@ pub struct Themed<E> {
     pub(crate) child: E,
 }
 
-impl<E> IntoAnyElement<E::ViewState> for Themed<E>
+impl<V, E> Component<V> for Themed<E>
 where
-    E: 'static + Element + Send + Sync,
+    V: 'static,
+    E: 'static + Element<V> + Send + Sync,
     E::ElementState: Send + Sync,
 {
-    fn into_any(self) -> AnyElement<E::ViewState> {
+    fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
@@ -161,11 +163,11 @@ where
 #[derive(Default)]
 struct ThemeStack(Vec<Theme>);
 
-impl<E: 'static + Element + Send + Sync> Element for Themed<E>
+impl<V, E: 'static + Element<V> + Send + Sync> Element<V> for Themed<E>
 where
+    V: 'static,
     E::ElementState: Send + Sync,
 {
-    type ViewState = E::ViewState;
     type ElementState = E::ElementState;
 
     fn id(&self) -> Option<gpui2::ElementId> {
@@ -174,9 +176,9 @@ where
 
     fn initialize(
         &mut self,
-        view_state: &mut Self::ViewState,
+        view_state: &mut V,
         element_state: Option<Self::ElementState>,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
         cx.default_global::<ThemeStack>().0.push(self.theme.clone());
         let element_state = self.child.initialize(view_state, element_state, cx);
@@ -186,9 +188,9 @@ where
 
     fn layout(
         &mut self,
-        view_state: &mut E::ViewState,
+        view_state: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<E::ViewState>,
+        cx: &mut ViewContext<V>,
     ) -> LayoutId
     where
         Self: Sized,
@@ -202,9 +204,9 @@ where
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        view_state: &mut Self::ViewState,
+        view_state: &mut V,
         frame_state: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     ) where
         Self: Sized,
     {

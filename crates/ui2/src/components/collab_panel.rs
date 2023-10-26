@@ -3,23 +3,18 @@ use crate::{
     static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon, List,
     ListHeader, ToggleState,
 };
-use std::marker::PhantomData;
 
-#[derive(Element)]
-pub struct CollabPanel<S: 'static + Send + Sync> {
+#[derive(Component)]
+pub struct CollabPanel {
     id: ElementId,
-    state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync> CollabPanel<S> {
+impl CollabPanel {
     pub fn new(id: impl Into<ElementId>) -> Self {
-        Self {
-            id: id.into(),
-            state_type: PhantomData,
-        }
+        Self { id: id.into() }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -98,25 +93,17 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct CollabPanelStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct CollabPanelStory;
 
-    impl<S: 'static + Send + Sync> CollabPanelStory<S> {
+    impl CollabPanelStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
-                .child(Story::title_for::<_, CollabPanel<S>>(cx))
+                .child(Story::title_for::<_, CollabPanel>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(CollabPanel::new("collab-panel"))
         }

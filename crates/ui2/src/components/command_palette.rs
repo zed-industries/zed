@@ -1,23 +1,17 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 use crate::{example_editor_actions, OrderMethod, Palette};
 
-#[derive(Element)]
-pub struct CommandPalette<S: 'static + Send + Sync> {
+#[derive(Component)]
+pub struct CommandPalette {
     id: ElementId,
-    state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync> CommandPalette<S> {
+impl CommandPalette {
     pub fn new(id: impl Into<ElementId>) -> Self {
-        Self {
-            id: id.into(),
-            state_type: PhantomData,
-        }
+        Self { id: id.into() }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(example_editor_actions())
@@ -37,25 +31,17 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct CommandPaletteStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct CommandPaletteStory;
 
-    impl<S: 'static + Send + Sync> CommandPaletteStory<S> {
+    impl CommandPaletteStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
-                .child(Story::title_for::<_, CommandPalette<S>>(cx))
+                .child(Story::title_for::<_, CommandPalette>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(CommandPalette::new("command-palette"))
         }

@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use gpui2::{hsla, red, AnyElement, ElementId, ExternalPaths, Hsla, Length, Size};
 use smallvec::SmallVec;
 
@@ -12,25 +10,29 @@ pub enum SplitDirection {
     Vertical,
 }
 
-#[derive(Element)]
-pub struct Pane<S: 'static + Send + Sync> {
+#[derive(Component)]
+pub struct Pane<V: 'static> {
     id: ElementId,
-    state_type: PhantomData<S>,
     size: Size<Length>,
     fill: Hsla,
-    children: SmallVec<[AnyElement<S>; 2]>,
+    children: SmallVec<[AnyElement<V>; 2]>,
 }
 
-impl<S: 'static + Send + Sync> Pane<S> {
+// impl<V: 'static> IntoAnyElement<V> for Pane<V> {
+//     fn into_any(self) -> AnyElement<V> {
+//         (move |view_state: &mut V, cx: &mut ViewContext<'_, '_, V>| self.render(view_state, cx))
+//             .into_any()
+//     }
+// }
+
+impl<V: 'static> Pane<V> {
     pub fn new(id: impl Into<ElementId>, size: Size<Length>) -> Self {
         // Fill is only here for debugging purposes, remove before release
 
         Self {
             id: id.into(),
-            state_type: PhantomData,
             size,
             fill: hsla(0.3, 0.3, 0.3, 1.),
-            // fill: system_color.transparent,
             children: SmallVec::new(),
         }
     }
@@ -40,7 +42,7 @@ impl<S: 'static + Send + Sync> Pane<S> {
         self
     }
 
-    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div()
             .id(self.id.clone())
             .flex()
@@ -49,12 +51,7 @@ impl<S: 'static + Send + Sync> Pane<S> {
             .w(self.size.width)
             .h(self.size.height)
             .relative()
-            .child(
-                div()
-                    .z_index(0)
-                    .size_full()
-                    .children(self.children.drain(..)),
-            )
+            .child(div().z_index(0).size_full().children(self.children))
             .child(
                 div()
                     .z_index(1)
@@ -69,40 +66,37 @@ impl<S: 'static + Send + Sync> Pane<S> {
     }
 }
 
-impl<S: 'static + Send + Sync> ParentElement for Pane<S> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
+impl<V: 'static> ParentElement<V> for Pane<V> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
 }
 
-#[derive(Element)]
-pub struct PaneGroup<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
-    groups: Vec<PaneGroup<S>>,
-    panes: Vec<Pane<S>>,
+#[derive(Component)]
+pub struct PaneGroup<V: 'static> {
+    groups: Vec<PaneGroup<V>>,
+    panes: Vec<Pane<V>>,
     split_direction: SplitDirection,
 }
 
-impl<S: 'static + Send + Sync> PaneGroup<S> {
-    pub fn new_groups(groups: Vec<PaneGroup<S>>, split_direction: SplitDirection) -> Self {
+impl<V: 'static> PaneGroup<V> {
+    pub fn new_groups(groups: Vec<PaneGroup<V>>, split_direction: SplitDirection) -> Self {
         Self {
-            state_type: PhantomData,
             groups,
             panes: Vec::new(),
             split_direction,
         }
     }
 
-    pub fn new_panes(panes: Vec<Pane<S>>, split_direction: SplitDirection) -> Self {
+    pub fn new_panes(panes: Vec<Pane<V>>, split_direction: SplitDirection) -> Self {
         Self {
-            state_type: PhantomData,
             groups: Vec::new(),
             panes,
             split_direction,
         }
     }
 
-    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(mut self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         if !self.panes.is_empty() {
@@ -112,7 +106,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
                 .gap_px()
                 .w_full()
                 .h_full()
-                .children(self.panes.iter_mut().map(|pane| pane.render(view, cx)));
+                .children(self.panes.drain(..).map(|pane| pane.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
                 return el;
@@ -129,7 +123,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
                 .w_full()
                 .h_full()
                 .bg(theme.editor)
-                .children(self.groups.iter_mut().map(|group| group.render(view, cx)));
+                .children(self.groups.drain(..).map(|group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
                 return el;

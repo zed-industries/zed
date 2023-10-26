@@ -1,20 +1,16 @@
-use std::marker::PhantomData;
-
 use gpui2::img;
 
 use crate::prelude::*;
 
-#[derive(Element)]
-pub struct Avatar<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+#[derive(Component)]
+pub struct Avatar {
     src: SharedString,
     shape: Shape,
 }
 
-impl<S: 'static + Send + Sync> Avatar<S> {
+impl Avatar {
     pub fn new(src: impl Into<SharedString>) -> Self {
         Self {
-            state_type: PhantomData,
             src: src.into(),
             shape: Shape::Circle,
         }
@@ -25,7 +21,7 @@ impl<S: 'static + Send + Sync> Avatar<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         let mut img = img();
@@ -51,25 +47,17 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct AvatarStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct AvatarStory;
 
-    impl<S: 'static + Send + Sync> AvatarStory<S> {
+    impl AvatarStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
-                .child(Story::title_for::<_, Avatar<S>>(cx))
+                .child(Story::title_for::<_, Avatar>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Avatar::new(
                     "https://avatars.githubusercontent.com/u/1714999?v=4",

@@ -1,20 +1,14 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 
-#[derive(Element)]
-pub struct ToolDivider<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
-}
+#[derive(Component)]
+pub struct ToolDivider;
 
-impl<S: 'static + Send + Sync> ToolDivider<S> {
+impl ToolDivider {
     pub fn new() -> Self {
-        Self {
-            state_type: PhantomData,
-        }
+        Self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         div().w_px().h_3().bg(theme.border)

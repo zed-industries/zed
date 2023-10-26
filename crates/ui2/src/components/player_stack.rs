@@ -1,23 +1,19 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 use crate::{Avatar, Facepile, PlayerWithCallStatus};
 
-#[derive(Element)]
-pub struct PlayerStack<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+#[derive(Component)]
+pub struct PlayerStack {
     player_with_call_status: PlayerWithCallStatus,
 }
 
-impl<S: 'static + Send + Sync> PlayerStack<S> {
+impl PlayerStack {
     pub fn new(player_with_call_status: PlayerWithCallStatus) -> Self {
         Self {
-            state_type: PhantomData,
             player_with_call_status,
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
         let player = self.player_with_call_status.get_player();
         self.player_with_call_status.get_call_status();

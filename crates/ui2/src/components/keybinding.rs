@@ -1,14 +1,11 @@
 use std::collections::HashSet;
-use std::marker::PhantomData;
 
 use strum::{EnumIter, IntoEnumIterator};
 
 use crate::prelude::*;
 
-#[derive(Element)]
-pub struct Keybinding<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
-
+#[derive(Component)]
+pub struct Keybinding {
     /// A keybinding consists of a key and a set of modifier keys.
     /// More then one keybinding produces a chord.
     ///
@@ -16,10 +13,9 @@ pub struct Keybinding<S: 'static + Send + Sync> {
     keybinding: Vec<(String, ModifierKeys)>,
 }
 
-impl<S: 'static + Send + Sync> Keybinding<S> {
+impl Keybinding {
     pub fn new(key: String, modifiers: ModifierKeys) -> Self {
         Self {
-            state_type: PhantomData,
             keybinding: vec![(key, modifiers)],
         }
     }
@@ -29,12 +25,11 @@ impl<S: 'static + Send + Sync> Keybinding<S> {
         second_note: (String, ModifierKeys),
     ) -> Self {
         Self {
-            state_type: PhantomData,
             keybinding: vec![first_note, second_note],
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div()
             .flex()
             .gap_2()
@@ -54,21 +49,17 @@ impl<S: 'static + Send + Sync> Keybinding<S> {
     }
 }
 
-#[derive(Element)]
-pub struct Key<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+#[derive(Component)]
+pub struct Key {
     key: SharedString,
 }
 
-impl<S: 'static + Send + Sync> Key<S> {
+impl Key {
     pub fn new(key: impl Into<SharedString>) -> Self {
-        Self {
-            state_type: PhantomData,
-            key: key.into(),
-        }
+        Self { key: key.into() }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         div()
@@ -173,27 +164,19 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct KeybindingStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct KeybindingStory;
 
-    impl<S: 'static + Send + Sync + Clone> KeybindingStory<S> {
+    impl KeybindingStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let all_modifier_permutations = ModifierKey::iter().permutations(2);
 
             Story::container(cx)
-                .child(Story::title_for::<_, Keybinding<S>>(cx))
+                .child(Story::title_for::<_, Keybinding>(cx))
                 .child(Story::label(cx, "Single Key"))
                 .child(Keybinding::new("Z".to_string(), ModifierKeys::new()))
                 .child(Story::label(cx, "Single Key with Modifier"))

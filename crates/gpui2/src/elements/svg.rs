@@ -1,6 +1,6 @@
 use crate::{
-    div, AnyElement, Bounds, Div, DivState, Element, ElementFocus, ElementId, ElementInteraction,
-    FocusDisabled, FocusEnabled, FocusListeners, Focusable, IntoAnyElement, LayoutId, Pixels,
+    div, AnyElement, Bounds, Component, Div, DivState, Element, ElementFocus, ElementId,
+    ElementInteraction, FocusDisabled, FocusEnabled, FocusListeners, Focusable, LayoutId, Pixels,
     SharedString, StatefulInteraction, StatefulInteractive, StatelessInteraction,
     StatelessInteractive, StyleRefinement, Styled, ViewContext,
 };
@@ -45,22 +45,21 @@ where
     }
 }
 
-impl<V, I, F> IntoAnyElement<V> for Svg<V, I, F>
+impl<V, I, F> Component<V> for Svg<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
-    fn into_any(self) -> AnyElement<V> {
+    fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<V, I, F> Element for Svg<V, I, F>
+impl<V, I, F> Element<V> for Svg<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
-    type ViewState = V;
     type ElementState = DivState;
 
     fn id(&self) -> Option<crate::ElementId> {
@@ -80,7 +79,7 @@ where
         &mut self,
         view_state: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     ) -> LayoutId {
         self.base.layout(view_state, element_state, cx)
     }
@@ -88,7 +87,7 @@ where
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        view: &mut Self::ViewState,
+        view: &mut V,
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) where
@@ -116,7 +115,7 @@ where
     }
 }
 
-impl<V, I, F> StatelessInteractive for Svg<V, I, F>
+impl<V, I, F> StatelessInteractive<V> for Svg<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
@@ -126,21 +125,21 @@ where
     }
 }
 
-impl<V, F> StatefulInteractive for Svg<V, StatefulInteraction<V>, F>
+impl<V, F> StatefulInteractive<V> for Svg<V, StatefulInteraction<V>, F>
 where
     V: 'static,
     F: ElementFocus<V>,
 {
-    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
+    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<V> {
         self.base.stateful_interaction()
     }
 }
 
-impl<V: 'static, I> Focusable for Svg<V, I, FocusEnabled<V>>
+impl<V: 'static, I> Focusable<V> for Svg<V, I, FocusEnabled<V>>
 where
     I: ElementInteraction<V>,
 {
-    fn focus_listeners(&mut self) -> &mut FocusListeners<Self::ViewState> {
+    fn focus_listeners(&mut self) -> &mut FocusListeners<V> {
         self.base.focus_listeners()
     }
 

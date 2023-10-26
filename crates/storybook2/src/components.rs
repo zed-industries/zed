@@ -14,7 +14,7 @@ impl<V, D> Default for ButtonHandlers<V, D> {
     }
 }
 
-#[derive(Element)]
+#[derive(Component)]
 pub struct Button<V: 'static, D: 'static> {
     handlers: ButtonHandlers<V, D>,
     label: Option<ArcCow<'static, str>>,

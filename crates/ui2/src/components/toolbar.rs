@@ -6,13 +6,13 @@ use crate::prelude::*;
 #[derive(Clone)]
 pub struct ToolbarItem {}
 
-#[derive(Element)]
-pub struct Toolbar<S: 'static + Send + Sync> {
+#[derive(Component)]
+pub struct Toolbar<S: 'static> {
     left_items: SmallVec<[AnyElement<S>; 2]>,
     right_items: SmallVec<[AnyElement<S>; 2]>,
 }
 
-impl<S: 'static + Send + Sync> Toolbar<S> {
+impl<S: 'static> Toolbar<S> {
     pub fn new() -> Self {
         Self {
             left_items: SmallVec::new(),
@@ -20,41 +20,41 @@ impl<S: 'static + Send + Sync> Toolbar<S> {
         }
     }
 
-    pub fn left_item(mut self, child: impl IntoAnyElement<S>) -> Self
+    pub fn left_item(mut self, child: impl Component<S>) -> Self
     where
         Self: Sized,
     {
-        self.left_items.push(child.into_any());
+        self.left_items.push(child.render());
         self
     }
 
-    pub fn left_items(mut self, iter: impl IntoIterator<Item = impl IntoAnyElement<S>>) -> Self
+    pub fn left_items(mut self, iter: impl IntoIterator<Item = impl Component<S>>) -> Self
     where
         Self: Sized,
     {
         self.left_items
-            .extend(iter.into_iter().map(|item| item.into_any()));
+            .extend(iter.into_iter().map(|item| item.render()));
         self
     }
 
-    pub fn right_item(mut self, child: impl IntoAnyElement<S>) -> Self
+    pub fn right_item(mut self, child: impl Component<S>) -> Self
     where
         Self: Sized,
     {
-        self.right_items.push(child.into_any());
+        self.right_items.push(child.render());
         self
     }
 
-    pub fn right_items(mut self, iter: impl IntoIterator<Item = impl IntoAnyElement<S>>) -> Self
+    pub fn right_items(mut self, iter: impl IntoIterator<Item = impl Component<S>>) -> Self
     where
         Self: Sized,
     {
         self.right_items
-            .extend(iter.into_iter().map(|item| item.into_any()));
+            .extend(iter.into_iter().map(|item| item.render()));
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         div()
@@ -72,7 +72,6 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use std::marker::PhantomData;
     use std::path::PathBuf;
     use std::str::FromStr;
 
@@ -80,27 +79,19 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct ToolbarStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct ToolbarStory;
 
-    impl<S: 'static + Send + Sync + Clone> ToolbarStory<S> {
+    impl ToolbarStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let theme = theme(cx);
 
             Story::container(cx)
-                .child(Story::title_for::<_, Toolbar<S>>(cx))
+                .child(Story::title_for::<_, Toolbar<V>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
                     Toolbar::new()

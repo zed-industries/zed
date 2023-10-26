@@ -1,22 +1,18 @@
-use std::marker::PhantomData;
-
 use gpui2::{rems, AbsoluteLength};
 
 use crate::prelude::*;
 use crate::{Icon, IconButton, Label, Panel, PanelSide};
 
-#[derive(Element)]
-pub struct AssistantPanel<S: 'static + Send + Sync> {
+#[derive(Component)]
+pub struct AssistantPanel {
     id: ElementId,
-    state_type: PhantomData<S>,
     current_side: PanelSide,
 }
 
-impl<S: 'static + Send + Sync> AssistantPanel<S> {
+impl AssistantPanel {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
-            state_type: PhantomData,
             current_side: PanelSide::default(),
         }
     }
@@ -26,7 +22,7 @@ impl<S: 'static + Send + Sync> AssistantPanel<S> {
         self
     }
 
-    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<V: 'static>(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         Panel::new(self.id.clone(), cx)
             .children(vec![div()
                 .flex()
@@ -69,7 +65,7 @@ impl<S: 'static + Send + Sync> AssistantPanel<S> {
                         .overflow_y_scroll()
                         .child(Label::new("Is this thing on?")),
                 )
-                .into_any()])
+                .render()])
             .side(self.current_side)
             .width(AbsoluteLength::Rems(rems(32.)))
     }
@@ -84,25 +80,17 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct AssistantPanelStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct AssistantPanelStory {}
 
-    impl<S: 'static + Send + Sync> AssistantPanelStory<S> {
+    impl AssistantPanelStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self {}
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
-                .child(Story::title_for::<_, AssistantPanel<S>>(cx))
+                .child(Story::title_for::<_, AssistantPanel>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(AssistantPanel::new("assistant-panel"))
         }
