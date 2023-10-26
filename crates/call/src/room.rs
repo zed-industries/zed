@@ -1481,12 +1481,11 @@ impl Room {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_display_sources(&self, sources: Vec<live_kit_client::MacOSDisplay>) {
-        todo!()
-        // self.live_kit
-        //     .as_ref()
-        //     .unwrap()
-        //     .room
-        //     .set_display_sources(sources);
+        self.live_kit
+            .as_ref()
+            .unwrap()
+            .room
+            .set_display_sources(sources);
     }
 }
 
