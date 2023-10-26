@@ -240,7 +240,7 @@ impl LanguageServer {
         let stderr_input_task = stderr
             .map(|stderr| {
                 let io_handlers = io_handlers.clone();
-                let stderr_captures = stderr_captures.clone();
+                let stderr_captures = stderr_capture.clone();
                 cx.spawn(|_| Self::handle_stderr(stderr, io_handlers, stderr_captures).log_err())
             })
             .unwrap_or_else(|| Task::Ready(Some(None)));

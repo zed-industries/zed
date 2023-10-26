@@ -2964,7 +2964,7 @@ impl Project {
             )
         })??;
 
-        Ok(language_server)
+        Ok(Some(language_server))
     }
 
     async fn setup_pending_language_server(
