@@ -10,7 +10,7 @@ use client2::{
     Client, ParticipantIndex, TypedEnvelope, User, UserStore,
 };
 use collections::{BTreeMap, HashMap, HashSet};
-use fs::Fs;
+use fs2::Fs;
 use futures::{FutureExt, StreamExt};
 use gpui2::{
     AppContext, AsyncAppContext, Context, EventEmitter, Handle, ModelContext, Task, WeakHandle,

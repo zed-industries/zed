@@ -1,7 +1,8 @@
 use crate::{
-    AnyWindowHandle, AppContext, AsyncAppContext, Context, Executor, Handle, MainThread,
-    ModelContext, Result, Task, TestDispatcher, TestPlatform, WindowContext,
+    AnyWindowHandle, AppContext, AsyncAppContext, Context, EventEmitter, Executor, Handle,
+    MainThread, ModelContext, Result, Task, TestDispatcher, TestPlatform, WindowContext,
 };
+use futures::SinkExt;
 use parking_lot::Mutex;
 use std::{any::Any, future::Future, sync::Arc};
 
@@ -149,4 +150,39 @@ impl TestAppContext {
             executor: self.executor.clone(),
         }
     }
+
+    pub fn subscribe<T: 'static + EventEmitter + Send + Sync>(
+        &mut self,
+        entity: &Handle<T>,
+    ) -> futures::channel::mpsc::UnboundedReceiver<T::Event>
+    where
+        T::Event: 'static + Send + Clone,
+    {
+        let (mut tx, rx) = futures::channel::mpsc::unbounded();
+        entity
+            .update(self, |_, cx: &mut ModelContext<T>| {
+                cx.subscribe(&entity, move |_, _, event, _| {
+                    let _ = tx.send(event.clone());
+                })
+            })
+            .detach();
+        rx
+    }
 }
+
+// pub fn subscribe<T: Entity>(
+//     entity: &impl Handle<T>,
+//     cx: &mut TestAppContext,
+// ) -> Observation<T::Event>
+// where
+//     T::Event: Clone,
+// {
+//     let (tx, rx) = smol::channel::unbounded();
+//     let _subscription = cx.update(|cx| {
+//         cx.subscribe(entity, move |_, event, _| {
+//             let _ = smol::block_on(tx.send(event.clone()));
+//         })
+//     });
+
+//     Observation { rx, _subscription }
+// }

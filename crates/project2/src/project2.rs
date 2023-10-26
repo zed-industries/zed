@@ -89,7 +89,7 @@ use util::{
     post_inc, ResultExt, TryFutureExt as _,
 };
 
-pub use fs::*;
+pub use fs2::*;
 pub use worktree::*;
 
 pub trait Item {
@@ -842,39 +842,39 @@ impl Project {
         }
     }
 
-    // #[cfg(any(test, feature = "test-support"))]
-    // pub async fn test(
-    //     fs: Arc<dyn Fs>,
-    //     root_paths: impl IntoIterator<Item = &Path>,
-    //     cx: &mut gpui::TestAppContext,
-    // ) -> Handle<Project> {
-    //     let mut languages = LanguageRegistry::test();
-    //     languages.set_executor(cx.background());
-    //     let http_client = util::http::FakeHttpClient::with_404_response();
-    //     let client = cx.update(|cx| client2::Client::new(http_client.clone(), cx));
-    //     let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-    //     let project = cx.update(|cx| {
-    //         Project::local(
-    //             client,
-    //             node_runtime::FakeNodeRuntime::new(),
-    //             user_store,
-    //             Arc::new(languages),
-    //             fs,
-    //             cx,
-    //         )
-    //     });
-    //     for path in root_paths {
-    //         let (tree, _) = project
-    //             .update(cx, |project, cx| {
-    //                 project.find_or_create_local_worktree(path, true, cx)
-    //             })
-    //             .await
-    //             .unwrap();
-    //         tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
-    //             .await;
-    //     }
-    //     project
-    // }
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn test(
+        fs: Arc<dyn Fs>,
+        root_paths: impl IntoIterator<Item = &Path>,
+        cx: &mut gpui2::TestAppContext,
+    ) -> Handle<Project> {
+        let mut languages = LanguageRegistry::test();
+        languages.set_executor(cx.executor().clone());
+        let http_client = util::http::FakeHttpClient::with_404_response();
+        let client = cx.update(|cx| client2::Client::new(http_client.clone(), cx));
+        let user_store = cx.entity(|cx| UserStore::new(client.clone(), http_client, cx));
+        let project = cx.update(|cx| {
+            Project::local(
+                client,
+                node_runtime::FakeNodeRuntime::new(),
+                user_store,
+                Arc::new(languages),
+                fs,
+                cx,
+            )
+        });
+        for path in root_paths {
+            let (tree, _) = project
+                .update(cx, |project, cx| {
+                    project.find_or_create_local_worktree(path, true, cx)
+                })
+                .await
+                .unwrap();
+            tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+                .await;
+        }
+        project
+    }
 
     /// Enables a prettier mock that avoids interacting with node runtime, prettier LSP wrapper, or any real file changes.
     /// Instead, if appends the suffix to every input, this suffix is returned by this method.
@@ -5199,7 +5199,7 @@ impl Project {
                         fs.create_file(
                             &abs_path,
                             op.options
-                                .map(|options| fs::CreateOptions {
+                                .map(|options| fs2::CreateOptions {
                                     overwrite: options.overwrite.unwrap_or(false),
                                     ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
                                 })
@@ -5222,7 +5222,7 @@ impl Project {
                         &source_abs_path,
                         &target_abs_path,
                         op.options
-                            .map(|options| fs::RenameOptions {
+                            .map(|options| fs2::RenameOptions {
                                 overwrite: options.overwrite.unwrap_or(false),
                                 ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
                             })
@@ -5238,7 +5238,7 @@ impl Project {
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
                     let options = op
                         .options
-                        .map(|options| fs::RemoveOptions {
+                        .map(|options| fs2::RemoveOptions {
                             recursive: options.recursive.unwrap_or(false),
                             ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
                         })

@@ -211,7 +211,7 @@ impl Drop for AnyHandle {
             let count = entity_map
                 .counts
                 .get(self.entity_id)
-                .expect("Detected over-release of a handle.");
+                .expect("detected over-release of a handle.");
             let prev_count = count.fetch_sub(1, SeqCst);
             assert_ne!(prev_count, 0, "Detected over-release of a handle.");
             if prev_count == 1 {

@@ -362,7 +362,7 @@ impl AppContext {
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
                 for mut release_callback in self.release_listeners.remove(&entity_id) {
-                    release_callback(&mut entity, self);
+                    release_callback(entity.as_mut(), self);
                 }
             }
         }

@@ -147,8 +147,10 @@ impl Executor {
                 Poll::Pending => {
                     if !self.dispatcher.poll() {
                         #[cfg(any(test, feature = "test-support"))]
-                        if let Some(_) = self.dispatcher.as_test() {
-                            panic!("blocked with nothing left to run")
+                        if let Some(test) = self.dispatcher.as_test() {
+                            if !test.parking_allowed() {
+                                panic!("blocked with nothing left to run")
+                            }
                         }
                         parker.park();
                     }
@@ -216,7 +218,7 @@ impl Executor {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_random_delay(&self) -> impl Future<Output = ()> {
-        self.dispatcher.as_test().unwrap().simulate_random_delay()
+        self.spawn(self.dispatcher.as_test().unwrap().simulate_random_delay())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -227,6 +229,11 @@ impl Executor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
         self.dispatcher.as_test().unwrap().run_until_parked()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn allow_parking(&self) {
+        self.dispatcher.as_test().unwrap().allow_parking();
     }
 
     pub fn num_cpus(&self) -> usize {
