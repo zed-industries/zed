@@ -168,10 +168,6 @@ mod stories {
     pub struct KeybindingStory;
 
     impl KeybindingStory {
-        pub fn new() -> Self {
-            Self
-        }
-
         fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let all_modifier_permutations = ModifierKey::iter().permutations(2);
 

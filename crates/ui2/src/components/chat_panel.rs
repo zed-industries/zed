@@ -117,10 +117,6 @@ mod stories {
     pub struct ChatPanelStory;
 
     impl ChatPanelStory {
-        pub fn new() -> Self {
-            Self
-        }
-
         fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
                 .child(Story::title_for::<_, ChatPanel>(cx))

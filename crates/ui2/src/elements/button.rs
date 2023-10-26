@@ -230,10 +230,6 @@ mod stories {
     pub struct ButtonStory;
 
     impl ButtonStory {
-        pub fn new() -> Self {
-            Self
-        }
-
         fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let states = InteractionState::iter();
 

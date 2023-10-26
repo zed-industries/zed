@@ -10,10 +10,6 @@ use crate::story::Story;
 pub struct ZIndexStory;
 
 impl ZIndexStory {
-    pub fn new() -> Self {
-        Self
-    }
-
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         Story::container(cx)
             .child(Story::title(cx, "z-index"))

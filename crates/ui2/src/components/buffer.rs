@@ -246,10 +246,6 @@ mod stories {
     pub struct BufferStory;
 
     impl BufferStory {
-        pub fn new() -> Self {
-            Self
-        }
-
         fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let theme = theme(cx);
 

@@ -81,13 +81,9 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct AssistantPanelStory {}
+    pub struct AssistantPanelStory;
 
     impl AssistantPanelStory {
-        pub fn new() -> Self {
-            Self {}
-        }
-
         fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
                 .child(Story::title_for::<_, AssistantPanel>(cx))

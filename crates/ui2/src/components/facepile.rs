@@ -39,10 +39,6 @@ mod stories {
     pub struct FacepileStory;
 
     impl FacepileStory {
-        pub fn new() -> Self {
-            Self
-        }
-
         fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let players = static_players();
 

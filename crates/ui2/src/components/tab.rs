@@ -176,10 +176,6 @@ mod stories {
     pub struct TabStory;
 
     impl TabStory {
-        pub fn new() -> Self {
-            Self
-        }
-
         fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let git_statuses = GitStatus::iter();
             let fs_statuses = FileSystemStatus::iter();

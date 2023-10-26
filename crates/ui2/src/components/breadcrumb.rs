@@ -83,10 +83,6 @@ mod stories {
     pub struct BreadcrumbStory;
 
     impl BreadcrumbStory {
-        pub fn new() -> Self {
-            Self
-        }
-
         fn render<V: 'static>(
             self,
             view_state: &mut V,
