@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use gpui::executor::Background;
-use gpui::{serde_json, AppContext};
+use gpui::serde_json;
 use isahc::http::StatusCode;
 use isahc::prelude::Configurable;
 use isahc::{AsyncBody, Response};
@@ -17,13 +17,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tiktoken_rs::{cl100k_base, CoreBPE};
 use util::http::{HttpClient, Request};
-use util::ResultExt;
 
+use crate::auth::{CredentialProvider, ProviderCredential};
 use crate::embedding::{Embedding, EmbeddingProvider};
 use crate::models::LanguageModel;
 use crate::providers::open_ai::OpenAILanguageModel;
 
-use super::OPENAI_API_URL;
+use crate::providers::open_ai::auth::OpenAICredentialProvider;
 
 lazy_static! {
     static ref OPENAI_API_KEY: Option<String> = env::var("OPENAI_API_KEY").ok();
@@ -33,6 +33,7 @@ lazy_static! {
 #[derive(Clone)]
 pub struct OpenAIEmbeddingProvider {
     model: OpenAILanguageModel,
+    credential_provider: OpenAICredentialProvider,
     pub client: Arc<dyn HttpClient>,
     pub executor: Arc<Background>,
     rate_limit_count_rx: watch::Receiver<Option<Instant>>,
@@ -73,6 +74,7 @@ impl OpenAIEmbeddingProvider {
 
         OpenAIEmbeddingProvider {
             model,
+            credential_provider: OpenAICredentialProvider {},
             client,
             executor,
             rate_limit_count_rx,
@@ -138,25 +140,17 @@ impl OpenAIEmbeddingProvider {
 
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbeddingProvider {
-    fn retrieve_credentials(&self, cx: &AppContext) -> Option<String> {
-        let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
-            Some(api_key)
-        } else if let Some((_, api_key)) = cx
-            .platform()
-            .read_credentials(OPENAI_API_URL)
-            .log_err()
-            .flatten()
-        {
-            String::from_utf8(api_key).log_err()
-        } else {
-            None
-        };
-        api_key
-    }
     fn base_model(&self) -> Box<dyn LanguageModel> {
         let model: Box<dyn LanguageModel> = Box::new(self.model.clone());
         model
     }
+
+    fn credential_provider(&self) -> Box<dyn CredentialProvider> {
+        let credential_provider: Box<dyn CredentialProvider> =
+            Box::new(self.credential_provider.clone());
+        credential_provider
+    }
+
     fn max_tokens_per_batch(&self) -> usize {
         50000
     }
@@ -164,25 +158,11 @@ impl EmbeddingProvider for OpenAIEmbeddingProvider {
     fn rate_limit_expiration(&self) -> Option<Instant> {
         *self.rate_limit_count_rx.borrow()
     }
-    // fn truncate(&self, span: &str) -> (String, usize) {
-    //     let mut tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span);
-    //     let output = if tokens.len() > OPENAI_INPUT_LIMIT {
-    //         tokens.truncate(OPENAI_INPUT_LIMIT);
-    //         OPENAI_BPE_TOKENIZER
-    //             .decode(tokens.clone())
-    //             .ok()
-    //             .unwrap_or_else(|| span.to_string())
-    //     } else {
-    //         span.to_string()
-    //     };
-
-    //     (output, tokens.len())
-    // }
 
     async fn embed_batch(
         &self,
         spans: Vec<String>,
-        api_key: Option<String>,
+        _credential: ProviderCredential,
     ) -> Result<Vec<Embedding>> {
         const BACKOFF_SECONDS: [usize; 4] = [3, 5, 15, 45];
         const MAX_RETRIES: usize = 4;

@@ -7,6 +7,7 @@ use ordered_float::OrderedFloat;
 use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::ToSql;
 
+use crate::auth::{CredentialProvider, ProviderCredential};
 use crate::models::LanguageModel;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -71,11 +72,14 @@ impl Embedding {
 #[async_trait]
 pub trait EmbeddingProvider: Sync + Send {
     fn base_model(&self) -> Box<dyn LanguageModel>;
-    fn retrieve_credentials(&self, cx: &AppContext) -> Option<String>;
+    fn credential_provider(&self) -> Box<dyn CredentialProvider>;
+    fn retrieve_credentials(&self, cx: &AppContext) -> ProviderCredential {
+        self.credential_provider().retrieve_credentials(cx)
+    }
     async fn embed_batch(
         &self,
         spans: Vec<String>,
-        api_key: Option<String>,
+        credential: ProviderCredential,
     ) -> Result<Vec<Embedding>>;
     fn max_tokens_per_batch(&self) -> usize;
     fn rate_limit_expiration(&self) -> Option<Instant>;

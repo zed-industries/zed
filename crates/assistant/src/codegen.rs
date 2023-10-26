@@ -335,7 +335,6 @@ fn strip_markdown_codeblock(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ai::providers::dummy::DummyCompletionRequest;
     use futures::{
         future::BoxFuture,
         stream::{self, BoxStream},
@@ -345,8 +344,20 @@ mod tests {
     use language::{language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, Point};
     use parking_lot::Mutex;
     use rand::prelude::*;
+    use serde::Serialize;
     use settings::SettingsStore;
     use smol::future::FutureExt;
+
+    #[derive(Serialize)]
+    pub struct DummyCompletionRequest {
+        pub name: String,
+    }
+
+    impl CompletionRequest for DummyCompletionRequest {
+        fn data(&self) -> serde_json::Result<String> {
+            serde_json::to_string(self)
+        }
+    }
 
     #[gpui::test(iterations = 10)]
     async fn test_transform_autoindent(
@@ -381,6 +392,7 @@ mod tests {
                 cx,
             )
         });
+
         let request = Box::new(DummyCompletionRequest {
             name: "test".to_string(),
         });
