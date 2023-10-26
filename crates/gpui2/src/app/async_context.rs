@@ -183,6 +183,41 @@ impl AsyncWindowContext {
         self.app
             .update_window(self.window, |cx| cx.update_global(update))
     }
+
+    pub fn spawn<Fut, R>(
+        &self,
+        f: impl FnOnce(AsyncWindowContext) -> Fut + Send + 'static,
+    ) -> Task<R>
+    where
+        Fut: Future<Output = R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let this = self.clone();
+        self.executor.spawn(async move { f(this).await })
+    }
+
+    pub fn spawn_on_main<Fut, R>(
+        &self,
+        f: impl FnOnce(AsyncWindowContext) -> Fut + Send + 'static,
+    ) -> Task<R>
+    where
+        Fut: Future<Output = R> + 'static,
+        R: Send + 'static,
+    {
+        let this = self.clone();
+        self.executor.spawn_on_main(|| f(this))
+    }
+
+    pub fn run_on_main<R>(
+        &self,
+        f: impl FnOnce(&mut MainThread<WindowContext>) -> R + Send + 'static,
+    ) -> Task<Result<R>>
+    where
+        R: Send + 'static,
+    {
+        self.update(|cx| cx.run_on_main(f))
+            .unwrap_or_else(|error| Task::ready(Err(error)))
+    }
 }
 
 impl Context for AsyncWindowContext {
