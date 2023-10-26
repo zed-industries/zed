@@ -645,7 +645,7 @@ struct LanguageRegistryState {
 
 pub struct PendingLanguageServer {
     pub server_id: LanguageServerId,
-    pub task: Task<Result<Option<lsp::LanguageServer>>>,
+    pub task: Task<Result<lsp::LanguageServer>>,
     pub container_dir: Option<Arc<Path>>,
 }
 
@@ -884,6 +884,7 @@ impl LanguageRegistry {
 
     pub fn create_pending_language_server(
         self: &Arc<Self>,
+        stderr_capture: Arc<Mutex<Option<String>>>,
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
@@ -923,7 +924,7 @@ impl LanguageRegistry {
                     })
                     .detach();
 
-                Ok(Some(server))
+                Ok(server)
             });
 
             return Some(PendingLanguageServer {
@@ -971,24 +972,23 @@ impl LanguageRegistry {
                     .clone();
                 drop(lock);
 
-                let binary = match entry.clone().await.log_err() {
-                    Some(binary) => binary,
-                    None => return Ok(None),
+                let binary = match entry.clone().await {
+                    Ok(binary) => binary,
+                    Err(err) => anyhow::bail!("{err}"),
                 };
 
                 if let Some(task) = adapter.will_start_server(&delegate, &mut cx) {
-                    if task.await.log_err().is_none() {
-                        return Ok(None);
-                    }
+                    task.await?;
                 }
 
-                Ok(Some(lsp::LanguageServer::new(
+                lsp::LanguageServer::new(
+                    stderr_capture,
                     server_id,
                     binary,
                     &root_path,
                     adapter.code_action_kinds(),
                     cx,
-                )?))
+                )
             })
         };
 
