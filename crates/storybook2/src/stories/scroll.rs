@@ -1,6 +1,6 @@
 use crate::themes::rose_pine;
 use gpui2::{
-    div, px, view, Component, Context, ParentElement, SharedString, Styled, View, WindowContext,
+    div, px, Component, ParentElement, SharedString, Styled, View, VisualContext, WindowContext,
 };
 
 pub struct ScrollStory {
@@ -11,7 +11,9 @@ impl ScrollStory {
     pub fn view(cx: &mut WindowContext) -> View<()> {
         let theme = rose_pine();
 
-        view(cx.entity(|cx| ()), move |_, cx| checkerboard(1))
+        {
+            cx.build_view(|cx| (), move |_, cx| checkerboard(1))
+        }
     }
 }
 

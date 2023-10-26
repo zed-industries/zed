@@ -1,7 +1,8 @@
 use crate::{
-    point, px, view, Action, AnyBox, AnyDrag, AppContext, BorrowWindow, Bounds, Component,
+    point, px, Action, AnyBox, AnyDrag, AppContext, BorrowWindow, Bounds, Component,
     DispatchContext, DispatchPhase, Element, ElementId, FocusHandle, KeyMatch, Keystroke,
-    Modifiers, Overflow, Pixels, Point, SharedString, Size, Style, StyleRefinement, ViewContext,
+    Modifiers, Overflow, Pixels, Point, SharedString, Size, Style, StyleRefinement, View,
+    ViewContext,
 };
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -331,9 +332,8 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
         self.stateful_interaction().drag_listener =
             Some(Box::new(move |view_state, cursor_offset, cx| {
                 let drag = listener(view_state, cx);
-                let view_handle = cx.handle().upgrade().unwrap();
                 let drag_handle_view = Some(
-                    view(view_handle, move |view_state, cx| {
+                    View::for_handle(cx.handle().upgrade().unwrap(), move |view_state, cx| {
                         (drag.render_drag_handle)(view_state, cx)
                     })
                     .into_any(),

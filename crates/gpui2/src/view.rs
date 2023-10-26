@@ -1,19 +1,60 @@
-use parking_lot::Mutex;
-
 use crate::{
-    AnyBox, AnyElement, BorrowWindow, Bounds, Component, Element, ElementId, EntityId, Handle,
-    LayoutId, Pixels, ViewContext, WindowContext,
+    AnyBox, AnyElement, AvailableSpace, BorrowWindow, Bounds, Component, Element, ElementId,
+    EntityId, Handle, LayoutId, Pixels, Size, ViewContext, VisualContext, WeakHandle,
+    WindowContext,
 };
-use std::{marker::PhantomData, sync::Arc};
+use anyhow::{Context, Result};
+use parking_lot::Mutex;
+use std::{
+    marker::PhantomData,
+    sync::{Arc, Weak},
+};
 
 pub struct View<V> {
-    state: Handle<V>,
+    pub(crate) state: Handle<V>,
     render: Arc<Mutex<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyElement<V> + Send + 'static>>,
+}
+
+impl<V: 'static> View<V> {
+    pub fn for_handle<E>(
+        state: Handle<V>,
+        render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    ) -> View<V>
+    where
+        E: Component<V>,
+    {
+        View {
+            state,
+            render: Arc::new(Mutex::new(
+                move |state: &mut V, cx: &mut ViewContext<'_, '_, V>| render(state, cx).render(),
+            )),
+        }
+    }
 }
 
 impl<V: 'static> View<V> {
     pub fn into_any(self) -> AnyView {
         AnyView(Arc::new(self))
+    }
+
+    pub fn downgrade(&self) -> WeakView<V> {
+        WeakView {
+            state: self.state.downgrade(),
+            render: Arc::downgrade(&self.render),
+        }
+    }
+}
+
+impl<V: 'static> View<V> {
+    pub fn update<C, R>(
+        &self,
+        cx: &mut C,
+        f: impl FnOnce(&mut V, &mut C::ViewContext<'_, '_, V>) -> R,
+    ) -> C::Result<R>
+    where
+        C: VisualContext,
+    {
+        cx.update_view(self, f)
     }
 }
 
@@ -23,21 +64,6 @@ impl<V> Clone for View<V> {
             state: self.state.clone(),
             render: self.render.clone(),
         }
-    }
-}
-
-pub fn view<V, E>(
-    state: Handle<V>,
-    render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
-) -> View<V>
-where
-    E: Component<V>,
-{
-    View {
-        state,
-        render: Arc::new(Mutex::new(
-            move |state: &mut V, cx: &mut ViewContext<'_, '_, V>| render(state, cx).render(),
-        )),
     }
 }
 
@@ -63,7 +89,7 @@ impl<V: 'static> Element<()> for View<V> {
         _: Option<Self::ElementState>,
         cx: &mut ViewContext<()>,
     ) -> Self::ElementState {
-        self.state.update(cx, |state, cx| {
+        self.update(cx, |state, cx| {
             let mut any_element = (self.render.lock())(state, cx);
             any_element.initialize(state, cx);
             any_element
@@ -76,7 +102,7 @@ impl<V: 'static> Element<()> for View<V> {
         element: &mut Self::ElementState,
         cx: &mut ViewContext<()>,
     ) -> LayoutId {
-        self.state.update(cx, |state, cx| element.layout(state, cx))
+        self.update(cx, |state, cx| element.layout(state, cx))
     }
 
     fn paint(
@@ -86,7 +112,38 @@ impl<V: 'static> Element<()> for View<V> {
         element: &mut Self::ElementState,
         cx: &mut ViewContext<()>,
     ) {
-        self.state.update(cx, |state, cx| element.paint(state, cx))
+        self.update(cx, |state, cx| element.paint(state, cx))
+    }
+}
+
+pub struct WeakView<V> {
+    pub(crate) state: WeakHandle<V>,
+    render: Weak<Mutex<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyElement<V> + Send + 'static>>,
+}
+
+impl<V: 'static> WeakView<V> {
+    pub fn upgrade(&self) -> Option<View<V>> {
+        let state = self.state.upgrade()?;
+        let render = self.render.upgrade()?;
+        Some(View { state, render })
+    }
+
+    pub fn update<R>(
+        &self,
+        cx: &mut WindowContext,
+        f: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
+    ) -> Result<R> {
+        let view = self.upgrade().context("error upgrading view")?;
+        Ok(view.update(cx, f))
+    }
+}
+
+impl<V> Clone for WeakView<V> {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            render: self.render.clone(),
+        }
     }
 }
 
@@ -153,7 +210,7 @@ impl<V: 'static> ViewObject for View<V> {
 
     fn initialize(&self, cx: &mut WindowContext) -> AnyBox {
         cx.with_element_id(self.entity_id(), |_global_id, cx| {
-            self.state.update(cx, |state, cx| {
+            self.update(cx, |state, cx| {
                 let mut any_element = Box::new((self.render.lock())(state, cx));
                 any_element.initialize(state, cx);
                 any_element as AnyBox
@@ -163,7 +220,7 @@ impl<V: 'static> ViewObject for View<V> {
 
     fn layout(&self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId {
         cx.with_element_id(self.entity_id(), |_global_id, cx| {
-            self.state.update(cx, |state, cx| {
+            self.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<V>>().unwrap();
                 element.layout(state, cx)
             })
@@ -172,7 +229,7 @@ impl<V: 'static> ViewObject for View<V> {
 
     fn paint(&self, _: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext) {
         cx.with_element_id(self.entity_id(), |_global_id, cx| {
-            self.state.update(cx, |state, cx| {
+            self.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<V>>().unwrap();
                 element.paint(state, cx);
             });
@@ -182,6 +239,18 @@ impl<V: 'static> ViewObject for View<V> {
 
 #[derive(Clone)]
 pub struct AnyView(Arc<dyn ViewObject>);
+
+impl AnyView {
+    pub(crate) fn draw(&self, available_space: Size<AvailableSpace>, cx: &mut WindowContext) {
+        let mut rendered_element = self.0.initialize(cx);
+        let layout_id = self.0.layout(&mut rendered_element, cx);
+        cx.window
+            .layout_engine
+            .compute_layout(layout_id, available_space);
+        let bounds = cx.window.layout_engine.layout_bounds(layout_id);
+        self.0.paint(bounds, &mut rendered_element, cx);
+    }
+}
 
 impl<ParentV: 'static> Component<ParentV> for AnyView {
     fn render(self) -> AnyElement<ParentV> {

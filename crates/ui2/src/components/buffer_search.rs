@@ -1,4 +1,4 @@
-use gpui2::{view, Context, View};
+use gpui2::{AppContext, Context, View};
 
 use crate::prelude::*;
 use crate::{h_stack, Icon, IconButton, IconColor, Input};
@@ -21,8 +21,12 @@ impl BufferSearch {
         cx.notify();
     }
 
-    pub fn view(cx: &mut WindowContext) -> View<Self> {
-        view(cx.entity(|cx| Self::new()), Self::render)
+    pub fn view(cx: &mut AppContext) -> View<Self> {
+        {
+            let state = cx.entity(|cx| Self::new());
+            let render = Self::render;
+            View::for_handle(state, render)
+        }
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {

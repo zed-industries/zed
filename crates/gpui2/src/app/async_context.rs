@@ -1,6 +1,6 @@
 use crate::{
     AnyWindowHandle, AppContext, Context, Executor, Handle, MainThread, ModelContext, Result, Task,
-    ViewContext, WindowContext,
+    WindowContext,
 };
 use anyhow::anyhow;
 use derive_more::{Deref, DerefMut};
@@ -14,12 +14,12 @@ pub struct AsyncAppContext {
 }
 
 impl Context for AsyncAppContext {
-    type EntityContext<'a, 'w, T> = ModelContext<'a, T>;
+    type EntityContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = Result<T>;
 
     fn entity<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
     ) -> Self::Result<Handle<T>>
     where
         T: 'static + Send,
@@ -35,7 +35,7 @@ impl Context for AsyncAppContext {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         let app = self
             .app
@@ -216,12 +216,12 @@ impl AsyncWindowContext {
 }
 
 impl Context for AsyncWindowContext {
-    type EntityContext<'a, 'w, T> = ViewContext<'a, 'w, T>;
+    type EntityContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = Result<T>;
 
     fn entity<T>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
     ) -> Result<Handle<T>>
     where
         T: 'static + Send,
@@ -233,7 +233,7 @@ impl Context for AsyncWindowContext {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
     ) -> Result<R> {
         self.app
             .update_window(self.window, |cx| cx.update_entity(handle, update))

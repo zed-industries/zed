@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use gpui2::WindowContext;
+use gpui2::{AppContext, WindowContext};
 use rand::Rng;
 use theme2::Theme;
 
@@ -781,7 +781,7 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
     ]
 }
 
-pub fn hello_world_rust_editor_with_status_example(cx: &mut WindowContext) -> EditorPane {
+pub fn hello_world_rust_editor_with_status_example(cx: &mut AppContext) -> EditorPane {
     let theme = theme(cx);
 
     EditorPane::new(
