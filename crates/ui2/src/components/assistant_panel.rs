@@ -69,7 +69,7 @@ impl<S: 'static + Send + Sync> AssistantPanel<S> {
                         .overflow_y_scroll()
                         .child(Label::new("Is this thing on?")),
                 )
-                .render()])
+                .renderinto_any()])
             .side(self.current_side)
             .width(AbsoluteLength::Rems(rems(32.)))
     }
@@ -85,20 +85,16 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct AssistantPanelStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    pub struct AssistantPanelStory {}
 
-    impl<S: 'static + Send + Sync> AssistantPanelStory<S> {
+    impl AssistantPanelStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self {}
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
-                .child(Story::title_for::<_, AssistantPanel<S>>(cx))
+                .child(Story::title_for::<_, AssistantPanel<V>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(AssistantPanel::new("assistant-panel"))
         }

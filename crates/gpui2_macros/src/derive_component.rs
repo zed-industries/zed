@@ -1,9 +1,21 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput};
+use syn::{parse_macro_input, parse_quote, DeriveInput};
 
 pub fn derive_component(input: TokenStream) -> TokenStream {
-    let ast = parse_macro_input!(input as DeriveInput);
+    let mut ast = parse_macro_input!(input as DeriveInput);
+
+    if !ast
+        .generics
+        .params
+        .iter()
+        .any(|param| matches!(param, syn::GenericParam::Type(_)))
+    {
+        ast.generics.params.push(parse_quote! {
+            V: 'static
+        });
+    }
+
     let name = &ast.ident;
     let generics = &ast.generics;
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
@@ -37,7 +49,7 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
         if let Some(syn::GenericParam::Type(type_param)) = generics.params.first() {
             type_param.ident.clone()
         } else {
-            panic!("Expected first type parameter");
+            panic!("Expected first type parameter to be a view type");
         }
     });
 
@@ -49,6 +61,10 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
             }
         }
     };
+
+    if name == "AssistantPanelStory" {
+        println!("Expanded tokens: {}", expanded.to_string());
+    }
 
     TokenStream::from(expanded)
 }
