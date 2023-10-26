@@ -22,7 +22,7 @@ impl ChatPanel {
         self
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div()
             .id(self.element_id.clone())
             .flex()
@@ -84,7 +84,7 @@ impl ChatMessage {
         }
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div()
             .flex()
             .flex_col()
@@ -121,7 +121,7 @@ mod stories {
             Self
         }
 
-        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
                 .child(Story::title_for::<_, ChatPanel>(cx))
                 .child(Story::label(cx, "Default"))

@@ -5,7 +5,7 @@ use crate::prelude::*;
 pub struct Story {}
 
 impl Story {
-    pub fn container<S: 'static>(cx: &mut ViewContext<S>) -> Div<S> {
+    pub fn container<V: 'static>(cx: &mut ViewContext<V>) -> Div<V> {
         let theme = theme(cx);
 
         div()
@@ -18,10 +18,7 @@ impl Story {
             .bg(theme.background)
     }
 
-    pub fn title<S: 'static>(
-        cx: &mut ViewContext<S>,
-        title: &str,
-    ) -> impl Component<S> {
+    pub fn title<V: 'static>(cx: &mut ViewContext<V>, title: &str) -> impl Component<V> {
         let theme = theme(cx);
 
         div()
@@ -30,14 +27,11 @@ impl Story {
             .child(title.to_owned())
     }
 
-    pub fn title_for<S: 'static, T>(cx: &mut ViewContext<S>) -> impl Component<S> {
+    pub fn title_for<V: 'static, T>(cx: &mut ViewContext<V>) -> impl Component<V> {
         Self::title(cx, std::any::type_name::<T>())
     }
 
-    pub fn label<S: 'static>(
-        cx: &mut ViewContext<S>,
-        label: &str,
-    ) -> impl Component<S> {
+    pub fn label<V: 'static>(cx: &mut ViewContext<V>, label: &str) -> impl Component<V> {
         let theme = theme(cx);
 
         div()

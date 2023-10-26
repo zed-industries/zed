@@ -14,7 +14,7 @@ impl ZIndexStory {
         Self
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         Story::container(cx)
             .child(Story::title(cx, "z-index"))
             .child(

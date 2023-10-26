@@ -11,7 +11,7 @@ impl Terminal {
         Self
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         let can_navigate_back = true;
@@ -95,7 +95,7 @@ mod stories {
             Self
         }
 
-        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
                 .child(Story::title_for::<_, Terminal>(cx))
                 .child(Story::label(cx, "Default"))

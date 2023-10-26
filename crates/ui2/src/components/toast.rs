@@ -23,12 +23,12 @@ pub enum ToastOrigin {
 ///
 /// Only one toast may be visible at a time.
 #[derive(Component)]
-pub struct Toast<S: 'static> {
+pub struct Toast<V: 'static> {
     origin: ToastOrigin,
-    children: SmallVec<[AnyElement<S>; 2]>,
+    children: SmallVec<[AnyElement<V>; 2]>,
 }
 
-impl<S: 'static> Toast<S> {
+impl<V: 'static> Toast<V> {
     pub fn new(origin: ToastOrigin) -> Self {
         Self {
             origin,
@@ -36,7 +36,7 @@ impl<S: 'static> Toast<S> {
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         let mut div = div();
@@ -61,8 +61,8 @@ impl<S: 'static> Toast<S> {
     }
 }
 
-impl<S: 'static> ParentElement<S> for Toast<S> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
+impl<V: 'static> ParentElement<V> for Toast<V> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
 }
@@ -84,9 +84,9 @@ mod stories {
             Self
         }
 
-        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
-                .child(Story::title_for::<_, Toast<S>>(cx))
+                .child(Story::title_for::<_, Toast<V>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Toast::new(ToastOrigin::Bottom).child(Label::new("label")))
         }

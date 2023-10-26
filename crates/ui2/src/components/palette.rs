@@ -42,7 +42,7 @@ impl Palette {
         self
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         v_stack()
@@ -131,7 +131,7 @@ impl PaletteItem {
         self
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div()
             .flex()
             .flex_row()

@@ -14,7 +14,7 @@ impl CollabPanel {
         Self { id: id.into() }
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         v_stack()
@@ -101,7 +101,7 @@ mod stories {
             Self
         }
 
-        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
                 .child(Story::title_for::<_, CollabPanel>(cx))
                 .child(Story::label(cx, "Default"))

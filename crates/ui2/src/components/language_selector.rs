@@ -11,7 +11,7 @@ impl LanguageSelector {
         Self { id: id.into() }
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(vec![
@@ -50,7 +50,7 @@ mod stories {
             Self
         }
 
-        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
                 .child(Story::title_for::<_, LanguageSelector>(cx))
                 .child(Story::label(cx, "Default"))

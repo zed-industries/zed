@@ -325,7 +325,7 @@ pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
     ]
 }
 
-pub fn static_new_notification_items<S: 'static>() -> Vec<ListItem<S>> {
+pub fn static_new_notification_items<V: 'static>() -> Vec<ListItem<V>> {
     vec![
         ListDetailsEntry::new("maxdeviant invited you to join a stream in #design.")
             .meta("4 people in stream."),
@@ -336,7 +336,7 @@ pub fn static_new_notification_items<S: 'static>() -> Vec<ListItem<S>> {
     .collect()
 }
 
-pub fn static_read_notification_items<S: 'static>() -> Vec<ListItem<S>> {
+pub fn static_read_notification_items<V: 'static>() -> Vec<ListItem<V>> {
     vec![
         ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
             Button::new("Decline"),
@@ -352,7 +352,7 @@ pub fn static_read_notification_items<S: 'static>() -> Vec<ListItem<S>> {
     .collect()
 }
 
-pub fn static_project_panel_project_items<S: 'static>() -> Vec<ListItem<S>> {
+pub fn static_project_panel_project_items<V: 'static>() -> Vec<ListItem<V>> {
     vec![
         ListEntry::new(Label::new("zed"))
             .left_icon(Icon::FolderOpen.into())
@@ -479,7 +479,7 @@ pub fn static_project_panel_project_items<S: 'static>() -> Vec<ListItem<S>> {
     .collect()
 }
 
-pub fn static_project_panel_single_items<S: 'static>() -> Vec<ListItem<S>> {
+pub fn static_project_panel_single_items<V: 'static>() -> Vec<ListItem<V>> {
     vec![
         ListEntry::new(Label::new("todo.md"))
             .left_icon(Icon::FileDoc.into())
@@ -496,7 +496,7 @@ pub fn static_project_panel_single_items<S: 'static>() -> Vec<ListItem<S>> {
     .collect()
 }
 
-pub fn static_collab_panel_current_call<S: 'static>() -> Vec<ListItem<S>> {
+pub fn static_collab_panel_current_call<V: 'static>() -> Vec<ListItem<V>> {
     vec![
         ListEntry::new(Label::new("as-cii")).left_avatar("http://github.com/as-cii.png?s=50"),
         ListEntry::new(Label::new("nathansobo"))
@@ -509,7 +509,7 @@ pub fn static_collab_panel_current_call<S: 'static>() -> Vec<ListItem<S>> {
     .collect()
 }
 
-pub fn static_collab_panel_channels<S: 'static>() -> Vec<ListItem<S>> {
+pub fn static_collab_panel_channels<V: 'static>() -> Vec<ListItem<V>> {
     vec![
         ListEntry::new(Label::new("zed"))
             .left_icon(Icon::Hash.into())

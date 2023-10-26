@@ -1,6 +1,6 @@
 use gpui2::Element;
 
-pub trait ElementExt<S: 'static>: Element<S> {
+pub trait ElementExt<V: 'static>: Element<V> {
     // fn when(mut self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
     // where
     //     Self: Sized,

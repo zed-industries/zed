@@ -55,7 +55,7 @@ impl ListHeader {
         self
     }
 
-    fn disclosure_control<S: 'static>(&self) -> Div<S> {
+    fn disclosure_control<V: 'static>(&self) -> Div<V> {
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = Toggleable::is_toggled(&self.toggleable);
 
@@ -88,7 +88,7 @@ impl ListHeader {
         }
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
@@ -151,7 +151,7 @@ impl ListSubHeader {
         self
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
@@ -192,39 +192,39 @@ pub enum ListEntrySize {
 }
 
 #[derive(Component)]
-pub enum ListItem<S: 'static> {
+pub enum ListItem<V: 'static> {
     Entry(ListEntry),
-    Details(ListDetailsEntry<S>),
+    Details(ListDetailsEntry<V>),
     Separator(ListSeparator),
     Header(ListSubHeader),
 }
 
-impl<S: 'static> From<ListEntry> for ListItem<S> {
+impl<V: 'static> From<ListEntry> for ListItem<V> {
     fn from(entry: ListEntry) -> Self {
         Self::Entry(entry)
     }
 }
 
-impl<S: 'static> From<ListDetailsEntry<S>> for ListItem<S> {
-    fn from(entry: ListDetailsEntry<S>) -> Self {
+impl<V: 'static> From<ListDetailsEntry<V>> for ListItem<V> {
+    fn from(entry: ListDetailsEntry<V>) -> Self {
         Self::Details(entry)
     }
 }
 
-impl<S: 'static> From<ListSeparator> for ListItem<S> {
+impl<V: 'static> From<ListSeparator> for ListItem<V> {
     fn from(entry: ListSeparator) -> Self {
         Self::Separator(entry)
     }
 }
 
-impl<S: 'static> From<ListSubHeader> for ListItem<S> {
+impl<V: 'static> From<ListSubHeader> for ListItem<V> {
     fn from(entry: ListSubHeader) -> Self {
         Self::Header(entry)
     }
 }
 
-impl<S: 'static> ListItem<S> {
-    fn render(self, view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+impl<V: 'static> ListItem<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         match self {
             ListItem::Entry(entry) => div().child(entry.render(view, cx)),
             ListItem::Separator(separator) => div().child(separator.render(view, cx)),
@@ -361,7 +361,7 @@ impl ListEntry {
         }
     }
 
-    fn render<S: 'static>(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let settings = user_settings(cx);
         let theme = theme(cx);
 
@@ -417,29 +417,29 @@ impl ListEntry {
     }
 }
 
-struct ListDetailsEntryHandlers<S: 'static> {
-    click: Option<ClickHandler<S>>,
+struct ListDetailsEntryHandlers<V: 'static> {
+    click: Option<ClickHandler<V>>,
 }
 
-impl<S: 'static> Default for ListDetailsEntryHandlers<S> {
+impl<V: 'static> Default for ListDetailsEntryHandlers<V> {
     fn default() -> Self {
         Self { click: None }
     }
 }
 
 #[derive(Component)]
-pub struct ListDetailsEntry<S: 'static> {
+pub struct ListDetailsEntry<V: 'static> {
     label: SharedString,
     meta: Option<SharedString>,
     left_content: Option<LeftContent>,
-    handlers: ListDetailsEntryHandlers<S>,
-    actions: Option<Vec<Button<S>>>,
+    handlers: ListDetailsEntryHandlers<V>,
+    actions: Option<Vec<Button<V>>>,
     // TODO: make this more generic instead of
     // specifically for notifications
     seen: bool,
 }
 
-impl<S: 'static> ListDetailsEntry<S> {
+impl<V: 'static> ListDetailsEntry<V> {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
@@ -461,17 +461,17 @@ impl<S: 'static> ListDetailsEntry<S> {
         self
     }
 
-    pub fn on_click(mut self, handler: ClickHandler<S>) -> Self {
+    pub fn on_click(mut self, handler: ClickHandler<V>) -> Self {
         self.handlers.click = Some(handler);
         self
     }
 
-    pub fn actions(mut self, actions: Vec<Button<S>>) -> Self {
+    pub fn actions(mut self, actions: Vec<Button<V>>) -> Self {
         self.actions = Some(actions);
         self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
         let settings = user_settings(cx);
 
@@ -531,15 +531,15 @@ impl ListSeparator {
 }
 
 #[derive(Component)]
-pub struct List<S: 'static> {
-    items: Vec<ListItem<S>>,
+pub struct List<V: 'static> {
+    items: Vec<ListItem<V>>,
     empty_message: SharedString,
     header: Option<ListHeader>,
     toggleable: Toggleable,
 }
 
-impl<S: 'static> List<S> {
-    pub fn new(items: Vec<ListItem<S>>) -> Self {
+impl<V: 'static> List<V> {
+    pub fn new(items: Vec<ListItem<V>>) -> Self {
         Self {
             items,
             empty_message: "No items".into(),
@@ -563,7 +563,7 @@ impl<S: 'static> List<S> {
         self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = Toggleable::is_toggled(&self.toggleable);
 

@@ -50,23 +50,23 @@ impl ButtonVariant {
 
 pub type ClickHandler<S> = Arc<dyn Fn(&mut S, &mut ViewContext<S>) + Send + Sync>;
 
-struct ButtonHandlers<S: 'static> {
-    click: Option<ClickHandler<S>>,
+struct ButtonHandlers<V: 'static> {
+    click: Option<ClickHandler<V>>,
 }
 
 unsafe impl<S> Send for ButtonHandlers<S> {}
 unsafe impl<S> Sync for ButtonHandlers<S> {}
 
-impl<S: 'static> Default for ButtonHandlers<S> {
+impl<V: 'static> Default for ButtonHandlers<V> {
     fn default() -> Self {
         Self { click: None }
     }
 }
 
 #[derive(Component)]
-pub struct Button<S: 'static> {
+pub struct Button<V: 'static> {
     disabled: bool,
-    handlers: ButtonHandlers<S>,
+    handlers: ButtonHandlers<V>,
     icon: Option<Icon>,
     icon_position: Option<IconPosition>,
     label: SharedString,
@@ -74,7 +74,7 @@ pub struct Button<S: 'static> {
     width: Option<DefiniteLength>,
 }
 
-impl<S: 'static> Button<S> {
+impl<V: 'static> Button<V> {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             disabled: false,
@@ -114,7 +114,7 @@ impl<S: 'static> Button<S> {
         self
     }
 
-    pub fn on_click(mut self, handler: ClickHandler<S>) -> Self {
+    pub fn on_click(mut self, handler: ClickHandler<V>) -> Self {
         self.handlers.click = Some(handler);
         self
     }
@@ -150,7 +150,7 @@ impl<S: 'static> Button<S> {
         self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 
-    pub fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    pub fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let icon_color = self.icon_color();
 
         let mut button = h_stack()

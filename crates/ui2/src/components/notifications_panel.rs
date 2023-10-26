@@ -1,4 +1,3 @@
-
 use crate::{prelude::*, static_new_notification_items, static_read_notification_items};
 use crate::{List, ListHeader};
 
@@ -9,12 +8,10 @@ pub struct NotificationsPanel {
 
 impl NotificationsPanel {
     pub fn new(id: impl Into<ElementId>) -> Self {
-        Self {
-            id: id.into(),
-        }
+        Self { id: id.into() }
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         div()
