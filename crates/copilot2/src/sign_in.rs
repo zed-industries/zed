@@ -106,7 +106,7 @@
 //         data: &PromptUserDeviceFlow,
 //         style: &theme::Copilot,
 //         cx: &mut ViewContext<Self>,
-//     ) -> impl Element<Self> {
+//     ) -> impl IntoAnyElement<Self> {
 //         let copied = cx
 //             .read_from_clipboard()
 //             .map(|item| item.text() == &data.user_code)

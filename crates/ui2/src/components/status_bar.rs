@@ -28,8 +28,8 @@ impl Default for ToolGroup {
     }
 }
 
-#[derive(Element)]
-#[element(view_state = "Workspace")]
+#[derive(Component)]
+#[component(view_type = "Workspace")]
 pub struct StatusBar {
     left_tools: Option<ToolGroup>,
     right_tools: Option<ToolGroup>,
@@ -83,10 +83,10 @@ impl StatusBar {
     }
 
     fn render(
-        &mut self,
+        self,
         view: &mut Workspace,
         cx: &mut ViewContext<Workspace>,
-    ) -> impl Element<ViewState = Workspace> {
+    ) -> impl Component<Workspace> {
         let theme = theme(cx);
 
         div()
@@ -105,7 +105,7 @@ impl StatusBar {
         &self,
         workspace: &mut Workspace,
         cx: &WindowContext,
-    ) -> impl Element<ViewState = Workspace> {
+    ) -> impl Component<Workspace> {
         div()
             .flex()
             .items_center()
@@ -136,7 +136,7 @@ impl StatusBar {
         &self,
         workspace: &mut Workspace,
         cx: &WindowContext,
-    ) -> impl Element<ViewState = Workspace> {
+    ) -> impl Component<Workspace> {
         div()
             .flex()
             .items_center()

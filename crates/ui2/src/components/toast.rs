@@ -22,13 +22,13 @@ pub enum ToastOrigin {
 /// they are actively showing the a process in progress.
 ///
 /// Only one toast may be visible at a time.
-#[derive(Element)]
-pub struct Toast<S: 'static + Send + Sync> {
+#[derive(Component)]
+pub struct Toast<S: 'static> {
     origin: ToastOrigin,
     children: SmallVec<[AnyElement<S>; 2]>,
 }
 
-impl<S: 'static + Send + Sync> Toast<S> {
+impl<S: 'static> Toast<S> {
     pub fn new(origin: ToastOrigin) -> Self {
         Self {
             origin,
@@ -36,7 +36,7 @@ impl<S: 'static + Send + Sync> Toast<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         let mut div = div();
@@ -57,12 +57,12 @@ impl<S: 'static + Send + Sync> Toast<S> {
             .shadow_md()
             .overflow_hidden()
             .bg(theme.elevated_surface)
-            .children(self.children.drain(..))
+            .children(self.children)
     }
 }
 
-impl<S: 'static + Send + Sync> ParentElement for Toast<S> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
+impl<S: 'static> ParentElement<S> for Toast<S> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
         &mut self.children
     }
 }
@@ -72,29 +72,19 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use std::marker::PhantomData;
-
     use crate::{Label, Story};
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct ToastStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct ToastStory;
 
-    impl<S: 'static + Send + Sync> ToastStory<S> {
+    impl ToastStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Toast<S>>(cx))
                 .child(Story::label(cx, "Default"))

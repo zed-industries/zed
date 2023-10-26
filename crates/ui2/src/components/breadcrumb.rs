@@ -1,41 +1,33 @@
-use std::marker::PhantomData;
 use std::path::PathBuf;
 
 use gpui2::Div;
-
 use crate::prelude::*;
 use crate::{h_stack, HighlightedText};
 
 #[derive(Clone)]
 pub struct Symbol(pub Vec<HighlightedText>);
 
-#[derive(Element)]
-pub struct Breadcrumb<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+#[derive(Component)]
+pub struct Breadcrumb {
     path: PathBuf,
     symbols: Vec<Symbol>,
 }
 
-impl<S: 'static + Send + Sync> Breadcrumb<S> {
+impl Breadcrumb {
     pub fn new(path: PathBuf, symbols: Vec<Symbol>) -> Self {
         Self {
-            state_type: PhantomData,
             path,
             symbols,
         }
     }
 
-    fn render_separator(&self, cx: &WindowContext) -> Div<S> {
+    fn render_separator<V: 'static>(&self, cx: &WindowContext) -> Div<V> {
         let theme = theme(cx);
 
         div().child(" › ").text_color(theme.text_muted)
     }
 
-    fn render(
-        &mut self,
-        view_state: &mut S,
-        cx: &mut ViewContext<S>,
-    ) -> impl Element<ViewState = S> {
+    fn render<V: 'static>(self, view_state: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         let symbols_len = self.symbols.len();
@@ -90,27 +82,19 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct BreadcrumbStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct BreadcrumbStory;
 
-    impl<S: 'static + Send + Sync> BreadcrumbStory<S> {
+    impl BreadcrumbStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            view_state: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<V: 'static>(self, view_state: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let theme = theme(cx);
 
             Story::container(cx)
-                .child(Story::title_for::<_, Breadcrumb<S>>(cx))
+                .child(Story::title_for::<_, Breadcrumb>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Breadcrumb::new(
                     PathBuf::from_str("crates/ui/src/components/toolbar.rs").unwrap(),

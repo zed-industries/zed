@@ -1,23 +1,17 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 use crate::{v_stack, Buffer, Icon, IconButton, Label};
 
-#[derive(Element)]
-pub struct MultiBuffer<S: 'static + Send + Sync + Clone> {
-    state_type: PhantomData<S>,
-    buffers: Vec<Buffer<S>>,
+#[derive(Component)]
+pub struct MultiBuffer {
+    buffers: Vec<Buffer>,
 }
 
-impl<S: 'static + Send + Sync + Clone> MultiBuffer<S> {
-    pub fn new(buffers: Vec<Buffer<S>>) -> Self {
-        Self {
-            state_type: PhantomData,
-            buffers,
-        }
+impl MultiBuffer {
+    pub fn new(buffers: Vec<Buffer>) -> Self {
+        Self { buffers }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         v_stack()
@@ -50,27 +44,19 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct MultiBufferStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct MultiBufferStory;
 
-    impl<S: 'static + Send + Sync + Clone> MultiBufferStory<S> {
+    impl MultiBufferStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let theme = theme(cx);
 
             Story::container(cx)
-                .child(Story::title_for::<_, MultiBuffer<S>>(cx))
+                .child(Story::title_for::<_, MultiBuffer>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(MultiBuffer::new(vec![
                     hello_world_rust_buffer_example(&theme),

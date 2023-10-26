@@ -1,22 +1,18 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 use crate::{Icon, IconButton, Tab};
 
-#[derive(Element)]
-pub struct TabBar<S: 'static + Send + Sync + Clone> {
+#[derive(Component)]
+pub struct TabBar {
     id: ElementId,
-    state_type: PhantomData<S>,
     /// Backwards, Forwards
     can_navigate: (bool, bool),
-    tabs: Vec<Tab<S>>,
+    tabs: Vec<Tab>,
 }
 
-impl<S: 'static + Send + Sync + Clone> TabBar<S> {
-    pub fn new(id: impl Into<ElementId>, tabs: Vec<Tab<S>>) -> Self {
+impl TabBar {
+    pub fn new(id: impl Into<ElementId>, tabs: Vec<Tab>) -> Self {
         Self {
             id: id.into(),
-            state_type: PhantomData,
             can_navigate: (false, false),
             tabs,
         }
@@ -27,7 +23,7 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         let (can_navigate_back, can_navigate_forward) = self.can_navigate;
@@ -100,25 +96,17 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct TabBarStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct TabBarStory;
 
-    impl<S: 'static + Send + Sync + Clone> TabBarStory<S> {
+    impl TabBarStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
-                .child(Story::title_for::<_, TabBar<S>>(cx))
+                .child(Story::title_for::<_, TabBar>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(TabBar::new(
                     "tab-bar",

@@ -21,7 +21,7 @@ use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
 use rand::prelude::*;
-use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
+use rpc2::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings2::Settings;
@@ -43,7 +43,7 @@ use util::channel::ReleaseChannel;
 use util::http::HttpClient;
 use util::{ResultExt, TryFutureExt};
 
-pub use rpc::*;
+pub use rpc2::*;
 pub use telemetry::ClickhouseEvent;
 pub use user::*;
 
@@ -975,7 +975,7 @@ impl Client {
                 "Authorization",
                 format!("{} {}", credentials.user_id, credentials.access_token),
             )
-            .header("x-zed-protocol-version", rpc::PROTOCOL_VERSION);
+            .header("x-zed-protocol-version", rpc2::PROTOCOL_VERSION);
 
         let http = self.http.clone();
         cx.executor().spawn(async move {
@@ -1025,7 +1025,7 @@ impl Client {
             // zed server to encrypt the user's access token, so that it can'be intercepted by
             // any other app running on the user's device.
             let (public_key, private_key) =
-                rpc::auth::keypair().expect("failed to generate keypair for auth");
+                rpc2::auth::keypair().expect("failed to generate keypair for auth");
             let public_key_string =
                 String::try_from(public_key).expect("failed to serialize public key for auth");
 
@@ -1377,290 +1377,275 @@ pub fn decode_worktree_url(url: &str) -> Option<(u64, String)> {
     Some((id, access_token.to_string()))
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::test::FakeServer;
-//     use gpui::{executor::Deterministic, TestAppContext};
-//     use parking_lot::Mutex;
-//     use std::future;
-//     use util::http::FakeHttpClient;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test::FakeServer;
 
-//     #[gpui::test(iterations = 10)]
-//     async fn test_reconnection(cx: &mut TestAppContext) {
-//         cx.foreground().forbid_parking();
+    use gpui2::{Context, Executor, TestAppContext};
+    use parking_lot::Mutex;
+    use std::future;
+    use util::http::FakeHttpClient;
 
-//         let user_id = 5;
-//         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
-//         let server = FakeServer::for_client(user_id, &client, cx).await;
-//         let mut status = client.status();
-//         assert!(matches!(
-//             status.next().await,
-//             Some(Status::Connected { .. })
-//         ));
-//         assert_eq!(server.auth_count(), 1);
+    #[gpui2::test(iterations = 10)]
+    async fn test_reconnection(cx: &mut TestAppContext) {
+        let user_id = 5;
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let server = FakeServer::for_client(user_id, &client, cx).await;
+        let mut status = client.status();
+        assert!(matches!(
+            status.next().await,
+            Some(Status::Connected { .. })
+        ));
+        assert_eq!(server.auth_count(), 1);
 
-//         server.forbid_connections();
-//         server.disconnect();
-//         while !matches!(status.next().await, Some(Status::ReconnectionError { .. })) {}
+        server.forbid_connections();
+        server.disconnect();
+        while !matches!(status.next().await, Some(Status::ReconnectionError { .. })) {}
 
-//         server.allow_connections();
-//         cx.foreground().advance_clock(Duration::from_secs(10));
-//         while !matches!(status.next().await, Some(Status::Connected { .. })) {}
-//         assert_eq!(server.auth_count(), 1); // Client reused the cached credentials when reconnecting
+        server.allow_connections();
+        cx.executor().advance_clock(Duration::from_secs(10));
+        while !matches!(status.next().await, Some(Status::Connected { .. })) {}
+        assert_eq!(server.auth_count(), 1); // Client reused the cached credentials when reconnecting
 
-//         server.forbid_connections();
-//         server.disconnect();
-//         while !matches!(status.next().await, Some(Status::ReconnectionError { .. })) {}
+        server.forbid_connections();
+        server.disconnect();
+        while !matches!(status.next().await, Some(Status::ReconnectionError { .. })) {}
 
-//         // Clear cached credentials after authentication fails
-//         server.roll_access_token();
-//         server.allow_connections();
-//         cx.foreground().advance_clock(Duration::from_secs(10));
-//         while !matches!(status.next().await, Some(Status::Connected { .. })) {}
-//         assert_eq!(server.auth_count(), 2); // Client re-authenticated due to an invalid token
-//     }
+        // Clear cached credentials after authentication fails
+        server.roll_access_token();
+        server.allow_connections();
+        cx.executor().run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(10));
+        while !matches!(status.next().await, Some(Status::Connected { .. })) {}
+        assert_eq!(server.auth_count(), 2); // Client re-authenticated due to an invalid token
+    }
 
-//     #[gpui::test(iterations = 10)]
-//     async fn test_connection_timeout(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-//         deterministic.forbid_parking();
+    #[gpui2::test(iterations = 10)]
+    async fn test_connection_timeout(executor: Executor, cx: &mut TestAppContext) {
+        let user_id = 5;
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let mut status = client.status();
 
-//         let user_id = 5;
-//         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
-//         let mut status = client.status();
+        // Time out when client tries to connect.
+        client.override_authenticate(move |cx| {
+            cx.executor().spawn(async move {
+                Ok(Credentials {
+                    user_id,
+                    access_token: "token".into(),
+                })
+            })
+        });
+        client.override_establish_connection(|_, cx| {
+            cx.executor().spawn(async move {
+                future::pending::<()>().await;
+                unreachable!()
+            })
+        });
+        let auth_and_connect = cx.spawn({
+            let client = client.clone();
+            |cx| async move { client.authenticate_and_connect(false, &cx).await }
+        });
+        executor.run_until_parked();
+        assert!(matches!(status.next().await, Some(Status::Connecting)));
 
-//         // Time out when client tries to connect.
-//         client.override_authenticate(move |cx| {
-//             cx.foreground().spawn(async move {
-//                 Ok(Credentials {
-//                     user_id,
-//                     access_token: "token".into(),
-//                 })
-//             })
-//         });
-//         client.override_establish_connection(|_, cx| {
-//             cx.foreground().spawn(async move {
-//                 future::pending::<()>().await;
-//                 unreachable!()
-//             })
-//         });
-//         let auth_and_connect = cx.spawn({
-//             let client = client.clone();
-//             |cx| async move { client.authenticate_and_connect(false, &cx).await }
-//         });
-//         deterministic.run_until_parked();
-//         assert!(matches!(status.next().await, Some(Status::Connecting)));
+        executor.advance_clock(CONNECTION_TIMEOUT);
+        assert!(matches!(
+            status.next().await,
+            Some(Status::ConnectionError { .. })
+        ));
+        auth_and_connect.await.unwrap_err();
 
-//         deterministic.advance_clock(CONNECTION_TIMEOUT);
-//         assert!(matches!(
-//             status.next().await,
-//             Some(Status::ConnectionError { .. })
-//         ));
-//         auth_and_connect.await.unwrap_err();
+        // Allow the connection to be established.
+        let server = FakeServer::for_client(user_id, &client, cx).await;
+        assert!(matches!(
+            status.next().await,
+            Some(Status::Connected { .. })
+        ));
 
-//         // Allow the connection to be established.
-//         let server = FakeServer::for_client(user_id, &client, cx).await;
-//         assert!(matches!(
-//             status.next().await,
-//             Some(Status::Connected { .. })
-//         ));
+        // Disconnect client.
+        server.forbid_connections();
+        server.disconnect();
+        while !matches!(status.next().await, Some(Status::ReconnectionError { .. })) {}
 
-//         // Disconnect client.
-//         server.forbid_connections();
-//         server.disconnect();
-//         while !matches!(status.next().await, Some(Status::ReconnectionError { .. })) {}
+        // Time out when re-establishing the connection.
+        server.allow_connections();
+        client.override_establish_connection(|_, cx| {
+            cx.executor().spawn(async move {
+                future::pending::<()>().await;
+                unreachable!()
+            })
+        });
+        executor.advance_clock(2 * INITIAL_RECONNECTION_DELAY);
+        assert!(matches!(
+            status.next().await,
+            Some(Status::Reconnecting { .. })
+        ));
 
-//         // Time out when re-establishing the connection.
-//         server.allow_connections();
-//         client.override_establish_connection(|_, cx| {
-//             cx.foreground().spawn(async move {
-//                 future::pending::<()>().await;
-//                 unreachable!()
-//             })
-//         });
-//         deterministic.advance_clock(2 * INITIAL_RECONNECTION_DELAY);
-//         assert!(matches!(
-//             status.next().await,
-//             Some(Status::Reconnecting { .. })
-//         ));
+        executor.advance_clock(CONNECTION_TIMEOUT);
+        assert!(matches!(
+            status.next().await,
+            Some(Status::ReconnectionError { .. })
+        ));
+    }
 
-//         deterministic.advance_clock(CONNECTION_TIMEOUT);
-//         assert!(matches!(
-//             status.next().await,
-//             Some(Status::ReconnectionError { .. })
-//         ));
-//     }
+    #[gpui2::test(iterations = 10)]
+    async fn test_authenticating_more_than_once(cx: &mut TestAppContext, executor: Executor) {
+        let auth_count = Arc::new(Mutex::new(0));
+        let dropped_auth_count = Arc::new(Mutex::new(0));
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        client.override_authenticate({
+            let auth_count = auth_count.clone();
+            let dropped_auth_count = dropped_auth_count.clone();
+            move |cx| {
+                let auth_count = auth_count.clone();
+                let dropped_auth_count = dropped_auth_count.clone();
+                cx.executor().spawn(async move {
+                    *auth_count.lock() += 1;
+                    let _drop = util::defer(move || *dropped_auth_count.lock() += 1);
+                    future::pending::<()>().await;
+                    unreachable!()
+                })
+            }
+        });
 
-//     #[gpui::test(iterations = 10)]
-//     async fn test_authenticating_more_than_once(
-//         cx: &mut TestAppContext,
-//         deterministic: Arc<Deterministic>,
-//     ) {
-//         cx.foreground().forbid_parking();
+        let _authenticate = cx.spawn({
+            let client = client.clone();
+            move |cx| async move { client.authenticate_and_connect(false, &cx).await }
+        });
+        executor.run_until_parked();
+        assert_eq!(*auth_count.lock(), 1);
+        assert_eq!(*dropped_auth_count.lock(), 0);
 
-//         let auth_count = Arc::new(Mutex::new(0));
-//         let dropped_auth_count = Arc::new(Mutex::new(0));
-//         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
-//         client.override_authenticate({
-//             let auth_count = auth_count.clone();
-//             let dropped_auth_count = dropped_auth_count.clone();
-//             move |cx| {
-//                 let auth_count = auth_count.clone();
-//                 let dropped_auth_count = dropped_auth_count.clone();
-//                 cx.foreground().spawn(async move {
-//                     *auth_count.lock() += 1;
-//                     let _drop = util::defer(move || *dropped_auth_count.lock() += 1);
-//                     future::pending::<()>().await;
-//                     unreachable!()
-//                 })
-//             }
-//         });
+        let _authenticate = cx.spawn({
+            let client = client.clone();
+            |cx| async move { client.authenticate_and_connect(false, &cx).await }
+        });
+        executor.run_until_parked();
+        assert_eq!(*auth_count.lock(), 2);
+        assert_eq!(*dropped_auth_count.lock(), 1);
+    }
 
-//         let _authenticate = cx.spawn(|cx| {
-//             let client = client.clone();
-//             async move { client.authenticate_and_connect(false, &cx).await }
-//         });
-//         deterministic.run_until_parked();
-//         assert_eq!(*auth_count.lock(), 1);
-//         assert_eq!(*dropped_auth_count.lock(), 0);
+    #[test]
+    fn test_encode_and_decode_worktree_url() {
+        let url = encode_worktree_url(5, "deadbeef");
+        assert_eq!(decode_worktree_url(&url), Some((5, "deadbeef".to_string())));
+        assert_eq!(
+            decode_worktree_url(&format!("\n {}\t", url)),
+            Some((5, "deadbeef".to_string()))
+        );
+        assert_eq!(decode_worktree_url("not://the-right-format"), None);
+    }
 
-//         let _authenticate = cx.spawn(|cx| {
-//             let client = client.clone();
-//             async move { client.authenticate_and_connect(false, &cx).await }
-//         });
-//         deterministic.run_until_parked();
-//         assert_eq!(*auth_count.lock(), 2);
-//         assert_eq!(*dropped_auth_count.lock(), 1);
-//     }
+    #[gpui2::test]
+    async fn test_subscribing_to_entity(cx: &mut TestAppContext) {
+        let user_id = 5;
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let server = FakeServer::for_client(user_id, &client, cx).await;
 
-//     #[test]
-//     fn test_encode_and_decode_worktree_url() {
-//         let url = encode_worktree_url(5, "deadbeef");
-//         assert_eq!(decode_worktree_url(&url), Some((5, "deadbeef".to_string())));
-//         assert_eq!(
-//             decode_worktree_url(&format!("\n {}\t", url)),
-//             Some((5, "deadbeef".to_string()))
-//         );
-//         assert_eq!(decode_worktree_url("not://the-right-format"), None);
-//     }
+        let (done_tx1, mut done_rx1) = smol::channel::unbounded();
+        let (done_tx2, mut done_rx2) = smol::channel::unbounded();
+        client.add_model_message_handler(
+            move |model: Handle<Model>, _: TypedEnvelope<proto::JoinProject>, _, mut cx| {
+                match model.update(&mut cx, |model, _| model.id).unwrap() {
+                    1 => done_tx1.try_send(()).unwrap(),
+                    2 => done_tx2.try_send(()).unwrap(),
+                    _ => unreachable!(),
+                }
+                async { Ok(()) }
+            },
+        );
+        let model1 = cx.entity(|_| Model {
+            id: 1,
+            subscription: None,
+        });
+        let model2 = cx.entity(|_| Model {
+            id: 2,
+            subscription: None,
+        });
+        let model3 = cx.entity(|_| Model {
+            id: 3,
+            subscription: None,
+        });
 
-//     #[gpui::test]
-//     async fn test_subscribing_to_entity(cx: &mut TestAppContext) {
-//         cx.foreground().forbid_parking();
+        let _subscription1 = client
+            .subscribe_to_entity(1)
+            .unwrap()
+            .set_model(&model1, &mut cx.to_async());
+        let _subscription2 = client
+            .subscribe_to_entity(2)
+            .unwrap()
+            .set_model(&model2, &mut cx.to_async());
+        // Ensure dropping a subscription for the same entity type still allows receiving of
+        // messages for other entity IDs of the same type.
+        let subscription3 = client
+            .subscribe_to_entity(3)
+            .unwrap()
+            .set_model(&model3, &mut cx.to_async());
+        drop(subscription3);
 
-//         let user_id = 5;
-//         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
-//         let server = FakeServer::for_client(user_id, &client, cx).await;
+        server.send(proto::JoinProject { project_id: 1 });
+        server.send(proto::JoinProject { project_id: 2 });
+        done_rx1.next().await.unwrap();
+        done_rx2.next().await.unwrap();
+    }
 
-//         let (done_tx1, mut done_rx1) = smol::channel::unbounded();
-//         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
-//         client.add_model_message_handler(
-//             move |model: ModelHandle<Model>, _: TypedEnvelope<proto::JoinProject>, _, cx| {
-//                 match model.read_with(&cx, |model, _| model.id) {
-//                     1 => done_tx1.try_send(()).unwrap(),
-//                     2 => done_tx2.try_send(()).unwrap(),
-//                     _ => unreachable!(),
-//                 }
-//                 async { Ok(()) }
-//             },
-//         );
-//         let model1 = cx.add_model(|_| Model {
-//             id: 1,
-//             subscription: None,
-//         });
-//         let model2 = cx.add_model(|_| Model {
-//             id: 2,
-//             subscription: None,
-//         });
-//         let model3 = cx.add_model(|_| Model {
-//             id: 3,
-//             subscription: None,
-//         });
+    #[gpui2::test]
+    async fn test_subscribing_after_dropping_subscription(cx: &mut TestAppContext) {
+        let user_id = 5;
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let server = FakeServer::for_client(user_id, &client, cx).await;
 
-//         let _subscription1 = client
-//             .subscribe_to_entity(1)
-//             .unwrap()
-//             .set_model(&model1, &mut cx.to_async());
-//         let _subscription2 = client
-//             .subscribe_to_entity(2)
-//             .unwrap()
-//             .set_model(&model2, &mut cx.to_async());
-//         // Ensure dropping a subscription for the same entity type still allows receiving of
-//         // messages for other entity IDs of the same type.
-//         let subscription3 = client
-//             .subscribe_to_entity(3)
-//             .unwrap()
-//             .set_model(&model3, &mut cx.to_async());
-//         drop(subscription3);
+        let model = cx.entity(|_| Model::default());
+        let (done_tx1, _done_rx1) = smol::channel::unbounded();
+        let (done_tx2, mut done_rx2) = smol::channel::unbounded();
+        let subscription1 = client.add_message_handler(
+            model.downgrade(),
+            move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+                done_tx1.try_send(()).unwrap();
+                async { Ok(()) }
+            },
+        );
+        drop(subscription1);
+        let _subscription2 = client.add_message_handler(
+            model.downgrade(),
+            move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+                done_tx2.try_send(()).unwrap();
+                async { Ok(()) }
+            },
+        );
+        server.send(proto::Ping {});
+        done_rx2.next().await.unwrap();
+    }
 
-//         server.send(proto::JoinProject { project_id: 1 });
-//         server.send(proto::JoinProject { project_id: 2 });
-//         done_rx1.next().await.unwrap();
-//         done_rx2.next().await.unwrap();
-//     }
+    #[gpui2::test]
+    async fn test_dropping_subscription_in_handler(cx: &mut TestAppContext) {
+        let user_id = 5;
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let server = FakeServer::for_client(user_id, &client, cx).await;
 
-//     #[gpui::test]
-//     async fn test_subscribing_after_dropping_subscription(cx: &mut TestAppContext) {
-//         cx.foreground().forbid_parking();
+        let model = cx.entity(|_| Model::default());
+        let (done_tx, mut done_rx) = smol::channel::unbounded();
+        let subscription = client.add_message_handler(
+            model.clone().downgrade(),
+            move |model: Handle<Model>, _: TypedEnvelope<proto::Ping>, _, mut cx| {
+                model
+                    .update(&mut cx, |model, _| model.subscription.take())
+                    .unwrap();
+                done_tx.try_send(()).unwrap();
+                async { Ok(()) }
+            },
+        );
+        model.update(cx, |model, _| {
+            model.subscription = Some(subscription);
+        });
+        server.send(proto::Ping {});
+        done_rx.next().await.unwrap();
+    }
 
-//         let user_id = 5;
-//         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
-//         let server = FakeServer::for_client(user_id, &client, cx).await;
-
-//         let model = cx.add_model(|_| Model::default());
-//         let (done_tx1, _done_rx1) = smol::channel::unbounded();
-//         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
-//         let subscription1 = client.add_message_handler(
-//             model.clone(),
-//             move |_, _: TypedEnvelope<proto::Ping>, _, _| {
-//                 done_tx1.try_send(()).unwrap();
-//                 async { Ok(()) }
-//             },
-//         );
-//         drop(subscription1);
-//         let _subscription2 = client.add_message_handler(
-//             model.clone(),
-//             move |_, _: TypedEnvelope<proto::Ping>, _, _| {
-//                 done_tx2.try_send(()).unwrap();
-//                 async { Ok(()) }
-//             },
-//         );
-//         server.send(proto::Ping {});
-//         done_rx2.next().await.unwrap();
-//     }
-
-//     #[gpui::test]
-//     async fn test_dropping_subscription_in_handler(cx: &mut TestAppContext) {
-//         cx.foreground().forbid_parking();
-
-//         let user_id = 5;
-//         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
-//         let server = FakeServer::for_client(user_id, &client, cx).await;
-
-//         let model = cx.add_model(|_| Model::default());
-//         let (done_tx, mut done_rx) = smol::channel::unbounded();
-//         let subscription = client.add_message_handler(
-//             model.clone(),
-//             move |model, _: TypedEnvelope<proto::Ping>, _, mut cx| {
-//                 model.update(&mut cx, |model, _| model.subscription.take());
-//                 done_tx.try_send(()).unwrap();
-//                 async { Ok(()) }
-//             },
-//         );
-//         model.update(cx, |model, _| {
-//             model.subscription = Some(subscription);
-//         });
-//         server.send(proto::Ping {});
-//         done_rx.next().await.unwrap();
-//     }
-
-//     #[derive(Default)]
-//     struct Model {
-//         id: usize,
-//         subscription: Option<Subscription>,
-//     }
-
-//     impl Entity for Model {
-//         type Event = ();
-//     }
-// }
+    #[derive(Default)]
+    struct Model {
+        id: usize,
+        subscription: Option<Subscription>,
+    }
+}

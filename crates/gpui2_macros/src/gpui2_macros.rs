@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 
-mod derive_element;
+mod derive_component;
 mod style_helpers;
 mod test;
 
@@ -9,9 +9,9 @@ pub fn style_helpers(args: TokenStream) -> TokenStream {
     style_helpers::style_helpers(args)
 }
 
-#[proc_macro_derive(Element, attributes(element))]
-pub fn derive_element(input: TokenStream) -> TokenStream {
-    derive_element::derive_element(input)
+#[proc_macro_derive(Component, attributes(component))]
+pub fn derive_component(input: TokenStream) -> TokenStream {
+    derive_component::derive_component(input)
 }
 
 #[proc_macro_attribute]

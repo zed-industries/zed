@@ -1,8 +1,8 @@
 use parking_lot::Mutex;
 
 use crate::{
-    AnyBox, AnyElement, AnyHandle, BorrowWindow, Bounds, Element, ElementId, Handle,
-    IntoAnyElement, LayoutId, Pixels, ViewContext, WindowContext,
+    AnyBox, AnyElement, AnyHandle, BorrowWindow, Bounds, Component, Element, ElementId, Handle,
+    LayoutId, Pixels, ViewContext, WindowContext,
 };
 use std::{marker::PhantomData, sync::Arc};
 
@@ -33,16 +33,16 @@ pub fn view<V, E>(
     render: impl Fn(&mut V, &mut ViewContext<V>) -> E + Send + Sync + 'static,
 ) -> View<V>
 where
-    E: IntoAnyElement<V>,
+    E: Component<V>,
 {
     View {
         state,
-        render: Arc::new(move |state, cx| render(state, cx).into_any()),
+        render: Arc::new(move |state, cx| render(state, cx).render()),
     }
 }
 
-impl<V: 'static, ParentViewState: 'static> IntoAnyElement<ParentViewState> for View<V> {
-    fn into_any(self) -> AnyElement<ParentViewState> {
+impl<V: 'static, ParentViewState: 'static> Component<ParentViewState> for View<V> {
+    fn render(self) -> AnyElement<ParentViewState> {
         AnyElement::new(EraseViewState {
             view: self,
             parent_view_state_type: PhantomData,
@@ -50,8 +50,7 @@ impl<V: 'static, ParentViewState: 'static> IntoAnyElement<ParentViewState> for V
     }
 }
 
-impl<V: 'static> Element for View<V> {
-    type ViewState = ();
+impl<V: 'static> Element<()> for View<V> {
     type ElementState = AnyElement<V>;
 
     fn id(&self) -> Option<ElementId> {
@@ -99,14 +98,13 @@ struct EraseViewState<V, ParentV> {
 unsafe impl<V, ParentV> Send for EraseViewState<V, ParentV> {}
 unsafe impl<V, ParentV> Sync for EraseViewState<V, ParentV> {}
 
-impl<V: 'static, ParentV: 'static> IntoAnyElement<ParentV> for EraseViewState<V, ParentV> {
-    fn into_any(self) -> AnyElement<ParentV> {
+impl<V: 'static, ParentV: 'static> Component<ParentV> for EraseViewState<V, ParentV> {
+    fn render(self) -> AnyElement<ParentV> {
         AnyElement::new(self)
     }
 }
 
-impl<V: 'static, ParentV: 'static> Element for EraseViewState<V, ParentV> {
-    type ViewState = ParentV;
+impl<V: 'static, ParentV: 'static> Element<ParentV> for EraseViewState<V, ParentV> {
     type ElementState = AnyBox;
 
     fn id(&self) -> Option<ElementId> {
@@ -115,18 +113,18 @@ impl<V: 'static, ParentV: 'static> Element for EraseViewState<V, ParentV> {
 
     fn initialize(
         &mut self,
-        _: &mut Self::ViewState,
+        _: &mut ParentV,
         _: Option<Self::ElementState>,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<ParentV>,
     ) -> Self::ElementState {
         ViewObject::initialize(&mut self.view, cx)
     }
 
     fn layout(
         &mut self,
-        _: &mut Self::ViewState,
+        _: &mut ParentV,
         element: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<ParentV>,
     ) -> LayoutId {
         ViewObject::layout(&mut self.view, element, cx)
     }
@@ -134,9 +132,9 @@ impl<V: 'static, ParentV: 'static> Element for EraseViewState<V, ParentV> {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::ViewState,
+        _: &mut ParentV,
         element: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<ParentV>,
     ) {
         ViewObject::paint(&mut self.view, bounds, element, cx)
     }
@@ -193,8 +191,8 @@ impl AnyView {
     }
 }
 
-impl<ParentV: 'static> IntoAnyElement<ParentV> for AnyView {
-    fn into_any(self) -> AnyElement<ParentV> {
+impl<ParentV: 'static> Component<ParentV> for AnyView {
+    fn render(self) -> AnyElement<ParentV> {
         AnyElement::new(EraseAnyViewState {
             view: self,
             parent_view_state_type: PhantomData,
@@ -202,8 +200,7 @@ impl<ParentV: 'static> IntoAnyElement<ParentV> for AnyView {
     }
 }
 
-impl Element for AnyView {
-    type ViewState = ();
+impl Element<()> for AnyView {
     type ElementState = AnyBox;
 
     fn id(&self) -> Option<ElementId> {
@@ -212,18 +209,18 @@ impl Element for AnyView {
 
     fn initialize(
         &mut self,
-        _: &mut Self::ViewState,
+        _: &mut (),
         _: Option<Self::ElementState>,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<()>,
     ) -> Self::ElementState {
         self.view.lock().initialize(cx)
     }
 
     fn layout(
         &mut self,
-        _: &mut Self::ViewState,
+        _: &mut (),
         element: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<()>,
     ) -> LayoutId {
         self.view.lock().layout(element, cx)
     }
@@ -233,7 +230,7 @@ impl Element for AnyView {
         bounds: Bounds<Pixels>,
         _: &mut (),
         element: &mut AnyBox,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<()>,
     ) {
         self.view.lock().paint(bounds, element, cx)
     }
@@ -247,14 +244,13 @@ struct EraseAnyViewState<ParentViewState> {
 unsafe impl<ParentV> Send for EraseAnyViewState<ParentV> {}
 unsafe impl<ParentV> Sync for EraseAnyViewState<ParentV> {}
 
-impl<ParentV: 'static> IntoAnyElement<ParentV> for EraseAnyViewState<ParentV> {
-    fn into_any(self) -> AnyElement<ParentV> {
+impl<ParentV: 'static> Component<ParentV> for EraseAnyViewState<ParentV> {
+    fn render(self) -> AnyElement<ParentV> {
         AnyElement::new(self)
     }
 }
 
-impl<ParentV: 'static> Element for EraseAnyViewState<ParentV> {
-    type ViewState = ParentV;
+impl<ParentV: 'static> Element<ParentV> for EraseAnyViewState<ParentV> {
     type ElementState = AnyBox;
 
     fn id(&self) -> Option<ElementId> {
@@ -263,18 +259,18 @@ impl<ParentV: 'static> Element for EraseAnyViewState<ParentV> {
 
     fn initialize(
         &mut self,
-        _: &mut Self::ViewState,
+        _: &mut ParentV,
         _: Option<Self::ElementState>,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<ParentV>,
     ) -> Self::ElementState {
         self.view.view.lock().initialize(cx)
     }
 
     fn layout(
         &mut self,
-        _: &mut Self::ViewState,
+        _: &mut ParentV,
         element: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<ParentV>,
     ) -> LayoutId {
         self.view.view.lock().layout(element, cx)
     }
@@ -282,9 +278,9 @@ impl<ParentV: 'static> Element for EraseAnyViewState<ParentV> {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::ViewState,
+        _: &mut ParentV,
         element: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<ParentV>,
     ) {
         self.view.view.lock().paint(bounds, element, cx)
     }

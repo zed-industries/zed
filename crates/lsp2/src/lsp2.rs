@@ -136,6 +136,7 @@ struct Error {
 
 impl LanguageServer {
     pub fn new(
+        stderr_capture: Arc<Mutex<Option<String>>>,
         server_id: LanguageServerId,
         binary: LanguageServerBinary,
         root_path: &Path,
@@ -165,6 +166,7 @@ impl LanguageServer {
             stdin,
             stdout,
             Some(stderr),
+            stderr_capture,
             Some(server),
             root_path,
             code_action_kinds,
@@ -197,6 +199,7 @@ impl LanguageServer {
         stdin: Stdin,
         stdout: Stdout,
         stderr: Option<Stderr>,
+        stderr_capture: Arc<Mutex<Option<String>>>,
         server: Option<Child>,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
@@ -237,7 +240,8 @@ impl LanguageServer {
         let stderr_input_task = stderr
             .map(|stderr| {
                 let io_handlers = io_handlers.clone();
-                cx.spawn(|_| Self::handle_stderr(stderr, io_handlers).log_err())
+                let stderr_captures = stderr_capture.clone();
+                cx.spawn(|_| Self::handle_stderr(stderr, io_handlers, stderr_captures).log_err())
             })
             .unwrap_or_else(|| Task::Ready(Some(None)));
         let input_task = cx.spawn(|_| async move {
@@ -360,12 +364,14 @@ impl LanguageServer {
     async fn handle_stderr<Stderr>(
         stderr: Stderr,
         io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
+        stderr_capture: Arc<Mutex<Option<String>>>,
     ) -> anyhow::Result<()>
     where
         Stderr: AsyncRead + Unpin + Send + 'static,
     {
         let mut stderr = BufReader::new(stderr);
         let mut buffer = Vec::new();
+
         loop {
             buffer.clear();
             stderr.read_until(b'\n', &mut buffer).await?;
@@ -373,6 +379,10 @@ impl LanguageServer {
                 log::trace!("incoming stderr message:{message}");
                 for handler in io_handlers.lock().values_mut() {
                     handler(IoKind::StdErr, message);
+                }
+
+                if let Some(stderr) = stderr_capture.lock().as_mut() {
+                    stderr.push_str(message);
                 }
             }
 
@@ -933,6 +943,7 @@ impl LanguageServer {
             stdin_writer,
             stdout_reader,
             None::<async_pipe::PipeReader>,
+            Arc::new(Mutex::new(None)),
             None,
             Path::new("/"),
             None,
@@ -945,6 +956,7 @@ impl LanguageServer {
                 stdout_writer,
                 stdin_reader,
                 None::<async_pipe::PipeReader>,
+                Arc::new(Mutex::new(None)),
                 None,
                 Path::new("/"),
                 None,

@@ -1,23 +1,20 @@
-use std::marker::PhantomData;
 
 use crate::{prelude::*, static_new_notification_items, static_read_notification_items};
 use crate::{List, ListHeader};
 
-#[derive(Element)]
-pub struct NotificationsPanel<S: 'static + Send + Sync> {
+#[derive(Component)]
+pub struct NotificationsPanel {
     id: ElementId,
-    state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync> NotificationsPanel<S> {
+impl NotificationsPanel {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
-            state_type: PhantomData,
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         div()
@@ -58,25 +55,17 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct NotificationsPanelStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct NotificationsPanelStory;
 
-    impl<S: 'static + Send + Sync + Clone> NotificationsPanelStory<S> {
+    impl NotificationsPanelStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
-                .child(Story::title_for::<_, NotificationsPanel<S>>(cx))
+                .child(Story::title_for::<_, NotificationsPanel>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
                     Panel::new("panel", cx).child(NotificationsPanel::new("notifications_panel")),

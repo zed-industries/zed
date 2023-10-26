@@ -143,7 +143,7 @@ impl TestAppContext {
         lock.update_global(update)
     }
 
-    fn to_async(&self) -> AsyncAppContext {
+    pub fn to_async(&self) -> AsyncAppContext {
         AsyncAppContext {
             app: Arc::downgrade(&self.app),
             executor: self.executor.clone(),

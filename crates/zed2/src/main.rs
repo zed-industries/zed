@@ -117,7 +117,6 @@ fn main() {
         let copilot_language_server_id = languages.next_language_server_id();
         languages.set_executor(cx.executor().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
-        let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
 
         language2::init(cx);

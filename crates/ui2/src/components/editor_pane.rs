@@ -10,10 +10,10 @@ use crate::{
 
 #[derive(Clone)]
 pub struct EditorPane {
-    tabs: Vec<Tab<Self>>,
+    tabs: Vec<Tab>,
     path: PathBuf,
     symbols: Vec<Symbol>,
-    buffer: Buffer<Self>,
+    buffer: Buffer,
     buffer_search: View<BufferSearch>,
     is_buffer_search_open: bool,
 }
@@ -21,10 +21,10 @@ pub struct EditorPane {
 impl EditorPane {
     pub fn new(
         cx: &mut WindowContext,
-        tabs: Vec<Tab<Self>>,
+        tabs: Vec<Tab>,
         path: PathBuf,
         symbols: Vec<Symbol>,
-        buffer: Buffer<Self>,
+        buffer: Buffer,
     ) -> Self {
         Self {
             tabs,
@@ -49,7 +49,7 @@ impl EditorPane {
         )
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
         v_stack()
             .w_full()
             .h_full()

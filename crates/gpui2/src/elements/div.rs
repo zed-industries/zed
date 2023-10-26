@@ -1,7 +1,7 @@
 use crate::{
-    point, AnyElement, BorrowWindow, Bounds, Element, ElementFocus, ElementId, ElementInteraction,
-    FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable, GlobalElementId,
-    GroupBounds, InteractiveElementState, IntoAnyElement, LayoutId, Overflow, ParentElement,
+    point, AnyElement, BorrowWindow, Bounds, Component, Element, ElementFocus, ElementId,
+    ElementInteraction, FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable,
+    GlobalElementId, GroupBounds, InteractiveElementState, LayoutId, Overflow, ParentElement,
     Pixels, Point, SharedString, StatefulInteraction, StatefulInteractive, StatelessInteraction,
     StatelessInteractive, Style, StyleRefinement, Styled, ViewContext,
 };
@@ -160,7 +160,7 @@ impl<V: 'static> Div<V, StatelessInteraction<V>, FocusDisabled> {
     }
 }
 
-impl<V, I> Focusable for Div<V, I, FocusEnabled<V>>
+impl<V, I> Focusable<V> for Div<V, I, FocusEnabled<V>>
 where
     V: 'static,
     I: ElementInteraction<V>,
@@ -189,12 +189,11 @@ pub struct DivState {
     child_layout_ids: SmallVec<[LayoutId; 4]>,
 }
 
-impl<V, I, F> Element for Div<V, I, F>
+impl<V, I, F> Element<V> for Div<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
-    type ViewState = V;
     type ElementState = DivState;
 
     fn id(&self) -> Option<ElementId> {
@@ -205,9 +204,9 @@ where
 
     fn initialize(
         &mut self,
-        view_state: &mut Self::ViewState,
+        view_state: &mut V,
         element_state: Option<Self::ElementState>,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
         let mut element_state = element_state.unwrap_or_default();
         self.focus
@@ -224,9 +223,9 @@ where
 
     fn layout(
         &mut self,
-        view_state: &mut Self::ViewState,
+        view_state: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     ) -> LayoutId {
         let style = self.compute_style(Bounds::default(), element_state, cx);
         style.apply_text_style(cx, |cx| {
@@ -245,9 +244,9 @@ where
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        view_state: &mut Self::ViewState,
+        view_state: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     ) {
         self.with_element_id(cx, |this, _global_id, cx| {
             if let Some(group) = this.group.clone() {
@@ -304,23 +303,23 @@ where
     }
 }
 
-impl<V, I, F> IntoAnyElement<V> for Div<V, I, F>
+impl<V, I, F> Component<V> for Div<V, I, F>
 where
     // V: Any + Send + Sync,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
-    fn into_any(self) -> AnyElement<V> {
+    fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<V, I, F> ParentElement for Div<V, I, F>
+impl<V, I, F> ParentElement<V> for Div<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
 }
@@ -335,7 +334,7 @@ where
     }
 }
 
-impl<V, I, F> StatelessInteractive for Div<V, I, F>
+impl<V, I, F> StatelessInteractive<V> for Div<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
@@ -345,11 +344,11 @@ where
     }
 }
 
-impl<V, F> StatefulInteractive for Div<V, StatefulInteraction<V>, F>
+impl<V, F> StatefulInteractive<V> for Div<V, StatefulInteraction<V>, F>
 where
     F: ElementFocus<V>,
 {
-    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<Self::ViewState> {
+    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<V> {
         &mut self.interaction
     }
 }

@@ -1,4 +1,3 @@
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 use gpui2::MouseButton;
@@ -6,19 +5,18 @@ use gpui2::MouseButton;
 use crate::{h_stack, prelude::*};
 use crate::{ClickHandler, Icon, IconColor, IconElement};
 
-struct IconButtonHandlers<S: 'static + Send + Sync> {
+struct IconButtonHandlers<S: 'static> {
     click: Option<ClickHandler<S>>,
 }
 
-impl<S: 'static + Send + Sync> Default for IconButtonHandlers<S> {
+impl<S: 'static> Default for IconButtonHandlers<S> {
     fn default() -> Self {
         Self { click: None }
     }
 }
 
-#[derive(Element)]
-pub struct IconButton<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+#[derive(Component)]
+pub struct IconButton<S: 'static> {
     id: ElementId,
     icon: Icon,
     color: IconColor,
@@ -27,10 +25,9 @@ pub struct IconButton<S: 'static + Send + Sync> {
     handlers: IconButtonHandlers<S>,
 }
 
-impl<S: 'static + Send + Sync> IconButton<S> {
+impl<S: 'static> IconButton<S> {
     pub fn new(id: impl Into<ElementId>, icon: Icon) -> Self {
         Self {
-            state_type: PhantomData,
             id: id.into(),
             icon,
             color: IconColor::default(),
@@ -60,15 +57,12 @@ impl<S: 'static + Send + Sync> IconButton<S> {
         self
     }
 
-    pub fn on_click(
-        mut self,
-        handler: impl Fn(&mut S, &mut ViewContext<S>) + 'static + Send + Sync,
-    ) -> Self {
+    pub fn on_click(mut self, handler: impl 'static + Fn(&mut S, &mut ViewContext<S>) + Send + Sync) -> Self {
         self.handlers.click = Some(Arc::new(handler));
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         let icon_color = match (self.state, self.color) {

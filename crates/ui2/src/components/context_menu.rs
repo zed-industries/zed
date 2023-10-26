@@ -1,14 +1,14 @@
 use crate::{prelude::*, ListItemVariant};
 use crate::{v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHeader};
 
-pub enum ContextMenuItem<S: 'static + Send + Sync> {
+pub enum ContextMenuItem {
     Header(SharedString),
-    Entry(Label<S>),
+    Entry(Label),
     Separator,
 }
 
-impl<S: 'static + Send + Sync> ContextMenuItem<S> {
-    fn to_list_item(self) -> ListItem<S> {
+impl ContextMenuItem {
+    fn to_list_item<V: 'static>(self) -> ListItem<V> {
         match self {
             ContextMenuItem::Header(label) => ListSubHeader::new(label).into(),
             ContextMenuItem::Entry(label) => {
@@ -26,23 +26,23 @@ impl<S: 'static + Send + Sync> ContextMenuItem<S> {
         Self::Separator
     }
 
-    pub fn entry(label: Label<S>) -> Self {
+    pub fn entry(label: Label) -> Self {
         Self::Entry(label)
     }
 }
 
-#[derive(Element)]
-pub struct ContextMenu<S: 'static + Send + Sync> {
-    items: Vec<ContextMenuItem<S>>,
+#[derive(Component)]
+pub struct ContextMenu {
+    items: Vec<ContextMenuItem>,
 }
 
-impl<S: 'static + Send + Sync> ContextMenu<S> {
-    pub fn new(items: impl IntoIterator<Item = ContextMenuItem<S>>) -> Self {
+impl ContextMenu {
+    pub fn new(items: impl IntoIterator<Item = ContextMenuItem>) -> Self {
         Self {
             items: items.into_iter().collect(),
         }
     }
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<S: 'static>(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -67,31 +67,21 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use std::marker::PhantomData;
-
     use crate::story::Story;
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct ContextMenuStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct ContextMenuStory;
 
-    impl<S: 'static + Send + Sync> ContextMenuStory<S> {
+    impl ContextMenuStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
-                .child(Story::title_for::<_, ContextMenu<S>>(cx))
+                .child(Story::title_for::<_, ContextMenu>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(ContextMenu::new([
                     ContextMenuItem::header("Section header"),

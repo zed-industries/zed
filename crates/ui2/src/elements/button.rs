@@ -1,4 +1,3 @@
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 use gpui2::{div, DefiniteLength, Hsla, MouseButton, WindowContext};
@@ -49,21 +48,23 @@ impl ButtonVariant {
     }
 }
 
-pub type ClickHandler<S> = Arc<dyn Fn(&mut S, &mut ViewContext<S>) + 'static + Send + Sync>;
+pub type ClickHandler<S> = Arc<dyn Fn(&mut S, &mut ViewContext<S>) + Send + Sync>;
 
-struct ButtonHandlers<S: 'static + Send + Sync> {
+struct ButtonHandlers<S: 'static> {
     click: Option<ClickHandler<S>>,
 }
 
-impl<S: 'static + Send + Sync> Default for ButtonHandlers<S> {
+unsafe impl<S> Send for ButtonHandlers<S> {}
+unsafe impl<S> Sync for ButtonHandlers<S> {}
+
+impl<S: 'static> Default for ButtonHandlers<S> {
     fn default() -> Self {
         Self { click: None }
     }
 }
 
-#[derive(Element)]
-pub struct Button<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+#[derive(Component)]
+pub struct Button<S: 'static> {
     disabled: bool,
     handlers: ButtonHandlers<S>,
     icon: Option<Icon>,
@@ -73,10 +74,9 @@ pub struct Button<S: 'static + Send + Sync> {
     width: Option<DefiniteLength>,
 }
 
-impl<S: 'static + Send + Sync> Button<S> {
+impl<S: 'static> Button<S> {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
-            state_type: PhantomData,
             disabled: false,
             handlers: ButtonHandlers::default(),
             icon: None,
@@ -140,21 +140,17 @@ impl<S: 'static + Send + Sync> Button<S> {
         }
     }
 
-    fn render_label(&self) -> Label<S> {
+    fn render_label(&self) -> Label {
         Label::new(self.label.clone())
             .color(self.label_color())
             .line_height_style(LineHeightStyle::UILabel)
     }
 
-    fn render_icon(&self, icon_color: IconColor) -> Option<IconElement<S>> {
+    fn render_icon(&self, icon_color: IconColor) -> Option<IconElement> {
         self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 
-    pub fn render(
-        &mut self,
-        _view: &mut S,
-        cx: &mut ViewContext<S>,
-    ) -> impl Element<ViewState = S> {
+    pub fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let icon_color = self.icon_color();
 
         let mut button = h_stack()
@@ -197,24 +193,20 @@ impl<S: 'static + Send + Sync> Button<S> {
     }
 }
 
-#[derive(Element)]
-pub struct ButtonGroup<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
-    buttons: Vec<Button<S>>,
+#[derive(Component)]
+pub struct ButtonGroup<V: 'static> {
+    buttons: Vec<Button<V>>,
 }
 
-impl<S: 'static + Send + Sync> ButtonGroup<S> {
-    pub fn new(buttons: Vec<Button<S>>) -> Self {
-        Self {
-            state_type: PhantomData,
-            buttons,
-        }
+impl<V: 'static> ButtonGroup<V> {
+    pub fn new(buttons: Vec<Button<V>>) -> Self {
+        Self { buttons }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let mut el = h_stack().text_size(ui_size(cx, 1.));
 
-        for button in &mut self.buttons {
+        for button in self.buttons {
             el = el.child(button.render(_view, cx));
         }
 
@@ -234,27 +226,19 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct ButtonStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct ButtonStory;
 
-    impl<S: 'static + Send + Sync + Clone> ButtonStory<S> {
+    impl ButtonStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let states = InteractionState::iter();
 
             Story::container(cx)
-                .child(Story::title_for::<_, Button<S>>(cx))
+                .child(Story::title_for::<_, Button<V>>(cx))
                 .child(
                     div()
                         .flex()

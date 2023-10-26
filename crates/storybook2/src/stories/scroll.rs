@@ -1,8 +1,7 @@
 use crate::themes::rose_pine;
 use gpui2::{
-    div, px, view, Context, Element, ParentElement, SharedString, Styled, View, WindowContext,
+    div, px, view, Component, Context, ParentElement, SharedString, Styled, View, WindowContext,
 };
-use ui::ElementExt;
 
 pub struct ScrollStory {
     text: View<()>,
@@ -16,7 +15,7 @@ impl ScrollStory {
     }
 }
 
-fn checkerboard<S>(depth: usize) -> impl Element<ViewState = S>
+fn checkerboard<S>(depth: usize) -> impl Component<S>
 where
     S: 'static + Send + Sync,
 {

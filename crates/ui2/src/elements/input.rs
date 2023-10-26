@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 use crate::Label;
 use crate::LabelColor;
@@ -11,9 +9,8 @@ pub enum InputVariant {
     Filled,
 }
 
-#[derive(Element)]
-pub struct Input<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+#[derive(Component)]
+pub struct Input {
     placeholder: SharedString,
     value: String,
     state: InteractionState,
@@ -22,10 +19,9 @@ pub struct Input<S: 'static + Send + Sync> {
     is_active: bool,
 }
 
-impl<S: 'static + Send + Sync> Input<S> {
+impl Input {
     pub fn new(placeholder: impl Into<SharedString>) -> Self {
         Self {
-            state_type: PhantomData,
             placeholder: placeholder.into(),
             value: "".to_string(),
             state: InteractionState::default(),
@@ -60,7 +56,7 @@ impl<S: 'static + Send + Sync> Input<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         let (input_bg, input_hover_bg, input_active_bg) = match self.variant {
@@ -120,25 +116,17 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct InputStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct InputStory;
 
-    impl<S: 'static + Send + Sync> InputStory<S> {
+    impl InputStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
-                .child(Story::title_for::<_, Input<S>>(cx))
+                .child(Story::title_for::<_, Input>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(div().flex().child(Input::new("Search")))
         }

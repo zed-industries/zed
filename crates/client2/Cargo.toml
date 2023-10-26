@@ -9,14 +9,14 @@ path = "src/client2.rs"
 doctest = false
 
 [features]
-test-support = ["collections/test-support", "gpui2/test-support", "rpc/test-support"]
+test-support = ["collections/test-support", "gpui2/test-support", "rpc2/test-support"]
 
 [dependencies]
 collections = { path = "../collections" }
 db2 = { path = "../db2" }
 gpui2 = { path = "../gpui2" }
 util = { path = "../util" }
-rpc = { path = "../rpc" }
+rpc2 = { path = "../rpc2" }
 text = { path = "../text" }
 settings2 = { path = "../settings2" }
 feature_flags2 = { path = "../feature_flags2" }
@@ -47,6 +47,6 @@ url = "2.2"
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
 gpui2 = { path = "../gpui2", features = ["test-support"] }
-rpc = { path = "../rpc", features = ["test-support"] }
+rpc2 = { path = "../rpc2", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }

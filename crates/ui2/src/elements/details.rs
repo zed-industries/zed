@@ -1,19 +1,15 @@
-use std::marker::PhantomData;
-
 use crate::{prelude::*, v_stack, ButtonGroup};
 
-#[derive(Element)]
-pub struct Details<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+#[derive(Component)]
+pub struct Details<V: 'static> {
     text: &'static str,
     meta: Option<&'static str>,
-    actions: Option<ButtonGroup<S>>,
+    actions: Option<ButtonGroup<V>>,
 }
 
-impl<S: 'static + Send + Sync> Details<S> {
+impl<S: 'static> Details<S> {
     pub fn new(text: &'static str) -> Self {
         Self {
-            state_type: PhantomData,
             text,
             meta: None,
             actions: None,
@@ -30,7 +26,7 @@ impl<S: 'static + Send + Sync> Details<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -54,25 +50,17 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct DetailsStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    #[derive(Component)]
+    pub struct DetailsStory;
 
-    impl<S: 'static + Send + Sync + Clone> DetailsStory<S> {
+    impl DetailsStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(
-            &mut self,
-            _view: &mut S,
-            cx: &mut ViewContext<S>,
-        ) -> impl Element<ViewState = S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
-                .child(Story::title_for::<_, Details<S>>(cx))
+                .child(Story::title_for::<_, Details<V>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Details::new("The quick brown fox jumps over the lazy dog"))
                 .child(Story::label(cx, "With meta"))

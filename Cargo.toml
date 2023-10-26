@@ -73,6 +73,7 @@ members = [
     "crates/recent_projects",
     "crates/rope",
     "crates/rpc",
+    "crates/rpc2",
     "crates/search",
     "crates/settings",
     "crates/settings2",

@@ -13,7 +13,7 @@ use crate::{
 };
 use crate::{HighlightedText, ListDetailsEntry};
 
-pub fn static_tabs_example<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
+pub fn static_tabs_example() -> Vec<Tab> {
     vec![
         Tab::new("wip.rs")
             .title("wip.rs".to_string())
@@ -63,7 +63,7 @@ pub fn static_tabs_example<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
     ]
 }
 
-pub fn static_tabs_1<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
+pub fn static_tabs_1() -> Vec<Tab> {
     vec![
         Tab::new("project_panel.rs")
             .title("project_panel.rs".to_string())
@@ -87,7 +87,7 @@ pub fn static_tabs_1<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
     ]
 }
 
-pub fn static_tabs_2<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
+pub fn static_tabs_2() -> Vec<Tab> {
     vec![
         Tab::new("tab_bar.rs")
             .title("tab_bar.rs".to_string())
@@ -102,7 +102,7 @@ pub fn static_tabs_2<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
     ]
 }
 
-pub fn static_tabs_3<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
+pub fn static_tabs_3() -> Vec<Tab> {
     vec![Tab::new("static_tabs_3")
         .git_status(GitStatus::Created)
         .current(true)]
@@ -325,7 +325,7 @@ pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
     ]
 }
 
-pub fn static_new_notification_items<S: 'static + Send + Sync>() -> Vec<ListItem<S>> {
+pub fn static_new_notification_items<S: 'static>() -> Vec<ListItem<S>> {
     vec![
         ListDetailsEntry::new("maxdeviant invited you to join a stream in #design.")
             .meta("4 people in stream."),
@@ -336,7 +336,7 @@ pub fn static_new_notification_items<S: 'static + Send + Sync>() -> Vec<ListItem
     .collect()
 }
 
-pub fn static_read_notification_items<S: 'static + Send + Sync>() -> Vec<ListItem<S>> {
+pub fn static_read_notification_items<S: 'static>() -> Vec<ListItem<S>> {
     vec![
         ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
             Button::new("Decline"),
@@ -352,7 +352,7 @@ pub fn static_read_notification_items<S: 'static + Send + Sync>() -> Vec<ListIte
     .collect()
 }
 
-pub fn static_project_panel_project_items<S: 'static + Send + Sync>() -> Vec<ListItem<S>> {
+pub fn static_project_panel_project_items<S: 'static>() -> Vec<ListItem<S>> {
     vec![
         ListEntry::new(Label::new("zed"))
             .left_icon(Icon::FolderOpen.into())
@@ -479,7 +479,7 @@ pub fn static_project_panel_project_items<S: 'static + Send + Sync>() -> Vec<Lis
     .collect()
 }
 
-pub fn static_project_panel_single_items<S: 'static + Send + Sync>() -> Vec<ListItem<S>> {
+pub fn static_project_panel_single_items<S: 'static>() -> Vec<ListItem<S>> {
     vec![
         ListEntry::new(Label::new("todo.md"))
             .left_icon(Icon::FileDoc.into())
@@ -496,7 +496,7 @@ pub fn static_project_panel_single_items<S: 'static + Send + Sync>() -> Vec<List
     .collect()
 }
 
-pub fn static_collab_panel_current_call<S: 'static + Send + Sync>() -> Vec<ListItem<S>> {
+pub fn static_collab_panel_current_call<S: 'static>() -> Vec<ListItem<S>> {
     vec![
         ListEntry::new(Label::new("as-cii")).left_avatar("http://github.com/as-cii.png?s=50"),
         ListEntry::new(Label::new("nathansobo"))
@@ -509,7 +509,7 @@ pub fn static_collab_panel_current_call<S: 'static + Send + Sync>() -> Vec<ListI
     .collect()
 }
 
-pub fn static_collab_panel_channels<S: 'static + Send + Sync>() -> Vec<ListItem<S>> {
+pub fn static_collab_panel_channels<S: 'static>() -> Vec<ListItem<S>> {
     vec![
         ListEntry::new(Label::new("zed"))
             .left_icon(Icon::Hash.into())
@@ -573,7 +573,7 @@ pub fn static_collab_panel_channels<S: 'static + Send + Sync>() -> Vec<ListItem<
     .collect()
 }
 
-pub fn example_editor_actions<S: 'static + Send + Sync>() -> Vec<PaletteItem<S>> {
+pub fn example_editor_actions() -> Vec<PaletteItem> {
     vec![
         PaletteItem::new("New File").keybinding(Keybinding::new(
             "N".to_string(),
@@ -638,7 +638,7 @@ pub fn empty_editor_example(cx: &mut WindowContext) -> EditorPane {
     )
 }
 
-pub fn empty_buffer_example<S: 'static + Send + Sync + Clone>() -> Buffer<S> {
+pub fn empty_buffer_example() -> Buffer {
     Buffer::new("empty-buffer").set_rows(Some(BufferRows::default()))
 }
 
@@ -663,9 +663,7 @@ pub fn hello_world_rust_editor_example(cx: &mut WindowContext) -> EditorPane {
     )
 }
 
-pub fn hello_world_rust_buffer_example<S: 'static + Send + Sync + Clone>(
-    theme: &Theme,
-) -> Buffer<S> {
+pub fn hello_world_rust_buffer_example(theme: &Theme) -> Buffer {
     Buffer::new("hello-world-rust-buffer")
         .set_title("hello_world.rs".to_string())
         .set_path("src/hello_world.rs".to_string())
@@ -804,9 +802,7 @@ pub fn hello_world_rust_editor_with_status_example(cx: &mut WindowContext) -> Ed
     )
 }
 
-pub fn hello_world_rust_buffer_with_status_example<S: 'static + Send + Sync + Clone>(
-    theme: &Theme,
-) -> Buffer<S> {
+pub fn hello_world_rust_buffer_with_status_example(theme: &Theme) -> Buffer {
     Buffer::new("hello-world-rust-buffer-with-status")
         .set_title("hello_world.rs".to_string())
         .set_path("src/hello_world.rs".to_string())
@@ -952,7 +948,7 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
     ]
 }
 
-pub fn terminal_buffer<S: 'static + Send + Sync + Clone>(theme: &Theme) -> Buffer<S> {
+pub fn terminal_buffer(theme: &Theme) -> Buffer {
     Buffer::new("terminal")
         .set_title("zed — fish".to_string())
         .set_rows(Some(BufferRows {

@@ -901,6 +901,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             }
             InputEvent::FileDrop(file_drop) => match file_drop {
                 FileDropEvent::Entered { position, files } => {
+                    self.window.mouse_position = position;
                     self.active_drag.get_or_insert_with(|| AnyDrag {
                         drag_handle_view: None,
                         cursor_offset: position,
@@ -914,17 +915,23 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                         modifiers: Modifiers::default(),
                     })
                 }
-                FileDropEvent::Pending { position } => InputEvent::MouseMove(MouseMoveEvent {
-                    position,
-                    pressed_button: Some(MouseButton::Left),
-                    modifiers: Modifiers::default(),
-                }),
-                FileDropEvent::Submit { position } => InputEvent::MouseUp(MouseUpEvent {
-                    button: MouseButton::Left,
-                    position,
-                    modifiers: Modifiers::default(),
-                    click_count: 1,
-                }),
+                FileDropEvent::Pending { position } => {
+                    self.window.mouse_position = position;
+                    InputEvent::MouseMove(MouseMoveEvent {
+                        position,
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Modifiers::default(),
+                    })
+                }
+                FileDropEvent::Submit { position } => {
+                    self.window.mouse_position = position;
+                    InputEvent::MouseUp(MouseUpEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                    })
+                }
                 FileDropEvent::Exited => InputEvent::MouseUp(MouseUpEvent {
                     button: MouseButton::Left,
                     position: Point::default(),

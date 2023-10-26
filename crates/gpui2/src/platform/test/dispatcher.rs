@@ -1,6 +1,6 @@
 use crate::PlatformDispatcher;
 use async_task::Runnable;
-use collections::{BTreeMap, HashMap, VecDeque};
+use collections::{HashMap, VecDeque};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use std::{
@@ -8,7 +8,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use util::post_inc;
 
@@ -24,8 +24,8 @@ struct TestDispatcherState {
     random: StdRng,
     foreground: HashMap<TestDispatcherId, VecDeque<Runnable>>,
     background: Vec<Runnable>,
-    delayed: BTreeMap<Instant, Runnable>,
-    time: Instant,
+    delayed: Vec<(Duration, Runnable)>,
+    time: Duration,
     is_main_thread: bool,
     next_id: TestDispatcherId,
 }
@@ -36,8 +36,8 @@ impl TestDispatcher {
             random,
             foreground: HashMap::default(),
             background: Vec::new(),
-            delayed: BTreeMap::new(),
-            time: Instant::now(),
+            delayed: Vec::new(),
+            time: Duration::ZERO,
             is_main_thread: true,
             next_id: TestDispatcherId(1),
         };
@@ -49,7 +49,21 @@ impl TestDispatcher {
     }
 
     pub fn advance_clock(&self, by: Duration) {
-        self.state.lock().time += by;
+        let new_now = self.state.lock().time + by;
+        loop {
+            self.run_until_parked();
+            let state = self.state.lock();
+            let next_due_time = state.delayed.first().map(|(time, _)| *time);
+            drop(state);
+            if let Some(due_time) = next_due_time {
+                if due_time <= new_now {
+                    self.state.lock().time = due_time;
+                    continue;
+                }
+            }
+            break;
+        }
+        self.state.lock().time = new_now;
     }
 
     pub fn simulate_random_delay(&self) -> impl Future<Output = ()> {
@@ -112,17 +126,20 @@ impl PlatformDispatcher for TestDispatcher {
     fn dispatch_after(&self, duration: std::time::Duration, runnable: Runnable) {
         let mut state = self.state.lock();
         let next_time = state.time + duration;
-        state.delayed.insert(next_time, runnable);
+        let ix = match state.delayed.binary_search_by_key(&next_time, |e| e.0) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        state.delayed.insert(ix, (next_time, runnable));
     }
 
     fn poll(&self) -> bool {
         let mut state = self.state.lock();
 
-        while let Some((deadline, _)) = state.delayed.first_key_value() {
+        while let Some((deadline, _)) = state.delayed.first() {
             if *deadline > state.time {
                 break;
             }
-            let (_, runnable) = state.delayed.pop_first().unwrap();
+            let (_, runnable) = state.delayed.remove(0);
             state.background.push(runnable);
         }
 
