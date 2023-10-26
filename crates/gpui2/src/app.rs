@@ -607,6 +607,20 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
+    pub fn observe_release<E: 'static>(
+        &mut self,
+        handle: &Handle<E>,
+        mut on_release: impl FnMut(&mut E, &mut AppContext) + Send + Sync + 'static,
+    ) -> Subscription {
+        self.release_listeners.insert(
+            handle.entity_id,
+            Box::new(move |entity, cx| {
+                let entity = entity.downcast_mut().expect("invalid entity type");
+                on_release(entity, cx)
+            }),
+        )
+    }
+
     pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
         self.text_style_stack.push(text_style);
     }

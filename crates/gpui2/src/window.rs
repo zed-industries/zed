@@ -1,7 +1,7 @@
 use crate::{
     px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
-    Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, ExternalPaths,
-    Edges, Effect, Element, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId,
+    Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect,
+    Element, EntityId, EventEmitter, ExternalPaths, FileDropEvent, FocusEvent, FontId,
     GlobalElementId, GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch,
     KeyMatcher, Keystroke, LayoutId, MainThread, MainThreadOnly, Modifiers, MonochromeSprite,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
@@ -1517,22 +1517,14 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         &mut self,
         handle: &Handle<T>,
         mut on_release: impl FnMut(&mut V, &mut T, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
-    ) -> Subscription
-    where
-        V: Any + Send + Sync,
-    {
+    ) -> Subscription {
         let this = self.handle();
         let window_handle = self.window.handle;
-        self.app.release_listeners.insert(
-            handle.entity_id,
-            Box::new(move |entity, cx| {
-                let entity = entity.downcast_mut().expect("invalid entity type");
-                // todo!("are we okay with silently swallowing the error?")
-                let _ = cx.update_window(window_handle.id, |cx| {
-                    this.update(cx, |this, cx| on_release(this, entity, cx))
-                });
-            }),
-        )
+        self.app.observe_release(handle, move |entity, cx| {
+            let _ = cx.update_window(window_handle.id, |cx| {
+                this.update(cx, |this, cx| on_release(this, entity, cx))
+            });
+        })
     }
 
     pub fn notify(&mut self) {

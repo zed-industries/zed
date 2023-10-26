@@ -10550,6 +10550,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "workspace2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-recursion 1.0.5",
+ "bincode",
+ "call2",
+ "client2",
+ "collections",
+ "db2",
+ "env_logger 0.9.3",
+ "fs2",
+ "futures 0.3.28",
+ "gpui2",
+ "indoc",
+ "install_cli2",
+ "itertools 0.10.5",
+ "language2",
+ "lazy_static",
+ "log",
+ "node_runtime",
+ "parking_lot 0.11.2",
+ "postage",
+ "project2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "smallvec",
+ "terminal2",
+ "theme2",
+ "util",
+ "uuid 1.4.1",
+]
+
+[[package]]
 name = "ws2_32-sys"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10857,6 +10894,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid 1.4.1",
+ "workspace2",
 ]
 
 [[package]]

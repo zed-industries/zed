@@ -115,15 +115,11 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         T: Any + Send + Sync,
     {
         let this = self.weak_handle();
-        self.app.release_listeners.insert(
-            handle.entity_id,
-            Box::new(move |entity, cx| {
-                let entity = entity.downcast_mut().expect("invalid entity type");
-                if let Some(this) = this.upgrade() {
-                    this.update(cx, |this, cx| on_release(this, entity, cx));
-                }
-            }),
-        )
+        self.app.observe_release(handle, move |entity, cx| {
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, cx| on_release(this, entity, cx));
+            }
+        })
     }
 
     pub fn observe_global<G: 'static>(

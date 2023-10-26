@@ -94,7 +94,7 @@ members = [
     "crates/semantic_index",
     "crates/vim",
     "crates/vcs_menu",
-    "crates/workspace",
+    "crates/workspace2",
     "crates/welcome",
     "crates/xtask",
     "crates/zed",
