@@ -37,7 +37,7 @@ impl Project {
                 Some(settings.blinking.clone()),
                 settings.alternate_scroll,
                 window,
-                |index, cx| todo!("color_for_index"),
+                |_, _| todo!("color_for_index"),
             )
             .map(|builder| {
                 let terminal_handle = cx.entity(|cx| builder.subscribe(cx));

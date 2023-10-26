@@ -15,7 +15,7 @@ test-support = ["gpui2/test-support", "fs/test-support"]
 collections = { path = "../collections" }
 gpui2 = { path = "../gpui2" }
 sqlez = { path = "../sqlez" }
-fs = { path = "../fs" }
+fs2 = { path = "../fs2" }
 feature_flags2 = { path = "../feature_flags2" }
 util = { path = "../util" }
 

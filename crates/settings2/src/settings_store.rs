@@ -871,431 +871,431 @@ pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T>
     Ok(serde_json_lenient::from_str(content)?)
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use serde_derive::Deserialize;
-//     use unindent::Unindent;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_derive::Deserialize;
+    use unindent::Unindent;
 
-//     #[gpui::test]
-//     fn test_settings_store_basic(cx: &mut AppContext) {
-//         let mut store = SettingsStore::default();
-//         store.register_setting::<UserSettings>(cx);
-//         store.register_setting::<TurboSetting>(cx);
-//         store.register_setting::<MultiKeySettings>(cx);
-//         store
-//             .set_default_settings(
-//                 r#"{
-//                     "turbo": false,
-//                     "user": {
-//                         "name": "John Doe",
-//                         "age": 30,
-//                         "staff": false
-//                     }
-//                 }"#,
-//                 cx,
-//             )
-//             .unwrap();
+    #[gpui2::test]
+    fn test_settings_store_basic(cx: &mut AppContext) {
+        let mut store = SettingsStore::default();
+        store.register_setting::<UserSettings>(cx);
+        store.register_setting::<TurboSetting>(cx);
+        store.register_setting::<MultiKeySettings>(cx);
+        store
+            .set_default_settings(
+                r#"{
+                    "turbo": false,
+                    "user": {
+                        "name": "John Doe",
+                        "age": 30,
+                        "staff": false
+                    }
+                }"#,
+                cx,
+            )
+            .unwrap();
 
-//         assert_eq!(store.get::<TurboSetting>(None), &TurboSetting(false));
-//         assert_eq!(
-//             store.get::<UserSettings>(None),
-//             &UserSettings {
-//                 name: "John Doe".to_string(),
-//                 age: 30,
-//                 staff: false,
-//             }
-//         );
-//         assert_eq!(
-//             store.get::<MultiKeySettings>(None),
-//             &MultiKeySettings {
-//                 key1: String::new(),
-//                 key2: String::new(),
-//             }
-//         );
+        assert_eq!(store.get::<TurboSetting>(None), &TurboSetting(false));
+        assert_eq!(
+            store.get::<UserSettings>(None),
+            &UserSettings {
+                name: "John Doe".to_string(),
+                age: 30,
+                staff: false,
+            }
+        );
+        assert_eq!(
+            store.get::<MultiKeySettings>(None),
+            &MultiKeySettings {
+                key1: String::new(),
+                key2: String::new(),
+            }
+        );
 
-//         store
-//             .set_user_settings(
-//                 r#"{
-//                     "turbo": true,
-//                     "user": { "age": 31 },
-//                     "key1": "a"
-//                 }"#,
-//                 cx,
-//             )
-//             .unwrap();
+        store
+            .set_user_settings(
+                r#"{
+                    "turbo": true,
+                    "user": { "age": 31 },
+                    "key1": "a"
+                }"#,
+                cx,
+            )
+            .unwrap();
 
-//         assert_eq!(store.get::<TurboSetting>(None), &TurboSetting(true));
-//         assert_eq!(
-//             store.get::<UserSettings>(None),
-//             &UserSettings {
-//                 name: "John Doe".to_string(),
-//                 age: 31,
-//                 staff: false
-//             }
-//         );
+        assert_eq!(store.get::<TurboSetting>(None), &TurboSetting(true));
+        assert_eq!(
+            store.get::<UserSettings>(None),
+            &UserSettings {
+                name: "John Doe".to_string(),
+                age: 31,
+                staff: false
+            }
+        );
 
-//         store
-//             .set_local_settings(
-//                 1,
-//                 Path::new("/root1").into(),
-//                 Some(r#"{ "user": { "staff": true } }"#),
-//                 cx,
-//             )
-//             .unwrap();
-//         store
-//             .set_local_settings(
-//                 1,
-//                 Path::new("/root1/subdir").into(),
-//                 Some(r#"{ "user": { "name": "Jane Doe" } }"#),
-//                 cx,
-//             )
-//             .unwrap();
+        store
+            .set_local_settings(
+                1,
+                Path::new("/root1").into(),
+                Some(r#"{ "user": { "staff": true } }"#),
+                cx,
+            )
+            .unwrap();
+        store
+            .set_local_settings(
+                1,
+                Path::new("/root1/subdir").into(),
+                Some(r#"{ "user": { "name": "Jane Doe" } }"#),
+                cx,
+            )
+            .unwrap();
 
-//         store
-//             .set_local_settings(
-//                 1,
-//                 Path::new("/root2").into(),
-//                 Some(r#"{ "user": { "age": 42 }, "key2": "b" }"#),
-//                 cx,
-//             )
-//             .unwrap();
+        store
+            .set_local_settings(
+                1,
+                Path::new("/root2").into(),
+                Some(r#"{ "user": { "age": 42 }, "key2": "b" }"#),
+                cx,
+            )
+            .unwrap();
 
-//         assert_eq!(
-//             store.get::<UserSettings>(Some((1, Path::new("/root1/something")))),
-//             &UserSettings {
-//                 name: "John Doe".to_string(),
-//                 age: 31,
-//                 staff: true
-//             }
-//         );
-//         assert_eq!(
-//             store.get::<UserSettings>(Some((1, Path::new("/root1/subdir/something")))),
-//             &UserSettings {
-//                 name: "Jane Doe".to_string(),
-//                 age: 31,
-//                 staff: true
-//             }
-//         );
-//         assert_eq!(
-//             store.get::<UserSettings>(Some((1, Path::new("/root2/something")))),
-//             &UserSettings {
-//                 name: "John Doe".to_string(),
-//                 age: 42,
-//                 staff: false
-//             }
-//         );
-//         assert_eq!(
-//             store.get::<MultiKeySettings>(Some((1, Path::new("/root2/something")))),
-//             &MultiKeySettings {
-//                 key1: "a".to_string(),
-//                 key2: "b".to_string(),
-//             }
-//         );
-//     }
+        assert_eq!(
+            store.get::<UserSettings>(Some((1, Path::new("/root1/something")))),
+            &UserSettings {
+                name: "John Doe".to_string(),
+                age: 31,
+                staff: true
+            }
+        );
+        assert_eq!(
+            store.get::<UserSettings>(Some((1, Path::new("/root1/subdir/something")))),
+            &UserSettings {
+                name: "Jane Doe".to_string(),
+                age: 31,
+                staff: true
+            }
+        );
+        assert_eq!(
+            store.get::<UserSettings>(Some((1, Path::new("/root2/something")))),
+            &UserSettings {
+                name: "John Doe".to_string(),
+                age: 42,
+                staff: false
+            }
+        );
+        assert_eq!(
+            store.get::<MultiKeySettings>(Some((1, Path::new("/root2/something")))),
+            &MultiKeySettings {
+                key1: "a".to_string(),
+                key2: "b".to_string(),
+            }
+        );
+    }
 
-//     #[gpui::test]
-//     fn test_setting_store_assign_json_before_register(cx: &mut AppContext) {
-//         let mut store = SettingsStore::default();
-//         store
-//             .set_default_settings(
-//                 r#"{
-//                     "turbo": true,
-//                     "user": {
-//                         "name": "John Doe",
-//                         "age": 30,
-//                         "staff": false
-//                     },
-//                     "key1": "x"
-//                 }"#,
-//                 cx,
-//             )
-//             .unwrap();
-//         store
-//             .set_user_settings(r#"{ "turbo": false }"#, cx)
-//             .unwrap();
-//         store.register_setting::<UserSettings>(cx);
-//         store.register_setting::<TurboSetting>(cx);
+    #[gpui2::test]
+    fn test_setting_store_assign_json_before_register(cx: &mut AppContext) {
+        let mut store = SettingsStore::default();
+        store
+            .set_default_settings(
+                r#"{
+                    "turbo": true,
+                    "user": {
+                        "name": "John Doe",
+                        "age": 30,
+                        "staff": false
+                    },
+                    "key1": "x"
+                }"#,
+                cx,
+            )
+            .unwrap();
+        store
+            .set_user_settings(r#"{ "turbo": false }"#, cx)
+            .unwrap();
+        store.register_setting::<UserSettings>(cx);
+        store.register_setting::<TurboSetting>(cx);
 
-//         assert_eq!(store.get::<TurboSetting>(None), &TurboSetting(false));
-//         assert_eq!(
-//             store.get::<UserSettings>(None),
-//             &UserSettings {
-//                 name: "John Doe".to_string(),
-//                 age: 30,
-//                 staff: false,
-//             }
-//         );
+        assert_eq!(store.get::<TurboSetting>(None), &TurboSetting(false));
+        assert_eq!(
+            store.get::<UserSettings>(None),
+            &UserSettings {
+                name: "John Doe".to_string(),
+                age: 30,
+                staff: false,
+            }
+        );
 
-//         store.register_setting::<MultiKeySettings>(cx);
-//         assert_eq!(
-//             store.get::<MultiKeySettings>(None),
-//             &MultiKeySettings {
-//                 key1: "x".into(),
-//                 key2: String::new(),
-//             }
-//         );
-//     }
+        store.register_setting::<MultiKeySettings>(cx);
+        assert_eq!(
+            store.get::<MultiKeySettings>(None),
+            &MultiKeySettings {
+                key1: "x".into(),
+                key2: String::new(),
+            }
+        );
+    }
 
-//     #[gpui::test]
-//     fn test_setting_store_update(cx: &mut AppContext) {
-//         let mut store = SettingsStore::default();
-//         store.register_setting::<MultiKeySettings>(cx);
-//         store.register_setting::<UserSettings>(cx);
-//         store.register_setting::<LanguageSettings>(cx);
+    #[gpui2::test]
+    fn test_setting_store_update(cx: &mut AppContext) {
+        let mut store = SettingsStore::default();
+        store.register_setting::<MultiKeySettings>(cx);
+        store.register_setting::<UserSettings>(cx);
+        store.register_setting::<LanguageSettings>(cx);
 
-//         // entries added and updated
-//         check_settings_update::<LanguageSettings>(
-//             &mut store,
-//             r#"{
-//                 "languages": {
-//                     "JSON": {
-//                         "language_setting_1": true
-//                     }
-//                 }
-//             }"#
-//             .unindent(),
-//             |settings| {
-//                 settings
-//                     .languages
-//                     .get_mut("JSON")
-//                     .unwrap()
-//                     .language_setting_1 = Some(false);
-//                 settings.languages.insert(
-//                     "Rust".into(),
-//                     LanguageSettingEntry {
-//                         language_setting_2: Some(true),
-//                         ..Default::default()
-//                     },
-//                 );
-//             },
-//             r#"{
-//                 "languages": {
-//                     "Rust": {
-//                         "language_setting_2": true
-//                     },
-//                     "JSON": {
-//                         "language_setting_1": false
-//                     }
-//                 }
-//             }"#
-//             .unindent(),
-//             cx,
-//         );
+        // entries added and updated
+        check_settings_update::<LanguageSettings>(
+            &mut store,
+            r#"{
+                "languages": {
+                    "JSON": {
+                        "language_setting_1": true
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                settings
+                    .languages
+                    .get_mut("JSON")
+                    .unwrap()
+                    .language_setting_1 = Some(false);
+                settings.languages.insert(
+                    "Rust".into(),
+                    LanguageSettingEntry {
+                        language_setting_2: Some(true),
+                        ..Default::default()
+                    },
+                );
+            },
+            r#"{
+                "languages": {
+                    "Rust": {
+                        "language_setting_2": true
+                    },
+                    "JSON": {
+                        "language_setting_1": false
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
 
-//         // weird formatting
-//         check_settings_update::<UserSettings>(
-//             &mut store,
-//             r#"{
-//                 "user":   { "age": 36, "name": "Max", "staff": true }
-//             }"#
-//             .unindent(),
-//             |settings| settings.age = Some(37),
-//             r#"{
-//                 "user":   { "age": 37, "name": "Max", "staff": true }
-//             }"#
-//             .unindent(),
-//             cx,
-//         );
+        // weird formatting
+        check_settings_update::<UserSettings>(
+            &mut store,
+            r#"{
+                "user":   { "age": 36, "name": "Max", "staff": true }
+            }"#
+            .unindent(),
+            |settings| settings.age = Some(37),
+            r#"{
+                "user":   { "age": 37, "name": "Max", "staff": true }
+            }"#
+            .unindent(),
+            cx,
+        );
 
-//         // single-line formatting, other keys
-//         check_settings_update::<MultiKeySettings>(
-//             &mut store,
-//             r#"{ "one": 1, "two": 2 }"#.unindent(),
-//             |settings| settings.key1 = Some("x".into()),
-//             r#"{ "key1": "x", "one": 1, "two": 2 }"#.unindent(),
-//             cx,
-//         );
+        // single-line formatting, other keys
+        check_settings_update::<MultiKeySettings>(
+            &mut store,
+            r#"{ "one": 1, "two": 2 }"#.unindent(),
+            |settings| settings.key1 = Some("x".into()),
+            r#"{ "key1": "x", "one": 1, "two": 2 }"#.unindent(),
+            cx,
+        );
 
-//         // empty object
-//         check_settings_update::<UserSettings>(
-//             &mut store,
-//             r#"{
-//                 "user": {}
-//             }"#
-//             .unindent(),
-//             |settings| settings.age = Some(37),
-//             r#"{
-//                 "user": {
-//                     "age": 37
-//                 }
-//             }"#
-//             .unindent(),
-//             cx,
-//         );
+        // empty object
+        check_settings_update::<UserSettings>(
+            &mut store,
+            r#"{
+                "user": {}
+            }"#
+            .unindent(),
+            |settings| settings.age = Some(37),
+            r#"{
+                "user": {
+                    "age": 37
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
 
-//         // no content
-//         check_settings_update::<UserSettings>(
-//             &mut store,
-//             r#""#.unindent(),
-//             |settings| settings.age = Some(37),
-//             r#"{
-//                 "user": {
-//                     "age": 37
-//                 }
-//             }
-//             "#
-//             .unindent(),
-//             cx,
-//         );
+        // no content
+        check_settings_update::<UserSettings>(
+            &mut store,
+            r#""#.unindent(),
+            |settings| settings.age = Some(37),
+            r#"{
+                "user": {
+                    "age": 37
+                }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
 
-//         check_settings_update::<UserSettings>(
-//             &mut store,
-//             r#"{
-//             }
-//             "#
-//             .unindent(),
-//             |settings| settings.age = Some(37),
-//             r#"{
-//                 "user": {
-//                     "age": 37
-//                 }
-//             }
-//             "#
-//             .unindent(),
-//             cx,
-//         );
-//     }
+        check_settings_update::<UserSettings>(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            |settings| settings.age = Some(37),
+            r#"{
+                "user": {
+                    "age": 37
+                }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+    }
 
-//     fn check_settings_update<T: Setting>(
-//         store: &mut SettingsStore,
-//         old_json: String,
-//         update: fn(&mut T::FileContent),
-//         expected_new_json: String,
-//         cx: &mut AppContext,
-//     ) {
-//         store.set_user_settings(&old_json, cx).ok();
-//         let edits = store.edits_for_update::<T>(&old_json, update);
-//         let mut new_json = old_json;
-//         for (range, replacement) in edits.into_iter() {
-//             new_json.replace_range(range, &replacement);
-//         }
-//         pretty_assertions::assert_eq!(new_json, expected_new_json);
-//     }
+    fn check_settings_update<T: Settings>(
+        store: &mut SettingsStore,
+        old_json: String,
+        update: fn(&mut T::FileContent),
+        expected_new_json: String,
+        cx: &mut AppContext,
+    ) {
+        store.set_user_settings(&old_json, cx).ok();
+        let edits = store.edits_for_update::<T>(&old_json, update);
+        let mut new_json = old_json;
+        for (range, replacement) in edits.into_iter() {
+            new_json.replace_range(range, &replacement);
+        }
+        pretty_assertions::assert_eq!(new_json, expected_new_json);
+    }
 
-//     #[derive(Debug, PartialEq, Deserialize)]
-//     struct UserSettings {
-//         name: String,
-//         age: u32,
-//         staff: bool,
-//     }
+    #[derive(Debug, PartialEq, Deserialize)]
+    struct UserSettings {
+        name: String,
+        age: u32,
+        staff: bool,
+    }
 
-//     #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
-//     struct UserSettingsJson {
-//         name: Option<String>,
-//         age: Option<u32>,
-//         staff: Option<bool>,
-//     }
+    #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+    struct UserSettingsJson {
+        name: Option<String>,
+        age: Option<u32>,
+        staff: Option<bool>,
+    }
 
-//     impl Setting for UserSettings {
-//         const KEY: Option<&'static str> = Some("user");
-//         type FileContent = UserSettingsJson;
+    impl Settings for UserSettings {
+        const KEY: Option<&'static str> = Some("user");
+        type FileContent = UserSettingsJson;
 
-//         fn load(
-//             default_value: &UserSettingsJson,
-//             user_values: &[&UserSettingsJson],
-//             _: &AppContext,
-//         ) -> Result<Self> {
-//             Self::load_via_json_merge(default_value, user_values)
-//         }
-//     }
+        fn load(
+            default_value: &UserSettingsJson,
+            user_values: &[&UserSettingsJson],
+            _: &mut AppContext,
+        ) -> Result<Self> {
+            Self::load_via_json_merge(default_value, user_values)
+        }
+    }
 
-//     #[derive(Debug, Deserialize, PartialEq)]
-//     struct TurboSetting(bool);
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct TurboSetting(bool);
 
-//     impl Setting for TurboSetting {
-//         const KEY: Option<&'static str> = Some("turbo");
-//         type FileContent = Option<bool>;
+    impl Settings for TurboSetting {
+        const KEY: Option<&'static str> = Some("turbo");
+        type FileContent = Option<bool>;
 
-//         fn load(
-//             default_value: &Option<bool>,
-//             user_values: &[&Option<bool>],
-//             _: &AppContext,
-//         ) -> Result<Self> {
-//             Self::load_via_json_merge(default_value, user_values)
-//         }
-//     }
+        fn load(
+            default_value: &Option<bool>,
+            user_values: &[&Option<bool>],
+            _: &mut AppContext,
+        ) -> Result<Self> {
+            Self::load_via_json_merge(default_value, user_values)
+        }
+    }
 
-//     #[derive(Clone, Debug, PartialEq, Deserialize)]
-//     struct MultiKeySettings {
-//         #[serde(default)]
-//         key1: String,
-//         #[serde(default)]
-//         key2: String,
-//     }
+    #[derive(Clone, Debug, PartialEq, Deserialize)]
+    struct MultiKeySettings {
+        #[serde(default)]
+        key1: String,
+        #[serde(default)]
+        key2: String,
+    }
 
-//     #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-//     struct MultiKeySettingsJson {
-//         key1: Option<String>,
-//         key2: Option<String>,
-//     }
+    #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+    struct MultiKeySettingsJson {
+        key1: Option<String>,
+        key2: Option<String>,
+    }
 
-//     impl Setting for MultiKeySettings {
-//         const KEY: Option<&'static str> = None;
+    impl Settings for MultiKeySettings {
+        const KEY: Option<&'static str> = None;
 
-//         type FileContent = MultiKeySettingsJson;
+        type FileContent = MultiKeySettingsJson;
 
-//         fn load(
-//             default_value: &MultiKeySettingsJson,
-//             user_values: &[&MultiKeySettingsJson],
-//             _: &AppContext,
-//         ) -> Result<Self> {
-//             Self::load_via_json_merge(default_value, user_values)
-//         }
-//     }
+        fn load(
+            default_value: &MultiKeySettingsJson,
+            user_values: &[&MultiKeySettingsJson],
+            _: &mut AppContext,
+        ) -> Result<Self> {
+            Self::load_via_json_merge(default_value, user_values)
+        }
+    }
 
-//     #[derive(Debug, Deserialize)]
-//     struct JournalSettings {
-//         pub path: String,
-//         pub hour_format: HourFormat,
-//     }
+    #[derive(Debug, Deserialize)]
+    struct JournalSettings {
+        pub path: String,
+        pub hour_format: HourFormat,
+    }
 
-//     #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-//     #[serde(rename_all = "snake_case")]
-//     enum HourFormat {
-//         Hour12,
-//         Hour24,
-//     }
+    #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+    #[serde(rename_all = "snake_case")]
+    enum HourFormat {
+        Hour12,
+        Hour24,
+    }
 
-//     #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
-//     struct JournalSettingsJson {
-//         pub path: Option<String>,
-//         pub hour_format: Option<HourFormat>,
-//     }
+    #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
+    struct JournalSettingsJson {
+        pub path: Option<String>,
+        pub hour_format: Option<HourFormat>,
+    }
 
-//     impl Setting for JournalSettings {
-//         const KEY: Option<&'static str> = Some("journal");
+    impl Settings for JournalSettings {
+        const KEY: Option<&'static str> = Some("journal");
 
-//         type FileContent = JournalSettingsJson;
+        type FileContent = JournalSettingsJson;
 
-//         fn load(
-//             default_value: &JournalSettingsJson,
-//             user_values: &[&JournalSettingsJson],
-//             _: &AppContext,
-//         ) -> Result<Self> {
-//             Self::load_via_json_merge(default_value, user_values)
-//         }
-//     }
+        fn load(
+            default_value: &JournalSettingsJson,
+            user_values: &[&JournalSettingsJson],
+            _: &mut AppContext,
+        ) -> Result<Self> {
+            Self::load_via_json_merge(default_value, user_values)
+        }
+    }
 
-//     #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-//     struct LanguageSettings {
-//         #[serde(default)]
-//         languages: HashMap<String, LanguageSettingEntry>,
-//     }
+    #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+    struct LanguageSettings {
+        #[serde(default)]
+        languages: HashMap<String, LanguageSettingEntry>,
+    }
 
-//     #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-//     struct LanguageSettingEntry {
-//         language_setting_1: Option<bool>,
-//         language_setting_2: Option<bool>,
-//     }
+    #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+    struct LanguageSettingEntry {
+        language_setting_1: Option<bool>,
+        language_setting_2: Option<bool>,
+    }
 
-//     impl Setting for LanguageSettings {
-//         const KEY: Option<&'static str> = None;
+    impl Settings for LanguageSettings {
+        const KEY: Option<&'static str> = None;
 
-//         type FileContent = Self;
+        type FileContent = Self;
 
-//         fn load(default_value: &Self, user_values: &[&Self], _: &AppContext) -> Result<Self> {
-//             Self::load_via_json_merge(default_value, user_values)
-//         }
-//     }
-// }
+        fn load(default_value: &Self, user_values: &[&Self], _: &mut AppContext) -> Result<Self> {
+            Self::load_via_json_merge(default_value, user_values)
+        }
+    }
+}
