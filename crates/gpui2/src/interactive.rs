@@ -19,7 +19,7 @@ use std::{
 
 const DRAG_THRESHOLD: f64 = 2.;
 
-pub trait StatelessInteractive<V>: Element<V> {
+pub trait StatelessInteractive<V: 'static>: Element<V> {
     fn stateless_interaction(&mut self) -> &mut StatelessInteraction<V>;
 
     fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
@@ -279,7 +279,7 @@ pub trait StatelessInteractive<V>: Element<V> {
     }
 }
 
-pub trait StatefulInteractive<V>: StatelessInteractive<V> {
+pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
     fn stateful_interaction(&mut self) -> &mut StatefulInteraction<V>;
 
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
@@ -870,6 +870,7 @@ pub struct ClickEvent {
 pub struct Drag<S, R, V, E>
 where
     R: Fn(&mut V, &mut ViewContext<V>) -> E,
+    V: 'static,
     E: Element<V>,
 {
     pub state: S,
@@ -880,6 +881,7 @@ where
 impl<S, R, V, E> Drag<S, R, V, E>
 where
     R: Fn(&mut V, &mut ViewContext<V>) -> E,
+    V: 'static,
     E: Element<V>,
 {
     pub fn new(state: S, render_drag_handle: R) -> Self {

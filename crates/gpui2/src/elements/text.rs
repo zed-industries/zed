@@ -53,8 +53,7 @@ impl<V: 'static> IntoAnyElement<V> for Text<V> {
     }
 }
 
-impl<V: 'static> Element for Text<V> {
-    type ViewState = V;
+impl<V: 'static> Element<V> for Text<V> {
     type ElementState = Arc<Mutex<Option<TextElementState>>>;
 
     fn id(&self) -> Option<crate::ElementId> {

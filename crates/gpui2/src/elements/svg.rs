@@ -135,7 +135,7 @@ where
     }
 }
 
-impl<V: 'static, I> Focusable for Svg<V, I, FocusEnabled<V>>
+impl<V: 'static, I> Focusable<V> for Svg<V, I, FocusEnabled<V>>
 where
     I: ElementInteraction<V>,
 {

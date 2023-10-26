@@ -41,7 +41,7 @@ pub trait Element<V: 'static>: IntoAnyElement<V> {
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
 
-pub trait ParentElement<V>: Element<V> {
+pub trait ParentElement<V: 'static>: Element<V> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]>;
 
     fn child(mut self, child: impl IntoAnyElement<V>) -> Self
@@ -68,7 +68,7 @@ trait ElementObject<V> {
     fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
 }
 
-struct RenderedElement<V, E: Element<V>> {
+struct RenderedElement<V: 'static, E: Element<V>> {
     element: E,
     phase: ElementRenderPhase<E::ElementState>,
 }
@@ -181,6 +181,7 @@ pub struct AnyElement<V>(Box<dyn ElementObject<V> + Send + Sync>);
 impl<V> AnyElement<V> {
     pub fn new<E>(element: E) -> Self
     where
+        V: 'static,
         E: 'static + Send + Sync,
         E: Element<V>,
         E::ElementState: Any + Send + Sync,

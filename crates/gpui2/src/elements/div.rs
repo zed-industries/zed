@@ -160,7 +160,7 @@ impl<V: 'static> Div<V, StatelessInteraction<V>, FocusDisabled> {
     }
 }
 
-impl<V, I> Focusable for Div<V, I, FocusEnabled<V>>
+impl<V, I> Focusable<V> for Div<V, I, FocusEnabled<V>>
 where
     V: 'static,
     I: ElementInteraction<V>,

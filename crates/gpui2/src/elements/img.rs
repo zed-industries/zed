@@ -161,7 +161,7 @@ where
     }
 }
 
-impl<V, I> Focusable for Img<V, I, FocusEnabled<V>>
+impl<V, I> Focusable<V> for Img<V, I, FocusEnabled<V>>
 where
     V: 'static,
     I: ElementInteraction<V>,

@@ -11,7 +11,7 @@ pub type FocusListeners<V> = SmallVec<[FocusListener<V>; 2]>;
 pub type FocusListener<V> =
     Arc<dyn Fn(&mut V, &FocusHandle, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
 
-pub trait Focusable<V>: Element<V> {
+pub trait Focusable<V: 'static>: Element<V> {
     fn focus_listeners(&mut self) -> &mut FocusListeners<V>;
     fn set_focus_style(&mut self, style: StyleRefinement);
     fn set_focus_in_style(&mut self, style: StyleRefinement);
@@ -43,10 +43,7 @@ pub trait Focusable<V>: Element<V> {
 
     fn on_focus(
         mut self,
-        listener: impl Fn(&mut Self::ViewState, &FocusEvent, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static,
     ) -> Self
     where
         Self: Sized,

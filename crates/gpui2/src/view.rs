@@ -194,8 +194,7 @@ impl<ParentV: 'static> IntoAnyElement<ParentV> for AnyView {
     }
 }
 
-impl Element for AnyView {
-    type ViewState = ();
+impl Element<()> for AnyView {
     type ElementState = AnyBox;
 
     fn id(&self) -> Option<crate::ElementId> {
@@ -204,18 +203,18 @@ impl Element for AnyView {
 
     fn initialize(
         &mut self,
-        _: &mut Self::ViewState,
+        _: &mut (),
         _: Option<Self::ElementState>,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<()>,
     ) -> Self::ElementState {
         self.view.lock().initialize(cx)
     }
 
     fn layout(
         &mut self,
-        _: &mut Self::ViewState,
+        _: &mut (),
         element: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<()>,
     ) -> LayoutId {
         self.view.lock().layout(element, cx)
     }
@@ -225,7 +224,7 @@ impl Element for AnyView {
         bounds: Bounds<Pixels>,
         _: &mut (),
         element: &mut AnyBox,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<()>,
     ) {
         self.view.lock().paint(bounds, element, cx)
     }
