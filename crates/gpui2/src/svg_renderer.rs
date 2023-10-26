@@ -1,4 +1,4 @@
-use crate::{DevicePixels, IsZero, Result, SharedString, Size, AssetSource};
+use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size};
 use anyhow::anyhow;
 use std::{hash::Hash, sync::Arc};
 

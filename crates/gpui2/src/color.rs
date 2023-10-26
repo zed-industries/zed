@@ -60,7 +60,6 @@ impl From<Rgba> for u32 {
     }
 }
 
-
 struct RgbaVisitor;
 
 impl<'de> Visitor<'de> for RgbaVisitor {
@@ -157,9 +156,7 @@ impl Hsla {
     }
 }
 
-
 impl Eq for Hsla {}
-
 
 pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
     Hsla {
