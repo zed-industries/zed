@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::prelude::*;
 use crate::{Icon, IconColor, IconElement, Label, LabelColor};
 
-#[derive(Element, Clone)]
+#[derive(IntoAnyElement, Clone)]
 pub struct Tab<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
     id: ElementId,
@@ -81,7 +81,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
         let has_fs_conflict = self.fs_status == FileSystemStatus::Conflict;
         let is_deleted = self.fs_status == FileSystemStatus::Deleted;
@@ -176,7 +176,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct TabStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -188,7 +188,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             let git_statuses = GitStatus::iter();
             let fs_statuses = FileSystemStatus::iter();
 

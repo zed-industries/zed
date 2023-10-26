@@ -7,7 +7,7 @@ use crate::story::Story;
 
 /// A reimplementation of the MDN `z-index` example, found here:
 /// [https://developer.mozilla.org/en-US/docs/Web/CSS/z-index](https://developer.mozilla.org/en-US/docs/Web/CSS/z-index).
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct ZIndexStory<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
 }
@@ -19,7 +19,7 @@ impl<S: 'static + Send + Sync> ZIndexStory<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         Story::container(cx)
             .child(Story::title(cx, "z-index"))
             .child(
@@ -88,7 +88,7 @@ trait Styles: Styled + Sized {
 
 impl<V: 'static + Send + Sync> Styles for Div<V> {}
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 struct ZIndexExample<V: 'static + Send + Sync> {
     view_type: PhantomData<V>,
     z_index: u32,
@@ -102,7 +102,7 @@ impl<V: 'static + Send + Sync> ZIndexExample<V> {
         }
     }
 
-    fn render(&mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl IntoAnyElement<V> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl IntoAnyElement<V> {
         div()
             .relative()
             .size_full()

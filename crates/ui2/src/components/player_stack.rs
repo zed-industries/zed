@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::prelude::*;
 use crate::{Avatar, Facepile, PlayerWithCallStatus};
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct PlayerStack<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     player_with_call_status: PlayerWithCallStatus,
@@ -17,7 +17,7 @@ impl<S: 'static + Send + Sync> PlayerStack<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
         let player = self.player_with_call_status.get_player();
         self.player_with_call_status.get_call_status();

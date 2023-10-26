@@ -4,7 +4,7 @@ use gpui2::rems;
 
 use crate::{h_stack, prelude::*, Icon};
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct NotificationToast<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
     label: SharedString,
@@ -28,7 +28,7 @@ impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         h_stack()

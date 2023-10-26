@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::prelude::*;
 use crate::{OrderMethod, Palette, PaletteItem};
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct LanguageSelector<S: 'static + Send + Sync + Clone> {
     id: ElementId,
     state_type: PhantomData<S>,
@@ -17,7 +17,7 @@ impl<S: 'static + Send + Sync + Clone> LanguageSelector<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(vec![
@@ -48,7 +48,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct LanguageSelectorStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -60,7 +60,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, LanguageSelector<S>>(cx))
                 .child(Story::label(cx, "Default"))

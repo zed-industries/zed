@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::{prelude::*, Button, Label, LabelColor, Modal};
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct CopilotModal<S: 'static + Send + Sync + Clone> {
     id: ElementId,
     state_type: PhantomData<S>,
@@ -16,7 +16,7 @@ impl<S: 'static + Send + Sync + Clone> CopilotModal<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         div().id(self.id.clone()).child(
             Modal::new("some-id")
                 .title("Connect Copilot to Zed")
@@ -35,7 +35,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct CopilotModalStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -47,7 +47,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, CopilotModal<S>>(cx))
                 .child(Story::label(cx, "Default"))

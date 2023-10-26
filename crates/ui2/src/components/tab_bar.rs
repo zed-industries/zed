@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::prelude::*;
 use crate::{Icon, IconButton, Tab};
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct TabBar<S: 'static + Send + Sync + Clone> {
     id: ElementId,
     state_type: PhantomData<S>,
@@ -27,7 +27,7 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         let (can_navigate_back, can_navigate_forward) = self.can_navigate;
@@ -100,7 +100,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct TabBarStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -112,7 +112,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, TabBar<S>>(cx))
                 .child(Story::label(cx, "Default"))

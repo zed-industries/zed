@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::prelude::*;
 use crate::{v_stack, Buffer, Icon, IconButton, Label};
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct MultiBuffer<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
     buffers: Vec<Buffer<S>>,
@@ -17,7 +17,7 @@ impl<S: 'static + Send + Sync + Clone> MultiBuffer<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -50,7 +50,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct MultiBufferStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -62,7 +62,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             let theme = theme(cx);
 
             Story::container(cx)

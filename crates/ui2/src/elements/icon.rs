@@ -148,7 +148,7 @@ impl Icon {
     }
 }
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct IconElement<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     icon: Icon,
@@ -176,7 +176,7 @@ impl<S: 'static + Send + Sync> IconElement<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let fill = self.color.color(cx);
         let svg_size = match self.size {
             IconSize::Small => ui_size(cx, 12. / 14.),
@@ -202,7 +202,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element, Default)]
+    #[derive(IntoAnyElement)]
     pub struct IconStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
@@ -214,7 +214,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             let icons = Icon::iter();
 
             Story::container(cx)

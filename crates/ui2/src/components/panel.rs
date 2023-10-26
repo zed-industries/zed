@@ -40,7 +40,7 @@ pub enum PanelSide {
 
 use std::collections::HashSet;
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct Panel<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
@@ -96,7 +96,7 @@ impl<S: 'static + Send + Sync> Panel<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         let current_size = self.width.unwrap_or(self.initial_width);
@@ -136,7 +136,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct PanelStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -148,7 +148,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Panel<S>>(cx))
                 .child(Story::label(cx, "Default"))

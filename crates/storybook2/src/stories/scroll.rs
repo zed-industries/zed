@@ -3,7 +3,6 @@ use gpui2::{
     div, px, view, Context, IntoAnyElement, ParentElement, SharedString, Styled, View,
     WindowContext,
 };
-use ui::ElementExt;
 
 pub struct ScrollStory {
     text: View<()>,

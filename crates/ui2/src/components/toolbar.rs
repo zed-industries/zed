@@ -6,7 +6,7 @@ use crate::prelude::*;
 #[derive(Clone)]
 pub struct ToolbarItem {}
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct Toolbar<S: 'static + Send + Sync> {
     left_items: SmallVec<[AnyElement<S>; 2]>,
     right_items: SmallVec<[AnyElement<S>; 2]>,
@@ -54,7 +54,7 @@ impl<S: 'static + Send + Sync> Toolbar<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         div()
@@ -80,7 +80,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct ToolbarStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -92,7 +92,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             let theme = theme(cx);
 
             Story::container(cx)

@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::prelude::*;
 use crate::{h_stack, v_stack, Keybinding, Label, LabelColor};
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct Palette<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
@@ -46,7 +46,7 @@ impl<S: 'static + Send + Sync> Palette<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -101,7 +101,7 @@ impl<S: 'static + Send + Sync> Palette<S> {
     }
 }
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct PaletteItem<S: 'static + Send + Sync> {
     pub label: SharedString,
     pub sublabel: Option<SharedString>,
@@ -135,7 +135,7 @@ impl<S: 'static + Send + Sync> PaletteItem<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         div()
             .flex()
             .flex_row()
@@ -160,7 +160,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct PaletteStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -172,7 +172,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Palette<S>>(cx))
                 .child(Story::label(cx, "Default"))

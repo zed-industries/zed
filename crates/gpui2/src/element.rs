@@ -209,6 +209,16 @@ impl<V> AnyElement<V> {
 
 pub trait IntoAnyElement<V> {
     fn into_any(self) -> AnyElement<V>;
+
+    fn when(mut self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        if condition {
+            self = then(self);
+        }
+        self
+    }
 }
 
 impl<V> IntoAnyElement<V> for AnyElement<V> {

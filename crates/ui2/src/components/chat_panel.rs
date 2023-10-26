@@ -5,7 +5,7 @@ use chrono::NaiveDateTime;
 use crate::prelude::*;
 use crate::{Icon, IconButton, Input, Label, LabelColor};
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct ChatPanel<S: 'static + Send + Sync> {
     element_id: ElementId,
     messages: Vec<ChatMessage<S>>,
@@ -24,7 +24,7 @@ impl<S: 'static + Send + Sync> ChatPanel<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         div()
             .id(self.element_id.clone())
             .flex()
@@ -70,7 +70,7 @@ impl<S: 'static + Send + Sync> ChatPanel<S> {
     }
 }
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct ChatMessage<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     author: String,
@@ -88,7 +88,7 @@ impl<S: 'static + Send + Sync> ChatMessage<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         div()
             .flex()
             .flex_col()
@@ -117,7 +117,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct ChatPanelStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
@@ -129,7 +129,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, ChatPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))

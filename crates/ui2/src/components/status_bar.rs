@@ -36,15 +36,6 @@ pub struct StatusBar {
     bottom_tools: Option<ToolGroup>,
 }
 
-// impl IntoAnyElement<Workspace> for StatusBar {
-//     fn into_any(self) -> gpui2::AnyElement<Workspace> {
-//         (move |workspace: &mut Workspace, cx: &mut ViewContext<'_, '_, Workspace>| {
-//             self.render(workspace, cx)
-//         })
-//         .into_any()
-//     }
-// }
-
 impl StatusBar {
     pub fn new() -> Self {
         Self {

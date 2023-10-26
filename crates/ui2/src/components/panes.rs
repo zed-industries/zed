@@ -75,7 +75,7 @@ impl<V: 'static> ParentElement<V> for Pane<V> {
     }
 }
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct PaneGroup<V: 'static + Send + Sync> {
     state_type: PhantomData<V>,
     groups: Vec<PaneGroup<V>>,
@@ -102,7 +102,7 @@ impl<V: 'static + Send + Sync> PaneGroup<V> {
         }
     }
 
-    fn render(&mut self, view: &mut V, cx: &mut ViewContext<V>) -> impl IntoAnyElement<V> {
+    fn render(mut self, view: &mut V, cx: &mut ViewContext<V>) -> impl IntoAnyElement<V> {
         let theme = theme(cx);
 
         if !self.panes.is_empty() {
@@ -129,7 +129,7 @@ impl<V: 'static + Send + Sync> PaneGroup<V> {
                 .w_full()
                 .h_full()
                 .bg(theme.editor)
-                .children(self.groups.iter_mut().map(|group| group.render(view, cx)));
+                .children(self.groups.drain(..).map(|group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
                 return el;

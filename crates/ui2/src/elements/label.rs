@@ -48,7 +48,7 @@ pub enum LineHeightStyle {
     UILabel,
 }
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct Label<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     label: SharedString,
@@ -83,7 +83,7 @@ impl<S: 'static + Send + Sync> Label<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         div()
             .when(self.strikethrough, |this| {
                 this.relative().child(
@@ -105,7 +105,7 @@ impl<S: 'static + Send + Sync> Label<S> {
     }
 }
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct HighlightedLabel<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     label: SharedString,
@@ -135,7 +135,7 @@ impl<S: 'static + Send + Sync> HighlightedLabel<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         let highlight_color = theme.text_accent;
@@ -211,7 +211,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct LabelStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
@@ -223,7 +223,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Label<S>>(cx))
                 .child(Story::label(cx, "Default"))

@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::prelude::*;
 use crate::{example_editor_actions, OrderMethod, Palette};
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct CommandPalette<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
@@ -17,7 +17,7 @@ impl<S: 'static + Send + Sync> CommandPalette<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(example_editor_actions())
@@ -37,7 +37,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct CommandPaletteStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
@@ -49,7 +49,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, CommandPalette<S>>(cx))
                 .child(Story::label(cx, "Default"))

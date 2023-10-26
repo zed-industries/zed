@@ -109,7 +109,7 @@ impl BufferRow {
     }
 }
 
-#[derive(Element, Clone)]
+#[derive(IntoAnyElement, Clone)]
 pub struct Buffer<S: 'static + Send + Sync + Clone> {
     id: ElementId,
     state_type: PhantomData<S>,
@@ -219,7 +219,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
         let rows = self.render_rows(cx);
 
@@ -246,7 +246,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct BufferStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -258,7 +258,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             let theme = theme(cx);
 
             Story::container(cx)

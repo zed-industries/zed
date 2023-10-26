@@ -4,7 +4,7 @@ use gpui2::img;
 
 use crate::prelude::*;
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct Avatar<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     src: SharedString,
@@ -25,7 +25,7 @@ impl<S: 'static + Send + Sync> Avatar<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         let mut img = img();
@@ -51,7 +51,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct AvatarStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
@@ -63,7 +63,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Avatar<S>>(cx))
                 .child(Story::label(cx, "Default"))

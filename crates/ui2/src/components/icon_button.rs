@@ -16,7 +16,7 @@ impl<S: 'static + Send + Sync> Default for IconButtonHandlers<S> {
     }
 }
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct IconButton<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     id: ElementId,
@@ -68,7 +68,7 @@ impl<S: 'static + Send + Sync> IconButton<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         let icon_color = match (self.state, self.color) {

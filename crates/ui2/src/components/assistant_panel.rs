@@ -5,7 +5,7 @@ use gpui2::{rems, AbsoluteLength};
 use crate::prelude::*;
 use crate::{Icon, IconButton, Label, Panel, PanelSide};
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct AssistantPanel<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
@@ -26,7 +26,7 @@ impl<S: 'static + Send + Sync> AssistantPanel<S> {
         self
     }
 
-    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         Panel::new(self.id.clone(), cx)
             .children(vec![div()
                 .flex()
@@ -84,7 +84,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
+    #[derive(IntoAnyElement)]
     pub struct AssistantPanelStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
@@ -96,7 +96,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, AssistantPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))

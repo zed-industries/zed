@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::prelude::*;
 
-#[derive(Element)]
+#[derive(IntoAnyElement)]
 pub struct ToolDivider<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
 }
@@ -14,7 +14,7 @@ impl<S: 'static + Send + Sync> ToolDivider<S> {
         }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
         let theme = theme(cx);
 
         div().w_px().h_3().bg(theme.border)
