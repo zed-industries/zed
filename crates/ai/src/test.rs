@@ -29,6 +29,10 @@ impl LanguageModel for FakeLanguageModel {
         length: usize,
         direction: TruncationDirection,
     ) -> anyhow::Result<String> {
+        if length > self.count_tokens(content)? {
+            return anyhow::Ok(content.to_string());
+        }
+
         anyhow::Ok(match direction {
             TruncationDirection::End => content.chars().collect::<Vec<char>>()[..length]
                 .into_iter()

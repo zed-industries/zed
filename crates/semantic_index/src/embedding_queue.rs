@@ -69,7 +69,7 @@ impl EmbeddingQueue {
     }
 
     pub fn set_credential(&mut self, credential: ProviderCredential) {
-        self.provider_credential = credential
+        self.provider_credential = credential;
     }
 
     pub fn push(&mut self, file: FileToEmbed) {

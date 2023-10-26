@@ -291,7 +291,6 @@ impl SemanticIndex {
         }
 
         self.embedding_queue.lock().set_credential(credential);
-
         self.is_authenticated()
     }
 
@@ -299,6 +298,7 @@ impl SemanticIndex {
         let credential = &self.provider_credential;
         match credential {
             &ProviderCredential::Credentials { .. } => true,
+            &ProviderCredential::NotNeeded => true,
             _ => false,
         }
     }
@@ -1020,10 +1020,13 @@ impl SemanticIndex {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         if !self.is_authenticated() {
+            println!("Authenticating");
             if !self.authenticate(cx) {
                 return Task::ready(Err(anyhow!("user is not authenticated")));
             }
         }
+
+        println!("SHOULD NOW BE AUTHENTICATED");
 
         if !self.projects.contains_key(&project.downgrade()) {
             let subscription = cx.subscribe(&project, |this, project, event, cx| match event {

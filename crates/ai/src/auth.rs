@@ -1,6 +1,6 @@
 use gpui::AppContext;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ProviderCredential {
     Credentials { api_key: String },
     NoCredentials,
