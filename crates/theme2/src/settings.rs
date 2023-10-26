@@ -8,7 +8,7 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings2::{Settings, SettingsJsonSchemaParams};
+use settings2::SettingsJsonSchemaParams;
 use std::sync::Arc;
 use util::ResultExt as _;
 

@@ -6,7 +6,6 @@ pub use registry::*;
 pub use settings::*;
 
 use gpui2::{AppContext, HighlightStyle, Hsla, SharedString};
-use settings2::Settings;
 use std::sync::Arc;
 
 pub fn init(cx: &mut AppContext) {
