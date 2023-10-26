@@ -166,7 +166,7 @@ impl Buffer {
         let line_number_color = if row.current {
             theme.text
         } else {
-            theme.syntax.comment
+            theme.syntax.get("comment").color.unwrap_or_default()
         };
 
         h_stack()

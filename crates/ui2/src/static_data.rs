@@ -652,11 +652,11 @@ pub fn hello_world_rust_editor_example(cx: &mut WindowContext) -> EditorPane {
         vec![Symbol(vec![
             HighlightedText {
                 text: "fn ".to_string(),
-                color: theme.syntax.keyword,
+                color: theme.syntax.color("keyword"),
             },
             HighlightedText {
                 text: "main".to_string(),
-                color: theme.syntax.function,
+                color: theme.syntax.color("function"),
             },
         ])],
         hello_world_rust_buffer_example(&theme),
@@ -686,11 +686,11 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "fn ".to_string(),
-                        color: theme.syntax.keyword,
+                        color: theme.syntax.color("keyword"),
                     },
                     HighlightedText {
                         text: "main".to_string(),
-                        color: theme.syntax.function,
+                        color: theme.syntax.color("function"),
                     },
                     HighlightedText {
                         text: "() {".to_string(),
@@ -710,7 +710,7 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Statements here are executed when the compiled binary is called."
                         .to_string(),
-                    color: theme.syntax.comment,
+                    color: theme.syntax.color("comment"),
                 }],
             }),
             cursors: None,
@@ -733,7 +733,7 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Print text to the console.".to_string(),
-                    color: theme.syntax.comment,
+                    color: theme.syntax.color("comment"),
                 }],
             }),
             cursors: None,
@@ -752,7 +752,7 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
                     },
                     HighlightedText {
                         text: "\"Hello, world!\"".to_string(),
-                        color: theme.syntax.string,
+                        color: theme.syntax.color("string"),
                     },
                     HighlightedText {
                         text: ");".to_string(),
@@ -791,11 +791,11 @@ pub fn hello_world_rust_editor_with_status_example(cx: &mut WindowContext) -> Ed
         vec![Symbol(vec![
             HighlightedText {
                 text: "fn ".to_string(),
-                color: theme.syntax.keyword,
+                color: theme.syntax.color("keyword"),
             },
             HighlightedText {
                 text: "main".to_string(),
-                color: theme.syntax.function,
+                color: theme.syntax.color("function"),
             },
         ])],
         hello_world_rust_buffer_with_status_example(&theme),
@@ -825,11 +825,11 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "fn ".to_string(),
-                        color: theme.syntax.keyword,
+                        color: theme.syntax.color("keyword"),
                     },
                     HighlightedText {
                         text: "main".to_string(),
-                        color: theme.syntax.function,
+                        color: theme.syntax.color("function"),
                     },
                     HighlightedText {
                         text: "() {".to_string(),
@@ -849,7 +849,7 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
                 highlighted_texts: vec![HighlightedText {
                     text: "// Statements here are executed when the compiled binary is called."
                         .to_string(),
-                    color: theme.syntax.comment,
+                    color: theme.syntax.color("comment"),
                 }],
             }),
             cursors: None,
@@ -872,7 +872,7 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Print text to the console.".to_string(),
-                    color: theme.syntax.comment,
+                    color: theme.syntax.color("comment"),
                 }],
             }),
             cursors: None,
@@ -891,7 +891,7 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
                     },
                     HighlightedText {
                         text: "\"Hello, world!\"".to_string(),
-                        color: theme.syntax.string,
+                        color: theme.syntax.color("string"),
                     },
                     HighlightedText {
                         text: ");".to_string(),
@@ -938,7 +938,7 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "// Marshall and Nate were here".to_string(),
-                    color: theme.syntax.comment,
+                    color: theme.syntax.color("comment"),
                 }],
             }),
             cursors: None,
@@ -969,7 +969,7 @@ pub fn terminal_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "maxdeviant ".to_string(),
-                        color: theme.syntax.keyword,
+                        color: theme.syntax.color("keyword"),
                     },
                     HighlightedText {
                         text: "in ".to_string(),
@@ -977,7 +977,7 @@ pub fn terminal_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
                     },
                     HighlightedText {
                         text: "profaned-capital ".to_string(),
-                        color: theme.syntax.function,
+                        color: theme.syntax.color("function"),
                     },
                     HighlightedText {
                         text: "in ".to_string(),
@@ -985,7 +985,7 @@ pub fn terminal_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
                     },
                     HighlightedText {
                         text: "~/p/zed ".to_string(),
-                        color: theme.syntax.function,
+                        color: theme.syntax.color("function"),
                     },
                     HighlightedText {
                         text: "on ".to_string(),
@@ -993,7 +993,7 @@ pub fn terminal_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
                     },
                     HighlightedText {
                         text: " gpui2-ui ".to_string(),
-                        color: theme.syntax.keyword,
+                        color: theme.syntax.color("keyword"),
                     },
                 ],
             }),
@@ -1008,7 +1008,7 @@ pub fn terminal_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "λ ".to_string(),
-                    color: theme.syntax.string,
+                    color: theme.syntax.color("string"),
                 }],
             }),
             cursors: None,

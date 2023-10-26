@@ -90,11 +90,20 @@ pub struct Theme {
 
 #[derive(Clone)]
 pub struct SyntaxTheme {
-    pub comment: Hsla,
-    pub string: Hsla,
-    pub function: Hsla,
-    pub keyword: Hsla,
     pub highlights: Vec<(String, HighlightStyle)>,
+}
+
+impl SyntaxTheme {
+    pub fn get(&self, name: &str) -> HighlightStyle {
+        self.highlights
+            .iter()
+            .find_map(|entry| if entry.0 == name { Some(entry.1) } else { None })
+            .unwrap_or_default()
+    }
+
+    pub fn color(&self, name: &str) -> Hsla {
+        self.get(name).color.unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Copy)]

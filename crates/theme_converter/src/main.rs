@@ -89,64 +89,6 @@ impl From<PlayerThemeColors> for PlayerTheme {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct SyntaxColor {
-    pub comment: Hsla,
-    pub string: Hsla,
-    pub function: Hsla,
-    pub keyword: Hsla,
-}
-
-impl Debug for SyntaxColor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SyntaxColor")
-            .field("comment", &HslaPrinter(self.comment))
-            .field("string", &HslaPrinter(self.string))
-            .field("function", &HslaPrinter(self.function))
-            .field("keyword", &HslaPrinter(self.keyword))
-            .finish()
-    }
-}
-
-impl SyntaxColor {
-    pub fn new(theme: &LegacyTheme) -> Self {
-        Self {
-            comment: theme
-                .syntax
-                .get("comment")
-                .cloned()
-                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
-            string: theme
-                .syntax
-                .get("string")
-                .cloned()
-                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
-            function: theme
-                .syntax
-                .get("function")
-                .cloned()
-                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
-            keyword: theme
-                .syntax
-                .get("keyword")
-                .cloned()
-                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
-        }
-    }
-}
-
-impl From<SyntaxColor> for SyntaxTheme {
-    fn from(value: SyntaxColor) -> Self {
-        Self {
-            comment: value.comment,
-            string: value.string,
-            keyword: value.keyword,
-            function: value.function,
-            highlights: Vec::new(),
-        }
-    }
-}
-
 fn convert_theme(theme: LegacyTheme) -> Result<theme2::Theme> {
     let transparent = hsla(0.0, 0.0, 0.0, 0.0);
 
@@ -194,8 +136,13 @@ fn convert_theme(theme: LegacyTheme) -> Result<theme2::Theme> {
         text_disabled: theme.lowest.base.disabled.foreground,
         text_accent: theme.lowest.accent.default.foreground,
         icon_muted: theme.lowest.variant.default.foreground,
-        syntax: SyntaxColor::new(&theme).into(),
-
+        syntax: SyntaxTheme {
+            highlights: theme
+                .syntax
+                .iter()
+                .map(|(token, color)| (token.clone(), color.clone().into()))
+                .collect(),
+        },
         status_bar: theme.lowest.base.default.background,
         title_bar: theme.lowest.base.default.background,
         toolbar: theme.highest.base.default.background,
@@ -491,11 +438,19 @@ pub struct SyntaxThemePrinter(SyntaxTheme);
 impl Debug for SyntaxThemePrinter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SyntaxTheme")
-            .field("comment", &HslaPrinter(self.0.comment))
-            .field("string", &HslaPrinter(self.0.string))
-            .field("function", &HslaPrinter(self.0.function))
-            .field("keyword", &HslaPrinter(self.0.keyword))
-            .field("highlights", &VecPrinter(&self.0.highlights))
+            .field(
+                "highlights",
+                &VecPrinter(
+                    &self
+                        .0
+                        .highlights
+                        .iter()
+                        .map(|(token, highlight)| {
+                            (IntoPrinter(token), HslaPrinter(highlight.color.unwrap()))
+                        })
+                        .collect(),
+                ),
+            )
             .finish()
     }
 }

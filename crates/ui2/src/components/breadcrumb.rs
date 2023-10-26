@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use gpui2::Div;
 use crate::prelude::*;
 use crate::{h_stack, HighlightedText};
+use gpui2::Div;
 
 #[derive(Clone)]
 pub struct Symbol(pub Vec<HighlightedText>);
@@ -15,10 +15,7 @@ pub struct Breadcrumb {
 
 impl Breadcrumb {
     pub fn new(path: PathBuf, symbols: Vec<Symbol>) -> Self {
-        Self {
-            path,
-            symbols,
-        }
+        Self { path, symbols }
     }
 
     fn render_separator<V: 'static>(&self, cx: &WindowContext) -> Div<V> {
@@ -90,7 +87,11 @@ mod stories {
             Self
         }
 
-        fn render<V: 'static>(self, view_state: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        fn render<V: 'static>(
+            self,
+            view_state: &mut V,
+            cx: &mut ViewContext<V>,
+        ) -> impl Component<V> {
             let theme = theme(cx);
 
             Story::container(cx)
@@ -102,21 +103,21 @@ mod stories {
                         Symbol(vec![
                             HighlightedText {
                                 text: "impl ".to_string(),
-                                color: theme.syntax.keyword,
+                                color: theme.syntax.color("keyword"),
                             },
                             HighlightedText {
                                 text: "BreadcrumbStory".to_string(),
-                                color: theme.syntax.function,
+                                color: theme.syntax.color("function"),
                             },
                         ]),
                         Symbol(vec![
                             HighlightedText {
                                 text: "fn ".to_string(),
-                                color: theme.syntax.keyword,
+                                color: theme.syntax.color("keyword"),
                             },
                             HighlightedText {
                                 text: "render".to_string(),
-                                color: theme.syntax.function,
+                                color: theme.syntax.color("function"),
                             },
                         ]),
                     ],
