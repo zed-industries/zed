@@ -1,14 +1,14 @@
 use crate::{
-    px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
-    Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect,
-    Element, EntityId, EventEmitter, ExternalPaths, FileDropEvent, FocusEvent, FontId,
-    GlobalElementId, GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch,
-    KeyMatcher, Keystroke, LayoutId, MainThread, MainThreadOnly, Modifiers, MonochromeSprite,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle, WindowOptions,
-    SUBPIXEL_VARIANTS,
+    px, size, Action, AnyBox, AnyDrag, AnyHandle, AnyView, AppContext, AsyncWindowContext,
+    AvailableSpace, Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId,
+    Edges, Effect, Element, EntityId, EventEmitter, ExternalPaths, FileDropEvent, FocusEvent,
+    FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener,
+    KeyMatch, KeyMatcher, Keystroke, LayoutId, MainThread, MainThreadOnly, Modifiers,
+    MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
+    Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -145,7 +145,7 @@ impl Drop for FocusHandle {
 }
 
 pub struct Window {
-    handle: AnyWindowHandle,
+    pub(crate) handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -305,6 +305,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.handle
     }
 
+    pub fn root_view(&self) -> Option<AnyHandle> {
+        Some(self.window.root_view.as_ref()?.entity_handle())
+    }
+
     pub fn notify(&mut self) {
         self.window.dirty = true;
     }
@@ -324,10 +328,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             self.window.last_blur = Some(self.window.focus);
         }
 
-        let window_id = self.window.handle.id;
         self.window.focus = Some(handle.id);
         self.app.push_effect(Effect::FocusChanged {
-            window_id,
+            window_handle: self.window.handle,
             focused: Some(handle.id),
         });
         self.notify();
@@ -338,10 +341,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             self.window.last_blur = Some(self.window.focus);
         }
 
-        let window_id = self.window.handle.id;
         self.window.focus = None;
         self.app.push_effect(Effect::FocusChanged {
-            window_id,
+            window_handle: self.window.handle,
             focused: None,
         });
         self.notify();
@@ -359,8 +361,8 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 mem::transmute::<&mut Self, &mut MainThread<Self>>(self)
             })))
         } else {
-            let id = self.window.handle.id;
-            self.app.run_on_main(move |cx| cx.update_window(id, f))
+            let handle = self.window.handle;
+            self.app.run_on_main(move |cx| cx.update_window(handle, f))
         }
     }
 
@@ -1076,10 +1078,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         &mut self,
         f: impl Fn(&mut WindowContext<'_, '_>) + Send + Sync + 'static,
     ) -> Subscription {
-        let window_id = self.window.handle.id;
+        let window_handle = self.window.handle;
         self.global_observers.insert(
             TypeId::of::<G>(),
-            Box::new(move |cx| cx.update_window(window_id, |cx| f(cx)).is_ok()),
+            Box::new(move |cx| cx.update_window(window_handle, |cx| f(cx)).is_ok()),
         )
     }
 
@@ -1159,6 +1161,16 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     .insert(action_type, global_listeners);
             }
         }
+    }
+}
+
+impl<'a, 'w> MainThread<WindowContext<'a, 'w>> {
+    fn platform_window(&self) -> &dyn PlatformWindow {
+        self.window.platform_window.borrow_on_main_thread().as_ref()
+    }
+
+    pub fn activate_window(&self) {
+        self.platform_window().activate();
     }
 }
 
@@ -1457,7 +1469,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         self.app.observers.insert(
             handle.entity_id,
             Box::new(move |cx| {
-                cx.update_window(window_handle.id, |cx| {
+                cx.update_window(window_handle, |cx| {
                     if let Some(handle) = handle.upgrade() {
                         this.update(cx, |this, cx| on_notify(this, handle, cx))
                             .is_ok()
@@ -1484,7 +1496,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         self.app.event_listeners.insert(
             handle.entity_id,
             Box::new(move |event, cx| {
-                cx.update_window(window_handle.id, |cx| {
+                cx.update_window(window_handle, |cx| {
                     if let Some(handle) = handle.upgrade() {
                         let event = event.downcast_ref().expect("invalid event type");
                         this.update(cx, |this, cx| on_event(this, handle, event, cx))
@@ -1508,7 +1520,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
                 // todo!("are we okay with silently swallowing the error?")
-                let _ = cx.update_window(window_handle.id, |cx| on_release(this, cx));
+                let _ = cx.update_window(window_handle, |cx| on_release(this, cx));
             }),
         )
     }
@@ -1521,7 +1533,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         let this = self.handle();
         let window_handle = self.window.handle;
         self.app.observe_release(handle, move |entity, cx| {
-            let _ = cx.update_window(window_handle.id, |cx| {
+            let _ = cx.update_window(window_handle, |cx| {
                 this.update(cx, |this, cx| on_release(this, entity, cx))
             });
         })
@@ -1678,12 +1690,12 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         &mut self,
         f: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
     ) -> Subscription {
-        let window_id = self.window.handle.id;
+        let window_handle = self.window.handle;
         let handle = self.handle();
         self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| {
-                cx.update_window(window_id, |cx| {
+                cx.update_window(window_handle, |cx| {
                     handle.update(cx, |view, cx| f(view, cx)).is_ok()
                 })
                 .unwrap_or(false)

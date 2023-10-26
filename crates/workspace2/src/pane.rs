@@ -120,8 +120,6 @@ impl_actions!(pane, [ActivateItem, CloseActiveItem, CloseAllItems]);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
-pub type BackgroundActions = fn() -> &'static [(&'static str, &'static dyn Action)];
-
 pub fn init(cx: &mut AppContext) {
     cx.add_action(Pane::toggle_zoom);
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
@@ -172,7 +170,6 @@ pub struct Pane {
     toolbar: ViewHandle<Toolbar>,
     tab_bar_context_menu: TabBarContextMenu,
     tab_context_menu: ViewHandle<ContextMenu>,
-    _background_actions: BackgroundActions,
     workspace: WeakViewHandle<Workspace>,
     project: ModelHandle<Project>,
     has_focus: bool,
@@ -306,7 +303,6 @@ impl Pane {
     pub fn new(
         workspace: WeakViewHandle<Workspace>,
         project: ModelHandle<Project>,
-        background_actions: BackgroundActions,
         next_timestamp: Arc<AtomicUsize>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -339,7 +335,6 @@ impl Pane {
                 handle: context_menu,
             },
             tab_context_menu: cx.add_view(|cx| ContextMenu::new(pane_view_id, cx)),
-            _background_actions: background_actions,
             workspace,
             project,
             has_focus: false,

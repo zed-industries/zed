@@ -13,11 +13,12 @@ use smallvec::SmallVec;
 pub use test_context::*;
 
 use crate::{
-    current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AppMetadata, AssetSource,
-    ClipboardItem, Context, DispatchPhase, DisplayId, Executor, FocusEvent, FocusHandle, FocusId,
-    KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly, Pixels, Platform, Point,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
-    TextSystem, View, Window, WindowContext, WindowHandle, WindowId,
+    current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AnyWindowHandle,
+    AppMetadata, AssetSource, ClipboardItem, Context, DispatchPhase, DisplayId, Executor,
+    FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly,
+    Pixels, Platform, Point, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextStyle, TextStyleRefinement, TextSystem, View, Window, WindowContext, WindowHandle,
+    WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -249,14 +250,21 @@ impl AppContext {
         result
     }
 
+    pub fn windows(&self) -> Vec<AnyWindowHandle> {
+        self.windows
+            .values()
+            .filter_map(|window| Some(window.as_ref()?.handle.clone()))
+            .collect()
+    }
+
     pub(crate) fn read_window<R>(
         &mut self,
-        id: WindowId,
+        handle: AnyWindowHandle,
         read: impl FnOnce(&WindowContext) -> R,
     ) -> Result<R> {
         let window = self
             .windows
-            .get(id)
+            .get(handle.id)
             .ok_or_else(|| anyhow!("window not found"))?
             .as_ref()
             .unwrap();
@@ -265,13 +273,13 @@ impl AppContext {
 
     pub(crate) fn update_window<R>(
         &mut self,
-        id: WindowId,
+        handle: AnyWindowHandle,
         update: impl FnOnce(&mut WindowContext) -> R,
     ) -> Result<R> {
         self.update(|cx| {
             let mut window = cx
                 .windows
-                .get_mut(id)
+                .get_mut(handle.id)
                 .ok_or_else(|| anyhow!("window not found"))?
                 .take()
                 .unwrap();
@@ -279,7 +287,7 @@ impl AppContext {
             let result = update(&mut WindowContext::mutable(cx, &mut window));
 
             cx.windows
-                .get_mut(id)
+                .get_mut(handle.id)
                 .ok_or_else(|| anyhow!("window not found"))?
                 .replace(window);
 
@@ -315,8 +323,11 @@ impl AppContext {
                         self.apply_notify_effect(emitter);
                     }
                     Effect::Emit { emitter, event } => self.apply_emit_effect(emitter, event),
-                    Effect::FocusChanged { window_id, focused } => {
-                        self.apply_focus_changed_effect(window_id, focused);
+                    Effect::FocusChanged {
+                        window_handle,
+                        focused,
+                    } => {
+                        self.apply_focus_changed_effect(window_handle, focused);
                     }
                     Effect::Refresh => {
                         self.apply_refresh_effect();
@@ -336,18 +347,19 @@ impl AppContext {
         let dirty_window_ids = self
             .windows
             .iter()
-            .filter_map(|(window_id, window)| {
+            .filter_map(|(_, window)| {
                 let window = window.as_ref().unwrap();
                 if window.dirty {
-                    Some(window_id)
+                    Some(window.handle.clone())
                 } else {
                     None
                 }
             })
             .collect::<SmallVec<[_; 8]>>();
 
-        for dirty_window_id in dirty_window_ids {
-            self.update_window(dirty_window_id, |cx| cx.draw()).unwrap();
+        for dirty_window_handle in dirty_window_ids {
+            self.update_window(dirty_window_handle, |cx| cx.draw())
+                .unwrap();
         }
     }
 
@@ -369,9 +381,8 @@ impl AppContext {
     }
 
     fn release_dropped_focus_handles(&mut self) {
-        let window_ids = self.windows.keys().collect::<SmallVec<[_; 8]>>();
-        for window_id in window_ids {
-            self.update_window(window_id, |cx| {
+        for window_handle in self.windows() {
+            self.update_window(window_handle, |cx| {
                 let mut blur_window = false;
                 let focus = cx.window.focus;
                 cx.window.focus_handles.write().retain(|handle_id, count| {
@@ -406,8 +417,12 @@ impl AppContext {
             .retain(&emitter, |handler| handler(&event, self));
     }
 
-    fn apply_focus_changed_effect(&mut self, window_id: WindowId, focused: Option<FocusId>) {
-        self.update_window(window_id, |cx| {
+    fn apply_focus_changed_effect(
+        &mut self,
+        window_handle: AnyWindowHandle,
+        focused: Option<FocusId>,
+    ) {
+        self.update_window(window_handle, |cx| {
             if cx.window.focus == focused {
                 let mut listeners = mem::take(&mut cx.window.focus_listeners);
                 let focused =
@@ -752,12 +767,12 @@ impl MainThread<AppContext> {
         })
     }
 
-    pub(crate) fn update_window<R>(
+    pub fn update_window<R>(
         &mut self,
-        id: WindowId,
+        handle: AnyWindowHandle,
         update: impl FnOnce(&mut MainThread<WindowContext>) -> R,
     ) -> Result<R> {
-        self.0.update_window(id, |cx| {
+        self.0.update_window(handle, |cx| {
             update(unsafe {
                 std::mem::transmute::<&mut WindowContext, &mut MainThread<WindowContext>>(cx)
             })
@@ -800,7 +815,7 @@ pub(crate) enum Effect {
         event: Box<dyn Any + Send + Sync + 'static>,
     },
     FocusChanged {
-        window_id: WindowId,
+        window_handle: AnyWindowHandle,
         focused: Option<FocusId>,
     },
     Refresh,

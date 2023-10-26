@@ -1,5 +1,5 @@
 // pub mod dock;
-// pub mod item;
+pub mod item;
 // pub mod notifications;
 // pub mod pane;
 // pub mod pane_group;
@@ -11,19 +11,18 @@
 // mod workspace_settings;
 
 // use anyhow::{anyhow, Context, Result};
-// use call::ActiveCall;
-// use client::{
+// use call2::ActiveCall;
+// use client2::{
 //     proto::{self, PeerId},
 //     Client, Status, TypedEnvelope, UserStore,
 // };
 // use collections::{hash_map, HashMap, HashSet};
-// use drag_and_drop::DragAndDrop;
 // use futures::{
 //     channel::{mpsc, oneshot},
 //     future::try_join_all,
 //     FutureExt, StreamExt,
 // };
-// use gpui::{
+// use gpui2::{
 //     actions,
 //     elements::*,
 //     geometry::{
@@ -41,19 +40,8 @@
 // };
 // use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 // use itertools::Itertools;
-// use language::{LanguageRegistry, Rope};
-// use node_runtime::NodeRuntime;
-// use std::{
-//     any::TypeId,
-//     borrow::Cow,
-//     cmp, env,
-//     future::Future,
-//     path::{Path, PathBuf},
-//     rc::Rc,
-//     str,
-//     sync::{atomic::AtomicUsize, Arc},
-//     time::Duration,
-// };
+// use language2::{LanguageRegistry, Rope};
+// use node_runtime::NodeRuntime;// //
 
 // use crate::{
 //     notifications::{simple_message_notification::MessageNotification, NotificationTracker},
@@ -446,32 +434,31 @@
 //     });
 // }
 
-// pub struct AppState {
-//     pub languages: Arc<LanguageRegistry>,
-//     pub client: Arc<Client>,
-//     pub user_store: ModelHandle<UserStore>,
-//     pub workspace_store: ModelHandle<WorkspaceStore>,
-//     pub fs: Arc<dyn fs::Fs>,
-//     pub build_window_options:
-//         fn(Option<WindowBounds>, Option<uuid::Uuid>, &dyn Platform) -> WindowOptions<'static>,
-//     pub initialize_workspace:
-//         fn(WeakViewHandle<Workspace>, bool, Arc<AppState>, AsyncAppContext) -> Task<Result<()>>,
-//     pub background_actions: BackgroundActions,
-//     pub node_runtime: Arc<dyn NodeRuntime>,
-// }
+pub struct AppState {
+    pub languages: Arc<LanguageRegistry>,
+    pub client: Arc<Client>,
+    pub user_store: Handle<UserStore>,
+    pub workspace_store: Handle<WorkspaceStore>,
+    pub fs: Arc<dyn fs2::Fs>,
+    pub build_window_options:
+        fn(Option<WindowBounds>, Option<DisplayId>, &MainThread<AppContext>) -> WindowOptions,
+    pub initialize_workspace:
+        fn(WeakHandle<Workspace>, bool, Arc<AppState>, AsyncAppContext) -> Task<anyhow::Result<()>>,
+    pub node_runtime: Arc<dyn NodeRuntime>,
+}
 
-// pub struct WorkspaceStore {
-//     workspaces: HashSet<WeakViewHandle<Workspace>>,
-//     followers: Vec<Follower>,
-//     client: Arc<Client>,
-//     _subscriptions: Vec<client::Subscription>,
-// }
+pub struct WorkspaceStore {
+    workspaces: HashSet<WeakHandle<Workspace>>,
+    followers: Vec<Follower>,
+    client: Arc<Client>,
+    _subscriptions: Vec<client2::Subscription>,
+}
 
-// #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
-// struct Follower {
-//     project_id: Option<u64>,
-//     peer_id: PeerId,
-// }
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct Follower {
+    project_id: Option<u64>,
+    peer_id: PeerId,
+}
 
 // impl AppState {
 //     #[cfg(any(test, feature = "test-support"))]
@@ -504,7 +491,6 @@
 //             node_runtime: FakeNodeRuntime::new(),
 //             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
 //             build_window_options: |_, _, _| Default::default(),
-//             background_actions: || &[],
 //         })
 //     }
 // }
@@ -560,37 +546,37 @@
 //     ContactRequestedJoin(u64),
 // }
 
-// pub struct Workspace {
-//     weak_self: WeakViewHandle<Self>,
-//     modal: Option<ActiveModal>,
-//     zoomed: Option<AnyWeakViewHandle>,
-//     zoomed_position: Option<DockPosition>,
-//     center: PaneGroup,
-//     left_dock: ViewHandle<Dock>,
-//     bottom_dock: ViewHandle<Dock>,
-//     right_dock: ViewHandle<Dock>,
-//     panes: Vec<ViewHandle<Pane>>,
-//     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
-//     active_pane: ViewHandle<Pane>,
-//     last_active_center_pane: Option<WeakViewHandle<Pane>>,
-//     last_active_view_id: Option<proto::ViewId>,
-//     status_bar: ViewHandle<StatusBar>,
-//     titlebar_item: Option<AnyViewHandle>,
-//     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
-//     project: ModelHandle<Project>,
-//     follower_states: HashMap<ViewHandle<Pane>, FollowerState>,
-//     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
-//     window_edited: bool,
-//     active_call: Option<(ModelHandle<ActiveCall>, Vec<Subscription>)>,
-//     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
-//     database_id: WorkspaceId,
-//     app_state: Arc<AppState>,
-//     subscriptions: Vec<Subscription>,
-//     _apply_leader_updates: Task<Result<()>>,
-//     _observe_current_user: Task<Result<()>>,
-//     _schedule_serialize: Option<Task<()>>,
-//     pane_history_timestamp: Arc<AtomicUsize>,
-// }
+pub struct Workspace {
+    weak_self: WeakHandle<Self>,
+    //     modal: Option<ActiveModal>,
+    //     zoomed: Option<AnyWeakViewHandle>,
+    //     zoomed_position: Option<DockPosition>,
+    //     center: PaneGroup,
+    //     left_dock: ViewHandle<Dock>,
+    //     bottom_dock: ViewHandle<Dock>,
+    //     right_dock: ViewHandle<Dock>,
+    //     panes: Vec<ViewHandle<Pane>>,
+    //     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
+    //     active_pane: ViewHandle<Pane>,
+    //     last_active_center_pane: Option<WeakViewHandle<Pane>>,
+    //     last_active_view_id: Option<proto::ViewId>,
+    //     status_bar: ViewHandle<StatusBar>,
+    //     titlebar_item: Option<AnyViewHandle>,
+    //     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
+    project: Handle<Project>,
+    //     follower_states: HashMap<ViewHandle<Pane>, FollowerState>,
+    //     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
+    //     window_edited: bool,
+    //     active_call: Option<(ModelHandle<ActiveCall>, Vec<Subscription>)>,
+    //     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
+    //     database_id: WorkspaceId,
+    //     app_state: Arc<AppState>,
+    //     subscriptions: Vec<Subscription>,
+    //     _apply_leader_updates: Task<Result<()>>,
+    //     _observe_current_user: Task<Result<()>>,
+    //     _schedule_serialize: Option<Task<()>>,
+    //     pane_history_timestamp: Arc<AtomicUsize>,
+}
 
 // struct ActiveModal {
 //     view: Box<dyn ModalHandle>,
@@ -669,7 +655,6 @@
 //             Pane::new(
 //                 weak_handle.clone(),
 //                 project.clone(),
-//                 app_state.background_actions,
 //                 pane_history_timestamp.clone(),
 //                 cx,
 //             )
@@ -1976,7 +1961,6 @@
 //             Pane::new(
 //                 self.weak_handle(),
 //                 self.project.clone(),
-//                 self.app_state.background_actions,
 //                 self.pane_history_timestamp.clone(),
 //                 cx,
 //             )
@@ -3536,7 +3520,6 @@
 //             fs: project.read(cx).fs().clone(),
 //             build_window_options: |_, _, _| Default::default(),
 //             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
-//             background_actions: || &[],
 //             node_runtime: FakeNodeRuntime::new(),
 //         });
 //         Self::new(0, project, app_state, cx)
@@ -4117,30 +4100,36 @@
 
 // pub struct WorkspaceCreated(pub WeakViewHandle<Workspace>);
 
-// pub fn activate_workspace_for_project(
-//     cx: &mut AsyncAppContext,
-//     predicate: impl Fn(&mut Project, &mut ModelContext<Project>) -> bool,
-// ) -> Option<WeakViewHandle<Workspace>> {
-//     for window in cx.windows() {
-//         let handle = window
-//             .update(cx, |cx| {
-//                 if let Some(workspace_handle) = cx.root_view().clone().downcast::<Workspace>() {
-//                     let project = workspace_handle.read(cx).project.clone();
-//                     if project.update(cx, &predicate) {
-//                         cx.activate_window();
-//                         return Some(workspace_handle.clone());
-//                     }
-//                 }
-//                 None
-//             })
-//             .flatten();
+pub async fn activate_workspace_for_project(
+    cx: &mut AsyncAppContext,
+    predicate: impl Fn(&Project, &AppContext) -> bool + Send + 'static,
+) -> Option<WeakHandle<Workspace>> {
+    cx.run_on_main(move |cx| {
+        for window in cx.windows() {
+            let handle = cx
+                .update_window(window, |cx| {
+                    if let Some(workspace_handle) = cx.root_view()?.downcast::<Workspace>() {
+                        let project = workspace_handle.read(cx).project.clone();
+                        if project.update(cx, |project, cx| predicate(project, cx)) {
+                            cx.activate_window();
+                            return Some(workspace_handle.clone());
+                        }
+                    }
+                    None
+                })
+                .log_err()
+                .flatten();
 
-//         if let Some(handle) = handle {
-//             return Some(handle.downgrade());
-//         }
-//     }
-//     None
-// }
+            if let Some(handle) = handle {
+                return Some(handle.downgrade());
+            }
+        }
+
+        None
+    })
+    .ok()?
+    .await
+}
 
 // pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
 //     DB.last_workspace().await.log_err().flatten()
@@ -4328,44 +4317,58 @@
 //     None
 // }
 
-// #[allow(clippy::type_complexity)]
-// pub fn open_paths(
-//     abs_paths: &[PathBuf],
-//     app_state: &Arc<AppState>,
-//     requesting_window: Option<WindowHandle<Workspace>>,
-//     cx: &mut AppContext,
-// ) -> Task<
-//     Result<(
-//         WeakViewHandle<Workspace>,
-//         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
-//     )>,
-// > {
-//     let app_state = app_state.clone();
-//     let abs_paths = abs_paths.to_vec();
-//     cx.spawn(|mut cx| async move {
-//         // Open paths in existing workspace if possible
-//         let existing = activate_workspace_for_project(&mut cx, |project, cx| {
-//             project.contains_paths(&abs_paths, cx)
-//         });
+use client2::{proto::PeerId, Client, UserStore};
+use collections::HashSet;
+use gpui2::{
+    AppContext, AsyncAppContext, DisplayId, Handle, MainThread, Task, WeakHandle, WindowBounds,
+    WindowHandle, WindowOptions,
+};
+use item::ItemHandle;
+use language2::LanguageRegistry;
+use node_runtime::NodeRuntime;
+use project2::Project;
+use std::{path::PathBuf, sync::Arc};
+use util::ResultExt;
 
-//         if let Some(existing) = existing {
-//             Ok((
-//                 existing.clone(),
-//                 existing
-//                     .update(&mut cx, |workspace, cx| {
-//                         workspace.open_paths(abs_paths, true, cx)
-//                     })?
-//                     .await,
-//             ))
-//         } else {
-//             Ok(cx
-//                 .update(|cx| {
-//                     Workspace::new_local(abs_paths, app_state.clone(), requesting_window, cx)
-//                 })
-//                 .await)
-//         }
-//     })
-// }
+#[allow(clippy::type_complexity)]
+pub fn open_paths(
+    abs_paths: &[PathBuf],
+    app_state: &Arc<AppState>,
+    requesting_window: Option<WindowHandle<Workspace>>,
+    cx: &mut AppContext,
+) -> Task<
+    anyhow::Result<(
+        WeakHandle<Workspace>,
+        Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
+    )>,
+> {
+    let app_state = app_state.clone();
+    let abs_paths = abs_paths.to_vec();
+    cx.spawn(|mut cx| async move {
+        // Open paths in existing workspace if possible
+        let existing = activate_workspace_for_project(&mut cx, |project, cx| {
+            project.contains_paths(&abs_paths, cx)
+        })
+        .await;
+
+        if let Some(existing) = existing {
+            Ok((
+                existing.clone(),
+                existing
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.open_paths(abs_paths, true, cx)
+                    })?
+                    .await,
+            ))
+        } else {
+            Ok(cx
+                .update(|cx| {
+                    Workspace::new_local(abs_paths, app_state.clone(), requesting_window, cx)
+                })
+                .await)
+        }
+    })
+}
 
 // pub fn open_new(
 //     app_state: &Arc<AppState>,

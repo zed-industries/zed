@@ -73,7 +73,7 @@ impl TestAppContext {
         read: impl FnOnce(&WindowContext) -> R,
     ) -> R {
         let mut app_context = self.app.lock();
-        app_context.read_window(handle.id, read).unwrap()
+        app_context.read_window(handle, read).unwrap()
     }
 
     pub fn update_window<R>(
@@ -82,7 +82,7 @@ impl TestAppContext {
         update: impl FnOnce(&mut WindowContext) -> R,
     ) -> R {
         let mut app = self.app.lock();
-        app.update_window(handle.id, update).unwrap()
+        app.update_window(handle, update).unwrap()
     }
 
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static) -> Task<R>

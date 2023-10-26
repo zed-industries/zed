@@ -1,8 +1,8 @@
 use parking_lot::Mutex;
 
 use crate::{
-    AnyBox, AnyElement, BorrowWindow, Bounds, Element, ElementId, EntityId, Handle, IntoAnyElement,
-    LayoutId, Pixels, ViewContext, WindowContext,
+    AnyBox, AnyElement, AnyHandle, BorrowWindow, Bounds, Element, ElementId, Handle,
+    IntoAnyElement, LayoutId, Pixels, ViewContext, WindowContext,
 };
 use std::{marker::PhantomData, sync::Arc};
 
@@ -54,7 +54,7 @@ impl<V: 'static> Element for View<V> {
     type ViewState = ();
     type ElementState = AnyElement<V>;
 
-    fn id(&self) -> Option<crate::ElementId> {
+    fn id(&self) -> Option<ElementId> {
         Some(ElementId::View(self.state.entity_id))
     }
 
@@ -109,7 +109,7 @@ impl<V: 'static, ParentV: 'static> Element for EraseViewState<V, ParentV> {
     type ViewState = ParentV;
     type ElementState = AnyBox;
 
-    fn id(&self) -> Option<crate::ElementId> {
+    fn id(&self) -> Option<ElementId> {
         Element::id(&self.view)
     }
 
@@ -143,19 +143,19 @@ impl<V: 'static, ParentV: 'static> Element for EraseViewState<V, ParentV> {
 }
 
 trait ViewObject: Send + Sync {
-    fn entity_id(&self) -> EntityId;
+    fn entity_handle(&self) -> &AnyHandle;
     fn initialize(&mut self, cx: &mut WindowContext) -> AnyBox;
     fn layout(&mut self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId;
     fn paint(&mut self, bounds: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext);
 }
 
 impl<V: 'static> ViewObject for View<V> {
-    fn entity_id(&self) -> EntityId {
-        self.state.entity_id
+    fn entity_handle(&self) -> &AnyHandle {
+        &self.state
     }
 
     fn initialize(&mut self, cx: &mut WindowContext) -> AnyBox {
-        cx.with_element_id(self.entity_id(), |_global_id, cx| {
+        cx.with_element_id(self.state.entity_id, |_global_id, cx| {
             self.state.update(cx, |state, cx| {
                 let mut any_element = Box::new((self.render)(state, cx));
                 any_element.initialize(state, cx);
@@ -165,7 +165,7 @@ impl<V: 'static> ViewObject for View<V> {
     }
 
     fn layout(&mut self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId {
-        cx.with_element_id(self.entity_id(), |_global_id, cx| {
+        cx.with_element_id(self.state.entity_id, |_global_id, cx| {
             self.state.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<V>>().unwrap();
                 element.layout(state, cx)
@@ -174,7 +174,7 @@ impl<V: 'static> ViewObject for View<V> {
     }
 
     fn paint(&mut self, _: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext) {
-        cx.with_element_id(self.entity_id(), |_global_id, cx| {
+        cx.with_element_id(self.state.entity_id, |_global_id, cx| {
             self.state.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<V>>().unwrap();
                 element.paint(state, cx);
@@ -185,6 +185,12 @@ impl<V: 'static> ViewObject for View<V> {
 
 pub struct AnyView {
     view: Arc<Mutex<dyn ViewObject>>,
+}
+
+impl AnyView {
+    pub fn entity_handle(&self) -> AnyHandle {
+        self.view.lock().entity_handle().clone()
+    }
 }
 
 impl<ParentV: 'static> IntoAnyElement<ParentV> for AnyView {
@@ -200,8 +206,8 @@ impl Element for AnyView {
     type ViewState = ();
     type ElementState = AnyBox;
 
-    fn id(&self) -> Option<crate::ElementId> {
-        Some(ElementId::View(self.view.lock().entity_id()))
+    fn id(&self) -> Option<ElementId> {
+        Some(ElementId::View(self.view.lock().entity_handle().entity_id))
     }
 
     fn initialize(
@@ -251,7 +257,7 @@ impl<ParentV: 'static> Element for EraseAnyViewState<ParentV> {
     type ViewState = ParentV;
     type ElementState = AnyBox;
 
-    fn id(&self) -> Option<crate::ElementId> {
+    fn id(&self) -> Option<ElementId> {
         Element::id(&self.view)
     }
 
