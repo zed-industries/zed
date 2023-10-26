@@ -131,7 +131,7 @@ impl PaletteItem {
         self
     }
 
-    fn render<S: 'static>(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div()
             .flex()
             .flex_row()
@@ -142,7 +142,7 @@ impl PaletteItem {
                     .child(Label::new(self.label.clone()))
                     .children(self.sublabel.clone().map(|sublabel| Label::new(sublabel))),
             )
-            .children(self.keybinding.take())
+            .children(self.keybinding)
     }
 }
 

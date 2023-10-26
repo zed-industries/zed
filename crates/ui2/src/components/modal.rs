@@ -38,7 +38,7 @@ impl<S: 'static> Modal<S> {
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -68,8 +68,8 @@ impl<S: 'static> Modal<S> {
                             .border_color(theme.border)
                             .p_1()
                             .justify_end()
-                            .children(self.secondary_action.take())
-                            .children(self.primary_action.take()),
+                            .children(self.secondary_action)
+                            .children(self.primary_action),
                     )
                 },
             )

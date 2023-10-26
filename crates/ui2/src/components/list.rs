@@ -250,7 +250,7 @@ impl<S: 'static> ListItem<S> {
 pub struct ListEntry {
     disclosure_control_style: DisclosureControlVisibility,
     indent_level: u32,
-    label: Option<Label>,
+    label: Label,
     left_content: Option<LeftContent>,
     variant: ListItemVariant,
     size: ListEntrySize,
@@ -264,7 +264,7 @@ impl ListEntry {
         Self {
             disclosure_control_style: DisclosureControlVisibility::default(),
             indent_level: 0,
-            label: Some(label),
+            label,
             variant: ListItemVariant::default(),
             left_content: None,
             size: ListEntrySize::default(),
@@ -412,7 +412,7 @@ impl ListEntry {
                     .relative()
                     .children(self.disclosure_control(cx))
                     .children(left_content)
-                    .children(self.label.take()),
+                    .child(self.label),
             )
     }
 }

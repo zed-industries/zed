@@ -26,7 +26,7 @@ impl<S: 'static> Details<S> {
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -37,7 +37,7 @@ impl<S: 'static> Details<S> {
             .size_full()
             .child(self.text)
             .children(self.meta.map(|m| m))
-            .children(self.actions.take().map(|a| a))
+            .children(self.actions.map(|a| a))
     }
 }
 
