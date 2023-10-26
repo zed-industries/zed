@@ -56,7 +56,6 @@ impl<S: 'static + Send + Sync> Pane<S> {
                     .children(self.children.drain(..)),
             )
             .child(
-                // TODO kb! Figure out why we can't we see the red background when we drag a file over this div.
                 div()
                     .z_index(1)
                     .id("drag-target")
