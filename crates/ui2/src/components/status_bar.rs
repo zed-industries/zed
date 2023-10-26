@@ -39,7 +39,6 @@ pub struct StatusBar {
 impl StatusBar {
     pub fn new() -> Self {
         Self {
-            // state_type: PhantomData,
             left_tools: None,
             right_tools: None,
             bottom_tools: None,
