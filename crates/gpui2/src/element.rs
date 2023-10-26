@@ -3,7 +3,7 @@ use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, mem};
 
-pub trait Element<V: 'static>: IntoAnyElement<V> {
+pub trait Element<V: 'static> {
     type ElementState: 'static;
 
     fn id(&self) -> Option<ElementId>;
