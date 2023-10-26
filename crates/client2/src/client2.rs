@@ -312,7 +312,7 @@ pub struct PendingEntitySubscription<T: 'static> {
 
 impl<T> PendingEntitySubscription<T>
 where
-    T: 'static + Send + Sync,
+    T: 'static + Send,
 {
     pub fn set_model(mut self, model: &Handle<T>, cx: &mut AsyncAppContext) -> Subscription {
         self.consumed = true;
@@ -529,7 +529,7 @@ impl Client {
         remote_id: u64,
     ) -> Result<PendingEntitySubscription<T>>
     where
-        T: 'static + Send + Sync,
+        T: 'static + Send,
     {
         let id = (TypeId::of::<T>(), remote_id);
 
@@ -557,7 +557,7 @@ impl Client {
     ) -> Subscription
     where
         M: EnvelopedMessage,
-        E: 'static + Send + Sync,
+        E: 'static + Send,
         H: 'static + Send + Sync + Fn(Handle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<()>> + Send,
     {
@@ -599,7 +599,7 @@ impl Client {
     ) -> Subscription
     where
         M: RequestMessage,
-        E: 'static + Send + Sync,
+        E: 'static + Send,
         H: 'static + Send + Sync + Fn(Handle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<M::Response>> + Send,
     {
@@ -615,7 +615,7 @@ impl Client {
     pub fn add_model_message_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
     where
         M: EntityMessage,
-        E: 'static + Send + Sync,
+        E: 'static + Send,
         H: 'static + Send + Sync + Fn(Handle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<()>> + Send,
     {
@@ -627,7 +627,7 @@ impl Client {
     fn add_entity_message_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
     where
         M: EntityMessage,
-        E: 'static + Send + Sync,
+        E: 'static + Send,
         H: 'static + Send + Sync + Fn(AnyHandle, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<()>> + Send,
     {
@@ -666,7 +666,7 @@ impl Client {
     pub fn add_model_request_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
     where
         M: EntityMessage + RequestMessage,
-        E: 'static + Send + Sync,
+        E: 'static + Send,
         H: 'static + Send + Sync + Fn(Handle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<M::Response>> + Send,
     {

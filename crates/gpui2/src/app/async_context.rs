@@ -5,7 +5,7 @@ use crate::{
 use anyhow::anyhow;
 use derive_more::{Deref, DerefMut};
 use parking_lot::Mutex;
-use std::{any::Any, future::Future, sync::Weak};
+use std::{future::Future, sync::Weak};
 
 #[derive(Clone)]
 pub struct AsyncAppContext {
@@ -22,7 +22,7 @@ impl Context for AsyncAppContext {
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Self::Result<Handle<T>>
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
         let app = self
             .app
@@ -224,7 +224,7 @@ impl Context for AsyncWindowContext {
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Result<Handle<T>>
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
         self.app
             .update_window(self.window, |cx| cx.entity(build_entity))

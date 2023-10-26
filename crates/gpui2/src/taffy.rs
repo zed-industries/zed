@@ -53,10 +53,7 @@ impl TaffyLayoutEngine {
         &mut self,
         style: Style,
         rem_size: Pixels,
-        measure: impl Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels>
-            + Send
-            + Sync
-            + 'static,
+        measure: impl Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + Send + Sync + 'static,
     ) -> LayoutId {
         let style = style.to_taffy(rem_size);
 
@@ -179,7 +176,7 @@ struct Measureable<F>(F);
 
 impl<F> taffy::tree::Measurable for Measureable<F>
 where
-    F: Send + Sync + Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels>,
+    F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + Send + Sync,
 {
     fn measure(
         &self,

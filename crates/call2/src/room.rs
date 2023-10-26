@@ -1269,7 +1269,7 @@ impl Room {
                     .update(&mut cx, |this, _| {
                         this.live_kit
                             .as_ref()
-                            .map(|live_kit| live_kit.room.publish_audio_track(&track))
+                            .map(|live_kit| live_kit.room.publish_audio_track(track))
                     })?
                     .ok_or_else(|| anyhow!("live-kit was not initialized"))?
                     .await
@@ -1355,7 +1355,7 @@ impl Room {
                     .update(&mut cx, |this, _| {
                         this.live_kit
                             .as_ref()
-                            .map(|live_kit| live_kit.room.publish_video_track(&track))
+                            .map(|live_kit| live_kit.room.publish_video_track(track))
                     })?
                     .ok_or_else(|| anyhow!("live-kit was not initialized"))?
                     .await

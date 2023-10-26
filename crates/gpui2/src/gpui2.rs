@@ -67,7 +67,7 @@ use std::{
 };
 use taffy::TaffyLayoutEngine;
 
-type AnyBox = Box<dyn Any + Send + Sync>;
+type AnyBox = Box<dyn Any + Send>;
 
 pub trait Context {
     type EntityContext<'a, 'w, T>;
@@ -78,7 +78,7 @@ pub trait Context {
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Self::Result<Handle<T>>
     where
-        T: 'static + Send + Sync;
+        T: 'static + Send;
 
     fn update_entity<T: 'static, R>(
         &mut self,
@@ -119,7 +119,7 @@ impl<C: Context> Context for MainThread<C> {
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Self::Result<Handle<T>>
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
         self.0.entity(|cx| {
             let cx = unsafe {
@@ -154,7 +154,7 @@ pub trait BorrowAppContext {
     where
         F: FnOnce(&mut Self) -> R;
 
-    fn set_global<T: Send + Sync + 'static>(&mut self, global: T);
+    fn set_global<T: Send + 'static>(&mut self, global: T);
 }
 
 impl<C> BorrowAppContext for C
@@ -171,7 +171,7 @@ where
         result
     }
 
-    fn set_global<G: 'static + Send + Sync>(&mut self, global: G) {
+    fn set_global<G: 'static + Send>(&mut self, global: G) {
         self.borrow_mut().set_global(global)
     }
 }

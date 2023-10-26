@@ -46,8 +46,8 @@ pub enum DispatchPhase {
     Capture,
 }
 
-type AnyListener = Arc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
-type AnyKeyListener = Arc<
+type AnyListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + 'static>;
+type AnyKeyListener = Box<
     dyn Fn(
             &dyn Any,
             &[&DispatchContext],
@@ -55,10 +55,9 @@ type AnyKeyListener = Arc<
             &mut WindowContext,
         ) -> Option<Box<dyn Action>>
         + Send
-        + Sync
         + 'static,
 >;
-type AnyFocusListener = Arc<dyn Fn(&FocusEvent, &mut WindowContext) + Send + Sync + 'static>;
+type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + Send + 'static>;
 
 slotmap::new_key_type! { pub struct FocusId; }
 
@@ -500,7 +499,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn on_mouse_event<Event: 'static>(
         &mut self,
-        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + Send + Sync + 'static,
+        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + Send + 'static,
     ) {
         let order = self.window.z_index_stack.clone();
         self.window
@@ -509,7 +508,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .or_default()
             .push((
                 order,
-                Arc::new(move |event: &dyn Any, phase, cx| {
+                Box::new(move |event: &dyn Any, phase, cx| {
                     handler(event.downcast_ref().unwrap(), phase, cx)
                 }),
             ))
@@ -1081,7 +1080,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut WindowContext<'_, '_>) + Send + Sync + 'static,
+        f: impl Fn(&mut WindowContext<'_, '_>) + Send + 'static,
     ) -> Subscription {
         let window_id = self.window.handle.id;
         self.global_observers.insert(
@@ -1178,7 +1177,7 @@ impl Context for WindowContext<'_, '_> {
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T>
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
         let slot = self.app.entities.reserve();
         let entity = build_entity(&mut ViewContext::mutable(
@@ -1311,7 +1310,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
     ) -> R
     where
-        S: Any + Send + Sync,
+        S: 'static + Send,
     {
         self.with_element_id(id, |global_id, cx| {
             if let Some(any) = cx
@@ -1347,7 +1346,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
     ) -> R
     where
-        S: Any + Send + Sync,
+        S: 'static + Send,
     {
         if let Some(element_id) = element_id {
             self.with_element_state(element_id, f)
@@ -1438,7 +1437,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + Send + 'static)
     where
-        V: Any + Send + Sync,
+        V: Any + Send,
     {
         let entity = self.handle();
         self.window_cx.on_next_frame(move |cx| {
@@ -1449,14 +1448,11 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn observe<E>(
         &mut self,
         handle: &Handle<E>,
-        mut on_notify: impl FnMut(&mut V, Handle<E>, &mut ViewContext<'_, '_, V>)
-            + Send
-            + Sync
-            + 'static,
+        mut on_notify: impl FnMut(&mut V, Handle<E>, &mut ViewContext<'_, '_, V>) + Send + 'static,
     ) -> Subscription
     where
         E: 'static,
-        V: Any + Send + Sync,
+        V: Any + Send,
     {
         let this = self.handle();
         let handle = handle.downgrade();
@@ -1482,7 +1478,6 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         handle: &Handle<E>,
         mut on_event: impl FnMut(&mut V, Handle<E>, &E::Event, &mut ViewContext<'_, '_, V>)
             + Send
-            + Sync
             + 'static,
     ) -> Subscription {
         let this = self.handle();
@@ -1507,7 +1502,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn on_release(
         &mut self,
-        mut on_release: impl FnMut(&mut V, &mut WindowContext) + Send + Sync + 'static,
+        mut on_release: impl FnMut(&mut V, &mut WindowContext) + Send + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
@@ -1523,10 +1518,10 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn observe_release<T: 'static>(
         &mut self,
         handle: &Handle<T>,
-        mut on_release: impl FnMut(&mut V, &mut T, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
+        mut on_release: impl FnMut(&mut V, &mut T, &mut ViewContext<'_, '_, V>) + Send + 'static,
     ) -> Subscription
     where
-        V: Any + Send + Sync,
+        V: Any + Send,
     {
         let this = self.handle();
         let window_handle = self.window.handle;
@@ -1551,10 +1546,10 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn on_focus_changed(
         &mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + 'static,
     ) {
         let handle = self.handle();
-        self.window.focus_listeners.push(Arc::new(move |event, cx| {
+        self.window.focus_listeners.push(Box::new(move |event, cx| {
             handle
                 .update(cx, |view, cx| listener(view, event, cx))
                 .log_err();
@@ -1563,13 +1558,14 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn with_key_listeners<R>(
         &mut self,
-        key_listeners: &[(TypeId, KeyListener<V>)],
+        key_listeners: impl IntoIterator<Item = (TypeId, KeyListener<V>)>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
+        let old_stack_len = self.window.key_dispatch_stack.len();
         if !self.window.freeze_key_dispatch_stack {
-            for (event_type, listener) in key_listeners.iter().cloned() {
+            for (event_type, listener) in key_listeners {
                 let handle = self.handle();
-                let listener = Arc::new(
+                let listener = Box::new(
                     move |event: &dyn Any,
                           context_stack: &[&DispatchContext],
                           phase: DispatchPhase,
@@ -1594,8 +1590,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         let result = f(self);
 
         if !self.window.freeze_key_dispatch_stack {
-            let prev_len = self.window.key_dispatch_stack.len() - key_listeners.len();
-            self.window.key_dispatch_stack.truncate(prev_len);
+            self.window.key_dispatch_stack.truncate(old_stack_len);
         }
 
         result
@@ -1681,7 +1676,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static + Send + Sync,
+        G: 'static + Send,
     {
         let mut global = self.app.lease_global::<G>();
         let result = f(&mut global, self);
@@ -1691,7 +1686,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
+        f: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) + Send + 'static,
     ) -> Subscription {
         let window_id = self.window.handle.id;
         let handle = self.handle();
@@ -1708,7 +1703,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn on_mouse_event<Event: 'static>(
         &mut self,
-        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static,
+        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + Send + 'static,
     ) {
         let handle = self.handle().upgrade().unwrap();
         self.window_cx.on_mouse_event(move |event, phase, cx| {
@@ -1722,7 +1717,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 impl<'a, 'w, V> ViewContext<'a, 'w, V>
 where
     V: EventEmitter,
-    V::Event: Any + Send + Sync,
+    V::Event: Any + Send,
 {
     pub fn emit(&mut self, event: V::Event) {
         let emitter = self.view_state.entity_id;
@@ -1742,7 +1737,7 @@ impl<'a, 'w, V> Context for ViewContext<'a, 'w, V> {
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T>
     where
-        T: 'static + Send + Sync,
+        T: 'static + Send,
     {
         self.window_cx.entity(build_entity)
     }

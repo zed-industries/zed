@@ -152,8 +152,8 @@ pub struct Themed<E> {
 impl<V, E> Component<V> for Themed<E>
 where
     V: 'static,
-    E: 'static + Element<V> + Send + Sync,
-    E::ElementState: Send + Sync,
+    E: 'static + Element<V> + Send,
+    E::ElementState: Send,
 {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
@@ -163,10 +163,10 @@ where
 #[derive(Default)]
 struct ThemeStack(Vec<Theme>);
 
-impl<V, E: 'static + Element<V> + Send + Sync> Element<V> for Themed<E>
+impl<V, E: 'static + Element<V> + Send> Element<V> for Themed<E>
 where
     V: 'static,
-    E::ElementState: Send + Sync,
+    E::ElementState: Send,
 {
     type ElementState = E::ElementState;
 

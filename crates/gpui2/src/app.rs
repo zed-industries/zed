@@ -22,7 +22,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
 use futures::{future::BoxFuture, Future};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use slotmap::SlotMap;
 use std::{
     any::{type_name, Any, TypeId},
@@ -109,11 +109,10 @@ impl App {
 
 type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
 type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
-type Handler = Box<dyn FnMut(&mut AppContext) -> bool + Send + Sync + 'static>;
-type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>;
-type QuitHandler =
-    Box<dyn FnMut(&mut AppContext) -> BoxFuture<'static, ()> + Send + Sync + 'static>;
-type ReleaseListener = Box<dyn FnMut(&mut dyn Any, &mut AppContext) + Send + Sync + 'static>;
+type Handler = Box<dyn FnMut(&mut AppContext) -> bool + Send + 'static>;
+type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + Send + 'static>;
+type QuitHandler = Box<dyn FnMut(&mut AppContext) -> BoxFuture<'static, ()> + Send + 'static>;
+type ReleaseListener = Box<dyn FnMut(&mut dyn Any, &mut AppContext) + Send + 'static>;
 
 pub struct AppContext {
     this: Weak<Mutex<AppContext>>,
@@ -133,9 +132,9 @@ pub struct AppContext {
     pub(crate) unit_entity: Handle<()>,
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
-    pub(crate) keymap: Arc<RwLock<Keymap>>,
+    pub(crate) keymap: Arc<Mutex<Keymap>>,
     pub(crate) global_action_listeners:
-        HashMap<TypeId, Vec<Box<dyn Fn(&dyn Action, DispatchPhase, &mut Self) + Send + Sync>>>,
+        HashMap<TypeId, Vec<Box<dyn Fn(&dyn Action, DispatchPhase, &mut Self) + Send>>>,
     action_builders: HashMap<SharedString, ActionBuilder>,
     pending_effects: VecDeque<Effect>,
     pub(crate) pending_notifications: HashSet<EntityId>,
@@ -188,7 +187,7 @@ impl AppContext {
                 unit_entity,
                 entities,
                 windows: SlotMap::with_key(),
-                keymap: Arc::new(RwLock::new(Keymap::default())),
+                keymap: Arc::new(Mutex::new(Keymap::default())),
                 global_action_listeners: HashMap::default(),
                 action_builders: HashMap::default(),
                 pending_effects: VecDeque::new(),
@@ -447,7 +446,7 @@ impl AppContext {
             .retain(&type_id, |observer| observer(self));
     }
 
-    fn apply_defer_effect(&mut self, callback: Box<dyn FnOnce(&mut Self) + Send + Sync + 'static>) {
+    fn apply_defer_effect(&mut self, callback: Box<dyn FnOnce(&mut Self) + Send + 'static>) {
         callback(self);
     }
 
@@ -506,7 +505,7 @@ impl AppContext {
         })
     }
 
-    pub fn defer(&mut self, f: impl FnOnce(&mut AppContext) + 'static + Send + Sync) {
+    pub fn defer(&mut self, f: impl FnOnce(&mut AppContext) + 'static + Send) {
         self.push_effect(Effect::Defer {
             callback: Box::new(f),
         });
@@ -556,7 +555,7 @@ impl AppContext {
             .unwrap()
     }
 
-    pub fn default_global<G: 'static + Default + Sync + Send>(&mut self) -> &mut G {
+    pub fn default_global<G: 'static + Default + Send>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
@@ -566,7 +565,7 @@ impl AppContext {
             .unwrap()
     }
 
-    pub fn set_global<G: Any + Send + Sync>(&mut self, global: G) {
+    pub fn set_global<G: Any + Send>(&mut self, global: G) {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, Box::new(global));
@@ -581,7 +580,7 @@ impl AppContext {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        mut f: impl FnMut(&mut Self) + Send + Sync + 'static,
+        mut f: impl FnMut(&mut Self) + Send + 'static,
     ) -> Subscription {
         self.global_observers.insert(
             TypeId::of::<G>(),
@@ -616,14 +615,11 @@ impl AppContext {
     }
 
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
-        self.keymap.write().add_bindings(bindings);
+        self.keymap.lock().add_bindings(bindings);
         self.pending_effects.push_back(Effect::Refresh);
     }
 
-    pub fn on_action<A: Action>(
-        &mut self,
-        listener: impl Fn(&A, &mut Self) + Send + Sync + 'static,
-    ) {
+    pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + Send + 'static) {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
             .or_default()
@@ -660,7 +656,7 @@ impl Context for AppContext {
     type EntityContext<'a, 'w, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
-    fn entity<T: Any + Send + Sync>(
+    fn entity<T: 'static + Send>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
@@ -766,7 +762,7 @@ impl MainThread<AppContext> {
         })
     }
 
-    pub fn update_global<G: 'static + Send + Sync, R>(
+    pub fn update_global<G: 'static + Send, R>(
         &mut self,
         update: impl FnOnce(&mut G, &mut MainThread<AppContext>) -> R,
     ) -> R {
@@ -783,7 +779,7 @@ pub(crate) enum Effect {
     },
     Emit {
         emitter: EntityId,
-        event: Box<dyn Any + Send + Sync + 'static>,
+        event: Box<dyn Any + Send + 'static>,
     },
     FocusChanged {
         window_id: WindowId,
@@ -794,7 +790,7 @@ pub(crate) enum Effect {
         global_type: TypeId,
     },
     Defer {
-        callback: Box<dyn FnOnce(&mut AppContext) + Send + Sync + 'static>,
+        callback: Box<dyn FnOnce(&mut AppContext) + Send + 'static>,
     },
 }
 

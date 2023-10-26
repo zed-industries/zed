@@ -4,7 +4,7 @@ use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{SecondaryMap, SlotMap};
 use std::{
-    any::{type_name, Any, TypeId},
+    any::{type_name, TypeId},
     fmt::{self, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -59,7 +59,7 @@ impl EntityMap {
     /// Insert an entity into a slot obtained by calling `reserve`.
     pub fn insert<T>(&mut self, slot: Slot<T>, entity: T) -> Handle<T>
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
         let handle = slot.0;
         self.entities.insert(handle.entity_id, Box::new(entity));

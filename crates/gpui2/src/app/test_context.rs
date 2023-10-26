@@ -3,7 +3,7 @@ use crate::{
     ModelContext, Result, Task, TestDispatcher, TestPlatform, WindowContext,
 };
 use parking_lot::Mutex;
-use std::{any::Any, future::Future, sync::Arc};
+use std::{future::Future, sync::Arc};
 
 #[derive(Clone)]
 pub struct TestAppContext {
@@ -20,7 +20,7 @@ impl Context for TestAppContext {
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Self::Result<Handle<T>>
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
         let mut lock = self.app.lock();
         lock.entity(build_entity)

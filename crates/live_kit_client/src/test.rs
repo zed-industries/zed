@@ -371,7 +371,7 @@ impl Room {
 
     pub fn publish_video_track(
         self: &Arc<Self>,
-        track: &LocalVideoTrack,
+        track: LocalVideoTrack,
     ) -> impl Future<Output = Result<LocalTrackPublication>> {
         let this = self.clone();
         let track = track.clone();
@@ -384,7 +384,7 @@ impl Room {
     }
     pub fn publish_audio_track(
         self: &Arc<Self>,
-        track: &LocalAudioTrack,
+        track: LocalAudioTrack,
     ) -> impl Future<Output = Result<LocalTrackPublication>> {
         let this = self.clone();
         let track = track.clone();
