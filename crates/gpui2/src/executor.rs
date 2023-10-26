@@ -163,6 +163,10 @@ impl Executor {
         future: impl Future<Output = R>,
     ) -> Result<R, impl Future<Output = R>> {
         let mut future = Box::pin(future);
+        if duration.is_zero() {
+            return Err(future);
+        }
+
         let timeout = {
             let future = &mut future;
             async {

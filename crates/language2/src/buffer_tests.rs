@@ -311,134 +311,134 @@ async fn test_normalize_whitespace(cx: &mut gpui2::TestAppContext) {
     });
 }
 
-// #[gpui2::test]
-// async fn test_reparse(cx: &mut gpui2::TestAppContext) {
-//     let text = "fn a() {}";
-//     let buffer = cx.entity(|cx| {
-//         Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx)
-//     });
+#[gpui2::test]
+async fn test_reparse(cx: &mut gpui2::TestAppContext) {
+    let text = "fn a() {}";
+    let buffer = cx.entity(|cx| {
+        Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx)
+    });
 
-//     // Wait for the initial text to parse
-//     cx.executor().run_until_parked();
-//     assert!(!buffer.update(cx, |buffer, _| buffer.is_parsing()));
-//     assert_eq!(
-//         get_tree_sexp(&buffer, cx),
-//         concat!(
-//             "(source_file (function_item name: (identifier) ",
-//             "parameters: (parameters) ",
-//             "body: (block)))"
-//         )
-//     );
+    // Wait for the initial text to parse
+    cx.executor().run_until_parked();
+    assert!(!buffer.update(cx, |buffer, _| buffer.is_parsing()));
+    assert_eq!(
+        get_tree_sexp(&buffer, cx),
+        concat!(
+            "(source_file (function_item name: (identifier) ",
+            "parameters: (parameters) ",
+            "body: (block)))"
+        )
+    );
 
-//     buffer.update(cx, |buffer, _| {
-//         buffer.set_sync_parse_timeout(Duration::ZERO)
-//     });
+    buffer.update(cx, |buffer, _| {
+        buffer.set_sync_parse_timeout(Duration::ZERO)
+    });
 
-//     // Perform some edits (add parameter and variable reference)
-//     // Parsing doesn't begin until the transaction is complete
-//     buffer.update(cx, |buf, cx| {
-//         buf.start_transaction();
+    // Perform some edits (add parameter and variable reference)
+    // Parsing doesn't begin until the transaction is complete
+    buffer.update(cx, |buf, cx| {
+        buf.start_transaction();
 
-//         let offset = buf.text().find(')').unwrap();
-//         buf.edit([(offset..offset, "b: C")], None, cx);
-//         assert!(!buf.is_parsing());
+        let offset = buf.text().find(')').unwrap();
+        buf.edit([(offset..offset, "b: C")], None, cx);
+        assert!(!buf.is_parsing());
 
-//         let offset = buf.text().find('}').unwrap();
-//         buf.edit([(offset..offset, " d; ")], None, cx);
-//         assert!(!buf.is_parsing());
+        let offset = buf.text().find('}').unwrap();
+        buf.edit([(offset..offset, " d; ")], None, cx);
+        assert!(!buf.is_parsing());
 
-//         buf.end_transaction(cx);
-//         assert_eq!(buf.text(), "fn a(b: C) { d; }");
-//         assert!(buf.is_parsing());
-//     });
-//     cx.executor().run_until_parked();
-//     assert!(!buffer.update(cx, |buffer, _| buffer.is_parsing()));
-//     assert_eq!(
-//         get_tree_sexp(&buffer, cx),
-//         concat!(
-//             "(source_file (function_item name: (identifier) ",
-//             "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
-//             "body: (block (expression_statement (identifier)))))"
-//         )
-//     );
+        buf.end_transaction(cx);
+        assert_eq!(buf.text(), "fn a(b: C) { d; }");
+        assert!(buf.is_parsing());
+    });
+    cx.executor().run_until_parked();
+    assert!(!buffer.update(cx, |buffer, _| buffer.is_parsing()));
+    assert_eq!(
+        get_tree_sexp(&buffer, cx),
+        concat!(
+            "(source_file (function_item name: (identifier) ",
+            "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
+            "body: (block (expression_statement (identifier)))))"
+        )
+    );
 
-//     // Perform a series of edits without waiting for the current parse to complete:
-//     // * turn identifier into a field expression
-//     // * turn field expression into a method call
-//     // * add a turbofish to the method call
-//     buffer.update(cx, |buf, cx| {
-//         let offset = buf.text().find(';').unwrap();
-//         buf.edit([(offset..offset, ".e")], None, cx);
-//         assert_eq!(buf.text(), "fn a(b: C) { d.e; }");
-//         assert!(buf.is_parsing());
-//     });
-//     buffer.update(cx, |buf, cx| {
-//         let offset = buf.text().find(';').unwrap();
-//         buf.edit([(offset..offset, "(f)")], None, cx);
-//         assert_eq!(buf.text(), "fn a(b: C) { d.e(f); }");
-//         assert!(buf.is_parsing());
-//     });
-//     buffer.update(cx, |buf, cx| {
-//         let offset = buf.text().find("(f)").unwrap();
-//         buf.edit([(offset..offset, "::<G>")], None, cx);
-//         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
-//         assert!(buf.is_parsing());
-//     });
-//     cx.executor().run_until_parked();
-//     assert_eq!(
-//         get_tree_sexp(&buffer, cx),
-//         concat!(
-//             "(source_file (function_item name: (identifier) ",
-//             "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
-//             "body: (block (expression_statement (call_expression ",
-//             "function: (generic_function ",
-//             "function: (field_expression value: (identifier) field: (field_identifier)) ",
-//             "type_arguments: (type_arguments (type_identifier))) ",
-//             "arguments: (arguments (identifier)))))))",
-//         )
-//     );
+    // Perform a series of edits without waiting for the current parse to complete:
+    // * turn identifier into a field expression
+    // * turn field expression into a method call
+    // * add a turbofish to the method call
+    buffer.update(cx, |buf, cx| {
+        let offset = buf.text().find(';').unwrap();
+        buf.edit([(offset..offset, ".e")], None, cx);
+        assert_eq!(buf.text(), "fn a(b: C) { d.e; }");
+        assert!(buf.is_parsing());
+    });
+    buffer.update(cx, |buf, cx| {
+        let offset = buf.text().find(';').unwrap();
+        buf.edit([(offset..offset, "(f)")], None, cx);
+        assert_eq!(buf.text(), "fn a(b: C) { d.e(f); }");
+        assert!(buf.is_parsing());
+    });
+    buffer.update(cx, |buf, cx| {
+        let offset = buf.text().find("(f)").unwrap();
+        buf.edit([(offset..offset, "::<G>")], None, cx);
+        assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
+        assert!(buf.is_parsing());
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        get_tree_sexp(&buffer, cx),
+        concat!(
+            "(source_file (function_item name: (identifier) ",
+            "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
+            "body: (block (expression_statement (call_expression ",
+            "function: (generic_function ",
+            "function: (field_expression value: (identifier) field: (field_identifier)) ",
+            "type_arguments: (type_arguments (type_identifier))) ",
+            "arguments: (arguments (identifier)))))))",
+        )
+    );
 
-//     buffer.update(cx, |buf, cx| {
-//         buf.undo(cx);
-//         buf.undo(cx);
-//         buf.undo(cx);
-//         buf.undo(cx);
-//         assert_eq!(buf.text(), "fn a() {}");
-//         assert!(buf.is_parsing());
-//     });
+    buffer.update(cx, |buf, cx| {
+        buf.undo(cx);
+        buf.undo(cx);
+        buf.undo(cx);
+        buf.undo(cx);
+        assert_eq!(buf.text(), "fn a() {}");
+        assert!(buf.is_parsing());
+    });
 
-//     cx.executor().run_until_parked();
-//     assert_eq!(
-//         get_tree_sexp(&buffer, cx),
-//         concat!(
-//             "(source_file (function_item name: (identifier) ",
-//             "parameters: (parameters) ",
-//             "body: (block)))"
-//         )
-//     );
+    cx.executor().run_until_parked();
+    assert_eq!(
+        get_tree_sexp(&buffer, cx),
+        concat!(
+            "(source_file (function_item name: (identifier) ",
+            "parameters: (parameters) ",
+            "body: (block)))"
+        )
+    );
 
-//     buffer.update(cx, |buf, cx| {
-//         buf.redo(cx);
-//         buf.redo(cx);
-//         buf.redo(cx);
-//         buf.redo(cx);
-//         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
-//         assert!(buf.is_parsing());
-//     });
-//     cx.executor().run_until_parked();
-//     assert_eq!(
-//         get_tree_sexp(&buffer, cx),
-//         concat!(
-//             "(source_file (function_item name: (identifier) ",
-//             "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
-//             "body: (block (expression_statement (call_expression ",
-//             "function: (generic_function ",
-//             "function: (field_expression value: (identifier) field: (field_identifier)) ",
-//             "type_arguments: (type_arguments (type_identifier))) ",
-//             "arguments: (arguments (identifier)))))))",
-//         )
-//     );
-// }
+    buffer.update(cx, |buf, cx| {
+        buf.redo(cx);
+        buf.redo(cx);
+        buf.redo(cx);
+        buf.redo(cx);
+        assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
+        assert!(buf.is_parsing());
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        get_tree_sexp(&buffer, cx),
+        concat!(
+            "(source_file (function_item name: (identifier) ",
+            "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
+            "body: (block (expression_statement (call_expression ",
+            "function: (generic_function ",
+            "function: (field_expression value: (identifier) field: (field_identifier)) ",
+            "type_arguments: (type_arguments (type_identifier))) ",
+            "arguments: (arguments (identifier)))))))",
+        )
+    );
+}
 
 #[gpui2::test]
 async fn test_resetting_language(cx: &mut gpui2::TestAppContext) {
