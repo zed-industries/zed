@@ -1,0 +1,26 @@
+[package]
+name = "activity_indicator2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/activity_indicator2.rs"
+doctest = false
+
+[dependencies]
+auto_update = { path = "../auto_update" }
+editor = { path = "../editor" }
+language2 = { path = "../language2" }
+gpui2= { path = "../gpui2" }
+project = { path = "../project" }
+settings2 = { path = "../settings2" }
+util = { path = "../util" }
+theme2 = { path = "../theme2" }
+workspace = { path = "../workspace" }
+
+futures.workspace = true
+smallvec.workspace = true
+
+[dev-dependencies]
+editor = { path = "../editor", features = ["test-support"] }
