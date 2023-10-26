@@ -1,22 +1,16 @@
-use std::marker::PhantomData;
-
 use crate::{prelude::*, Button, Label, LabelColor, Modal};
 
 #[derive(Component)]
-pub struct CopilotModal<S: 'static + Send + Sync + Clone> {
+pub struct CopilotModal {
     id: ElementId,
-    state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync + Clone> CopilotModal<S> {
+impl CopilotModal {
     pub fn new(id: impl Into<ElementId>) -> Self {
-        Self {
-            id: id.into(),
-            state_type: PhantomData,
-        }
+        Self { id: id.into() }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div().id(self.id.clone()).child(
             Modal::new("some-id")
                 .title("Connect Copilot to Zed")
@@ -36,20 +30,16 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct CopilotModalStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    pub struct CopilotModalStory;
 
-    impl<S: 'static + Send + Sync + Clone> CopilotModalStory<S> {
+    impl CopilotModalStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
-                .child(Story::title_for::<_, CopilotModal<S>>(cx))
+                .child(Story::title_for::<_, CopilotModal>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(CopilotModal::new("copilot-modal"))
         }

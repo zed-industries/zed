@@ -1,6 +1,6 @@
 use gpui2::Element;
 
-pub trait ElementExt<S: 'static + Send + Sync>: Element<S> {
+pub trait ElementExt<S: 'static>: Element<S> {
     // fn when(mut self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
     // where
     //     Self: Sized,
@@ -22,4 +22,4 @@ pub trait ElementExt<S: 'static + Send + Sync>: Element<S> {
     // }
 }
 
-impl<S: 'static + Send + Sync, E: Element<S>> ElementExt<S> for E {}
+impl<S: 'static, E: Element<S>> ElementExt<S> for E {}

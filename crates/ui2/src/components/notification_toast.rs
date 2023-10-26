@@ -1,20 +1,16 @@
-use std::marker::PhantomData;
-
 use gpui2::rems;
 
 use crate::{h_stack, prelude::*, Icon};
 
 #[derive(Component)]
-pub struct NotificationToast<S: 'static + Send + Sync + Clone> {
-    state_type: PhantomData<S>,
+pub struct NotificationToast {
     label: SharedString,
     icon: Option<Icon>,
 }
 
-impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
+impl NotificationToast {
     pub fn new(label: SharedString) -> Self {
         Self {
-            state_type: PhantomData,
             label,
             icon: None,
         }
@@ -28,7 +24,7 @@ impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
         self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         h_stack()

@@ -1,22 +1,18 @@
-use std::marker::PhantomData;
-
 use gpui2::{rems, AbsoluteLength};
 
 use crate::prelude::*;
 use crate::{Icon, IconButton, Label, Panel, PanelSide};
 
 #[derive(Component)]
-pub struct AssistantPanel<S: 'static + Send + Sync> {
+pub struct AssistantPanel {
     id: ElementId,
-    state_type: PhantomData<S>,
     current_side: PanelSide,
 }
 
-impl<S: 'static + Send + Sync> AssistantPanel<S> {
+impl AssistantPanel {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
-            state_type: PhantomData,
             current_side: PanelSide::default(),
         }
     }
@@ -26,7 +22,7 @@ impl<S: 'static + Send + Sync> AssistantPanel<S> {
         self
     }
 
-    fn render(self, view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         Panel::new(self.id.clone(), cx)
             .children(vec![div()
                 .flex()
@@ -92,9 +88,9 @@ mod stories {
             Self {}
         }
 
-        fn render<V: 'static + Send + Sync>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
-                .child(Story::title_for::<_, AssistantPanel<V>>(cx))
+                .child(Story::title_for::<_, AssistantPanel>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(AssistantPanel::new("assistant-panel"))
         }

@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use gpui2::{svg, Hsla};
 use strum::EnumIter;
 
@@ -149,17 +147,15 @@ impl Icon {
 }
 
 #[derive(Component)]
-pub struct IconElement<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+pub struct IconElement {
     icon: Icon,
     color: IconColor,
     size: IconSize,
 }
 
-impl<S: 'static + Send + Sync> IconElement<S> {
+impl IconElement {
     pub fn new(icon: Icon) -> Self {
         Self {
-            state_type: PhantomData,
             icon,
             color: IconColor::default(),
             size: IconSize::default(),
@@ -176,7 +172,7 @@ impl<S: 'static + Send + Sync> IconElement<S> {
         self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let fill = self.color.color(cx);
         let svg_size = match self.size {
             IconSize::Small => ui_size(cx, 12. / 14.),
@@ -203,22 +199,18 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct IconStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    pub struct IconStory;
 
-    impl<S: 'static + Send + Sync> IconStory<S> {
+    impl IconStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let icons = Icon::iter();
 
             Story::container(cx)
-                .child(Story::title_for::<_, IconElement<S>>(cx))
+                .child(Story::title_for::<_, IconElement>(cx))
                 .child(Story::label(cx, "All Icons"))
                 .child(div().flex().gap_3().children(icons.map(IconElement::new)))
         }

@@ -1,23 +1,17 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 use crate::{OrderMethod, Palette, PaletteItem};
 
 #[derive(Component)]
-pub struct RecentProjects<S: 'static + Send + Sync + Clone> {
+pub struct RecentProjects {
     id: ElementId,
-    state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync + Clone> RecentProjects<S> {
+impl RecentProjects {
     pub fn new(id: impl Into<ElementId>) -> Self {
-        Self {
-            id: id.into(),
-            state_type: PhantomData,
-        }
+        Self { id: id.into() }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(vec![
@@ -45,20 +39,16 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct RecentProjectsStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    pub struct RecentProjectsStory;
 
-    impl<S: 'static + Send + Sync + Clone> RecentProjectsStory<S> {
+    impl RecentProjectsStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
-                .child(Story::title_for::<_, RecentProjects<S>>(cx))
+                .child(Story::title_for::<_, RecentProjects>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(RecentProjects::new("recent-projects"))
         }

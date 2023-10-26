@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use gpui2::{AbsoluteLength, AnyElement};
 use smallvec::SmallVec;
 
@@ -41,9 +39,8 @@ pub enum PanelSide {
 use std::collections::HashSet;
 
 #[derive(Component)]
-pub struct Panel<S: 'static + Send + Sync> {
+pub struct Panel<S: 'static> {
     id: ElementId,
-    state_type: PhantomData<S>,
     current_side: PanelSide,
     /// Defaults to PanelAllowedSides::LeftAndRight
     allowed_sides: PanelAllowedSides,
@@ -52,13 +49,12 @@ pub struct Panel<S: 'static + Send + Sync> {
     children: SmallVec<[AnyElement<S>; 2]>,
 }
 
-impl<S: 'static + Send + Sync> Panel<S> {
+impl<S: 'static> Panel<S> {
     pub fn new(id: impl Into<ElementId>, cx: &mut WindowContext) -> Self {
         let settings = user_settings(cx);
 
         Self {
             id: id.into(),
-            state_type: PhantomData,
             current_side: PanelSide::default(),
             allowed_sides: PanelAllowedSides::default(),
             initial_width: *settings.default_panel_size,
@@ -121,7 +117,7 @@ impl<S: 'static + Send + Sync> Panel<S> {
     }
 }
 
-impl<S: 'static + Send + Sync> ParentElement<S> for Panel<S> {
+impl<S: 'static> ParentElement<S> for Panel<S> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
         &mut self.children
     }
@@ -137,18 +133,14 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct PanelStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    pub struct PanelStory;
 
-    impl<S: 'static + Send + Sync + Clone> PanelStory<S> {
+    impl PanelStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Panel<S>>(cx))
                 .child(Story::label(cx, "Default"))

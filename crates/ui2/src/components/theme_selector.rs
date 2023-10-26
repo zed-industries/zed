@@ -1,23 +1,17 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 use crate::{OrderMethod, Palette, PaletteItem};
 
 #[derive(Component)]
-pub struct ThemeSelector<S: 'static + Send + Sync> {
+pub struct ThemeSelector {
     id: ElementId,
-    state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync> ThemeSelector<S> {
+impl ThemeSelector {
     pub fn new(id: impl Into<ElementId>) -> Self {
-        Self {
-            id: id.into(),
-            state_type: PhantomData,
-        }
+        Self { id: id.into() }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div().child(
             Palette::new(self.id.clone())
                 .items(vec![
@@ -50,20 +44,16 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct ThemeSelectorStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    pub struct ThemeSelectorStory;
 
-    impl<S: 'static + Send + Sync + Clone> ThemeSelectorStory<S> {
+    impl ThemeSelectorStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
-                .child(Story::title_for::<_, ThemeSelector<S>>(cx))
+                .child(Story::title_for::<_, ThemeSelector>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(ThemeSelector::new("theme-selector"))
         }

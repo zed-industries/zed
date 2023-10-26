@@ -1,23 +1,19 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 use crate::{Avatar, Player};
 
 #[derive(Component)]
-pub struct Facepile<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+pub struct Facepile {
     players: Vec<Player>,
 }
 
-impl<S: 'static + Send + Sync> Facepile<S> {
+impl Facepile {
     pub fn new<P: Iterator<Item = Player>>(players: P) -> Self {
         Self {
-            state_type: PhantomData,
             players: players.collect(),
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let player_count = self.players.len();
         let player_list = self.players.iter().enumerate().map(|(ix, player)| {
             let isnt_last = ix < player_count - 1;
@@ -40,22 +36,18 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct FacepileStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    pub struct FacepileStory;
 
-    impl<S: 'static + Send + Sync> FacepileStory<S> {
+    impl FacepileStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             let players = static_players();
 
             Story::container(cx)
-                .child(Story::title_for::<_, Facepile<S>>(cx))
+                .child(Story::title_for::<_, Facepile>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
                     div()

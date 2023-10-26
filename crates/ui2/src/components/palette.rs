@@ -1,23 +1,19 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 use crate::{h_stack, v_stack, Keybinding, Label, LabelColor};
 
 #[derive(Component)]
-pub struct Palette<S: 'static + Send + Sync> {
+pub struct Palette {
     id: ElementId,
-    state_type: PhantomData<S>,
     input_placeholder: SharedString,
     empty_string: SharedString,
-    items: Vec<PaletteItem<S>>,
+    items: Vec<PaletteItem>,
     default_order: OrderMethod,
 }
 
-impl<S: 'static + Send + Sync> Palette<S> {
+impl Palette {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
-            state_type: PhantomData,
             input_placeholder: "Find something...".into(),
             empty_string: "No items found.".into(),
             items: vec![],
@@ -25,7 +21,7 @@ impl<S: 'static + Send + Sync> Palette<S> {
         }
     }
 
-    pub fn items(mut self, items: Vec<PaletteItem<S>>) -> Self {
+    pub fn items(mut self, items: Vec<PaletteItem>) -> Self {
         self.items = items;
         self
     }
@@ -46,7 +42,7 @@ impl<S: 'static + Send + Sync> Palette<S> {
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -102,13 +98,13 @@ impl<S: 'static + Send + Sync> Palette<S> {
 }
 
 #[derive(Component)]
-pub struct PaletteItem<S: 'static + Send + Sync> {
+pub struct PaletteItem {
     pub label: SharedString,
     pub sublabel: Option<SharedString>,
-    pub keybinding: Option<Keybinding<S>>,
+    pub keybinding: Option<Keybinding>,
 }
 
-impl<S: 'static + Send + Sync> PaletteItem<S> {
+impl PaletteItem {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
@@ -129,13 +125,13 @@ impl<S: 'static + Send + Sync> PaletteItem<S> {
 
     pub fn keybinding<K>(mut self, keybinding: K) -> Self
     where
-        K: Into<Option<Keybinding<S>>>,
+        K: Into<Option<Keybinding>>,
     {
         self.keybinding = keybinding.into();
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div()
             .flex()
             .flex_row()
@@ -161,20 +157,16 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct PaletteStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    pub struct PaletteStory;
 
-    impl<S: 'static + Send + Sync + Clone> PaletteStory<S> {
+    impl PaletteStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
-                .child(Story::title_for::<_, Palette<S>>(cx))
+                .child(Story::title_for::<_, Palette>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Palette::new("palette-1"))
                 .child(Story::label(cx, "With Items"))

@@ -1,4 +1,3 @@
-use std::marker::PhantomData;
 
 use gpui2::{px, rgb, Div, Hsla};
 use ui::prelude::*;
@@ -8,18 +7,14 @@ use crate::story::Story;
 /// A reimplementation of the MDN `z-index` example, found here:
 /// [https://developer.mozilla.org/en-US/docs/Web/CSS/z-index](https://developer.mozilla.org/en-US/docs/Web/CSS/z-index).
 #[derive(Component)]
-pub struct ZIndexStory<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
-}
+pub struct ZIndexStory;
 
-impl<S: 'static + Send + Sync> ZIndexStory<S> {
+impl ZIndexStory {
     pub fn new() -> Self {
-        Self {
-            state_type: PhantomData,
-        }
+        Self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         Story::container(cx)
             .child(Story::title(cx, "z-index"))
             .child(
@@ -86,23 +81,19 @@ trait Styles: Styled + Sized {
     }
 }
 
-impl<V: 'static + Send + Sync> Styles for Div<V> {}
+impl<V: 'static> Styles for Div<V> {}
 
 #[derive(Component)]
-struct ZIndexExample<V: 'static + Send + Sync> {
-    view_type: PhantomData<V>,
+struct ZIndexExample {
     z_index: u32,
 }
 
-impl<V: 'static + Send + Sync> ZIndexExample<V> {
+impl ZIndexExample {
     pub fn new(z_index: u32) -> Self {
-        Self {
-            view_type: PhantomData,
-            z_index,
-        }
+        Self { z_index }
     }
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div()
             .relative()
             .size_full()

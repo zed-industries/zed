@@ -1,25 +1,21 @@
-use std::marker::PhantomData;
-
 use gpui2::AnyElement;
 use smallvec::SmallVec;
 
 use crate::{h_stack, prelude::*, v_stack, Button, Icon, IconButton, Label};
 
 #[derive(Component)]
-pub struct Modal<S: 'static + Send + Sync> {
+pub struct Modal<S: 'static> {
     id: ElementId,
-    state_type: PhantomData<S>,
     title: Option<SharedString>,
     primary_action: Option<Button<S>>,
     secondary_action: Option<Button<S>>,
     children: SmallVec<[AnyElement<S>; 2]>,
 }
 
-impl<S: 'static + Send + Sync> Modal<S> {
+impl<S: 'static> Modal<S> {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
-            state_type: PhantomData,
             title: None,
             primary_action: None,
             secondary_action: None,
@@ -80,7 +76,7 @@ impl<S: 'static + Send + Sync> Modal<S> {
     }
 }
 
-impl<S: 'static + Send + Sync> ParentElement<S> for Modal<S> {
+impl<S: 'static> ParentElement<S> for Modal<S> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
         &mut self.children
     }

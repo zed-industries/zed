@@ -1,23 +1,17 @@
-use std::marker::PhantomData;
-
 use gpui2::{relative, rems, Size};
 
 use crate::prelude::*;
 use crate::{Icon, IconButton, Pane, Tab};
 
 #[derive(Component)]
-pub struct Terminal<S: 'static + Send + Sync + Clone> {
-    state_type: PhantomData<S>,
-}
+pub struct Terminal;
 
-impl<S: 'static + Send + Sync + Clone> Terminal<S> {
+impl Terminal {
     pub fn new() -> Self {
-        Self {
-            state_type: PhantomData,
-        }
+        Self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         let can_navigate_back = true;
@@ -94,20 +88,16 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct TerminalStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    pub struct TerminalStory;
 
-    impl<S: 'static + Send + Sync + Clone> TerminalStory<S> {
+    impl TerminalStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
-                .child(Story::title_for::<_, Terminal<S>>(cx))
+                .child(Story::title_for::<_, Terminal>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Terminal::new())
         }

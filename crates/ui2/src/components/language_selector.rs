@@ -1,23 +1,17 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 use crate::{OrderMethod, Palette, PaletteItem};
 
 #[derive(Component)]
-pub struct LanguageSelector<S: 'static + Send + Sync + Clone> {
+pub struct LanguageSelector {
     id: ElementId,
-    state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync + Clone> LanguageSelector<S> {
+impl LanguageSelector {
     pub fn new(id: impl Into<ElementId>) -> Self {
-        Self {
-            id: id.into(),
-            state_type: PhantomData,
-        }
+        Self { id: id.into() }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(vec![
@@ -49,20 +43,16 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct LanguageSelectorStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    pub struct LanguageSelectorStory;
 
-    impl<S: 'static + Send + Sync + Clone> LanguageSelectorStory<S> {
+    impl LanguageSelectorStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
-                .child(Story::title_for::<_, LanguageSelector<S>>(cx))
+                .child(Story::title_for::<_, LanguageSelector>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(LanguageSelector::new("language-selector"))
         }

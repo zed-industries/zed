@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use gpui2::{div, relative, Div};
 
 use crate::settings::user_settings;
@@ -18,8 +16,7 @@ pub enum ListItemVariant {
 }
 
 #[derive(Component)]
-pub struct ListHeader<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+pub struct ListHeader {
     label: SharedString,
     left_icon: Option<Icon>,
     variant: ListItemVariant,
@@ -27,10 +24,9 @@ pub struct ListHeader<S: 'static + Send + Sync> {
     toggleable: Toggleable,
 }
 
-impl<S: 'static + Send + Sync> ListHeader<S> {
+impl ListHeader {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
-            state_type: PhantomData,
             label: label.into(),
             left_icon: None,
             variant: ListItemVariant::default(),
@@ -59,7 +55,7 @@ impl<S: 'static + Send + Sync> ListHeader<S> {
         self
     }
 
-    fn disclosure_control(&self) -> Div<S> {
+    fn disclosure_control<S: 'static>(&self) -> Div<S> {
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = Toggleable::is_toggled(&self.toggleable);
 
@@ -92,7 +88,7 @@ impl<S: 'static + Send + Sync> ListHeader<S> {
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
@@ -135,17 +131,15 @@ impl<S: 'static + Send + Sync> ListHeader<S> {
 }
 
 #[derive(Component)]
-pub struct ListSubHeader<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+pub struct ListSubHeader {
     label: SharedString,
     left_icon: Option<Icon>,
     variant: ListItemVariant,
 }
 
-impl<S: 'static + Send + Sync> ListSubHeader<S> {
+impl ListSubHeader {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
-            state_type: PhantomData,
             label: label.into(),
             left_icon: None,
             variant: ListItemVariant::default(),
@@ -157,7 +151,7 @@ impl<S: 'static + Send + Sync> ListSubHeader<S> {
         self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
@@ -198,38 +192,38 @@ pub enum ListEntrySize {
 }
 
 #[derive(Component)]
-pub enum ListItem<S: 'static + Send + Sync> {
-    Entry(ListEntry<S>),
+pub enum ListItem<S: 'static> {
+    Entry(ListEntry),
     Details(ListDetailsEntry<S>),
-    Separator(ListSeparator<S>),
-    Header(ListSubHeader<S>),
+    Separator(ListSeparator),
+    Header(ListSubHeader),
 }
 
-impl<S: 'static + Send + Sync> From<ListEntry<S>> for ListItem<S> {
-    fn from(entry: ListEntry<S>) -> Self {
+impl<S: 'static> From<ListEntry> for ListItem<S> {
+    fn from(entry: ListEntry) -> Self {
         Self::Entry(entry)
     }
 }
 
-impl<S: 'static + Send + Sync> From<ListDetailsEntry<S>> for ListItem<S> {
+impl<S: 'static> From<ListDetailsEntry<S>> for ListItem<S> {
     fn from(entry: ListDetailsEntry<S>) -> Self {
         Self::Details(entry)
     }
 }
 
-impl<S: 'static + Send + Sync> From<ListSeparator<S>> for ListItem<S> {
-    fn from(entry: ListSeparator<S>) -> Self {
+impl<S: 'static> From<ListSeparator> for ListItem<S> {
+    fn from(entry: ListSeparator) -> Self {
         Self::Separator(entry)
     }
 }
 
-impl<S: 'static + Send + Sync> From<ListSubHeader<S>> for ListItem<S> {
-    fn from(entry: ListSubHeader<S>) -> Self {
+impl<S: 'static> From<ListSubHeader> for ListItem<S> {
+    fn from(entry: ListSubHeader) -> Self {
         Self::Header(entry)
     }
 }
 
-impl<S: 'static + Send + Sync> ListItem<S> {
+impl<S: 'static> ListItem<S> {
     fn render(self, view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         match self {
             ListItem::Entry(entry) => div().child(entry.render(view, cx)),
@@ -239,11 +233,11 @@ impl<S: 'static + Send + Sync> ListItem<S> {
         }
     }
 
-    pub fn new(label: Label<S>) -> Self {
+    pub fn new(label: Label) -> Self {
         Self::Entry(ListEntry::new(label))
     }
 
-    pub fn as_entry(&mut self) -> Option<&mut ListEntry<S>> {
+    pub fn as_entry(&mut self) -> Option<&mut ListEntry> {
         if let Self::Entry(entry) = self {
             Some(entry)
         } else {
@@ -253,10 +247,10 @@ impl<S: 'static + Send + Sync> ListItem<S> {
 }
 
 #[derive(Component)]
-pub struct ListEntry<S: 'static + Send + Sync> {
+pub struct ListEntry {
     disclosure_control_style: DisclosureControlVisibility,
     indent_level: u32,
-    label: Option<Label<S>>,
+    label: Option<Label>,
     left_content: Option<LeftContent>,
     variant: ListItemVariant,
     size: ListEntrySize,
@@ -265,8 +259,8 @@ pub struct ListEntry<S: 'static + Send + Sync> {
     overflow: OverflowStyle,
 }
 
-impl<S: 'static + Send + Sync> ListEntry<S> {
-    pub fn new(label: Label<S>) -> Self {
+impl ListEntry {
+    pub fn new(label: Label) -> Self {
         Self {
             disclosure_control_style: DisclosureControlVisibility::default(),
             indent_level: 0,
@@ -344,7 +338,10 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
         }
     }
 
-    fn disclosure_control(&mut self, cx: &mut ViewContext<S>) -> Option<impl Component<S>> {
+    fn disclosure_control<V: 'static>(
+        &mut self,
+        cx: &mut ViewContext<V>,
+    ) -> Option<impl Component<V>> {
         let disclosure_control_icon = if let Some(ToggleState::Toggled) = self.toggle {
             IconElement::new(Icon::ChevronDown)
         } else {
@@ -364,7 +361,7 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
         }
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let settings = user_settings(cx);
         let theme = theme(cx);
 
@@ -420,18 +417,18 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
     }
 }
 
-struct ListDetailsEntryHandlers<S: 'static + Send + Sync> {
+struct ListDetailsEntryHandlers<S: 'static> {
     click: Option<ClickHandler<S>>,
 }
 
-impl<S: 'static + Send + Sync> Default for ListDetailsEntryHandlers<S> {
+impl<S: 'static> Default for ListDetailsEntryHandlers<S> {
     fn default() -> Self {
         Self { click: None }
     }
 }
 
 #[derive(Component)]
-pub struct ListDetailsEntry<S: 'static + Send + Sync> {
+pub struct ListDetailsEntry<S: 'static> {
     label: SharedString,
     meta: Option<SharedString>,
     left_content: Option<LeftContent>,
@@ -442,7 +439,7 @@ pub struct ListDetailsEntry<S: 'static + Send + Sync> {
     seen: bool,
 }
 
-impl<S: 'static + Send + Sync> ListDetailsEntry<S> {
+impl<S: 'static> ListDetailsEntry<S> {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
@@ -520,18 +517,14 @@ impl<S: 'static + Send + Sync> ListDetailsEntry<S> {
 }
 
 #[derive(Clone, Component)]
-pub struct ListSeparator<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
-}
+pub struct ListSeparator;
 
-impl<S: 'static + Send + Sync> ListSeparator<S> {
+impl ListSeparator {
     pub fn new() -> Self {
-        Self {
-            state_type: PhantomData,
-        }
+        Self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         div().h_px().w_full().bg(theme.border)
@@ -539,14 +532,14 @@ impl<S: 'static + Send + Sync> ListSeparator<S> {
 }
 
 #[derive(Component)]
-pub struct List<S: 'static + Send + Sync> {
+pub struct List<S: 'static> {
     items: Vec<ListItem<S>>,
     empty_message: SharedString,
-    header: Option<ListHeader<S>>,
+    header: Option<ListHeader>,
     toggleable: Toggleable,
 }
 
-impl<S: 'static + Send + Sync> List<S> {
+impl<S: 'static> List<S> {
     pub fn new(items: Vec<ListItem<S>>) -> Self {
         Self {
             items,
@@ -561,7 +554,7 @@ impl<S: 'static + Send + Sync> List<S> {
         self
     }
 
-    pub fn header(mut self, header: ListHeader<S>) -> Self {
+    pub fn header(mut self, header: ListHeader) -> Self {
         self.header = Some(header);
         self
     }

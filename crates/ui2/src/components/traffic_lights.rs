@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 
 #[derive(Clone, Copy)]
@@ -10,22 +8,20 @@ enum TrafficLightColor {
 }
 
 #[derive(Component)]
-struct TrafficLight<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+struct TrafficLight {
     color: TrafficLightColor,
     window_has_focus: bool,
 }
 
-impl<S: 'static + Send + Sync> TrafficLight<S> {
+impl TrafficLight {
     fn new(color: TrafficLightColor, window_has_focus: bool) -> Self {
         Self {
-            state_type: PhantomData,
             color,
             window_has_focus,
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         let fill = match (self.window_has_focus, self.color) {
@@ -40,15 +36,13 @@ impl<S: 'static + Send + Sync> TrafficLight<S> {
 }
 
 #[derive(Component)]
-pub struct TrafficLights<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+pub struct TrafficLights {
     window_has_focus: bool,
 }
 
-impl<S: 'static + Send + Sync> TrafficLights<S> {
+impl TrafficLights {
     pub fn new() -> Self {
         Self {
-            state_type: PhantomData,
             window_has_focus: true,
         }
     }
@@ -58,7 +52,7 @@ impl<S: 'static + Send + Sync> TrafficLights<S> {
         self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div()
             .flex()
             .items_center()
@@ -88,20 +82,16 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct TrafficLightsStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    pub struct TrafficLightsStory;
 
-    impl<S: 'static + Send + Sync> TrafficLightsStory<S> {
+    impl TrafficLightsStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
-                .child(Story::title_for::<_, TrafficLights<S>>(cx))
+                .child(Story::title_for::<_, TrafficLights>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(TrafficLights::new())
                 .child(Story::label(cx, "Unfocused"))

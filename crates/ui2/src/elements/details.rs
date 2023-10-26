@@ -1,19 +1,15 @@
-use std::marker::PhantomData;
-
 use crate::{prelude::*, v_stack, ButtonGroup};
 
 #[derive(Component)]
-pub struct Details<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+pub struct Details<V: 'static> {
     text: &'static str,
     meta: Option<&'static str>,
-    actions: Option<ButtonGroup<S>>,
+    actions: Option<ButtonGroup<V>>,
 }
 
-impl<S: 'static + Send + Sync> Details<S> {
+impl<S: 'static> Details<S> {
     pub fn new(text: &'static str) -> Self {
         Self {
-            state_type: PhantomData,
             text,
             meta: None,
             actions: None,
@@ -55,20 +51,16 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct DetailsStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    pub struct DetailsStory;
 
-    impl<S: 'static + Send + Sync + Clone> DetailsStory<S> {
+    impl DetailsStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
-                .child(Story::title_for::<_, Details<S>>(cx))
+                .child(Story::title_for::<_, Details<V>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Details::new("The quick brown fox jumps over the lazy dog"))
                 .child(Story::label(cx, "With meta"))

@@ -7,12 +7,12 @@ use crate::prelude::*;
 pub struct ToolbarItem {}
 
 #[derive(Component)]
-pub struct Toolbar<S: 'static + Send + Sync> {
+pub struct Toolbar<S: 'static> {
     left_items: SmallVec<[AnyElement<S>; 2]>,
     right_items: SmallVec<[AnyElement<S>; 2]>,
 }
 
-impl<S: 'static + Send + Sync> Toolbar<S> {
+impl<S: 'static> Toolbar<S> {
     pub fn new() -> Self {
         Self {
             left_items: SmallVec::new(),
@@ -72,7 +72,6 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use std::marker::PhantomData;
     use std::path::PathBuf;
     use std::str::FromStr;
 
@@ -81,22 +80,18 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct ToolbarStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    pub struct ToolbarStory;
 
-    impl<S: 'static + Send + Sync + Clone> ToolbarStory<S> {
+    impl ToolbarStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let theme = theme(cx);
 
             Story::container(cx)
-                .child(Story::title_for::<_, Toolbar<S>>(cx))
+                .child(Story::title_for::<_, Toolbar<V>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
                     Toolbar::new()

@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use gpui2::{Hsla, WindowContext};
 
 use crate::prelude::*;
@@ -110,9 +108,8 @@ impl BufferRow {
 }
 
 #[derive(Component, Clone)]
-pub struct Buffer<S: 'static + Send + Sync + Clone> {
+pub struct Buffer {
     id: ElementId,
-    state_type: PhantomData<S>,
     rows: Option<BufferRows>,
     readonly: bool,
     language: Option<String>,
@@ -120,11 +117,10 @@ pub struct Buffer<S: 'static + Send + Sync + Clone> {
     path: Option<String>,
 }
 
-impl<S: 'static + Send + Sync + Clone> Buffer<S> {
+impl Buffer {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
-            state_type: PhantomData,
             rows: Some(BufferRows::default()),
             readonly: false,
             language: None,
@@ -158,7 +154,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
         self
     }
 
-    fn render_row(row: BufferRow, cx: &WindowContext) -> impl Component<S> {
+    fn render_row<S: 'static>(row: BufferRow, cx: &WindowContext) -> impl Component<S> {
         let theme = theme(cx);
 
         let line_background = if row.current {
@@ -208,7 +204,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
             }))
     }
 
-    fn render_rows(&self, cx: &WindowContext) -> Vec<impl Component<S>> {
+    fn render_rows<S: 'static>(&self, cx: &WindowContext) -> Vec<impl Component<S>> {
         match &self.rows {
             Some(rows) => rows
                 .rows
@@ -219,7 +215,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
         let rows = self.render_rows(cx);
 
@@ -247,22 +243,18 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct BufferStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    pub struct BufferStory;
 
-    impl<S: 'static + Send + Sync + Clone> BufferStory<S> {
+    impl BufferStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             let theme = theme(cx);
 
             Story::container(cx)
-                .child(Story::title_for::<_, Buffer<S>>(cx))
+                .child(Story::title_for::<_, Buffer>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(div().w(rems(64.)).h_96().child(empty_buffer_example()))
                 .child(Story::label(cx, "Hello World (Rust)"))

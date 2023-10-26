@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use gpui2::{hsla, red, AnyElement, ElementId, ExternalPaths, Hsla, Length, Size};
 use smallvec::SmallVec;
 
@@ -76,17 +74,15 @@ impl<V: 'static> ParentElement<V> for Pane<V> {
 }
 
 #[derive(Component)]
-pub struct PaneGroup<V: 'static + Send + Sync> {
-    state_type: PhantomData<V>,
+pub struct PaneGroup<V: 'static> {
     groups: Vec<PaneGroup<V>>,
     panes: Vec<Pane<V>>,
     split_direction: SplitDirection,
 }
 
-impl<V: 'static + Send + Sync> PaneGroup<V> {
+impl<V: 'static> PaneGroup<V> {
     pub fn new_groups(groups: Vec<PaneGroup<V>>, split_direction: SplitDirection) -> Self {
         Self {
-            state_type: PhantomData,
             groups,
             panes: Vec::new(),
             split_direction,
@@ -95,7 +91,6 @@ impl<V: 'static + Send + Sync> PaneGroup<V> {
 
     pub fn new_panes(panes: Vec<Pane<V>>, split_direction: SplitDirection) -> Self {
         Self {
-            state_type: PhantomData,
             groups: Vec::new(),
             panes,
             split_direction,

@@ -1,25 +1,19 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 use crate::{
     static_project_panel_project_items, static_project_panel_single_items, Input, List, ListHeader,
 };
 
 #[derive(Component)]
-pub struct ProjectPanel<S: 'static + Send + Sync> {
+pub struct ProjectPanel {
     id: ElementId,
-    state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync> ProjectPanel<S> {
+impl ProjectPanel {
     pub fn new(id: impl Into<ElementId>) -> Self {
-        Self {
-            id: id.into(),
-            state_type: PhantomData,
-        }
+        Self { id: id.into() }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         div()
@@ -68,20 +62,16 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct ProjectPanelStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    pub struct ProjectPanelStory;
 
-    impl<S: 'static + Send + Sync + Clone> ProjectPanelStory<S> {
+    impl ProjectPanelStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
-                .child(Story::title_for::<_, ProjectPanel<S>>(cx))
+                .child(Story::title_for::<_, ProjectPanel>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
                     Panel::new("project-panel-outer", cx)

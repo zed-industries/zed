@@ -19,7 +19,7 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
         }) {
             quote! { #first_type_param }
         } else {
-            trait_generics.params.push(parse_quote! { V: 'static + Send + Sync });
+            trait_generics.params.push(parse_quote! { V: 'static });
             quote! { V }
         }
     };

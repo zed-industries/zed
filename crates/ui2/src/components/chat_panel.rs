@@ -1,17 +1,15 @@
-use std::marker::PhantomData;
-
 use chrono::NaiveDateTime;
 
 use crate::prelude::*;
 use crate::{Icon, IconButton, Input, Label, LabelColor};
 
 #[derive(Component)]
-pub struct ChatPanel<S: 'static + Send + Sync> {
+pub struct ChatPanel {
     element_id: ElementId,
-    messages: Vec<ChatMessage<S>>,
+    messages: Vec<ChatMessage>,
 }
 
-impl<S: 'static + Send + Sync> ChatPanel<S> {
+impl ChatPanel {
     pub fn new(element_id: impl Into<ElementId>) -> Self {
         Self {
             element_id: element_id.into(),
@@ -19,12 +17,12 @@ impl<S: 'static + Send + Sync> ChatPanel<S> {
         }
     }
 
-    pub fn messages(mut self, messages: Vec<ChatMessage<S>>) -> Self {
+    pub fn messages(mut self, messages: Vec<ChatMessage>) -> Self {
         self.messages = messages;
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div()
             .id(self.element_id.clone())
             .flex()
@@ -71,24 +69,22 @@ impl<S: 'static + Send + Sync> ChatPanel<S> {
 }
 
 #[derive(Component)]
-pub struct ChatMessage<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+pub struct ChatMessage {
     author: String,
     text: String,
     sent_at: NaiveDateTime,
 }
 
-impl<S: 'static + Send + Sync> ChatMessage<S> {
+impl ChatMessage {
     pub fn new(author: String, text: String, sent_at: NaiveDateTime) -> Self {
         Self {
-            state_type: PhantomData,
             author,
             text,
             sent_at,
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div()
             .flex()
             .flex_col()
@@ -118,20 +114,16 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct ChatPanelStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    pub struct ChatPanelStory;
 
-    impl<S: 'static + Send + Sync> ChatPanelStory<S> {
+    impl ChatPanelStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
-                .child(Story::title_for::<_, ChatPanel<S>>(cx))
+                .child(Story::title_for::<_, ChatPanel>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
                     Panel::new("chat-panel-1-outer", cx)

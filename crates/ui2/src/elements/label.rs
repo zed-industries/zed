@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use gpui2::{relative, Hsla, WindowContext};
 use smallvec::SmallVec;
 
@@ -49,18 +47,16 @@ pub enum LineHeightStyle {
 }
 
 #[derive(Component)]
-pub struct Label<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+pub struct Label {
     label: SharedString,
     line_height_style: LineHeightStyle,
     color: LabelColor,
     strikethrough: bool,
 }
 
-impl<S: 'static + Send + Sync> Label<S> {
+impl Label {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
-            state_type: PhantomData,
             label: label.into(),
             line_height_style: LineHeightStyle::default(),
             color: LabelColor::Default,
@@ -83,7 +79,7 @@ impl<S: 'static + Send + Sync> Label<S> {
         self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div()
             .when(self.strikethrough, |this| {
                 this.relative().child(
@@ -106,18 +102,16 @@ impl<S: 'static + Send + Sync> Label<S> {
 }
 
 #[derive(Component)]
-pub struct HighlightedLabel<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
+pub struct HighlightedLabel {
     label: SharedString,
     color: LabelColor,
     highlight_indices: Vec<usize>,
     strikethrough: bool,
 }
 
-impl<S: 'static + Send + Sync> HighlightedLabel<S> {
+impl HighlightedLabel {
     pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
         Self {
-            state_type: PhantomData,
             label: label.into(),
             color: LabelColor::Default,
             highlight_indices,
@@ -135,7 +129,7 @@ impl<S: 'static + Send + Sync> HighlightedLabel<S> {
         self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         let highlight_color = theme.text_accent;
@@ -212,20 +206,16 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct LabelStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    pub struct LabelStory;
 
-    impl<S: 'static + Send + Sync> LabelStory<S> {
+    impl LabelStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
-                .child(Story::title_for::<_, Label<S>>(cx))
+                .child(Story::title_for::<_, Label>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Label::new("Hello, world!"))
                 .child(Story::label(cx, "Highlighted"))

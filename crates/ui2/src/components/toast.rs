@@ -23,12 +23,12 @@ pub enum ToastOrigin {
 ///
 /// Only one toast may be visible at a time.
 #[derive(Component)]
-pub struct Toast<S: 'static + Send + Sync> {
+pub struct Toast<S: 'static> {
     origin: ToastOrigin,
     children: SmallVec<[AnyElement<S>; 2]>,
 }
 
-impl<S: 'static + Send + Sync> Toast<S> {
+impl<S: 'static> Toast<S> {
     pub fn new(origin: ToastOrigin) -> Self {
         Self {
             origin,
@@ -61,7 +61,7 @@ impl<S: 'static + Send + Sync> Toast<S> {
     }
 }
 
-impl<S: 'static + Send + Sync> ParentElement<S> for Toast<S> {
+impl<S: 'static> ParentElement<S> for Toast<S> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
         &mut self.children
     }
@@ -72,25 +72,19 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use std::marker::PhantomData;
-
     use crate::{Label, Story};
 
     use super::*;
 
     #[derive(Component)]
-    pub struct ToastStory<S: 'static + Send + Sync> {
-        state_type: PhantomData<S>,
-    }
+    pub struct ToastStory;
 
-    impl<S: 'static + Send + Sync> ToastStory<S> {
+    impl ToastStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Toast<S>>(cx))
                 .child(Story::label(cx, "Default"))

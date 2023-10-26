@@ -1,11 +1,8 @@
-use std::marker::PhantomData;
-
 use crate::prelude::*;
 use crate::{Icon, IconColor, IconElement, Label, LabelColor};
 
 #[derive(Component, Clone)]
-pub struct Tab<S: 'static + Send + Sync + Clone> {
-    state_type: PhantomData<S>,
+pub struct Tab {
     id: ElementId,
     title: String,
     icon: Option<Icon>,
@@ -22,10 +19,9 @@ struct TabDragState {
     title: String,
 }
 
-impl<S: 'static + Send + Sync + Clone> Tab<S> {
+impl Tab {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
-            state_type: PhantomData,
             id: id.into(),
             title: "untitled".to_string(),
             icon: None,
@@ -81,7 +77,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
         self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
         let has_fs_conflict = self.fs_status == FileSystemStatus::Conflict;
         let is_deleted = self.fs_status == FileSystemStatus::Deleted;
@@ -177,23 +173,19 @@ mod stories {
     use super::*;
 
     #[derive(Component)]
-    pub struct TabStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
-    }
+    pub struct TabStory;
 
-    impl<S: 'static + Send + Sync + Clone> TabStory<S> {
+    impl TabStory {
         pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+            Self
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let git_statuses = GitStatus::iter();
             let fs_statuses = FileSystemStatus::iter();
 
             Story::container(cx)
-                .child(Story::title_for::<_, Tab<S>>(cx))
+                .child(Story::title_for::<_, Tab>(cx))
                 .child(
                     h_stack().child(
                         v_stack()
