@@ -331,9 +331,8 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
         self.stateful_interaction().drag_listener =
             Some(Box::new(move |view_state, cursor_offset, cx| {
                 let drag = listener(view_state, cx);
-                let view_handle = cx.handle().upgrade().unwrap();
                 let drag_handle_view = Some(
-                    view(view_handle, move |view_state, cx| {
+                    view(cx.handle().upgrade().unwrap(), move |view_state, cx| {
                         (drag.render_drag_handle)(view_state, cx)
                     })
                     .into_any(),

@@ -130,6 +130,7 @@ pub struct AppContext {
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) globals_by_type: HashMap<TypeId, AnyBox>,
     pub(crate) unit_entity: Handle<()>,
+    pub(crate) unit_view: View<()>,
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) keymap: Arc<Mutex<Keymap>>,
@@ -653,12 +654,12 @@ impl AppContext {
 }
 
 impl Context for AppContext {
-    type EntityContext<'a, 'w, T> = ModelContext<'a, T>;
+    type EntityContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
     fn entity<T: 'static + Send>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
     ) -> Handle<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
@@ -670,7 +671,7 @@ impl Context for AppContext {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
     ) -> R {
         self.update(|cx| {
             let mut entity = cx.entities.lease(handle);

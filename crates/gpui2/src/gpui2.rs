@@ -70,12 +70,12 @@ use taffy::TaffyLayoutEngine;
 type AnyBox = Box<dyn Any + Send>;
 
 pub trait Context {
-    type EntityContext<'a, 'w, T>;
+    type EntityContext<'a, T>;
     type Result<T>;
 
     fn entity<T>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
     ) -> Self::Result<Handle<T>>
     where
         T: 'static + Send;
@@ -83,7 +83,7 @@ pub trait Context {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
     ) -> Self::Result<R>;
 }
 
@@ -111,12 +111,12 @@ impl<T> DerefMut for MainThread<T> {
 }
 
 impl<C: Context> Context for MainThread<C> {
-    type EntityContext<'a, 'w, T> = MainThread<C::EntityContext<'a, 'w, T>>;
+    type EntityContext<'a, T> = MainThread<C::EntityContext<'a, T>>;
     type Result<T> = C::Result<T>;
 
     fn entity<T>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
     ) -> Self::Result<Handle<T>>
     where
         T: 'static + Send,
@@ -124,8 +124,8 @@ impl<C: Context> Context for MainThread<C> {
         self.0.entity(|cx| {
             let cx = unsafe {
                 mem::transmute::<
-                    &mut C::EntityContext<'_, '_, T>,
-                    &mut MainThread<C::EntityContext<'_, '_, T>>,
+                    &mut C::EntityContext<'_, T>,
+                    &mut MainThread<C::EntityContext<'_, T>>,
                 >(cx)
             };
             build_entity(cx)
@@ -135,13 +135,13 @@ impl<C: Context> Context for MainThread<C> {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         self.0.update_entity(handle, |entity, cx| {
             let cx = unsafe {
                 mem::transmute::<
-                    &mut C::EntityContext<'_, '_, T>,
-                    &mut MainThread<C::EntityContext<'_, '_, T>>,
+                    &mut C::EntityContext<'_, T>,
+                    &mut MainThread<C::EntityContext<'_, T>>,
                 >(cx)
             };
             update(entity, cx)

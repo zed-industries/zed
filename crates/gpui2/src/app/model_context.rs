@@ -224,12 +224,12 @@ where
 }
 
 impl<'a, T> Context for ModelContext<'a, T> {
-    type EntityContext<'b, 'c, U> = ModelContext<'b, U>;
+    type EntityContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
     fn entity<U>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, U>) -> U,
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, U>) -> U,
     ) -> Handle<U>
     where
         U: 'static + Send,
@@ -240,7 +240,7 @@ impl<'a, T> Context for ModelContext<'a, T> {
     fn update_entity<U: 'static, R>(
         &mut self,
         handle: &Handle<U>,
-        update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,
+        update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, U>) -> R,
     ) -> R {
         self.app.update_entity(handle, update)
     }
