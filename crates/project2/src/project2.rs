@@ -52,6 +52,7 @@ use lsp2::{
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
+use parking_lot::Mutex;
 use postage::watch;
 use prettier2::{LocateStart, Prettier, PRETTIER_SERVER_FILE, PRETTIER_SERVER_JS};
 use project_settings::{LspSettings, ProjectSettings};
@@ -2778,7 +2779,9 @@ impl Project {
             return;
         }
 
+        let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let pending_server = match self.languages.create_pending_language_server(
+            stderr_capture.clone(),
             language.clone(),
             adapter.clone(),
             worktree_path,
@@ -2824,10 +2827,14 @@ impl Project {
                 .await;
 
                 match result {
-                    Ok(server) => server,
+                    Ok(server) => {
+                        stderr_capture.lock().take();
+                        server
+                    }
 
                     Err(err) => {
                         log::error!("failed to start language server {:?}: {}", server_name, err);
+                        log::error!("server stderr: {:?}", stderr_capture.lock().take());
 
                         if let Some(this) = this.upgrade() {
                             if let Some(container_dir) = container_dir {
@@ -2931,19 +2938,16 @@ impl Project {
         key: (WorktreeId, LanguageServerName),
         cx: &mut AsyncAppContext,
     ) -> Result<Option<Arc<LanguageServer>>> {
-        let setup = Self::setup_pending_language_server(
+        let language_server = Self::setup_pending_language_server(
             this.clone(),
             initialization_options,
             pending_server,
             adapter.clone(),
             server_id,
             cx,
-        );
+        )
+        .await?;
 
-        let language_server = match setup.await? {
-            Some(language_server) => language_server,
-            None => return Ok(None),
-        };
         let this = match this.upgrade() {
             Some(this) => this,
             None => return Err(anyhow!("failed to upgrade project handle")),
@@ -2960,7 +2964,7 @@ impl Project {
             )
         })??;
 
-        Ok(Some(language_server))
+        Ok(language_server)
     }
 
     async fn setup_pending_language_server(
@@ -2970,12 +2974,9 @@ impl Project {
         adapter: Arc<CachedLspAdapter>,
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
-    ) -> Result<Option<Arc<LanguageServer>>> {
+    ) -> Result<Arc<LanguageServer>> {
         let workspace_config = cx.update(|cx| adapter.workspace_configuration(cx))?.await;
-        let language_server = match pending_server.task.await? {
-            Some(server) => server,
-            None => return Ok(None),
-        };
+        let language_server = pending_server.task.await?;
 
         language_server
             .on_notification::<lsp2::notification::PublishDiagnostics, _>({
@@ -3050,6 +3051,7 @@ impl Project {
                 }
             })
             .detach();
+
         language_server
             .on_request::<lsp2::request::RegisterCapability, _, _>({
                 let this = this.clone();
@@ -3138,7 +3140,7 @@ impl Project {
             )
             .ok();
 
-        Ok(Some(language_server))
+        Ok(language_server)
     }
 
     fn insert_newly_running_language_server(
