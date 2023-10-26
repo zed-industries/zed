@@ -323,6 +323,12 @@ impl<T> PartialEq for Handle<T> {
 
 impl<T> Eq for Handle<T> {}
 
+impl<T> PartialEq<WeakHandle<T>> for Handle<T> {
+    fn eq(&self, other: &WeakHandle<T>) -> bool {
+        self.entity_id() == other.entity_id()
+    }
+}
+
 #[derive(Clone)]
 pub struct AnyWeakHandle {
     pub(crate) entity_id: EntityId,
@@ -444,3 +450,9 @@ impl<T> PartialEq for WeakHandle<T> {
 }
 
 impl<T> Eq for WeakHandle<T> {}
+
+impl<T> PartialEq<Handle<T>> for WeakHandle<T> {
+    fn eq(&self, other: &Handle<T>) -> bool {
+        self.entity_id() == other.entity_id()
+    }
+}

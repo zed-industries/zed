@@ -1127,6 +1127,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "call2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-broadcast",
+ "audio2",
+ "client2",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "live_kit_client",
+ "log",
+ "media",
+ "postage",
+ "project2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "util",
+]
+
+[[package]]
 name = "cap-fs-ext"
 version = "0.24.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10736,6 +10762,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "backtrace",
+ "call2",
  "chrono",
  "cli",
  "client2",
@@ -10765,6 +10792,7 @@ dependencies = [
  "num_cpus",
  "parking_lot 0.11.2",
  "postage",
+ "project2",
  "rand 0.8.5",
  "regex",
  "rpc",

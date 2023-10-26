@@ -2,16 +2,17 @@
 #![allow(non_snake_case)]
 
 use crate::open_listener::{OpenListener, OpenRequest};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
+use client2::UserStore;
 use db2::kvp::KEY_VALUE_STORE;
 use fs2::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui2::{App, AppContext, AsyncAppContext, SemanticVersion, Task};
+use gpui2::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
 use language2::LanguageRegistry;
 use log::LevelFilter;
@@ -111,26 +112,26 @@ fn main() {
         handle_settings_file_changes(user_settings_file_rx, cx);
         // handle_keymap_file_changes(user_keymap_file_rx, cx);
 
-        // let client = client2::Client::new(http.clone(), cx);
-        let languages = LanguageRegistry::new(login_shell_env_loaded);
+        let client = client2::Client::new(http.clone(), cx);
+        let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
-        // languages.set_executor(cx.background().clone());
-        // languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
-        // let languages = Arc::new(languages);
+        languages.set_executor(cx.executor().clone());
+        languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
+        let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
 
-        // languages::init(languages.clone(), node_runtime.clone(), cx);
-        // let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
+        language2::init(cx);
+        let user_store = cx.entity(|cx| UserStore::new(client.clone(), http.clone(), cx));
         // let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
-        // cx.set_global(client.clone());
+        cx.set_global(client.clone());
 
         theme2::init(cx);
         // context_menu::init(cx);
-        // project::Project::init(&client, cx);
-        // client::init(&client, cx);
+        project2::Project::init(&client, cx);
+        client2::init(&client, cx);
         // command_palette::init(cx);
-        // language::init(cx);
+        language2::init(cx);
         // editor::init(cx);
         // go_to_line::init(cx);
         // file_finder::init(cx);
@@ -167,7 +168,7 @@ fn main() {
         // client.telemetry().start(installation_id, session_id, cx);
 
         // todo!("app_state")
-        let app_state = Arc::new(AppState);
+        let app_state = Arc::new(AppState { client, user_store });
         // let app_state = Arc::new(AppState {
         //     languages,
         //     client: client.clone(),
@@ -193,7 +194,7 @@ fn main() {
         // theme_selector::init(cx);
         // activity_indicator::init(cx);
         // language_tools::init(cx);
-        // call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        call2::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         // collab_ui::init(&app_state, cx);
         // feedback::init(cx);
         // welcome::init(cx);
