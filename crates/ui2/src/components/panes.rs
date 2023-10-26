@@ -13,17 +13,18 @@ pub enum SplitDirection {
 }
 
 // #[derive(Element)]
-pub struct Pane<S: 'static + Send + Sync> {
+pub struct Pane<V: 'static> {
     id: ElementId,
-    state_type: PhantomData<S>,
+    state_type: PhantomData<V>,
     size: Size<Length>,
     fill: Hsla,
-    children: SmallVec<[AnyElement<S>; 2]>,
+    children: SmallVec<[AnyElement<V>; 2]>,
 }
 
 impl<V: 'static + Send + Sync> IntoAnyElement<V> for Pane<V> {
     fn into_any(self) -> AnyElement<V> {
-        let render = move |view_state, cx| self.render(view_state, cx);
+        let render =
+            move |view_state: &mut V, cx: &mut ViewContext<'_, '_, V>| self.render(view_state, cx);
 
         AnyElement::new(ElementRenderer {
             render: Some(render),
@@ -35,20 +36,36 @@ impl<V: 'static + Send + Sync> IntoAnyElement<V> for Pane<V> {
 
 struct ElementRenderer<V, E, F>
 where
-    V: 'static + Send + Sync,
+    V: 'static,
     E: 'static + IntoAnyElement<V> + Send + Sync,
-    F: FnOnce(&mut V, &mut ViewContext<V>) -> E + 'static + Send + Sync,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static + Send + Sync,
 {
     render: Option<F>,
     view_type: PhantomData<V>,
     element_type: PhantomData<E>,
 }
 
+unsafe impl<V, E, F> Send for ElementRenderer<V, E, F>
+where
+    V: 'static,
+    E: 'static + IntoAnyElement<V> + Send + Sync,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static + Send + Sync,
+{
+}
+
+unsafe impl<V, E, F> Sync for ElementRenderer<V, E, F>
+where
+    V: 'static,
+    E: 'static + IntoAnyElement<V> + Send + Sync,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static + Send + Sync,
+{
+}
+
 impl<V, E, F> Element<V> for ElementRenderer<V, E, F>
 where
-    V: 'static + Send + Sync,
+    V: 'static,
     E: 'static + IntoAnyElement<V> + Send + Sync,
-    F: FnOnce(&mut V, &mut ViewContext<V>) -> E + 'static + Send + Sync,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static + Send + Sync,
 {
     type ElementState = AnyElement<V>;
 
@@ -88,7 +105,7 @@ where
 
 impl<V, E, F> IntoAnyElement<V> for ElementRenderer<V, E, F>
 where
-    V: 'static + Send + Sync,
+    V: 'static,
     E: 'static + IntoAnyElement<V> + Send + Sync,
     F: FnOnce(&mut V, &mut ViewContext<V>) -> E + 'static + Send + Sync,
 {
@@ -97,7 +114,7 @@ where
     }
 }
 
-impl<V: 'static + Send + Sync> Pane<V> {
+impl<V: 'static> Pane<V> {
     pub fn new(id: impl Into<ElementId>, size: Size<Length>) -> Self {
         // Fill is only here for debugging purposes, remove before release
 
@@ -116,7 +133,7 @@ impl<V: 'static + Send + Sync> Pane<V> {
         self
     }
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Div<V, StatefulInteraction<V>> IntoAnyElement<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl IntoAnyElement<V> {
         div()
             .id(self.id.clone())
             .flex()
@@ -141,17 +158,17 @@ impl<V: 'static + Send + Sync> Pane<V> {
     }
 }
 
-impl<S: 'static + Send + Sync> ParentElement<S> for Pane<S> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
+impl<V: 'static> ParentElement<V> for Pane<V> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
 }
 
 #[derive(Element)]
-pub struct PaneGroup<S: 'static + Send + Sync> {
-    state_type: PhantomData<S>,
-    groups: Vec<PaneGroup<S>>,
-    panes: Vec<Pane<S>>,
+pub struct PaneGroup<V: 'static + Send + Sync> {
+    state_type: PhantomData<V>,
+    groups: Vec<PaneGroup<V>>,
+    panes: Vec<Pane<V>>,
     split_direction: SplitDirection,
 }
 
@@ -201,7 +218,7 @@ impl<V: 'static + Send + Sync> PaneGroup<V> {
                 .w_full()
                 .h_full()
                 .bg(theme.editor)
-                .children(self.groups.iter_mut().map(| group| group.render(view, cx)));
+                .children(self.groups.iter_mut().map(|group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
                 return el;
