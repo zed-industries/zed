@@ -1,41 +1,41 @@
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Element, IntoAnyElement, LayoutId, Line, Pixels,
-    SharedString, Size, ViewContext,
+    AnyElement, BorrowWindow, Bounds, Component, Element, LayoutId, Line, Pixels, SharedString,
+    Size, ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
 use std::{marker::PhantomData, sync::Arc};
 use util::ResultExt;
 
-impl<V: 'static> IntoAnyElement<V> for SharedString {
-    fn into_any(self) -> AnyElement<V> {
+impl<V: 'static> Component<V> for SharedString {
+    fn render(self) -> AnyElement<V> {
         Text {
             text: self,
             state_type: PhantomData,
         }
-        .into_any()
+        .render()
     }
 }
 
-impl<V: 'static> IntoAnyElement<V> for &'static str {
-    fn into_any(self) -> AnyElement<V> {
+impl<V: 'static> Component<V> for &'static str {
+    fn render(self) -> AnyElement<V> {
         Text {
             text: self.into(),
             state_type: PhantomData,
         }
-        .into_any()
+        .render()
     }
 }
 
 // TODO: Figure out how to pass `String` to `child` without this.
 // This impl doesn't exist in the `gpui2` crate.
-impl<V: 'static> IntoAnyElement<V> for String {
-    fn into_any(self) -> AnyElement<V> {
+impl<V: 'static> Component<V> for String {
+    fn render(self) -> AnyElement<V> {
         Text {
             text: self.into(),
             state_type: PhantomData,
         }
-        .into_any()
+        .render()
     }
 }
 
@@ -47,8 +47,8 @@ pub struct Text<V> {
 unsafe impl<V> Send for Text<V> {}
 unsafe impl<V> Sync for Text<V> {}
 
-impl<V: 'static> IntoAnyElement<V> for Text<V> {
-    fn into_any(self) -> AnyElement<V> {
+impl<V: 'static> Component<V> for Text<V> {
+    fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }

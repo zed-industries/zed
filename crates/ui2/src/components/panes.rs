@@ -12,7 +12,7 @@ pub enum SplitDirection {
     Vertical,
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct Pane<V: 'static> {
     id: ElementId,
     size: Size<Length>,
@@ -44,7 +44,7 @@ impl<V: 'static> Pane<V> {
         self
     }
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl IntoAnyElement<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div()
             .id(self.id.clone())
             .flex()
@@ -75,7 +75,7 @@ impl<V: 'static> ParentElement<V> for Pane<V> {
     }
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct PaneGroup<V: 'static + Send + Sync> {
     state_type: PhantomData<V>,
     groups: Vec<PaneGroup<V>>,
@@ -102,7 +102,7 @@ impl<V: 'static + Send + Sync> PaneGroup<V> {
         }
     }
 
-    fn render(mut self, view: &mut V, cx: &mut ViewContext<V>) -> impl IntoAnyElement<V> {
+    fn render(mut self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         if !self.panes.is_empty() {

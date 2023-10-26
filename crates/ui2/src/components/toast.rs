@@ -22,7 +22,7 @@ pub enum ToastOrigin {
 /// they are actively showing the a process in progress.
 ///
 /// Only one toast may be visible at a time.
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct Toast<S: 'static + Send + Sync> {
     origin: ToastOrigin,
     children: SmallVec<[AnyElement<S>; 2]>,
@@ -36,7 +36,7 @@ impl<S: 'static + Send + Sync> Toast<S> {
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         let mut div = div();
@@ -78,7 +78,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(IntoAnyElement)]
+    #[derive(Component)]
     pub struct ToastStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
@@ -90,7 +90,7 @@ mod stories {
             }
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Toast<S>>(cx))
                 .child(Story::label(cx, "Default"))

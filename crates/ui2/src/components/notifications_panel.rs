@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::{prelude::*, static_new_notification_items, static_read_notification_items};
 use crate::{List, ListHeader};
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct NotificationsPanel<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
@@ -17,7 +17,7 @@ impl<S: 'static + Send + Sync> NotificationsPanel<S> {
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         div()
@@ -58,7 +58,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(IntoAnyElement)]
+    #[derive(Component)]
     pub struct NotificationsPanelStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -70,7 +70,7 @@ mod stories {
             }
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, NotificationsPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))

@@ -11,7 +11,7 @@ pub enum InputVariant {
     Filled,
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct Input<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     placeholder: SharedString,
@@ -60,7 +60,7 @@ impl<S: 'static + Send + Sync> Input<S> {
         self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         let (input_bg, input_hover_bg, input_active_bg) = match self.variant {
@@ -120,7 +120,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(IntoAnyElement)]
+    #[derive(Component)]
     pub struct InputStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
@@ -132,7 +132,7 @@ mod stories {
             }
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Input<S>>(cx))
                 .child(Story::label(cx, "Default"))

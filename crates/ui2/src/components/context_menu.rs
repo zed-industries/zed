@@ -31,7 +31,7 @@ impl<S: 'static + Send + Sync> ContextMenuItem<S> {
     }
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct ContextMenu<S: 'static + Send + Sync> {
     items: Vec<ContextMenuItem<S>>,
 }
@@ -42,7 +42,7 @@ impl<S: 'static + Send + Sync> ContextMenu<S> {
             items: items.into_iter().collect(),
         }
     }
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         v_stack()
@@ -73,7 +73,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(IntoAnyElement)]
+    #[derive(Component)]
     pub struct ContextMenuStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
@@ -85,7 +85,7 @@ mod stories {
             }
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, ContextMenu<S>>(cx))
                 .child(Story::label(cx, "Default"))

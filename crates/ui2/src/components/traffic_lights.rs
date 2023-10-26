@@ -9,7 +9,7 @@ enum TrafficLightColor {
     Green,
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 struct TrafficLight<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     color: TrafficLightColor,
@@ -25,7 +25,7 @@ impl<S: 'static + Send + Sync> TrafficLight<S> {
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         let fill = match (self.window_has_focus, self.color) {
@@ -39,7 +39,7 @@ impl<S: 'static + Send + Sync> TrafficLight<S> {
     }
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct TrafficLights<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     window_has_focus: bool,
@@ -58,7 +58,7 @@ impl<S: 'static + Send + Sync> TrafficLights<S> {
         self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div()
             .flex()
             .items_center()
@@ -87,7 +87,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(IntoAnyElement)]
+    #[derive(Component)]
     pub struct TrafficLightsStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
@@ -99,7 +99,7 @@ mod stories {
             }
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             Story::container(cx)
                 .child(Story::title_for::<_, TrafficLights<S>>(cx))
                 .child(Story::label(cx, "Default"))

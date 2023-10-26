@@ -1,7 +1,7 @@
 use parking_lot::Mutex;
 
 use crate::{
-    AnyBox, AnyElement, BorrowWindow, Bounds, Element, ElementId, EntityId, Handle, IntoAnyElement,
+    AnyBox, AnyElement, BorrowWindow, Bounds, Component, Element, ElementId, EntityId, Handle,
     LayoutId, Pixels, ViewContext, WindowContext,
 };
 use std::{marker::PhantomData, sync::Arc};
@@ -33,16 +33,16 @@ pub fn view<V, E>(
     render: impl Fn(&mut V, &mut ViewContext<V>) -> E + Send + Sync + 'static,
 ) -> View<V>
 where
-    E: IntoAnyElement<V>,
+    E: Component<V>,
 {
     View {
         state,
-        render: Arc::new(move |state, cx| render(state, cx).into_any()),
+        render: Arc::new(move |state, cx| render(state, cx).render()),
     }
 }
 
-impl<V: 'static, ParentViewState: 'static> IntoAnyElement<ParentViewState> for View<V> {
-    fn into_any(self) -> AnyElement<ParentViewState> {
+impl<V: 'static, ParentViewState: 'static> Component<ParentViewState> for View<V> {
+    fn render(self) -> AnyElement<ParentViewState> {
         AnyElement::new(EraseViewState {
             view: self,
             parent_view_state_type: PhantomData,
@@ -98,8 +98,8 @@ struct EraseViewState<V, ParentV> {
 unsafe impl<V, ParentV> Send for EraseViewState<V, ParentV> {}
 unsafe impl<V, ParentV> Sync for EraseViewState<V, ParentV> {}
 
-impl<V: 'static, ParentV: 'static> IntoAnyElement<ParentV> for EraseViewState<V, ParentV> {
-    fn into_any(self) -> AnyElement<ParentV> {
+impl<V: 'static, ParentV: 'static> Component<ParentV> for EraseViewState<V, ParentV> {
+    fn render(self) -> AnyElement<ParentV> {
         AnyElement::new(self)
     }
 }
@@ -185,8 +185,8 @@ pub struct AnyView {
     view: Arc<Mutex<dyn ViewObject>>,
 }
 
-impl<ParentV: 'static> IntoAnyElement<ParentV> for AnyView {
-    fn into_any(self) -> AnyElement<ParentV> {
+impl<ParentV: 'static> Component<ParentV> for AnyView {
+    fn render(self) -> AnyElement<ParentV> {
         AnyElement::new(EraseAnyViewState {
             view: self,
             parent_view_state_type: PhantomData,
@@ -238,8 +238,8 @@ struct EraseAnyViewState<ParentViewState> {
 unsafe impl<ParentV> Send for EraseAnyViewState<ParentV> {}
 unsafe impl<ParentV> Sync for EraseAnyViewState<ParentV> {}
 
-impl<ParentV: 'static> IntoAnyElement<ParentV> for EraseAnyViewState<ParentV> {
-    fn into_any(self) -> AnyElement<ParentV> {
+impl<ParentV: 'static> Component<ParentV> for EraseAnyViewState<ParentV> {
+    fn render(self) -> AnyElement<ParentV> {
         AnyElement::new(self)
     }
 }

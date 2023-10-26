@@ -1,6 +1,6 @@
 use crate::{
-    div, AnyElement, Bounds, Div, DivState, Element, ElementFocus, ElementId, ElementInteraction,
-    FocusDisabled, FocusEnabled, FocusListeners, Focusable, IntoAnyElement, LayoutId, Pixels,
+    div, AnyElement, Bounds, Component, Div, DivState, Element, ElementFocus, ElementId,
+    ElementInteraction, FocusDisabled, FocusEnabled, FocusListeners, Focusable, LayoutId, Pixels,
     SharedString, StatefulInteraction, StatefulInteractive, StatelessInteraction,
     StatelessInteractive, StyleRefinement, Styled, ViewContext,
 };
@@ -45,12 +45,12 @@ where
     }
 }
 
-impl<V, I, F> IntoAnyElement<V> for Svg<V, I, F>
+impl<V, I, F> Component<V> for Svg<V, I, F>
 where
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
-    fn into_any(self) -> AnyElement<V> {
+    fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }

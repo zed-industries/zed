@@ -25,7 +25,7 @@ impl BufferSearch {
         view(cx.entity(|cx| Self::new()), Self::render)
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoAnyElement<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
         let theme = theme(cx);
 
         h_stack().bg(theme.toolbar).p_2().child(

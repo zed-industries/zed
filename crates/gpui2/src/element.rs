@@ -46,20 +46,20 @@ pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
 pub trait ParentElement<V: 'static> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]>;
 
-    fn child(mut self, child: impl IntoAnyElement<V>) -> Self
+    fn child(mut self, child: impl Component<V>) -> Self
     where
         Self: Sized,
     {
-        self.children_mut().push(child.into_any());
+        self.children_mut().push(child.render());
         self
     }
 
-    fn children(mut self, iter: impl IntoIterator<Item = impl IntoAnyElement<V>>) -> Self
+    fn children(mut self, iter: impl IntoIterator<Item = impl Component<V>>) -> Self
     where
         Self: Sized,
     {
         self.children_mut()
-            .extend(iter.into_iter().map(|item| item.into_any()));
+            .extend(iter.into_iter().map(|item| item.render()));
         self
     }
 }
@@ -207,8 +207,8 @@ impl<V> AnyElement<V> {
     }
 }
 
-pub trait IntoAnyElement<V> {
-    fn into_any(self) -> AnyElement<V>;
+pub trait Component<V> {
+    fn render(self) -> AnyElement<V>;
 
     fn when(mut self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
     where
@@ -221,8 +221,8 @@ pub trait IntoAnyElement<V> {
     }
 }
 
-impl<V> IntoAnyElement<V> for AnyElement<V> {
-    fn into_any(self) -> AnyElement<V> {
+impl<V> Component<V> for AnyElement<V> {
+    fn render(self) -> AnyElement<V> {
         self
     }
 }
@@ -230,7 +230,7 @@ impl<V> IntoAnyElement<V> for AnyElement<V> {
 impl<V, E, F> Element<V> for Option<F>
 where
     V: 'static,
-    E: 'static + IntoAnyElement<V> + Send + Sync,
+    E: 'static + Component<V> + Send + Sync,
     F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + Sync + 'static,
 {
     type ElementState = AnyElement<V>;
@@ -246,7 +246,7 @@ where
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
         let render = self.take().unwrap();
-        (render)(view_state, cx).into_any()
+        (render)(view_state, cx).render()
     }
 
     fn layout(
@@ -269,24 +269,24 @@ where
     }
 }
 
-impl<V, E, F> IntoAnyElement<V> for Option<F>
+impl<V, E, F> Component<V> for Option<F>
 where
     V: 'static,
-    E: 'static + IntoAnyElement<V> + Send + Sync,
+    E: 'static + Component<V> + Send + Sync,
     F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + Sync + 'static,
 {
-    fn into_any(self) -> AnyElement<V> {
+    fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<V, E, F> IntoAnyElement<V> for F
+impl<V, E, F> Component<V> for F
 where
     V: 'static,
-    E: 'static + IntoAnyElement<V> + Send + Sync,
+    E: 'static + Component<V> + Send + Sync,
     F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + Sync + 'static,
 {
-    fn into_any(self) -> AnyElement<V> {
+    fn render(self) -> AnyElement<V> {
         AnyElement::new(Some(self))
     }
 }

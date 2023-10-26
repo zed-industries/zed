@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 
 use crate::{h_stack, prelude::*, v_stack, Button, Icon, IconButton, Label};
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct Modal<S: 'static + Send + Sync> {
     id: ElementId,
     state_type: PhantomData<S>,
@@ -42,7 +42,7 @@ impl<S: 'static + Send + Sync> Modal<S> {
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         v_stack()

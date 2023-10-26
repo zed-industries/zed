@@ -109,7 +109,7 @@ impl BufferRow {
     }
 }
 
-#[derive(IntoAnyElement, Clone)]
+#[derive(Component, Clone)]
 pub struct Buffer<S: 'static + Send + Sync + Clone> {
     id: ElementId,
     state_type: PhantomData<S>,
@@ -158,7 +158,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
         self
     }
 
-    fn render_row(row: BufferRow, cx: &WindowContext) -> impl IntoAnyElement<S> {
+    fn render_row(row: BufferRow, cx: &WindowContext) -> impl Component<S> {
         let theme = theme(cx);
 
         let line_background = if row.current {
@@ -208,7 +208,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
             }))
     }
 
-    fn render_rows(&self, cx: &WindowContext) -> Vec<impl IntoAnyElement<S>> {
+    fn render_rows(&self, cx: &WindowContext) -> Vec<impl Component<S>> {
         match &self.rows {
             Some(rows) => rows
                 .rows
@@ -219,7 +219,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
         let rows = self.render_rows(cx);
 
@@ -246,7 +246,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(IntoAnyElement)]
+    #[derive(Component)]
     pub struct BufferStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -258,7 +258,7 @@ mod stories {
             }
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             let theme = theme(cx);
 
             Story::container(cx)

@@ -1,7 +1,7 @@
 use crate::{
-    point, AnyElement, BorrowWindow, Bounds, Element, ElementFocus, ElementId, ElementInteraction,
-    FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable, GlobalElementId,
-    GroupBounds, InteractiveElementState, IntoAnyElement, LayoutId, Overflow, ParentElement,
+    point, AnyElement, BorrowWindow, Bounds, Component, Element, ElementFocus, ElementId,
+    ElementInteraction, FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable,
+    GlobalElementId, GroupBounds, InteractiveElementState, LayoutId, Overflow, ParentElement,
     Pixels, Point, SharedString, StatefulInteraction, StatefulInteractive, StatelessInteraction,
     StatelessInteractive, Style, StyleRefinement, Styled, ViewContext,
 };
@@ -303,13 +303,13 @@ where
     }
 }
 
-impl<V, I, F> IntoAnyElement<V> for Div<V, I, F>
+impl<V, I, F> Component<V> for Div<V, I, F>
 where
     // V: Any + Send + Sync,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {
-    fn into_any(self) -> AnyElement<V> {
+    fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }

@@ -1,5 +1,5 @@
 use gpui2::{
-    AnyElement, Bounds, Element, Hsla, IntoAnyElement, LayoutId, Pixels, Result, ViewContext,
+    AnyElement, Bounds, Component, Element, Hsla, LayoutId, Pixels, Result, ViewContext,
     WindowContext,
 };
 use serde::{de::Visitor, Deserialize, Deserializer};
@@ -149,13 +149,13 @@ pub struct Themed<E> {
     pub(crate) child: E,
 }
 
-impl<V, E> IntoAnyElement<V> for Themed<E>
+impl<V, E> Component<V> for Themed<E>
 where
     V: 'static,
     E: 'static + Element<V> + Send + Sync,
     E::ElementState: Send + Sync,
 {
-    fn into_any(self) -> AnyElement<V> {
+    fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }

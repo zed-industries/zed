@@ -21,7 +21,7 @@ impl Story {
     pub fn title<S: 'static + Send + Sync>(
         cx: &mut ViewContext<S>,
         title: &str,
-    ) -> impl IntoAnyElement<S> {
+    ) -> impl Component<S> {
         let theme = theme(cx);
 
         div()
@@ -30,16 +30,14 @@ impl Story {
             .child(title.to_owned())
     }
 
-    pub fn title_for<S: 'static + Send + Sync, T>(
-        cx: &mut ViewContext<S>,
-    ) -> impl IntoAnyElement<S> {
+    pub fn title_for<S: 'static + Send + Sync, T>(cx: &mut ViewContext<S>) -> impl Component<S> {
         Self::title(cx, std::any::type_name::<T>())
     }
 
     pub fn label<S: 'static + Send + Sync>(
         cx: &mut ViewContext<S>,
         label: &str,
-    ) -> impl IntoAnyElement<S> {
+    ) -> impl Component<S> {
         let theme = theme(cx);
 
         div()

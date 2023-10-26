@@ -5,7 +5,7 @@ use strum::{EnumIter, IntoEnumIterator};
 
 use crate::prelude::*;
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct Keybinding<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
 
@@ -34,7 +34,7 @@ impl<S: 'static + Send + Sync> Keybinding<S> {
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         div()
             .flex()
             .gap_2()
@@ -54,7 +54,7 @@ impl<S: 'static + Send + Sync> Keybinding<S> {
     }
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct Key<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     key: SharedString,
@@ -68,7 +68,7 @@ impl<S: 'static + Send + Sync> Key<S> {
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         div()
@@ -173,7 +173,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(IntoAnyElement)]
+    #[derive(Component)]
     pub struct KeybindingStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -185,7 +185,7 @@ mod stories {
             }
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             let all_modifier_permutations = ModifierKey::iter().permutations(2);
 
             Story::container(cx)

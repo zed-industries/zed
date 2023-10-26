@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput};
 
-pub fn derive_into_any_element(input: TokenStream) -> TokenStream {
+pub fn derive_component(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let name = &ast.ident;
     let generics = &ast.generics;
@@ -11,7 +11,7 @@ pub fn derive_into_any_element(input: TokenStream) -> TokenStream {
     let specified_view_type = ast
         .attrs
         .iter()
-        .find(|attr| attr.path.is_ident("element"))
+        .find(|attr| attr.path.is_ident("component"))
         .and_then(|attr| {
             if let Ok(syn::Meta::List(meta_list)) = attr.parse_meta() {
                 meta_list.nested.iter().find_map(|nested| {
@@ -42,10 +42,10 @@ pub fn derive_into_any_element(input: TokenStream) -> TokenStream {
     });
 
     let expanded = quote! {
-        impl #impl_generics gpui2::IntoAnyElement<#view_type> for #name #ty_generics #where_clause {
-            fn into_any(self) -> gpui2::AnyElement<#view_type> {
+        impl #impl_generics gpui2::Component<#view_type> for #name #ty_generics #where_clause {
+            fn render(self) -> gpui2::AnyElement<#view_type> {
                 (move |view_state: &mut #view_type, cx: &mut gpui2::ViewContext<'_, '_, #view_type>| self.render(view_state, cx))
-                    .into_any()
+                    .render()
             }
         }
     };

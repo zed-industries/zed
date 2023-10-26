@@ -174,7 +174,7 @@ impl Workspace {
         view(cx.entity(|cx| Self::new(cx)), Self::render)
     }
 
-    pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoAnyElement<Self> {
+    pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
         let theme = old_theme(cx).clone();
 
         // HACK: This should happen inside of `debug_toggle_user_settings`, but

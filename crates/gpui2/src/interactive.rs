@@ -1,7 +1,7 @@
 use crate::{
-    point, px, view, Action, AnyBox, AnyDrag, AppContext, BorrowWindow, Bounds, DispatchContext,
-    DispatchPhase, Element, ElementId, FocusHandle, IntoAnyElement, KeyMatch, Keystroke, Modifiers,
-    Overflow, Pixels, Point, SharedString, Size, Style, StyleRefinement, ViewContext,
+    point, px, view, Action, AnyBox, AnyDrag, AppContext, BorrowWindow, Bounds, Component,
+    DispatchContext, DispatchPhase, Element, ElementId, FocusHandle, KeyMatch, Keystroke,
+    Modifiers, Overflow, Pixels, Point, SharedString, Size, Style, StyleRefinement, ViewContext,
 };
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -327,7 +327,7 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
         S: Any + Send + Sync,
         R: Fn(&mut V, &mut ViewContext<V>) -> E,
         R: 'static + Send + Sync,
-        E: IntoAnyElement<V>,
+        E: Component<V>,
     {
         debug_assert!(
             self.stateful_interaction().drag_listener.is_none(),
@@ -871,7 +871,7 @@ pub struct Drag<S, R, V, E>
 where
     R: Fn(&mut V, &mut ViewContext<V>) -> E,
     V: 'static,
-    E: IntoAnyElement<V>,
+    E: Component<V>,
 {
     pub state: S,
     pub render_drag_handle: R,
@@ -882,7 +882,7 @@ impl<S, R, V, E> Drag<S, R, V, E>
 where
     R: Fn(&mut V, &mut ViewContext<V>) -> E,
     V: 'static,
-    E: IntoAnyElement<V>,
+    E: Component<V>,
 {
     pub fn new(state: S, render_drag_handle: R) -> Self {
         Drag {

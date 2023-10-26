@@ -6,7 +6,7 @@ use crate::prelude::*;
 #[derive(Clone)]
 pub struct ToolbarItem {}
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct Toolbar<S: 'static + Send + Sync> {
     left_items: SmallVec<[AnyElement<S>; 2]>,
     right_items: SmallVec<[AnyElement<S>; 2]>,
@@ -20,41 +20,41 @@ impl<S: 'static + Send + Sync> Toolbar<S> {
         }
     }
 
-    pub fn left_item(mut self, child: impl IntoAnyElement<S>) -> Self
+    pub fn left_item(mut self, child: impl Component<S>) -> Self
     where
         Self: Sized,
     {
-        self.left_items.push(child.into_any());
+        self.left_items.push(child.render());
         self
     }
 
-    pub fn left_items(mut self, iter: impl IntoIterator<Item = impl IntoAnyElement<S>>) -> Self
+    pub fn left_items(mut self, iter: impl IntoIterator<Item = impl Component<S>>) -> Self
     where
         Self: Sized,
     {
         self.left_items
-            .extend(iter.into_iter().map(|item| item.into_any()));
+            .extend(iter.into_iter().map(|item| item.render()));
         self
     }
 
-    pub fn right_item(mut self, child: impl IntoAnyElement<S>) -> Self
+    pub fn right_item(mut self, child: impl Component<S>) -> Self
     where
         Self: Sized,
     {
-        self.right_items.push(child.into_any());
+        self.right_items.push(child.render());
         self
     }
 
-    pub fn right_items(mut self, iter: impl IntoIterator<Item = impl IntoAnyElement<S>>) -> Self
+    pub fn right_items(mut self, iter: impl IntoIterator<Item = impl Component<S>>) -> Self
     where
         Self: Sized,
     {
         self.right_items
-            .extend(iter.into_iter().map(|item| item.into_any()));
+            .extend(iter.into_iter().map(|item| item.render()));
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         div()
@@ -80,7 +80,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(IntoAnyElement)]
+    #[derive(Component)]
     pub struct ToolbarStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -92,7 +92,7 @@ mod stories {
             }
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             let theme = theme(cx);
 
             Story::container(cx)

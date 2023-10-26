@@ -16,7 +16,7 @@ impl KitchenSinkStory {
         view(cx.entity(|cx| Self::new()), Self::render)
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoAnyElement<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
         let element_stories = ElementStory::iter()
             .map(|selector| selector.story(cx))
             .collect::<Vec<_>>();

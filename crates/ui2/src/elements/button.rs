@@ -61,7 +61,7 @@ impl<S: 'static + Send + Sync> Default for ButtonHandlers<S> {
     }
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct Button<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     disabled: bool,
@@ -150,7 +150,7 @@ impl<S: 'static + Send + Sync> Button<S> {
         self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 
-    pub fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    pub fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let icon_color = self.icon_color();
 
         let mut button = h_stack()
@@ -193,7 +193,7 @@ impl<S: 'static + Send + Sync> Button<S> {
     }
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct ButtonGroup<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     buttons: Vec<Button<S>>,
@@ -207,7 +207,7 @@ impl<S: 'static + Send + Sync> ButtonGroup<S> {
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let mut el = h_stack().text_size(ui_size(cx, 1.));
 
         for button in self.buttons {
@@ -230,7 +230,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(IntoAnyElement)]
+    #[derive(Component)]
     pub struct ButtonStory<S: 'static + Send + Sync + Clone> {
         state_type: PhantomData<S>,
     }
@@ -242,7 +242,7 @@ mod stories {
             }
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             let states = InteractionState::iter();
 
             Story::container(cx)

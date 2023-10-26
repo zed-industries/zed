@@ -9,7 +9,7 @@ use crate::{h_stack, HighlightedText};
 #[derive(Clone)]
 pub struct Symbol(pub Vec<HighlightedText>);
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct Breadcrumb<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     path: PathBuf,
@@ -31,7 +31,7 @@ impl<S: 'static + Send + Sync> Breadcrumb<S> {
         div().child(" › ").text_color(theme.text_muted)
     }
 
-    fn render(self, view_state: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, view_state: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         let symbols_len = self.symbols.len();
@@ -86,7 +86,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(IntoAnyElement)]
+    #[derive(Component)]
     pub struct BreadcrumbStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
@@ -98,7 +98,7 @@ mod stories {
             }
         }
 
-        fn render(self, view_state: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, view_state: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             let theme = theme(cx);
 
             Story::container(cx)

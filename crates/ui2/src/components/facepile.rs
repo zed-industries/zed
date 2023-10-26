@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::prelude::*;
 use crate::{Avatar, Player};
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct Facepile<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     players: Vec<Player>,
@@ -17,7 +17,7 @@ impl<S: 'static + Send + Sync> Facepile<S> {
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let player_count = self.players.len();
         let player_list = self.players.iter().enumerate().map(|(ix, player)| {
             let isnt_last = ix < player_count - 1;
@@ -39,7 +39,7 @@ mod stories {
 
     use super::*;
 
-    #[derive(IntoAnyElement)]
+    #[derive(Component)]
     pub struct FacepileStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
@@ -51,7 +51,7 @@ mod stories {
             }
         }
 
-        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+        fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
             let players = static_players();
 
             Story::container(cx)

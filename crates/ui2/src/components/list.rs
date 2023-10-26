@@ -17,7 +17,7 @@ pub enum ListItemVariant {
     Inset,
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct ListHeader<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     label: SharedString,
@@ -92,7 +92,7 @@ impl<S: 'static + Send + Sync> ListHeader<S> {
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
@@ -134,7 +134,7 @@ impl<S: 'static + Send + Sync> ListHeader<S> {
     }
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct ListSubHeader<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     label: SharedString,
@@ -157,7 +157,7 @@ impl<S: 'static + Send + Sync> ListSubHeader<S> {
         self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
@@ -197,7 +197,7 @@ pub enum ListEntrySize {
     Medium,
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub enum ListItem<S: 'static + Send + Sync> {
     Entry(ListEntry<S>),
     Details(ListDetailsEntry<S>),
@@ -230,7 +230,7 @@ impl<S: 'static + Send + Sync> From<ListSubHeader<S>> for ListItem<S> {
 }
 
 impl<S: 'static + Send + Sync> ListItem<S> {
-    fn render(self, view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         match self {
             ListItem::Entry(entry) => div().child(entry.render(view, cx)),
             ListItem::Separator(separator) => div().child(separator.render(view, cx)),
@@ -252,7 +252,7 @@ impl<S: 'static + Send + Sync> ListItem<S> {
     }
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct ListEntry<S: 'static + Send + Sync> {
     disclosure_control_style: DisclosureControlVisibility,
     indent_level: u32,
@@ -344,7 +344,7 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
         }
     }
 
-    fn disclosure_control(&mut self, cx: &mut ViewContext<S>) -> Option<impl IntoAnyElement<S>> {
+    fn disclosure_control(&mut self, cx: &mut ViewContext<S>) -> Option<impl Component<S>> {
         let disclosure_control_icon = if let Some(ToggleState::Toggled) = self.toggle {
             IconElement::new(Icon::ChevronDown)
         } else {
@@ -364,7 +364,7 @@ impl<S: 'static + Send + Sync> ListEntry<S> {
         }
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let settings = user_settings(cx);
         let theme = theme(cx);
 
@@ -430,7 +430,7 @@ impl<S: 'static + Send + Sync> Default for ListDetailsEntryHandlers<S> {
     }
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct ListDetailsEntry<S: 'static + Send + Sync> {
     label: SharedString,
     meta: Option<SharedString>,
@@ -474,7 +474,7 @@ impl<S: 'static + Send + Sync> ListDetailsEntry<S> {
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
         let settings = user_settings(cx);
 
@@ -519,7 +519,7 @@ impl<S: 'static + Send + Sync> ListDetailsEntry<S> {
     }
 }
 
-#[derive(Clone, IntoAnyElement)]
+#[derive(Clone, Component)]
 pub struct ListSeparator<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
 }
@@ -531,14 +531,14 @@ impl<S: 'static + Send + Sync> ListSeparator<S> {
         }
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let theme = theme(cx);
 
         div().h_px().w_full().bg(theme.border)
     }
 }
 
-#[derive(IntoAnyElement)]
+#[derive(Component)]
 pub struct List<S: 'static + Send + Sync> {
     items: Vec<ListItem<S>>,
     empty_message: SharedString,
@@ -571,7 +571,7 @@ impl<S: 'static + Send + Sync> List<S> {
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl IntoAnyElement<S> {
+    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = Toggleable::is_toggled(&self.toggleable);
 
