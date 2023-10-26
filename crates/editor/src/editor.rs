@@ -758,6 +758,132 @@ impl CodeCompletionsProvider for ModelHandle<CodeCompletions> {
         self.update(cx, |this, _| this.completion_tasks.clear())
     }
 }
+
+trait CodeActionsProvider {
+    fn refresh_code_actions(
+        &mut self,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<()>;
+    fn toggle_code_actions(
+        &mut self,
+        editor: &mut Editor,
+        action: &ToggleCodeActions,
+        cx: &mut ViewContext<Editor>,
+    );
+    fn has_code_actions(&self, cx: &mut ViewContext<Editor>) -> bool;
+    fn clear(&mut self, cx: &mut AppContext);
+}
+
+struct CodeActions {
+    available_code_actions: Option<(ModelHandle<Buffer>, Arc<[CodeAction]>)>,
+    code_actions_task: Option<Task<()>>,
+    project: ModelHandle<Project>,
+}
+
+impl Entity for CodeActions {
+    type Event = ();
+}
+
+impl CodeActionsProvider for ModelHandle<CodeActions> {
+    fn refresh_code_actions(
+        &mut self,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<()> {
+        let project = &self.read(cx).project;
+        let buffer = editor.buffer.read(cx);
+        let newest_selection = editor.selections.newest_anchor().clone();
+        let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
+        let (end_buffer, end) = buffer.text_anchor_for_position(newest_selection.end, cx)?;
+        if start_buffer != end_buffer {
+            return None;
+        }
+
+        self.update(cx, |this, cx| {
+            this.code_actions_task = Some(cx.spawn(|this, mut cx| async move {
+                cx.background().timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT).await;
+                let actions = this
+                    .update(&mut cx, |this, cx| {
+                        this.project.update(cx, |project, cx| {
+                            project.code_actions(&start_buffer, start..end, cx)
+                        })
+                    })
+                    .await;
+
+                this.update(&mut cx, |this, cx| {
+                    this.available_code_actions = actions.log_err().and_then(|actions| {
+                        if actions.is_empty() {
+                            None
+                        } else {
+                            Some((start_buffer, actions.into()))
+                        }
+                    });
+                    cx.notify();
+                });
+            }))
+        });
+        None
+    }
+
+    fn toggle_code_actions(
+        &mut self,
+        editor: &mut Editor,
+        action: &ToggleCodeActions,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let mut context_menu = editor.context_menu.write();
+        if matches!(context_menu.as_ref(), Some(ContextMenu::CodeActions(_))) {
+            *context_menu = None;
+            cx.notify();
+            return;
+        }
+        drop(context_menu);
+
+        let deployed_from_indicator = action.deployed_from_indicator;
+        let mut task = self.update(cx, |this, _| this.code_actions_task.take());
+        let provider = self.clone();
+        cx.spawn(|this, mut cx| async move {
+            while let Some(prev_task) = task {
+                prev_task.await;
+                task = provider.update(&mut cx, |provider, cx| provider.code_actions_task.take());
+            }
+
+            this.update(&mut cx, |this, cx| {
+                if this.focused {
+                    if let Some((buffer, actions)) =
+                        provider.read(cx).available_code_actions.clone()
+                    {
+                        this.completions_provider
+                            .as_mut()
+                            .map(|provider| provider.clear(cx));
+                        this.discard_copilot_suggestion(cx);
+                        *this.context_menu.write() =
+                            Some(ContextMenu::CodeActions(CodeActionsMenu {
+                                buffer,
+                                actions,
+                                selected_item: Default::default(),
+                                list: Default::default(),
+                                deployed_from_indicator,
+                            }));
+                    }
+                }
+            })?;
+
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn has_code_actions(&self, cx: &mut ViewContext<Editor>) -> bool {
+        self.read(cx).available_code_actions.is_some()
+    }
+
+    fn clear(&mut self, cx: &mut AppContext) {
+        self.update(cx, |this, _| this.available_code_actions.take());
+    }
+}
+
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
@@ -792,8 +918,6 @@ pub struct Editor {
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
-    available_code_actions: Option<(ModelHandle<Buffer>, Arc<[CodeAction]>)>,
-    code_actions_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
     pending_rename: Option<RenameState>,
     searchable: bool,
@@ -815,6 +939,7 @@ pub struct Editor {
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<Vector2F>,
     completions_provider: Option<Box<dyn CodeCompletionsProvider>>,
+    actions_provider: Option<Box<dyn CodeActionsProvider>>,
 }
 
 pub struct EditorSnapshot {
@@ -2066,6 +2191,15 @@ impl Editor {
         } else {
             None
         };
+        let actions_provider = if let Some(ref project) = project {
+            Some(Box::new(cx.add_model(|cx| CodeActions {
+                available_code_actions: None,
+                project: project.clone(),
+                code_actions_task: None,
+            })) as _)
+        } else {
+            None
+        };
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -2101,8 +2235,6 @@ impl Editor {
             mouse_context_menu: cx
                 .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
             next_inlay_id: 0,
-            available_code_actions: Default::default(),
-            code_actions_task: Default::default(),
             document_highlights_task: Default::default(),
             pending_rename: Default::default(),
             searchable: true,
@@ -2140,6 +2272,7 @@ impl Editor {
                 }),
             ],
             completions_provider,
+            actions_provider,
         };
 
         this._subscriptions.extend(project_subscriptions);
@@ -2448,7 +2581,9 @@ impl Editor {
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
             {
-                self.available_code_actions.take();
+                self.actions_provider
+                    .as_mut()
+                    .map(|provider| provider.clear(cx));
             }
             self.refresh_code_actions(cx);
             self.refresh_document_highlights(cx);
@@ -3833,44 +3968,11 @@ impl Editor {
     }
 
     pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
-        let mut context_menu = self.context_menu.write();
-        if matches!(context_menu.as_ref(), Some(ContextMenu::CodeActions(_))) {
-            *context_menu = None;
-            cx.notify();
-            return;
+        let mut provider = std::mem::take(&mut self.actions_provider);
+        if let Some(ref mut provider) = provider {
+            provider.toggle_code_actions(self, action, cx)
         }
-        drop(context_menu);
-
-        let deployed_from_indicator = action.deployed_from_indicator;
-        let mut task = self.code_actions_task.take();
-        cx.spawn(|this, mut cx| async move {
-            while let Some(prev_task) = task {
-                prev_task.await;
-                task = this.update(&mut cx, |this, _| this.code_actions_task.take())?;
-            }
-
-            this.update(&mut cx, |this, cx| {
-                if this.focused {
-                    if let Some((buffer, actions)) = this.available_code_actions.clone() {
-                        this.completions_provider
-                            .as_mut()
-                            .map(|provider| provider.clear(cx));
-                        this.discard_copilot_suggestion(cx);
-                        *this.context_menu.write() =
-                            Some(ContextMenu::CodeActions(CodeActionsMenu {
-                                buffer,
-                                actions,
-                                selected_item: Default::default(),
-                                list: Default::default(),
-                                deployed_from_indicator,
-                            }));
-                    }
-                }
-            })?;
-
-            Ok::<_, anyhow::Error>(())
-        })
-        .detach_and_log_err(cx);
+        self.actions_provider = provider;
     }
 
     pub fn confirm_code_action(
@@ -3986,37 +4088,14 @@ impl Editor {
     }
 
     fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
-        let project = self.project.clone()?;
-        let buffer = self.buffer.read(cx);
-        let newest_selection = self.selections.newest_anchor().clone();
-        let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
-        let (end_buffer, end) = buffer.text_anchor_for_position(newest_selection.end, cx)?;
-        if start_buffer != end_buffer {
-            return None;
-        }
-
-        self.code_actions_task = Some(cx.spawn(|this, mut cx| async move {
-            cx.background().timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT).await;
-
-            let actions = project
-                .update(&mut cx, |project, cx| {
-                    project.code_actions(&start_buffer, start..end, cx)
-                })
-                .await;
-
-            this.update(&mut cx, |this, cx| {
-                this.available_code_actions = actions.log_err().and_then(|actions| {
-                    if actions.is_empty() {
-                        None
-                    } else {
-                        Some((start_buffer, actions.into()))
-                    }
-                });
-                cx.notify();
-            })
-            .log_err();
-        }));
-        None
+        let mut provider = std::mem::take(&mut self.actions_provider);
+        let ret = if let Some(ref mut provider) = provider {
+            provider.refresh_code_actions(self, cx)
+        } else {
+            None
+        };
+        self.actions_provider = provider;
+        ret
     }
 
     fn refresh_document_highlights(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
@@ -4375,7 +4454,8 @@ impl Editor {
         is_active: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement<Self>> {
-        if self.available_code_actions.is_some() {
+        let actions_provider = self.actions_provider.as_ref()?;
+        if actions_provider.has_code_actions(cx) {
             enum CodeActions {}
             Some(
                 MouseEventHandler::new::<CodeActions, _>(0, cx, |state, _| {
@@ -4391,12 +4471,17 @@ impl Editor {
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_padding(Padding::uniform(3.))
                 .on_down(MouseButton::Left, |_, this, cx| {
-                    this.toggle_code_actions(
-                        &ToggleCodeActions {
-                            deployed_from_indicator: true,
-                        },
-                        cx,
-                    );
+                    let mut provider = std::mem::take(&mut this.actions_provider);
+                    if let Some(ref mut provider) = provider {
+                        provider.toggle_code_actions(
+                            this,
+                            &ToggleCodeActions {
+                                deployed_from_indicator: true,
+                            },
+                            cx,
+                        );
+                    }
+                    this.actions_provider = provider;
                 })
                 .into_any(),
             )
