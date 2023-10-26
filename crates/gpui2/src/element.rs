@@ -180,6 +180,9 @@ where
 
 pub struct AnyElement<V>(Box<dyn ElementObject<V> + Send + Sync>);
 
+unsafe impl<V> Send for AnyElement<V> {}
+unsafe impl<V> Sync for AnyElement<V> {}
+
 impl<V> AnyElement<V> {
     pub fn new<E>(element: E) -> Self
     where
@@ -211,5 +214,69 @@ pub trait IntoAnyElement<V> {
 impl<V> IntoAnyElement<V> for AnyElement<V> {
     fn into_any(self) -> AnyElement<V> {
         self
+    }
+}
+
+impl<V, E, F> Element<V> for Option<F>
+where
+    V: 'static,
+    E: 'static + IntoAnyElement<V> + Send + Sync,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + Sync + 'static,
+{
+    type ElementState = AnyElement<V>;
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn initialize(
+        &mut self,
+        view_state: &mut V,
+        _rendered_element: Option<Self::ElementState>,
+        cx: &mut ViewContext<V>,
+    ) -> Self::ElementState {
+        let render = self.take().unwrap();
+        (render)(view_state, cx).into_any()
+    }
+
+    fn layout(
+        &mut self,
+        view_state: &mut V,
+        rendered_element: &mut Self::ElementState,
+        cx: &mut ViewContext<V>,
+    ) -> LayoutId {
+        rendered_element.layout(view_state, cx)
+    }
+
+    fn paint(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        view_state: &mut V,
+        rendered_element: &mut Self::ElementState,
+        cx: &mut ViewContext<V>,
+    ) {
+        rendered_element.paint(view_state, cx)
+    }
+}
+
+impl<V, E, F> IntoAnyElement<V> for Option<F>
+where
+    V: 'static,
+    E: 'static + IntoAnyElement<V> + Send + Sync,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + Sync + 'static,
+{
+    fn into_any(self) -> AnyElement<V> {
+        AnyElement::new(self)
+    }
+}
+
+impl<V, E, F> IntoAnyElement<V> for F
+where
+    V: 'static,
+    E: 'static + IntoAnyElement<V> + Send + Sync,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + Sync + 'static,
+{
+    fn into_any(self) -> AnyElement<V> {
+        AnyElement::new(Some(self))
     }
 }

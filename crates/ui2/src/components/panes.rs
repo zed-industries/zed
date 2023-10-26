@@ -12,105 +12,17 @@ pub enum SplitDirection {
     Vertical,
 }
 
-// #[derive(Element)]
 pub struct Pane<V: 'static> {
     id: ElementId,
-    state_type: PhantomData<V>,
     size: Size<Length>,
     fill: Hsla,
     children: SmallVec<[AnyElement<V>; 2]>,
 }
 
-impl<V: 'static + Send + Sync> IntoAnyElement<V> for Pane<V> {
+impl<V: 'static> IntoAnyElement<V> for Pane<V> {
     fn into_any(self) -> AnyElement<V> {
-        let render =
-            move |view_state: &mut V, cx: &mut ViewContext<'_, '_, V>| self.render(view_state, cx);
-
-        AnyElement::new(ElementRenderer {
-            render: Some(render),
-            view_type: PhantomData,
-            element_type: PhantomData,
-        })
-    }
-}
-
-struct ElementRenderer<V, E, F>
-where
-    V: 'static,
-    E: 'static + IntoAnyElement<V> + Send + Sync,
-    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static + Send + Sync,
-{
-    render: Option<F>,
-    view_type: PhantomData<V>,
-    element_type: PhantomData<E>,
-}
-
-unsafe impl<V, E, F> Send for ElementRenderer<V, E, F>
-where
-    V: 'static,
-    E: 'static + IntoAnyElement<V> + Send + Sync,
-    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static + Send + Sync,
-{
-}
-
-unsafe impl<V, E, F> Sync for ElementRenderer<V, E, F>
-where
-    V: 'static,
-    E: 'static + IntoAnyElement<V> + Send + Sync,
-    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static + Send + Sync,
-{
-}
-
-impl<V, E, F> Element<V> for ElementRenderer<V, E, F>
-where
-    V: 'static,
-    E: 'static + IntoAnyElement<V> + Send + Sync,
-    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static + Send + Sync,
-{
-    type ElementState = AnyElement<V>;
-
-    fn id(&self) -> Option<ElementId> {
-        None
-    }
-
-    fn initialize(
-        &mut self,
-        view_state: &mut V,
-        _element_state: Option<Self::ElementState>,
-        cx: &mut ViewContext<V>,
-    ) -> Self::ElementState {
-        let render = self.render.take().unwrap();
-        (render)(view_state, cx).into_any()
-    }
-
-    fn layout(
-        &mut self,
-        view_state: &mut V,
-        rendered_element: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) -> gpui2::LayoutId {
-        rendered_element.layout(view_state, cx)
-    }
-
-    fn paint(
-        &mut self,
-        bounds: gpui2::Bounds<gpui2::Pixels>,
-        view_state: &mut V,
-        rendered_element: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) {
-        rendered_element.paint(view_state, cx)
-    }
-}
-
-impl<V, E, F> IntoAnyElement<V> for ElementRenderer<V, E, F>
-where
-    V: 'static,
-    E: 'static + IntoAnyElement<V> + Send + Sync,
-    F: FnOnce(&mut V, &mut ViewContext<V>) -> E + 'static + Send + Sync,
-{
-    fn into_any(self) -> AnyElement<V> {
-        AnyElement::new(self)
+        (move |view_state: &mut V, cx: &mut ViewContext<'_, '_, V>| self.render(view_state, cx))
+            .into_any()
     }
 }
 
@@ -120,10 +32,8 @@ impl<V: 'static> Pane<V> {
 
         Self {
             id: id.into(),
-            state_type: PhantomData,
             size,
             fill: hsla(0.3, 0.3, 0.3, 1.),
-            // fill: system_color.transparent,
             children: SmallVec::new(),
         }
     }
