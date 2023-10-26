@@ -1,11 +1,11 @@
 pub use gpui2::{
-    div, Element, ElementId, Component, ParentElement, SharedString, StatefulInteractive,
+    div, Component, Element, ElementId, ParentElement, SharedString, StatefulInteractive,
     StatelessInteractive, Styled, ViewContext, WindowContext,
 };
 
 pub use crate::elevation::*;
 use crate::settings::user_settings;
-pub use crate::{old_theme, theme, ButtonVariant, ElementExt, Theme};
+pub use crate::{old_theme, theme, ButtonVariant, Theme};
 
 use gpui2::{rems, Hsla, Rems};
 use strum::EnumIter;
