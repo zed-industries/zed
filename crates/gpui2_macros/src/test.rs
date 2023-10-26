@@ -174,7 +174,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 ));
                                 inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
                                 cx_teardowns.extend(quote!(
-                                    #cx_varname.quit();
+                                    #cx_varname_lock.quit();
                                     dispatcher.run_until_parked();
                                 ));
                                 continue;
