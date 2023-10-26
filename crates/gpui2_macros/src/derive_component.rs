@@ -36,10 +36,6 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
         }
     };
 
-    if name == "AssistantPanelStory" {
-        println!("Expanded tokens: {}", expanded.to_string());
-    }
-
     TokenStream::from(expanded)
 }
 
