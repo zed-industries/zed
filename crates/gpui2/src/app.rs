@@ -30,6 +30,7 @@ use std::{
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
+    path::PathBuf,
     sync::{atomic::Ordering::SeqCst, Arc, Weak},
     time::Duration,
 };
@@ -721,6 +722,10 @@ where
 
     pub fn open_url(&self, url: &str) {
         self.platform().open_url(url);
+    }
+
+    pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
+        self.platform().path_for_auxiliary_executable(name)
     }
 }
 

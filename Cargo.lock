@@ -3930,6 +3930,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "install_cli2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui2",
+ "log",
+ "smol",
+ "util",
+]
+
+[[package]]
 name = "instant"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
