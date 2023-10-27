@@ -12,7 +12,12 @@ use std::{
     sync::Arc,
 };
 
-use crate::completion::{CompletionProvider, CompletionRequest};
+use crate::{
+    completion::{CompletionProvider, CompletionRequest},
+    models::LanguageModel,
+};
+
+use super::OpenAILanguageModel;
 
 pub const OPENAI_API_URL: &'static str = "https://api.openai.com/v1";
 
@@ -180,17 +185,27 @@ pub async fn stream_completion(
 }
 
 pub struct OpenAICompletionProvider {
+    model: OpenAILanguageModel,
     api_key: String,
     executor: Arc<Background>,
 }
 
 impl OpenAICompletionProvider {
-    pub fn new(api_key: String, executor: Arc<Background>) -> Self {
-        Self { api_key, executor }
+    pub fn new(model_name: &str, api_key: String, executor: Arc<Background>) -> Self {
+        let model = OpenAILanguageModel::load(model_name);
+        Self {
+            model,
+            api_key,
+            executor,
+        }
     }
 }
 
 impl CompletionProvider for OpenAICompletionProvider {
+    fn base_model(&self) -> Box<dyn LanguageModel> {
+        let model: Box<dyn LanguageModel> = Box::new(self.model.clone());
+        model
+    }
     fn complete(
         &self,
         prompt: Box<dyn CompletionRequest>,

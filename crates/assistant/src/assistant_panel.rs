@@ -328,6 +328,7 @@ impl AssistantPanel {
 
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
         let provider = Arc::new(OpenAICompletionProvider::new(
+            "gpt-4",
             api_key,
             cx.background().clone(),
         ));

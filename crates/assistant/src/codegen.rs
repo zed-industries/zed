@@ -335,6 +335,7 @@ fn strip_markdown_codeblock(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ai::{models::LanguageModel, test::FakeLanguageModel};
     use futures::{
         future::BoxFuture,
         stream::{self, BoxStream},
@@ -638,6 +639,10 @@ mod tests {
     }
 
     impl CompletionProvider for TestCompletionProvider {
+        fn base_model(&self) -> Box<dyn LanguageModel> {
+            let model: Box<dyn LanguageModel> = Box::new(FakeLanguageModel { capacity: 8190 });
+            model
+        }
         fn complete(
             &self,
             _prompt: Box<dyn CompletionRequest>,
