@@ -38,7 +38,10 @@ use util::http::{self, HttpClient};
 
 pub struct App(Arc<Mutex<AppContext>>);
 
+/// Represents an application before it is fully launched. Once your app is
+/// configured, you'll start the app with `App::run`.
 impl App {
+    /// Builds an app with the given asset source.
     pub fn production(asset_source: Arc<dyn AssetSource>) -> Self {
         Self(AppContext::new(
             current_platform(),
@@ -47,6 +50,8 @@ impl App {
         ))
     }
 
+    /// Start the application. The provided callback will be called once the
+    /// app is fully launched.
     pub fn run<F>(self, on_finish_launching: F)
     where
         F: 'static + FnOnce(&mut MainThread<AppContext>),
@@ -60,6 +65,8 @@ impl App {
         }));
     }
 
+    /// Register a handler to be invoked when the platform instructs the application
+    /// to open one or more URLs.
     pub fn on_open_urls<F>(&self, mut callback: F) -> &Self
     where
         F: 'static + FnMut(Vec<String>, &mut AppContext),
@@ -203,6 +210,8 @@ impl AppContext {
         })
     }
 
+    /// Quit the application gracefully. Handlers registered with `ModelContext::on_app_quit`
+    /// will be given 100ms to complete before exiting.
     pub fn quit(&mut self) {
         let mut futures = Vec::new();
 
@@ -230,6 +239,8 @@ impl AppContext {
         self.app_metadata.clone()
     }
 
+    /// Schedules all windows in the application to be redrawn. This can be called
+    /// multiple times in an update cycle and still result in a single redraw.
     pub fn refresh(&mut self) {
         self.pending_effects.push_back(Effect::Refresh);
     }
@@ -302,6 +313,9 @@ impl AppContext {
         self.pending_effects.push_back(effect);
     }
 
+    /// Called at the end of AppContext::update to complete any side effects
+    /// such as notifying observers, emitting events, etc. Effects can themselves
+    /// cause effects, so we continue looping until all effects are processed.
     fn flush_effects(&mut self) {
         loop {
             self.release_dropped_entities();
@@ -348,6 +362,9 @@ impl AppContext {
         }
     }
 
+    /// Repeatedly called during `flush_effects` to release any entities whose
+    /// reference count has become zero. We invoke any release observers before dropping
+    /// each entity.
     fn release_dropped_entities(&mut self) {
         loop {
             let dropped = self.entities.take_dropped();
@@ -365,6 +382,9 @@ impl AppContext {
         }
     }
 
+    /// Repeatedly called during `flush_effects` to handle a focused handle being dropped.
+    /// For now, we simply blur the window if this happens, but we may want to support invoking
+    /// a window blur handler to restore focus to some logical element.
     fn release_dropped_focus_handles(&mut self) {
         let window_ids = self.windows.keys().collect::<SmallVec<[_; 8]>>();
         for window_id in window_ids {
@@ -448,6 +468,8 @@ impl AppContext {
         callback(self);
     }
 
+    /// Creates an `AsyncAppContext`, which can be cloned and has a static lifetime
+    /// so it can be held across `await` points.
     pub fn to_async(&self) -> AsyncAppContext {
         AsyncAppContext {
             app: unsafe { mem::transmute(self.this.clone()) },
@@ -455,10 +477,14 @@ impl AppContext {
         }
     }
 
+    /// Obtains a reference to the executor, which can be used to spawn futures.
     pub fn executor(&self) -> &Executor {
         &self.executor
     }
 
+    /// Runs the given closure on the main thread, where interaction with the platform
+    /// is possible. The given closure will be invoked with a `MainThread<AppContext>`, which
+    /// has platform-specific methods that aren't present on `AppContext`.
     pub fn run_on_main<R>(
         &mut self,
         f: impl FnOnce(&mut MainThread<AppContext>) -> R + Send + 'static,
@@ -479,6 +505,11 @@ impl AppContext {
         }
     }
 
+    /// Spawns the future returned by the given function on the main thread, where interaction with
+    /// the platform is possible. The given closure will be invoked with a `MainThread<AsyncAppContext>`,
+    /// which has platform-specific methods that aren't present on `AsyncAppContext`. The future will be
+    /// polled exclusively on the main thread.
+    // todo!("I think we need somehow to prevent the MainThread<AsyncAppContext> from implementing Send")
     pub fn spawn_on_main<F, R>(
         &self,
         f: impl FnOnce(MainThread<AsyncAppContext>) -> F + Send + 'static,
@@ -491,6 +522,8 @@ impl AppContext {
         self.executor.spawn_on_main(move || f(MainThread(cx)))
     }
 
+    /// Spawns the future returned by the given function on the thread pool. The closure will be invoked
+    /// with AsyncAppContext, which allows the application state to be accessed across await points.
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static) -> Task<R>
     where
         Fut: Future<Output = R> + Send + 'static,
@@ -503,20 +536,25 @@ impl AppContext {
         })
     }
 
+    /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
+    /// that are currently on the stack to be returned to the app.
     pub fn defer(&mut self, f: impl FnOnce(&mut AppContext) + 'static + Send) {
         self.push_effect(Effect::Defer {
             callback: Box::new(f),
         });
     }
 
+    /// Accessor for the application's asset source, which is provided when constructing the `App`.
     pub fn asset_source(&self) -> &Arc<dyn AssetSource> {
         &self.asset_source
     }
 
+    /// Accessor for the text system.
     pub fn text_system(&self) -> &Arc<TextSystem> {
         &self.text_system
     }
 
+    /// The current text style. Which is composed of all the style refinements provided to `with_text_style`.
     pub fn text_style(&self) -> TextStyle {
         let mut style = TextStyle::default();
         for refinement in &self.text_style_stack {
@@ -525,10 +563,12 @@ impl AppContext {
         style
     }
 
+    /// Check whether a global of the given type has been assigned.
     pub fn has_global<G: 'static>(&self) -> bool {
         self.globals_by_type.contains_key(&TypeId::of::<G>())
     }
 
+    /// Access the global of the given type. Panics if a global for that type has not been assigned.
     pub fn global<G: 'static>(&self) -> &G {
         self.globals_by_type
             .get(&TypeId::of::<G>())
@@ -537,12 +577,14 @@ impl AppContext {
             .unwrap()
     }
 
+    /// Access the global of the given type if a value has been assigned.
     pub fn try_global<G: 'static>(&self) -> Option<&G> {
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
     }
 
+    /// Access the global of the given type mutably. Panics if a global for that type has not been assigned.
     pub fn global_mut<G: 'static>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
@@ -553,6 +595,8 @@ impl AppContext {
             .unwrap()
     }
 
+    /// Access the global of the given type mutably. A default value is assigned if a global of this type has not
+    /// yet been assigned.
     pub fn default_global<G: 'static + Default + Send>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
@@ -563,12 +607,15 @@ impl AppContext {
             .unwrap()
     }
 
+    /// Set the value of the global of the given type.
     pub fn set_global<G: Any + Send>(&mut self, global: G) {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, Box::new(global));
     }
 
+    /// Update the global of the given type with a closure. Unlike `global_mut`, this method provides
+    /// your closure with mutable access to the `AppContext` and the global simultaneously.
     pub fn update_global<G: 'static, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R {
         let mut global = self.lease_global::<G>();
         let result = f(&mut global, self);
@@ -576,6 +623,7 @@ impl AppContext {
         result
     }
 
+    /// Register a callback to be invoked when a global of the given type is updated.
     pub fn observe_global<G: 'static>(
         &mut self,
         mut f: impl FnMut(&mut Self) + Send + 'static,
@@ -589,6 +637,7 @@ impl AppContext {
         )
     }
 
+    /// Move the global of the given type to the stack.
     pub(crate) fn lease_global<G: 'static>(&mut self) -> GlobalLease<G> {
         GlobalLease::new(
             self.globals_by_type
@@ -598,6 +647,7 @@ impl AppContext {
         )
     }
 
+    /// Restore the global of the given type after it is moved to the stack.
     pub(crate) fn end_global_lease<G: 'static>(&mut self, lease: GlobalLease<G>) {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
@@ -612,11 +662,13 @@ impl AppContext {
         self.text_style_stack.pop();
     }
 
+    /// Register key bindings.
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
         self.keymap.lock().add_bindings(bindings);
         self.pending_effects.push_back(Effect::Refresh);
     }
 
+    /// Register a global listener for actions invoked via the keyboard.
     pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + Send + 'static) {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
@@ -629,10 +681,12 @@ impl AppContext {
             }));
     }
 
+    /// Register an action type to allow it to be referenced in keymaps.
     pub fn register_action_type<A: Action>(&mut self) {
         self.action_builders.insert(A::qualified_name(), A::build);
     }
 
+    /// Construct an action based on its name and parameters.
     pub fn build_action(
         &mut self,
         name: &str,
@@ -645,6 +699,8 @@ impl AppContext {
         (build)(params)
     }
 
+    /// Halt propagation of a mouse event, keyboard event, or action. This prevents listeners
+    /// that have not yet been invoked from receiving the event.
     pub fn stop_propagation(&mut self) {
         self.propagate_event = false;
     }
@@ -654,6 +710,9 @@ impl Context for AppContext {
     type EntityContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
+    /// Build an entity that is owned by the application. The given function will be invoked with
+    /// a `ModelContext` and must return an object representing the entity. A `Handle` will be returned
+    /// which can be used to access the entity in a context.
     fn entity<T: 'static + Send>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
@@ -665,6 +724,8 @@ impl Context for AppContext {
         })
     }
 
+    /// Update the entity referenced by the given handle. The function is passed a mutable reference to the
+    /// entity along with a `ModelContext` for the entity.
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
@@ -690,30 +751,37 @@ where
         self.0.borrow().platform.borrow_on_main_thread()
     }
 
+    /// Instructs the platform to activate the application by bringing it to the foreground.
     pub fn activate(&self, ignoring_other_apps: bool) {
         self.platform().activate(ignoring_other_apps);
     }
 
+    /// Writes data to the platform clipboard.
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
         self.platform().write_to_clipboard(item)
     }
 
+    /// Reads data from the platform clipboard.
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.platform().read_from_clipboard()
     }
 
+    /// Writes credentials to the platform keychain.
     pub fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
         self.platform().write_credentials(url, username, password)
     }
 
+    /// Reads credentials from the platform keychain.
     pub fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
         self.platform().read_credentials(url)
     }
 
+    /// Deletes credentials from the platform keychain.
     pub fn delete_credentials(&self, url: &str) -> Result<()> {
         self.platform().delete_credentials(url)
     }
 
+    /// Directs the platform's default browser to open the given URL.
     pub fn open_url(&self, url: &str) {
         self.platform().open_url(url);
     }
@@ -744,6 +812,9 @@ impl MainThread<AppContext> {
         })
     }
 
+    /// Opens a new window with the given option and the root view returned by the given function.
+    /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
+    /// functionality.
     pub fn open_window<V: 'static>(
         &mut self,
         options: crate::WindowOptions,
@@ -760,6 +831,8 @@ impl MainThread<AppContext> {
         })
     }
 
+    /// Update the global of the given type with a closure. Unlike `global_mut`, this method provides
+    /// your closure with mutable access to the `MainThread<AppContext>` and the global simultaneously.
     pub fn update_global<G: 'static + Send, R>(
         &mut self,
         update: impl FnOnce(&mut G, &mut MainThread<AppContext>) -> R,
@@ -771,6 +844,7 @@ impl MainThread<AppContext> {
     }
 }
 
+/// These effects are processed at the end of each application update cycle.
 pub(crate) enum Effect {
     Notify {
         emitter: EntityId,
@@ -792,6 +866,7 @@ pub(crate) enum Effect {
     },
 }
 
+/// Wraps a global variable value during `update_global` while the value has been moved to the stack.
 pub(crate) struct GlobalLease<G: 'static> {
     global: AnyBox,
     global_type: PhantomData<G>,
@@ -820,6 +895,8 @@ impl<G: 'static> DerefMut for GlobalLease<G> {
     }
 }
 
+/// Contains state associated with an active drag operation, started by dragging an element
+/// within the window or by dragging into the app from the underlying platform.
 pub(crate) struct AnyDrag {
     pub drag_handle_view: Option<AnyView>,
     pub cursor_offset: Point<Pixels>,
