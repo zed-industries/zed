@@ -281,15 +281,13 @@ impl SemanticIndex {
     }
 
     pub fn authenticate(&mut self, cx: &AppContext) -> bool {
-        let credential = self.provider_credential.clone();
-        match credential {
-            ProviderCredential::NoCredentials => {
-                let credential = self.embedding_provider.retrieve_credentials(cx);
-                self.provider_credential = credential;
-            }
-            _ => {}
-        }
+        let existing_credential = self.provider_credential.clone();
+        let credential = match existing_credential {
+            ProviderCredential::NoCredentials => self.embedding_provider.retrieve_credentials(cx),
+            _ => existing_credential,
+        };
 
+        self.provider_credential = credential.clone();
         self.embedding_queue.lock().set_credential(credential);
         self.is_authenticated()
     }
@@ -1020,13 +1018,10 @@ impl SemanticIndex {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         if !self.is_authenticated() {
-            println!("Authenticating");
             if !self.authenticate(cx) {
                 return Task::ready(Err(anyhow!("user is not authenticated")));
             }
         }
-
-        println!("SHOULD NOW BE AUTHENTICATED");
 
         if !self.projects.contains_key(&project.downgrade()) {
             let subscription = cx.subscribe(&project, |this, project, event, cx| match event {

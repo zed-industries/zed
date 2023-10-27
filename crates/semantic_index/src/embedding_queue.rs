@@ -41,7 +41,7 @@ pub struct EmbeddingQueue {
     pending_batch_token_count: usize,
     finished_files_tx: channel::Sender<FileToEmbed>,
     finished_files_rx: channel::Receiver<FileToEmbed>,
-    provider_credential: ProviderCredential,
+    pub provider_credential: ProviderCredential,
 }
 
 #[derive(Clone)]

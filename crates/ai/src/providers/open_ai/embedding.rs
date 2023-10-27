@@ -162,14 +162,15 @@ impl EmbeddingProvider for OpenAIEmbeddingProvider {
     async fn embed_batch(
         &self,
         spans: Vec<String>,
-        _credential: ProviderCredential,
+        credential: ProviderCredential,
     ) -> Result<Vec<Embedding>> {
         const BACKOFF_SECONDS: [usize; 4] = [3, 5, 15, 45];
         const MAX_RETRIES: usize = 4;
 
-        let api_key = OPENAI_API_KEY
-            .as_ref()
-            .ok_or_else(|| anyhow!("no api key"))?;
+        let api_key = match credential {
+            ProviderCredential::Credentials { api_key } => anyhow::Ok(api_key),
+            _ => Err(anyhow!("no api key provided")),
+        }?;
 
         let mut request_number = 0;
         let mut rate_limiting = false;
@@ -178,7 +179,7 @@ impl EmbeddingProvider for OpenAIEmbeddingProvider {
         while request_number < MAX_RETRIES {
             response = self
                 .send_request(
-                    api_key,
+                    &api_key,
                     spans.iter().map(|x| &**x).collect(),
                     request_timeout,
                 )
