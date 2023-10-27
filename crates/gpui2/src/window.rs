@@ -30,16 +30,22 @@ use std::{
 };
 use util::ResultExt;
 
+/// A global stacking order, which is created by stacking successive z-index values.
+/// Each z-index will always be interpreted in the context of its parent z-index.
 #[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default)]
-pub struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
+pub(crate) struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
 
+/// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
 pub enum DispatchPhase {
-    /// After the capture phase comes the bubble phase, in which event handlers are
-    /// invoked front to back. This is the phase you'll usually want to use for event handlers.
+    /// After the capture phase comes the bubble phase, in which mouse event listeners are
+    /// invoked front to back and keyboard event listeners are invoked from the focused element
+    /// to the root of the element tree. This is the phase you'll most commonly want to use when
+    /// registering event listeners.
     #[default]
     Bubble,
-    /// During the initial capture phase, event handlers are invoked back to front. This phase
+    /// During the initial capture phase, mouse event listeners are invoked back to front, and keyboard
+    /// listeners are invoked from the root of the tree downward toward the focused element. This phase
     /// is used for special purposes such as clearing the "pressed" state for click events. If
     /// you stop event propagation during this phase, you need to know what you're doing. Handlers
     /// outside of the immediate region may rely on detecting non-local events during this phase.
@@ -61,6 +67,7 @@ type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + Send + 'st
 
 slotmap::new_key_type! { pub struct FocusId; }
 
+/// A handle which can be used to track and manipulate the focused element in a window.
 pub struct FocusHandle {
     pub(crate) id: FocusId,
     handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
@@ -92,20 +99,26 @@ impl FocusHandle {
         }
     }
 
+    /// Obtains whether the element associated with this handle is currently focused.
     pub fn is_focused(&self, cx: &WindowContext) -> bool {
         cx.window.focus == Some(self.id)
     }
 
+    /// Obtains whether the element associated with this handle contains the focused
+    /// element or is itself focused.
     pub fn contains_focused(&self, cx: &WindowContext) -> bool {
         cx.focused()
             .map_or(false, |focused| self.contains(&focused, cx))
     }
 
+    /// Obtains whether the element associated with this handle is contained within the
+    /// focused element or is itself focused.
     pub fn within_focused(&self, cx: &WindowContext) -> bool {
         let focused = cx.focused();
         focused.map_or(false, |focused| focused.contains(self, cx))
     }
 
+    /// Obtains whether this handle contains the given handle in the most recently rendered frame.
     pub(crate) fn contains(&self, other: &Self, cx: &WindowContext) -> bool {
         let mut ancestor = Some(other.id);
         while let Some(ancestor_id) = ancestor {
@@ -143,6 +156,7 @@ impl Drop for FocusHandle {
     }
 }
 
+// Holds the state for a specific window.
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
@@ -253,6 +267,9 @@ impl Window {
     }
 }
 
+/// When constructing the element tree, we maintain a stack of key dispatch frames until we
+/// find the focused element. We interleave key listeners with dispatch contexts so we can use the
+/// contexts when matching key events against the keymap.
 enum KeyDispatchStackFrame {
     Listener {
         event_type: TypeId,
@@ -261,6 +278,9 @@ enum KeyDispatchStackFrame {
     Context(DispatchContext),
 }
 
+/// Indicates which region of the window is visible. Content falling outside of this mask will not be
+/// rendered. Currently, only rectangular content masks are supported, but we give the mask its own type
+/// to leave room to support more complex shapes in the future.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct ContentMask<P: Clone + Default + Debug> {
@@ -268,18 +288,23 @@ pub struct ContentMask<P: Clone + Default + Debug> {
 }
 
 impl ContentMask<Pixels> {
+    /// Scale the content mask's pixel units by the given scaling factor.
     pub fn scale(&self, factor: f32) -> ContentMask<ScaledPixels> {
         ContentMask {
             bounds: self.bounds.scale(factor),
         }
     }
 
+    /// Intersect the content mask with the given content mask.
     pub fn intersect(&self, other: &Self) -> Self {
         let bounds = self.bounds.intersect(&other.bounds);
         ContentMask { bounds }
     }
 }
 
+/// Provides access to application state in the context of a single window. Derefs
+/// to an `AppContext`, so you can also pass a `WindowContext` to any method that takes
+/// an `AppContext` and call any `AppContext` methods.
 pub struct WindowContext<'a, 'w> {
     pub(crate) app: Reference<'a, AppContext>,
     pub(crate) window: Reference<'w, Window>,
@@ -300,24 +325,30 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         }
     }
 
+    /// Obtain a handle to the window that belongs to this context.
     pub fn window_handle(&self) -> AnyWindowHandle {
         self.window.handle
     }
 
+    /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn notify(&mut self) {
         self.window.dirty = true;
     }
 
+    /// Obtain a new `FocusHandle`, which allows you to track and manipulate the keyboard focus
+    /// for elements rendered within this window.
     pub fn focus_handle(&mut self) -> FocusHandle {
         FocusHandle::new(&self.window.focus_handles)
     }
 
+    /// Obtain the currently focused `FocusHandle`. If no elements are focused, returns `None`.
     pub fn focused(&self) -> Option<FocusHandle> {
         self.window
             .focus
             .and_then(|id| FocusHandle::for_id(id, &self.window.focus_handles))
     }
 
+    /// Move focus to the element associated with the given `FocusHandle`.
     pub fn focus(&mut self, handle: &FocusHandle) {
         if self.window.last_blur.is_none() {
             self.window.last_blur = Some(self.window.focus);
@@ -332,6 +363,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.notify();
     }
 
+    /// Remove focus from all elements within this context's window.
     pub fn blur(&mut self) {
         if self.window.last_blur.is_none() {
             self.window.last_blur = Some(self.window.focus);
@@ -346,6 +378,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.notify();
     }
 
+    /// Schedule the given closure to be run on the main thread. It will be invoked with
+    /// a `MainThread<WindowContext>`, which provides access to platform-specific functionality
+    /// of the window.
     pub fn run_on_main<R>(
         &mut self,
         f: impl FnOnce(&mut MainThread<WindowContext<'_, '_>>) -> R + Send + 'static,
@@ -363,10 +398,13 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         }
     }
 
+    /// Create an `AsyncWindowContext`, which has a static lifetime and can be held across
+    /// await points in async code.
     pub fn to_async(&self) -> AsyncWindowContext {
         AsyncWindowContext::new(self.app.to_async(), self.window.handle)
     }
 
+    /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + Send + 'static) {
         let f = Box::new(f);
         let display_id = self.window.display_id;
@@ -410,6 +448,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         .detach();
     }
 
+    /// Spawn the future returned by the given closure on the application thread pool.
+    /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
+    /// use within your future.
     pub fn spawn<Fut, R>(
         &mut self,
         f: impl FnOnce(AnyWindowHandle, AsyncWindowContext) -> Fut + Send + 'static,
@@ -426,6 +467,8 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         })
     }
 
+    /// Update the global of the given type. The given closure is given simultaneous mutable
+    /// access both to the global and the context.
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
         G: 'static,
@@ -436,6 +479,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         result
     }
 
+    /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
+    /// layout is being requested, along with the layout ids of any children. This method is called during
+    /// calls to the `Element::layout` trait method and enables any element to participate in layout.
     pub fn request_layout(
         &mut self,
         style: &Style,
@@ -450,6 +496,12 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .request_layout(style, rem_size, &self.app.layout_id_buffer)
     }
 
+    /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
+    /// this variant takes a function that is invoked during layout so you can use arbitrary logic to
+    /// determine the element's size. One place this is used internally is when measuring text.
+    ///
+    /// The given closure is invoked at layout time with the known dimensions and available space and
+    /// returns a `Size`.
     pub fn request_measured_layout<
         F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + Send + Sync + 'static,
     >(
@@ -463,6 +515,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .request_measured_layout(style, rem_size, measure)
     }
 
+    /// Obtain the bounds computed for the given LayoutId relative to the window. This method should not
+    /// be invoked until the paint phase begins, and will usually be invoked by GPUI itself automatically
+    /// in order to pass your element its `Bounds` automatically.
     pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
         let mut bounds = self
             .window
@@ -473,14 +528,20 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         bounds
     }
 
+    /// The scale factor of the display associated with the window. For example, it could
+    /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
+    /// be rendered as two pixels on screen.
     pub fn scale_factor(&self) -> f32 {
         self.window.scale_factor
     }
 
+    /// The size of an em for the base font of the application. Adjusting this value allows the
+    /// UI to scale, just like zooming a web page.
     pub fn rem_size(&self) -> Pixels {
         self.window.rem_size
     }
 
+    /// The line height associated with the current text style.
     pub fn line_height(&self) -> Pixels {
         let rem_size = self.rem_size();
         let text_style = self.text_style();
@@ -489,14 +550,23 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .to_pixels(text_style.font_size.into(), rem_size)
     }
 
+    /// Call to prevent the default action of an event. Currently only used to prevent
+    /// parent elements from becoming focused on mouse down.
     pub fn prevent_default(&mut self) {
         self.window.default_prevented = true;
     }
 
+    /// Obtain whether default has been prevented for the event currently being dispatched.
     pub fn default_prevented(&self) -> bool {
         self.window.default_prevented
     }
 
+    /// Register a mouse event listener on the window for the current frame. The type of event
+    /// is determined by the first parameter of the given listener. When the next frame is rendered
+    /// the listener will be cleared.
+    ///
+    /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
+    /// a specific need to register a global listener.
     pub fn on_mouse_event<Event: 'static>(
         &mut self,
         handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + Send + 'static,
@@ -514,17 +584,21 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             ))
     }
 
+    /// The position of the mouse relative to the window.
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.window.mouse_position
     }
 
-    pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.z_index_stack.push(order);
+    /// Called during painting to invoke the given closure in a new stacking context. The given
+    /// z-index is interpreted relative to the previous call to `stack`.
+    pub fn stack<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.window.z_index_stack.push(z_index);
         let result = f(self);
         self.window.z_index_stack.pop();
         result
     }
 
+    /// Paint one or more drop shadows into the scene for the current frame at the current z-index.
     pub fn paint_shadows(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -552,6 +626,8 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         }
     }
 
+    /// Paint one or more quads into the scene for the current frame at the current stacking context.
+    /// Quads are colored rectangular regions with an optional background, border, and corner radius.
     pub fn paint_quad(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -578,6 +654,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         );
     }
 
+    /// Paint the given `Path` into the scene for the current frame at the current z-index.
     pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
@@ -589,6 +666,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .insert(&window.z_index_stack, path.scale(scale_factor));
     }
 
+    /// Paint an underline into the scene for the current frame at the current z-index.
     pub fn paint_underline(
         &mut self,
         origin: Point<Pixels>,
@@ -621,6 +699,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         Ok(())
     }
 
+    /// Paint a monochrome (non-emoji) glyph into the scene for the current frame at the current z-index.
     pub fn paint_glyph(
         &mut self,
         origin: Point<Pixels>,
@@ -673,6 +752,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         Ok(())
     }
 
+    /// Paint an emoji glyph into the scene for the current frame at the current z-index.
     pub fn paint_emoji(
         &mut self,
         origin: Point<Pixels>,
@@ -723,6 +803,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         Ok(())
     }
 
+    /// Paint a monochrome SVG into the scene for the current frame at the current stacking context.
     pub fn paint_svg(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -763,6 +844,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         Ok(())
     }
 
+    /// Paint an image into the scene for the current frame at the current z-index.
     pub fn paint_image(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -798,6 +880,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         Ok(())
     }
 
+    /// Draw pixels to the display for this window based on the contents of its scene.
     pub(crate) fn draw(&mut self) {
         let root_view = self.window.root_view.take().unwrap();
 
@@ -870,12 +953,17 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         window.freeze_key_dispatch_stack = false;
     }
 
+    /// Dispatch a mouse or keyboard event on the window.
     fn dispatch_event(&mut self, event: InputEvent) -> bool {
         let event = match event {
+            // Track the mouse position with our own state, since accessing the platform
+            // API for the mouse position can only occur on the main thread.
             InputEvent::MouseMove(mouse_move) => {
                 self.window.mouse_position = mouse_move.position;
                 InputEvent::MouseMove(mouse_move)
             }
+            // Translate dragging and dropping of external files from the operating system
+            // to internal drag and drop events.
             InputEvent::FileDrop(file_drop) => match file_drop {
                 FileDropEvent::Entered { position, files } => {
                     self.window.mouse_position = position;
@@ -1036,6 +1124,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         true
     }
 
+    /// Attempt to map a keystroke to an action based on the keymap.
     pub fn match_keystroke(
         &mut self,
         element_id: &GlobalElementId,
@@ -1058,6 +1147,8 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         key_match
     }
 
+    /// Register the given handler to be invoked whenever the global of the given type
+    /// is updated.
     pub fn observe_global<G: 'static>(
         &mut self,
         f: impl Fn(&mut WindowContext<'_, '_>) + Send + 'static,
@@ -1182,6 +1273,10 @@ impl Context for WindowContext<'_, '_> {
 impl VisualContext for WindowContext<'_, '_> {
     type ViewContext<'a, 'w, V> = ViewContext<'a, 'w, V>;
 
+    /// Builds a new view in the current window. The first argument is a function that builds
+    /// an entity representing the view's state. It is invoked with a `ViewContext` that provides
+    /// entity-specific access to the window and application state during construction. The second
+    /// argument is a render function that returns a component based on the view's state.
     fn build_view<E, V>(
         &mut self,
         build_view_state: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
@@ -1199,6 +1294,7 @@ impl VisualContext for WindowContext<'_, '_> {
         view
     }
 
+    /// Update the given view. Prefer calling `View::update` instead, which calls this method.
     fn update_view<T: 'static, R>(
         &mut self,
         view: &View<T>,
@@ -1251,6 +1347,10 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         self.borrow_mut()
     }
 
+    /// Pushes the given element id onto the global stack and invokes the given closure
+    /// with a `GlobalElementId`, which disambiguates the given id in the context of its ancestor
+    /// ids. Because elements are discarded and recreated on each frame, the `GlobalElementId` is
+    /// used to associate state with identified elements across separate frames.
     fn with_element_id<R>(
         &mut self,
         id: impl Into<ElementId>,
@@ -1277,6 +1377,8 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         result
     }
 
+    /// Invoke the given function with the given content mask after intersecting it
+    /// with the current mask.
     fn with_content_mask<R>(
         &mut self,
         mask: ContentMask<Pixels>,
@@ -1289,6 +1391,8 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         result
     }
 
+    /// Update the global element offset based on the given offset. This is used to implement
+    /// scrolling and position drag handles.
     fn with_element_offset<R>(
         &mut self,
         offset: Option<Point<Pixels>>,
@@ -1305,6 +1409,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         result
     }
 
+    /// Obtain the current element offset.
     fn element_offset(&self) -> Point<Pixels> {
         self.window()
             .element_offset_stack
@@ -1313,6 +1418,10 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
             .unwrap_or_default()
     }
 
+    /// Update or intialize state for an element with the given id that lives across multiple
+    /// frames. If an element with this id existed in the previous frame, its state will be passed
+    /// to the given closure. The state returned by the closure will be stored so it can be referenced
+    /// when drawing the next frame.
     fn with_element_state<S, R>(
         &mut self,
         id: ElementId,
@@ -1349,6 +1458,8 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         })
     }
 
+    /// Like `with_element_state`, but for situations where the element_id is optional. If the
+    /// id is `None`, no state will be retrieved or stored.
     fn with_optional_element_state<S, R>(
         &mut self,
         element_id: Option<ElementId>,
@@ -1364,6 +1475,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         }
     }
 
+    /// Obtain the current content mask.
     fn content_mask(&self) -> ContentMask<Pixels> {
         self.window()
             .content_mask_stack
@@ -1377,6 +1489,8 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
             })
     }
 
+    /// The size of an em for the base font of the application. Adjusting this value allows the
+    /// UI to scale, just like zooming a web page.
     fn rem_size(&self) -> Pixels {
         self.window().rem_size
     }
