@@ -335,7 +335,7 @@ fn strip_markdown_codeblock(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ai::{models::LanguageModel, test::FakeLanguageModel};
+    use ai::test::TestCompletionProvider;
     use futures::{
         future::BoxFuture,
         stream::{self, BoxStream},
@@ -614,42 +614,6 @@ mod tests {
                     .map(|chunk| Ok(chunk.iter().collect::<String>()))
                     .collect::<Vec<_>>(),
             )
-        }
-    }
-
-    struct TestCompletionProvider {
-        last_completion_tx: Mutex<Option<mpsc::Sender<String>>>,
-    }
-
-    impl TestCompletionProvider {
-        fn new() -> Self {
-            Self {
-                last_completion_tx: Mutex::new(None),
-            }
-        }
-
-        fn send_completion(&self, completion: impl Into<String>) {
-            let mut tx = self.last_completion_tx.lock();
-            tx.as_mut().unwrap().try_send(completion.into()).unwrap();
-        }
-
-        fn finish_completion(&self) {
-            self.last_completion_tx.lock().take().unwrap();
-        }
-    }
-
-    impl CompletionProvider for TestCompletionProvider {
-        fn base_model(&self) -> Box<dyn LanguageModel> {
-            let model: Box<dyn LanguageModel> = Box::new(FakeLanguageModel { capacity: 8190 });
-            model
-        }
-        fn complete(
-            &self,
-            _prompt: Box<dyn CompletionRequest>,
-        ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-            let (tx, rx) = mpsc::channel(1);
-            *self.last_completion_tx.lock() = Some(tx);
-            async move { Ok(rx.map(|rx| Ok(rx)).boxed()) }.boxed()
         }
     }
 

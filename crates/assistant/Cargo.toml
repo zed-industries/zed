@@ -44,6 +44,7 @@ tiktoken-rs = "0.5"
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
+ai = { path = "../ai", features = ["test-support"]}
 
 ctor.workspace = true
 env_logger.workspace = true

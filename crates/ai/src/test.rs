@@ -4,9 +4,12 @@ use std::{
 };
 
 use async_trait::async_trait;
+use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use parking_lot::Mutex;
 
 use crate::{
     auth::{CredentialProvider, NullCredentialProvider, ProviderCredential},
+    completion::{CompletionProvider, CompletionRequest},
     embedding::{Embedding, EmbeddingProvider},
     models::{LanguageModel, TruncationDirection},
 };
@@ -123,5 +126,41 @@ impl EmbeddingProvider for FakeEmbeddingProvider {
             .fetch_add(spans.len(), atomic::Ordering::SeqCst);
 
         anyhow::Ok(spans.iter().map(|span| self.embed_sync(span)).collect())
+    }
+}
+
+pub struct TestCompletionProvider {
+    last_completion_tx: Mutex<Option<mpsc::Sender<String>>>,
+}
+
+impl TestCompletionProvider {
+    pub fn new() -> Self {
+        Self {
+            last_completion_tx: Mutex::new(None),
+        }
+    }
+
+    pub fn send_completion(&self, completion: impl Into<String>) {
+        let mut tx = self.last_completion_tx.lock();
+        tx.as_mut().unwrap().try_send(completion.into()).unwrap();
+    }
+
+    pub fn finish_completion(&self) {
+        self.last_completion_tx.lock().take().unwrap();
+    }
+}
+
+impl CompletionProvider for TestCompletionProvider {
+    fn base_model(&self) -> Box<dyn LanguageModel> {
+        let model: Box<dyn LanguageModel> = Box::new(FakeLanguageModel { capacity: 8190 });
+        model
+    }
+    fn complete(
+        &self,
+        _prompt: Box<dyn CompletionRequest>,
+    ) -> BoxFuture<'static, anyhow::Result<BoxStream<'static, anyhow::Result<String>>>> {
+        let (tx, rx) = mpsc::channel(1);
+        *self.last_completion_tx.lock() = Some(tx);
+        async move { Ok(rx.map(|rx| Ok(rx)).boxed()) }.boxed()
     }
 }
