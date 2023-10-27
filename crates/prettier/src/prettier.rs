@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use fs::Fs;
 use gpui::{AsyncAppContext, ModelHandle};
 use language::language_settings::language_settings;
-use language::{Buffer, BundledFormatter, Diff};
+use language::{Buffer, Diff};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,9 @@ pub const PRETTIER_SERVER_JS: &str = include_str!("./prettier_server.js");
 const PRETTIER_PACKAGE_NAME: &str = "prettier";
 const TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME: &str = "prettier-plugin-tailwindcss";
 
+#[cfg(any(test, feature = "test-support"))]
+pub const FORMAT_SUFFIX: &str = "\nformatted by test prettier";
+
 impl Prettier {
     pub const CONFIG_FILE_NAMES: &'static [&'static str] = &[
         ".prettierrc",
@@ -59,9 +62,6 @@ impl Prettier {
         "prettier.config.cjs",
         ".editorconfig",
     ];
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub const FORMAT_SUFFIX: &str = "\nformatted by test prettier";
 
     pub async fn locate(
         starting_path: Option<LocateStart>,
@@ -210,6 +210,7 @@ impl Prettier {
             .spawn(async move { node.binary_path().await })
             .await?;
         let server = LanguageServer::new(
+            Arc::new(parking_lot::Mutex::new(None)),
             server_id,
             LanguageServerBinary {
                 path: node_path,
@@ -242,40 +243,16 @@ impl Prettier {
             Self::Real(local) => {
                 let params = buffer.read_with(cx, |buffer, cx| {
                     let buffer_language = buffer.language();
-                    let parsers_with_plugins = buffer_language
-                        .into_iter()
-                        .flat_map(|language| {
-                            language
-                                .lsp_adapters()
-                                .iter()
-                                .flat_map(|adapter| adapter.enabled_formatters())
-                                .filter_map(|formatter| match formatter {
-                                    BundledFormatter::Prettier {
-                                        parser_name,
-                                        plugin_names,
-                                    } => Some((parser_name, plugin_names)),
-                                })
-                        })
-                        .fold(
-                            HashMap::default(),
-                            |mut parsers_with_plugins, (parser_name, plugins)| {
-                                match parser_name {
-                                    Some(parser_name) => parsers_with_plugins
-                                        .entry(parser_name)
-                                        .or_insert_with(HashSet::default)
-                                        .extend(plugins),
-                                    None => parsers_with_plugins.values_mut().for_each(|existing_plugins| {
-                                        existing_plugins.extend(plugins.iter());
-                                    }),
-                                }
-                                parsers_with_plugins
-                            },
-                        );
-
-                    let selected_parser_with_plugins = parsers_with_plugins.iter().max_by_key(|(_, plugins)| plugins.len());
-                    if parsers_with_plugins.len() > 1 {
-                        log::warn!("Found multiple parsers with plugins {parsers_with_plugins:?}, will select only one: {selected_parser_with_plugins:?}");
-                    }
+                    let parser_with_plugins = buffer_language.and_then(|l| {
+                        let prettier_parser = l.prettier_parser_name()?;
+                        let mut prettier_plugins = l
+                            .lsp_adapters()
+                            .iter()
+                            .flat_map(|adapter| adapter.prettier_plugins())
+                            .collect::<Vec<_>>();
+                        prettier_plugins.dedup();
+                        Some((prettier_parser, prettier_plugins))
+                    });
 
                     let prettier_node_modules = self.prettier_dir().join("node_modules");
                     anyhow::ensure!(prettier_node_modules.is_dir(), "Prettier node_modules dir does not exist: {prettier_node_modules:?}");
@@ -296,7 +273,7 @@ impl Prettier {
                         }
                         None
                     };
-                    let (parser, located_plugins) = match selected_parser_with_plugins {
+                    let (parser, located_plugins) = match parser_with_plugins {
                         Some((parser, plugins)) => {
                             // Tailwind plugin requires being added last
                             // https://github.com/tailwindlabs/prettier-plugin-tailwindcss#compatibility-with-other-prettier-plugins
@@ -373,7 +350,7 @@ impl Prettier {
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => Ok(buffer
                 .read_with(cx, |buffer, cx| {
-                    let formatted_text = buffer.text() + Self::FORMAT_SUFFIX;
+                    let formatted_text = buffer.text() + FORMAT_SUFFIX;
                     buffer.diff(formatted_text, cx)
                 })
                 .await),

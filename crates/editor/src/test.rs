@@ -8,6 +8,7 @@ use crate::{
 
 use gpui::{ModelHandle, ViewContext};
 
+use project::Project;
 use util::test::{marked_text_offsets, marked_text_ranges};
 
 #[cfg(test)]
@@ -63,9 +64,20 @@ pub fn assert_text_with_selections(
     assert_eq!(editor.selections.ranges(cx), text_ranges);
 }
 
+// RA thinks this is dead code even though it is used in a whole lot of tests
+#[allow(dead_code)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn build_editor(
     buffer: ModelHandle<MultiBuffer>,
     cx: &mut ViewContext<Editor>,
 ) -> Editor {
     Editor::new(EditorMode::Full, buffer, None, None, cx)
+}
+
+pub(crate) fn build_editor_with_project(
+    project: ModelHandle<Project>,
+    buffer: ModelHandle<MultiBuffer>,
+    cx: &mut ViewContext<Editor>,
+) -> Editor {
+    Editor::new(EditorMode::Full, buffer, Some(project), None, cx)
 }

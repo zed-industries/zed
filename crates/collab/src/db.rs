@@ -20,7 +20,7 @@ use rpc::{
 };
 use sea_orm::{
     entity::prelude::*,
-    sea_query::{Alias, Expr, OnConflict, Query},
+    sea_query::{Alias, Expr, OnConflict},
     ActiveValue, Condition, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr,
     FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect, Statement,
     TransactionTrait,
@@ -47,14 +47,14 @@ pub use ids::*;
 pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
 
-use self::queries::channels::ChannelGraph;
-
 pub struct Database {
     options: ConnectOptions,
     pool: DatabaseConnection,
     rooms: DashMap<RoomId, Arc<Mutex<()>>>,
     rng: Mutex<StdRng>,
     executor: Executor,
+    notification_kinds_by_id: HashMap<NotificationKindId, &'static str>,
+    notification_kinds_by_name: HashMap<String, NotificationKindId>,
     #[cfg(test)]
     runtime: Option<tokio::runtime::Runtime>,
 }
@@ -69,6 +69,8 @@ impl Database {
             pool: sea_orm::Database::connect(options).await?,
             rooms: DashMap::with_capacity(16384),
             rng: Mutex::new(StdRng::seed_from_u64(0)),
+            notification_kinds_by_id: HashMap::default(),
+            notification_kinds_by_name: HashMap::default(),
             executor,
             #[cfg(test)]
             runtime: None,
@@ -119,6 +121,11 @@ impl Database {
         }
 
         Ok(new_migrations)
+    }
+
+    pub async fn initialize_static_data(&mut self) -> Result<()> {
+        self.initialize_notification_kinds().await?;
+        Ok(())
     }
 
     pub async fn transaction<F, Fut, T>(&self, f: F) -> Result<T>
@@ -361,18 +368,9 @@ impl<T> RoomGuard<T> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Contact {
-    Accepted {
-        user_id: UserId,
-        should_notify: bool,
-        busy: bool,
-    },
-    Outgoing {
-        user_id: UserId,
-    },
-    Incoming {
-        user_id: UserId,
-        should_notify: bool,
-    },
+    Accepted { user_id: UserId, busy: bool },
+    Outgoing { user_id: UserId },
+    Incoming { user_id: UserId },
 }
 
 impl Contact {
@@ -383,6 +381,15 @@ impl Contact {
             Contact::Incoming { user_id, .. } => *user_id,
         }
     }
+}
+
+pub type NotificationBatch = Vec<(UserId, proto::Notification)>;
+
+pub struct CreatedChannelMessage {
+    pub message_id: MessageId,
+    pub participant_connection_ids: Vec<ConnectionId>,
+    pub channel_members: Vec<UserId>,
+    pub notifications: NotificationBatch,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, FromQueryResult, Serialize, Deserialize)]
@@ -417,7 +424,6 @@ pub struct WaitlistSummary {
 pub struct NewUserParams {
     pub github_login: String,
     pub github_user_id: i32,
-    pub invite_count: i32,
 }
 
 #[derive(Debug)]
@@ -428,17 +434,115 @@ pub struct NewUserResult {
     pub signup_device_id: Option<String>,
 }
 
-#[derive(FromQueryResult, Debug, PartialEq, Eq, Hash)]
+#[derive(Debug)]
+pub struct MoveChannelResult {
+    pub participants_to_update: HashMap<UserId, ChannelsForUser>,
+    pub participants_to_remove: HashSet<UserId>,
+    pub moved_channels: HashSet<ChannelId>,
+}
+
+#[derive(Debug)]
+pub struct RenameChannelResult {
+    pub channel: Channel,
+    pub participants_to_update: HashMap<UserId, Channel>,
+}
+
+#[derive(Debug)]
+pub struct CreateChannelResult {
+    pub channel: Channel,
+    pub participants_to_update: Vec<(UserId, ChannelsForUser)>,
+}
+
+#[derive(Debug)]
+pub struct SetChannelVisibilityResult {
+    pub participants_to_update: HashMap<UserId, ChannelsForUser>,
+    pub participants_to_remove: HashSet<UserId>,
+    pub channels_to_remove: Vec<ChannelId>,
+}
+
+#[derive(Debug)]
+pub struct MembershipUpdated {
+    pub channel_id: ChannelId,
+    pub new_channels: ChannelsForUser,
+    pub removed_channels: Vec<ChannelId>,
+}
+
+#[derive(Debug)]
+pub enum SetMemberRoleResult {
+    InviteUpdated(Channel),
+    MembershipUpdated(MembershipUpdated),
+}
+
+#[derive(Debug)]
+pub struct InviteMemberResult {
+    pub channel: Channel,
+    pub notifications: NotificationBatch,
+}
+
+#[derive(Debug)]
+pub struct RespondToChannelInvite {
+    pub membership_update: Option<MembershipUpdated>,
+    pub notifications: NotificationBatch,
+}
+
+#[derive(Debug)]
+pub struct RemoveChannelMemberResult {
+    pub membership_update: MembershipUpdated,
+    pub notification_id: Option<NotificationId>,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
+    pub visibility: ChannelVisibility,
+    pub role: ChannelRole,
+    pub parent_path: Vec<ChannelId>,
+}
+
+impl Channel {
+    fn from_model(value: channel::Model, role: ChannelRole) -> Self {
+        Channel {
+            id: value.id,
+            visibility: value.visibility,
+            name: value.clone().name,
+            role,
+            parent_path: value.ancestors().collect(),
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::Channel {
+        proto::Channel {
+            id: self.id.to_proto(),
+            name: self.name.clone(),
+            visibility: self.visibility.into(),
+            role: self.role.into(),
+            parent_path: self.parent_path.iter().map(|c| c.to_proto()).collect(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct ChannelMember {
+    pub role: ChannelRole,
+    pub user_id: UserId,
+    pub kind: proto::channel_member::Kind,
+}
+
+impl ChannelMember {
+    pub fn to_proto(&self) -> proto::ChannelMember {
+        proto::ChannelMember {
+            role: self.role.into(),
+            user_id: self.user_id.to_proto(),
+            kind: self.kind.into(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
 pub struct ChannelsForUser {
-    pub channels: ChannelGraph,
+    pub channels: Vec<Channel>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
-    pub channels_with_admin_privileges: HashSet<ChannelId>,
     pub unseen_buffer_changes: Vec<proto::UnseenChannelBufferChange>,
     pub channel_messages: Vec<proto::UnseenChannelMessage>,
 }

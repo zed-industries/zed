@@ -16,9 +16,10 @@ use futures::{channel::oneshot, StreamExt as _};
 use gpui::{executor::Deterministic, ModelHandle, Task, TestAppContext, WindowHandle};
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
+use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
-use rpc::RECEIVE_TIMEOUT;
+use rpc::{proto::ChannelRole, RECEIVE_TIMEOUT};
 use settings::SettingsStore;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -46,6 +47,7 @@ pub struct TestClient {
     pub username: String,
     pub app_state: Arc<workspace::AppState>,
     channel_store: ModelHandle<ChannelStore>,
+    notification_store: ModelHandle<NotificationStore>,
     state: RefCell<TestClientState>,
 }
 
@@ -138,7 +140,6 @@ impl TestServer {
                     NewUserParams {
                         github_login: name.into(),
                         github_user_id: 0,
-                        invite_count: 0,
                     },
                 )
                 .await
@@ -231,7 +232,8 @@ impl TestServer {
             workspace::init(app_state.clone(), cx);
             audio::init((), cx);
             call::init(client.clone(), user_store.clone(), cx);
-            channel::init(&client, user_store, cx);
+            channel::init(&client, user_store.clone(), cx);
+            notifications::init(client.clone(), user_store, cx);
         });
 
         client
@@ -243,6 +245,7 @@ impl TestServer {
             app_state,
             username: name.to_string(),
             channel_store: cx.read(ChannelStore::global).clone(),
+            notification_store: cx.read(NotificationStore::global).clone(),
             state: Default::default(),
         };
         client.wait_for_current_user(cx).await;
@@ -327,7 +330,7 @@ impl TestServer {
                     channel_store.invite_member(
                         channel_id,
                         member_client.user_id().unwrap(),
-                        false,
+                        ChannelRole::Member,
                         cx,
                     )
                 })
@@ -338,8 +341,8 @@ impl TestServer {
 
             member_cx
                 .read(ChannelStore::global)
-                .update(*member_cx, |channels, _| {
-                    channels.respond_to_channel_invite(channel_id, true)
+                .update(*member_cx, |channels, cx| {
+                    channels.respond_to_channel_invite(channel_id, true, cx)
                 })
                 .await
                 .unwrap();
@@ -446,6 +449,10 @@ impl TestClient {
 
     pub fn channel_store(&self) -> &ModelHandle<ChannelStore> {
         &self.channel_store
+    }
+
+    pub fn notification_store(&self) -> &ModelHandle<NotificationStore> {
+        &self.notification_store
     }
 
     pub fn user_store(&self) -> &ModelHandle<UserStore> {
@@ -603,33 +610,6 @@ impl TestClient {
         cx: &mut TestAppContext,
     ) -> WindowHandle<Workspace> {
         cx.add_window(|cx| Workspace::new(0, project.clone(), self.app_state.clone(), cx))
-    }
-
-    pub async fn add_admin_to_channel(
-        &self,
-        user: (&TestClient, &mut TestAppContext),
-        channel: u64,
-        cx_self: &mut TestAppContext,
-    ) {
-        let (other_client, other_cx) = user;
-
-        cx_self
-            .read(ChannelStore::global)
-            .update(cx_self, |channel_store, cx| {
-                channel_store.invite_member(channel, other_client.user_id().unwrap(), true, cx)
-            })
-            .await
-            .unwrap();
-
-        cx_self.foreground().run_until_parked();
-
-        other_cx
-            .read(ChannelStore::global)
-            .update(other_cx, |channel_store, _| {
-                channel_store.respond_to_channel_invite(channel, true)
-            })
-            .await
-            .unwrap();
     }
 }
 

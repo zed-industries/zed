@@ -18,7 +18,7 @@ use util::{
     test::{generate_marked_text, marked_text_ranges},
 };
 
-use super::build_editor;
+use super::build_editor_with_project;
 
 pub struct EditorTestContext<'a> {
     pub cx: &'a mut gpui::TestAppContext,
@@ -29,13 +29,24 @@ pub struct EditorTestContext<'a> {
 impl<'a> EditorTestContext<'a> {
     pub async fn new(cx: &'a mut gpui::TestAppContext) -> EditorTestContext<'a> {
         let fs = FakeFs::new(cx.background());
-        let project = Project::test(fs, [], cx).await;
+        // fs.insert_file("/file", "".to_owned()).await;
+        fs.insert_tree(
+            "/root",
+            gpui::serde_json::json!({
+                "file": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, ["/root".as_ref()], cx).await;
         let buffer = project
-            .update(cx, |project, cx| project.create_buffer("", None, cx))
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/root/file", cx)
+            })
+            .await
             .unwrap();
         let window = cx.add_window(|cx| {
             cx.focus_self();
-            build_editor(MultiBuffer::build_from_buffer(buffer, cx), cx)
+            build_editor_with_project(project, MultiBuffer::build_from_buffer(buffer, cx), cx)
         });
         let editor = window.root(cx);
         Self {

@@ -6,6 +6,7 @@ mod channel_message_tests;
 mod channel_tests;
 mod following_tests;
 mod integration_tests;
+mod notification_tests;
 mod random_channel_buffer_tests;
 mod random_project_collaboration_tests;
 mod randomized_test_helpers;
@@ -38,4 +39,8 @@ fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomP
         pending.sort();
         RoomParticipants { remote, pending }
     })
+}
+
+fn channel_id(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> Option<u64> {
+    cx.read(|cx| room.read(cx).channel_id())
 }

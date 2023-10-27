@@ -32,10 +32,17 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut
     vim.update_active_editor(cx, |editor, cx| {
         editor.set_clip_at_line_ends(false, cx);
         editor.transact(cx, |editor, cx| {
+            let text_layout_details = editor.text_layout_details(cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.start == selection.end {
-                        Motion::Right.expand_selection(map, selection, count, true);
+                        Motion::Right.expand_selection(
+                            map,
+                            selection,
+                            count,
+                            true,
+                            &text_layout_details,
+                        );
                     }
                     if line_mode {
                         // in Visual mode when the selection contains the newline at the end
@@ -43,7 +50,13 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut
                         if !selection.is_empty() && selection.end.column() == 0 {
                             selection.end = movement::left(map, selection.end);
                         }
-                        Motion::CurrentLine.expand_selection(map, selection, None, false);
+                        Motion::CurrentLine.expand_selection(
+                            map,
+                            selection,
+                            None,
+                            false,
+                            &text_layout_details,
+                        );
                         if let Some((point, _)) = (Motion::FirstNonWhitespace {
                             display_lines: false,
                         })
@@ -52,6 +65,7 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut
                             selection.start,
                             selection.goal,
                             None,
+                            &text_layout_details,
                         ) {
                             selection.start = point;
                         }

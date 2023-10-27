@@ -1,15 +1,15 @@
 use editor::scroll::VERTICAL_SCROLL_MARGIN;
 use indoc::indoc;
 use settings::SettingsStore;
-use std::ops::{Deref, DerefMut, Range};
+use std::{
+    ops::{Deref, DerefMut},
+    panic, thread,
+};
 
 use collections::{HashMap, HashSet};
 use gpui::{geometry::vector::vec2f, ContextHandle};
-use language::{
-    language_settings::{AllLanguageSettings, SoftWrap},
-    OffsetRangeExt,
-};
-use util::test::{generate_marked_text, marked_text_offsets};
+use language::language_settings::{AllLanguageSettings, SoftWrap};
+use util::test::marked_text_offsets;
 
 use super::{neovim_connection::NeovimConnection, NeovimBackedBindingTestContext, VimTestContext};
 use crate::state::Mode;
@@ -37,10 +37,6 @@ pub enum ExemptionFeatures {
     AroundSentenceStartingBetweenIncludesWrongWhitespace,
     // Non empty selection with text objects in visual mode
     NonEmptyVisualTextObjects,
-    // Quote style surrounding text objects don't seek forward properly
-    QuotesSeekForward,
-    // Neovim freezes up for some reason with angle brackets
-    AngleBracketsFreezeNeovim,
     // Sentence Doesn't backtrack when its at the end of the file
     SentenceAfterPunctuationAtEndOfFile,
 }
@@ -66,12 +62,22 @@ pub struct NeovimBackedTestContext<'a> {
 
 impl<'a> NeovimBackedTestContext<'a> {
     pub async fn new(cx: &'a mut gpui::TestAppContext) -> NeovimBackedTestContext<'a> {
-        let function_name = cx.function_name.clone();
-        let cx = VimTestContext::new(cx, true).await;
+        // rust stores the name of the test on the current thread.
+        // We use this to automatically name a file that will store
+        // the neovim connection's requests/responses so that we can
+        // run without neovim on CI.
+        let thread = thread::current();
+        let test_name = thread
+            .name()
+            .expect("thread is not named")
+            .split(":")
+            .last()
+            .unwrap()
+            .to_string();
         Self {
-            cx,
+            cx: VimTestContext::new(cx, true).await,
             exemptions: Default::default(),
-            neovim: NeovimConnection::new(function_name).await,
+            neovim: NeovimConnection::new(test_name).await,
 
             last_set_state: None,
             recent_keystrokes: Default::default(),
@@ -250,23 +256,11 @@ impl<'a> NeovimBackedTestContext<'a> {
     }
 
     pub async fn neovim_state(&mut self) -> String {
-        generate_marked_text(
-            self.neovim.text().await.as_str(),
-            &self.neovim_selections().await[..],
-            true,
-        )
+        self.neovim.marked_text().await
     }
 
     pub async fn neovim_mode(&mut self) -> Mode {
         self.neovim.mode().await.unwrap()
-    }
-
-    async fn neovim_selections(&mut self) -> Vec<Range<usize>> {
-        let neovim_selections = self.neovim.selections().await;
-        neovim_selections
-            .into_iter()
-            .map(|selection| selection.to_offset(&self.buffer_snapshot()))
-            .collect()
     }
 
     pub async fn assert_state_matches(&mut self) {

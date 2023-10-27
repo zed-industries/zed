@@ -1,7 +1,9 @@
+use super::new_test_user;
 use crate::{
-    db::{Database, MessageId, NewUserParams},
+    db::{ChannelRole, Database, MessageId},
     test_both_dbs,
 };
+use channel::mentions_to_proto;
 use std::sync::Arc;
 use time::OffsetDateTime;
 
@@ -12,39 +14,38 @@ test_both_dbs!(
 );
 
 async fn test_channel_message_retrieval(db: &Arc<Database>) {
-    let user = db
-        .create_user(
-            "user@example.com",
-            false,
-            NewUserParams {
-                github_login: "user".into(),
-                github_user_id: 1,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-    let channel = db.create_channel("channel", None, user).await.unwrap();
+    let user = new_test_user(db, "user@example.com").await;
+    let result = db.create_channel("channel", None, user).await.unwrap();
 
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
-    db.join_channel_chat(channel, rpc::ConnectionId { owner_id, id: 0 }, user)
-        .await
-        .unwrap();
+    db.join_channel_chat(
+        result.channel.id,
+        rpc::ConnectionId { owner_id, id: 0 },
+        user,
+    )
+    .await
+    .unwrap();
 
     let mut all_messages = Vec::new();
     for i in 0..10 {
         all_messages.push(
-            db.create_channel_message(channel, user, &i.to_string(), OffsetDateTime::now_utc(), i)
-                .await
-                .unwrap()
-                .0
-                .to_proto(),
+            db.create_channel_message(
+                result.channel.id,
+                user,
+                &i.to_string(),
+                &[],
+                OffsetDateTime::now_utc(),
+                i,
+            )
+            .await
+            .unwrap()
+            .message_id
+            .to_proto(),
         );
     }
 
     let messages = db
-        .get_channel_messages(channel, user, 3, None)
+        .get_channel_messages(result.channel.id, user, 3, None)
         .await
         .unwrap()
         .into_iter()
@@ -54,7 +55,7 @@ async fn test_channel_message_retrieval(db: &Arc<Database>) {
 
     let messages = db
         .get_channel_messages(
-            channel,
+            result.channel.id,
             user,
             4,
             Some(MessageId::from_proto(all_messages[6])),
@@ -74,99 +75,154 @@ test_both_dbs!(
 );
 
 async fn test_channel_message_nonces(db: &Arc<Database>) {
-    let user = db
-        .create_user(
-            "user@example.com",
-            false,
-            NewUserParams {
-                github_login: "user".into(),
-                github_user_id: 1,
-                invite_count: 0,
-            },
+    let user_a = new_test_user(db, "user_a@example.com").await;
+    let user_b = new_test_user(db, "user_b@example.com").await;
+    let user_c = new_test_user(db, "user_c@example.com").await;
+    let channel = db.create_root_channel("channel", user_a).await.unwrap();
+    db.invite_channel_member(channel, user_b, user_a, ChannelRole::Member)
+        .await
+        .unwrap();
+    db.invite_channel_member(channel, user_c, user_a, ChannelRole::Member)
+        .await
+        .unwrap();
+    db.respond_to_channel_invite(channel, user_b, true)
+        .await
+        .unwrap();
+    db.respond_to_channel_invite(channel, user_c, true)
+        .await
+        .unwrap();
+
+    let owner_id = db.create_server("test").await.unwrap().0 as u32;
+    db.join_channel_chat(channel, rpc::ConnectionId { owner_id, id: 0 }, user_a)
+        .await
+        .unwrap();
+    db.join_channel_chat(channel, rpc::ConnectionId { owner_id, id: 1 }, user_b)
+        .await
+        .unwrap();
+
+    // As user A, create messages that re-use the same nonces. The requests
+    // succeed, but return the same ids.
+    let id1 = db
+        .create_channel_message(
+            channel,
+            user_a,
+            "hi @user_b",
+            &mentions_to_proto(&[(3..10, user_b.to_proto())]),
+            OffsetDateTime::now_utc(),
+            100,
         )
         .await
         .unwrap()
-        .user_id;
-    let channel = db.create_channel("channel", None, user).await.unwrap();
+        .message_id;
+    let id2 = db
+        .create_channel_message(
+            channel,
+            user_a,
+            "hello, fellow users",
+            &mentions_to_proto(&[]),
+            OffsetDateTime::now_utc(),
+            200,
+        )
+        .await
+        .unwrap()
+        .message_id;
+    let id3 = db
+        .create_channel_message(
+            channel,
+            user_a,
+            "bye @user_c (same nonce as first message)",
+            &mentions_to_proto(&[(4..11, user_c.to_proto())]),
+            OffsetDateTime::now_utc(),
+            100,
+        )
+        .await
+        .unwrap()
+        .message_id;
+    let id4 = db
+        .create_channel_message(
+            channel,
+            user_a,
+            "omg (same nonce as second message)",
+            &mentions_to_proto(&[]),
+            OffsetDateTime::now_utc(),
+            200,
+        )
+        .await
+        .unwrap()
+        .message_id;
 
-    let owner_id = db.create_server("test").await.unwrap().0 as u32;
+    // As a different user, reuse one of the same nonces. This request succeeds
+    // and returns a different id.
+    let id5 = db
+        .create_channel_message(
+            channel,
+            user_b,
+            "omg @user_a (same nonce as user_a's first message)",
+            &mentions_to_proto(&[(4..11, user_a.to_proto())]),
+            OffsetDateTime::now_utc(),
+            100,
+        )
+        .await
+        .unwrap()
+        .message_id;
 
-    db.join_channel_chat(channel, rpc::ConnectionId { owner_id, id: 0 }, user)
-        .await
-        .unwrap();
+    assert_ne!(id1, id2);
+    assert_eq!(id1, id3);
+    assert_eq!(id2, id4);
+    assert_ne!(id5, id1);
 
-    let msg1_id = db
-        .create_channel_message(channel, user, "1", OffsetDateTime::now_utc(), 1)
+    let messages = db
+        .get_channel_messages(channel, user_a, 5, None)
         .await
-        .unwrap();
-    let msg2_id = db
-        .create_channel_message(channel, user, "2", OffsetDateTime::now_utc(), 2)
-        .await
-        .unwrap();
-    let msg3_id = db
-        .create_channel_message(channel, user, "3", OffsetDateTime::now_utc(), 1)
-        .await
-        .unwrap();
-    let msg4_id = db
-        .create_channel_message(channel, user, "4", OffsetDateTime::now_utc(), 2)
-        .await
-        .unwrap();
-
-    assert_ne!(msg1_id, msg2_id);
-    assert_eq!(msg1_id, msg3_id);
-    assert_eq!(msg2_id, msg4_id);
+        .unwrap()
+        .into_iter()
+        .map(|m| (m.id, m.body, m.mentions))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages,
+        &[
+            (
+                id1.to_proto(),
+                "hi @user_b".into(),
+                mentions_to_proto(&[(3..10, user_b.to_proto())]),
+            ),
+            (
+                id2.to_proto(),
+                "hello, fellow users".into(),
+                mentions_to_proto(&[])
+            ),
+            (
+                id5.to_proto(),
+                "omg @user_a (same nonce as user_a's first message)".into(),
+                mentions_to_proto(&[(4..11, user_a.to_proto())]),
+            ),
+        ]
+    );
 }
 
 test_both_dbs!(
-    test_channel_message_new_notification,
-    test_channel_message_new_notification_postgres,
-    test_channel_message_new_notification_sqlite
+    test_unseen_channel_messages,
+    test_unseen_channel_messages_postgres,
+    test_unseen_channel_messages_sqlite
 );
 
-async fn test_channel_message_new_notification(db: &Arc<Database>) {
-    let user = db
-        .create_user(
-            "user_a@example.com",
-            false,
-            NewUserParams {
-                github_login: "user_a".into(),
-                github_user_id: 1,
-                invite_count: 0,
-            },
-        )
+async fn test_unseen_channel_messages(db: &Arc<Database>) {
+    let user = new_test_user(db, "user_a@example.com").await;
+    let observer = new_test_user(db, "user_b@example.com").await;
+
+    let channel_1 = db.create_root_channel("channel", user).await.unwrap();
+    let channel_2 = db.create_root_channel("channel-2", user).await.unwrap();
+
+    db.invite_channel_member(channel_1, observer, user, ChannelRole::Member)
         .await
-        .unwrap()
-        .user_id;
-    let observer = db
-        .create_user(
-            "user_b@example.com",
-            false,
-            NewUserParams {
-                github_login: "user_b".into(),
-                github_user_id: 1,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-
-    let channel_1 = db.create_channel("channel", None, user).await.unwrap();
-
-    let channel_2 = db.create_channel("channel-2", None, user).await.unwrap();
-
-    db.invite_channel_member(channel_1, observer, user, false)
+        .unwrap();
+    db.invite_channel_member(channel_2, observer, user, ChannelRole::Member)
         .await
         .unwrap();
 
     db.respond_to_channel_invite(channel_1, observer, true)
         .await
         .unwrap();
-
-    db.invite_channel_member(channel_2, observer, user, false)
-        .await
-        .unwrap();
-
     db.respond_to_channel_invite(channel_2, observer, true)
         .await
         .unwrap();
@@ -179,28 +235,31 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .unwrap();
 
     let _ = db
-        .create_channel_message(channel_1, user, "1_1", OffsetDateTime::now_utc(), 1)
+        .create_channel_message(channel_1, user, "1_1", &[], OffsetDateTime::now_utc(), 1)
         .await
         .unwrap();
 
-    let (second_message, _, _) = db
-        .create_channel_message(channel_1, user, "1_2", OffsetDateTime::now_utc(), 2)
+    let second_message = db
+        .create_channel_message(channel_1, user, "1_2", &[], OffsetDateTime::now_utc(), 2)
         .await
-        .unwrap();
+        .unwrap()
+        .message_id;
 
-    let (third_message, _, _) = db
-        .create_channel_message(channel_1, user, "1_3", OffsetDateTime::now_utc(), 3)
+    let third_message = db
+        .create_channel_message(channel_1, user, "1_3", &[], OffsetDateTime::now_utc(), 3)
         .await
-        .unwrap();
+        .unwrap()
+        .message_id;
 
     db.join_channel_chat(channel_2, user_connection_id, user)
         .await
         .unwrap();
 
-    let (fourth_message, _, _) = db
-        .create_channel_message(channel_2, user, "2_1", OffsetDateTime::now_utc(), 4)
+    let fourth_message = db
+        .create_channel_message(channel_2, user, "2_1", &[], OffsetDateTime::now_utc(), 4)
         .await
-        .unwrap();
+        .unwrap()
+        .message_id;
 
     // Check that observer has new messages
     let unseen_messages = db
@@ -293,5 +352,103 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
             channel_id: channel_2.to_proto(),
             message_id: fourth_message.to_proto(),
         }]
+    );
+}
+
+test_both_dbs!(
+    test_channel_message_mentions,
+    test_channel_message_mentions_postgres,
+    test_channel_message_mentions_sqlite
+);
+
+async fn test_channel_message_mentions(db: &Arc<Database>) {
+    let user_a = new_test_user(db, "user_a@example.com").await;
+    let user_b = new_test_user(db, "user_b@example.com").await;
+    let user_c = new_test_user(db, "user_c@example.com").await;
+
+    let channel = db
+        .create_channel("channel", None, user_a)
+        .await
+        .unwrap()
+        .channel
+        .id;
+    db.invite_channel_member(channel, user_b, user_a, ChannelRole::Member)
+        .await
+        .unwrap();
+    db.respond_to_channel_invite(channel, user_b, true)
+        .await
+        .unwrap();
+
+    let owner_id = db.create_server("test").await.unwrap().0 as u32;
+    let connection_id = rpc::ConnectionId { owner_id, id: 0 };
+    db.join_channel_chat(channel, connection_id, user_a)
+        .await
+        .unwrap();
+
+    db.create_channel_message(
+        channel,
+        user_a,
+        "hi @user_b and @user_c",
+        &mentions_to_proto(&[(3..10, user_b.to_proto()), (15..22, user_c.to_proto())]),
+        OffsetDateTime::now_utc(),
+        1,
+    )
+    .await
+    .unwrap();
+    db.create_channel_message(
+        channel,
+        user_a,
+        "bye @user_c",
+        &mentions_to_proto(&[(4..11, user_c.to_proto())]),
+        OffsetDateTime::now_utc(),
+        2,
+    )
+    .await
+    .unwrap();
+    db.create_channel_message(
+        channel,
+        user_a,
+        "umm",
+        &mentions_to_proto(&[]),
+        OffsetDateTime::now_utc(),
+        3,
+    )
+    .await
+    .unwrap();
+    db.create_channel_message(
+        channel,
+        user_a,
+        "@user_b, stop.",
+        &mentions_to_proto(&[(0..7, user_b.to_proto())]),
+        OffsetDateTime::now_utc(),
+        4,
+    )
+    .await
+    .unwrap();
+
+    let messages = db
+        .get_channel_messages(channel, user_b, 5, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|m| (m.body, m.mentions))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        &messages,
+        &[
+            (
+                "hi @user_b and @user_c".into(),
+                mentions_to_proto(&[(3..10, user_b.to_proto()), (15..22, user_c.to_proto())]),
+            ),
+            (
+                "bye @user_c".into(),
+                mentions_to_proto(&[(4..11, user_c.to_proto())]),
+            ),
+            ("umm".into(), mentions_to_proto(&[]),),
+            (
+                "@user_b, stop.".into(),
+                mentions_to_proto(&[(0..7, user_b.to_proto())]),
+            ),
+        ]
     );
 }

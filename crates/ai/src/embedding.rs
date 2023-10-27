@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use gpui::executor::Background;
-use gpui::serde_json;
+use gpui::{serde_json, AppContext};
 use isahc::http::StatusCode;
 use isahc::prelude::Configurable;
 use isahc::{AsyncBody, Response};
@@ -20,9 +20,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tiktoken_rs::{cl100k_base, CoreBPE};
 use util::http::{HttpClient, Request};
+use util::ResultExt;
+
+use crate::completion::OPENAI_API_URL;
 
 lazy_static! {
-    static ref OPENAI_API_KEY: Option<String> = env::var("OPENAI_API_KEY").ok();
     static ref OPENAI_BPE_TOKENIZER: CoreBPE = cl100k_base().unwrap();
 }
 
@@ -85,25 +87,6 @@ impl Embedding {
     }
 }
 
-// impl FromSql for Embedding {
-//     fn column_result(value: ValueRef) -> FromSqlResult<Self> {
-//         let bytes = value.as_blob()?;
-//         let embedding: Result<Vec<f32>, Box<bincode::ErrorKind>> = bincode::deserialize(bytes);
-//         if embedding.is_err() {
-//             return Err(rusqlite::types::FromSqlError::Other(embedding.unwrap_err()));
-//         }
-//         Ok(Embedding(embedding.unwrap()))
-//     }
-// }
-
-// impl ToSql for Embedding {
-//     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput> {
-//         let bytes = bincode::serialize(&self.0)
-//             .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
-//         Ok(ToSqlOutput::Owned(rusqlite::types::Value::Blob(bytes)))
-//     }
-// }
-
 #[derive(Clone)]
 pub struct OpenAIEmbeddings {
     pub client: Arc<dyn HttpClient>,
@@ -139,8 +122,12 @@ struct OpenAIEmbeddingUsage {
 
 #[async_trait]
 pub trait EmbeddingProvider: Sync + Send {
-    fn is_authenticated(&self) -> bool;
-    async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>>;
+    fn retrieve_credentials(&self, cx: &AppContext) -> Option<String>;
+    async fn embed_batch(
+        &self,
+        spans: Vec<String>,
+        api_key: Option<String>,
+    ) -> Result<Vec<Embedding>>;
     fn max_tokens_per_batch(&self) -> usize;
     fn truncate(&self, span: &str) -> (String, usize);
     fn rate_limit_expiration(&self) -> Option<Instant>;
@@ -150,13 +137,17 @@ pub struct DummyEmbeddings {}
 
 #[async_trait]
 impl EmbeddingProvider for DummyEmbeddings {
-    fn is_authenticated(&self) -> bool {
-        true
+    fn retrieve_credentials(&self, _cx: &AppContext) -> Option<String> {
+        Some("Dummy API KEY".to_string())
     }
     fn rate_limit_expiration(&self) -> Option<Instant> {
         None
     }
-    async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
+    async fn embed_batch(
+        &self,
+        spans: Vec<String>,
+        _api_key: Option<String>,
+    ) -> Result<Vec<Embedding>> {
         // 1024 is the OpenAI Embeddings size for ada models.
         // the model we will likely be starting with.
         let dummy_vec = Embedding::from(vec![0.32 as f32; 1536]);
@@ -255,9 +246,21 @@ impl OpenAIEmbeddings {
 
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbeddings {
-    fn is_authenticated(&self) -> bool {
-        OPENAI_API_KEY.as_ref().is_some()
+    fn retrieve_credentials(&self, cx: &AppContext) -> Option<String> {
+        if let Ok(api_key) = env::var("OPENAI_API_KEY") {
+            Some(api_key)
+        } else if let Some((_, api_key)) = cx
+            .platform()
+            .read_credentials(OPENAI_API_URL)
+            .log_err()
+            .flatten()
+        {
+            String::from_utf8(api_key).log_err()
+        } else {
+            None
+        }
     }
+
     fn max_tokens_per_batch(&self) -> usize {
         50000
     }
@@ -280,13 +283,17 @@ impl EmbeddingProvider for OpenAIEmbeddings {
         (output, tokens.len())
     }
 
-    async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
+    async fn embed_batch(
+        &self,
+        spans: Vec<String>,
+        api_key: Option<String>,
+    ) -> Result<Vec<Embedding>> {
         const BACKOFF_SECONDS: [usize; 4] = [3, 5, 15, 45];
         const MAX_RETRIES: usize = 4;
 
-        let api_key = OPENAI_API_KEY
-            .as_ref()
-            .ok_or_else(|| anyhow!("no api key"))?;
+        let Some(api_key) = api_key else {
+            return Err(anyhow!("no open ai key provided"));
+        };
 
         let mut request_number = 0;
         let mut rate_limiting = false;
@@ -295,11 +302,12 @@ impl EmbeddingProvider for OpenAIEmbeddings {
         while request_number < MAX_RETRIES {
             response = self
                 .send_request(
-                    api_key,
+                    &api_key,
                     spans.iter().map(|x| &**x).collect(),
                     request_timeout,
                 )
                 .await?;
+
             request_number += 1;
 
             match response.status() {

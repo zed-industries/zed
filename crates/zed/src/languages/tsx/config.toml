@@ -14,6 +14,7 @@ brackets = [
 ]
 word_characters = ["#", "$"]
 scope_opt_in_language_servers = ["tailwindcss-language-server"]
+prettier_parser_name = "typescript"
 
 [overrides.element]
 line_comment = { remove = true }

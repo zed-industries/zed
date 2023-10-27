@@ -2,6 +2,7 @@ pub mod assets;
 pub mod languages;
 pub mod menus;
 pub mod only_instance;
+pub mod open_listener;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -28,6 +29,7 @@ use gpui::{
     AppContext, AsyncAppContext, Task, ViewContext, WeakViewHandle,
 };
 pub use lsp;
+use open_listener::OpenListener;
 pub use project;
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -87,6 +89,10 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         },
     );
     cx.add_global_action(quit);
+    cx.add_global_action(move |action: &OpenZedURL, cx| {
+        cx.global::<Arc<OpenListener>>()
+            .open_urls(vec![action.url.clone()])
+    });
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
     cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
         theme::adjust_font_size(cx, |size| *size += 1.0)
@@ -223,6 +229,13 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     );
     cx.add_action(
         |workspace: &mut Workspace,
+         _: &collab_ui::notification_panel::ToggleFocus,
+         cx: &mut ViewContext<Workspace>| {
+            workspace.toggle_panel_focus::<collab_ui::notification_panel::NotificationPanel>(cx);
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace,
          _: &terminal_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
             workspace.toggle_panel_focus::<TerminalPanel>(cx);
@@ -275,9 +288,8 @@ pub fn initialize_workspace(
                                     QuickActionBar::new(buffer_search_bar, workspace)
                                 });
                                 toolbar.add_item(quick_action_bar, cx);
-                                let diagnostic_editor_controls = cx.add_view(|_| {
-                                    diagnostics::ToolbarControls::new()
-                                });
+                                let diagnostic_editor_controls =
+                                    cx.add_view(|_| diagnostics::ToolbarControls::new());
                                 toolbar.add_item(diagnostic_editor_controls, cx);
                                 let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
                                 toolbar.add_item(project_search_bar, cx);
@@ -351,12 +363,24 @@ pub fn initialize_workspace(
             collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
         let chat_panel =
             collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
-        let (project_panel, terminal_panel, assistant_panel, channels_panel, chat_panel) = futures::try_join!(
+        let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
+            workspace_handle.clone(),
+            cx.clone(),
+        );
+        let (
             project_panel,
             terminal_panel,
             assistant_panel,
             channels_panel,
             chat_panel,
+            notification_panel,
+        ) = futures::try_join!(
+            project_panel,
+            terminal_panel,
+            assistant_panel,
+            channels_panel,
+            chat_panel,
+            notification_panel,
         )?;
         workspace_handle.update(&mut cx, |workspace, cx| {
             let project_panel_position = project_panel.position(cx);
@@ -377,6 +401,7 @@ pub fn initialize_workspace(
             workspace.add_panel(assistant_panel, cx);
             workspace.add_panel(channels_panel, cx);
             workspace.add_panel(chat_panel, cx);
+            workspace.add_panel(notification_panel, cx);
 
             if !was_deserialized
                 && workspace
@@ -2426,6 +2451,7 @@ mod tests {
             audio::init((), cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+            notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
             language::init(cx);

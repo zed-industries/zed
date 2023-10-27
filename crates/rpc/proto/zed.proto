@@ -89,88 +89,96 @@ message Envelope {
         FormatBuffersResponse format_buffers_response = 70;
         GetCompletions get_completions = 71;
         GetCompletionsResponse get_completions_response = 72;
-        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 73;
-        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 74;
-        GetCodeActions get_code_actions = 75;
-        GetCodeActionsResponse get_code_actions_response = 76;
-        GetHover get_hover = 77;
-        GetHoverResponse get_hover_response = 78;
-        ApplyCodeAction apply_code_action = 79;
-        ApplyCodeActionResponse apply_code_action_response = 80;
-        PrepareRename prepare_rename = 81;
-        PrepareRenameResponse prepare_rename_response = 82;
-        PerformRename perform_rename = 83;
-        PerformRenameResponse perform_rename_response = 84;
-        SearchProject search_project = 85;
-        SearchProjectResponse search_project_response = 86;
+        ResolveCompletionDocumentation resolve_completion_documentation = 73;
+        ResolveCompletionDocumentationResponse resolve_completion_documentation_response = 74;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 75;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 76;
+        GetCodeActions get_code_actions = 77;
+        GetCodeActionsResponse get_code_actions_response = 78;
+        GetHover get_hover = 79;
+        GetHoverResponse get_hover_response = 80;
+        ApplyCodeAction apply_code_action = 81;
+        ApplyCodeActionResponse apply_code_action_response = 82;
+        PrepareRename prepare_rename = 83;
+        PrepareRenameResponse prepare_rename_response = 84;
+        PerformRename perform_rename = 85;
+        PerformRenameResponse perform_rename_response = 86;
+        SearchProject search_project = 87;
+        SearchProjectResponse search_project_response = 88;
 
-        UpdateContacts update_contacts = 87;
-        UpdateInviteInfo update_invite_info = 88;
-        ShowContacts show_contacts = 89;
+        UpdateContacts update_contacts = 89;
+        UpdateInviteInfo update_invite_info = 90;
+        ShowContacts show_contacts = 91;
 
-        GetUsers get_users = 90;
-        FuzzySearchUsers fuzzy_search_users = 91;
-        UsersResponse users_response = 92;
-        RequestContact request_contact = 93;
-        RespondToContactRequest respond_to_contact_request = 94;
-        RemoveContact remove_contact = 95;
+        GetUsers get_users = 92;
+        FuzzySearchUsers fuzzy_search_users = 93;
+        UsersResponse users_response = 94;
+        RequestContact request_contact = 95;
+        RespondToContactRequest respond_to_contact_request = 96;
+        RemoveContact remove_contact = 97;
 
-        Follow follow = 96;
-        FollowResponse follow_response = 97;
-        UpdateFollowers update_followers = 98;
-        Unfollow unfollow = 99;
-        GetPrivateUserInfo get_private_user_info = 100;
-        GetPrivateUserInfoResponse get_private_user_info_response = 101;
-        UpdateDiffBase update_diff_base = 102;
+        Follow follow = 98;
+        FollowResponse follow_response = 99;
+        UpdateFollowers update_followers = 100;
+        Unfollow unfollow = 101;
+        GetPrivateUserInfo get_private_user_info = 102;
+        GetPrivateUserInfoResponse get_private_user_info_response = 103;
+        UpdateDiffBase update_diff_base = 104;
 
-        OnTypeFormatting on_type_formatting = 103;
-        OnTypeFormattingResponse on_type_formatting_response = 104;
+        OnTypeFormatting on_type_formatting = 105;
+        OnTypeFormattingResponse on_type_formatting_response = 106;
 
-        UpdateWorktreeSettings update_worktree_settings = 105;
+        UpdateWorktreeSettings update_worktree_settings = 107;
 
-        InlayHints inlay_hints = 106;
-        InlayHintsResponse inlay_hints_response = 107;
-        ResolveInlayHint resolve_inlay_hint = 108;
-        ResolveInlayHintResponse resolve_inlay_hint_response = 109;
-        RefreshInlayHints refresh_inlay_hints = 110;
+        InlayHints inlay_hints = 108;
+        InlayHintsResponse inlay_hints_response = 109;
+        ResolveInlayHint resolve_inlay_hint = 110;
+        ResolveInlayHintResponse resolve_inlay_hint_response = 111;
+        RefreshInlayHints refresh_inlay_hints = 112;
 
-        CreateChannel create_channel = 111;
-        CreateChannelResponse create_channel_response = 112;
-        InviteChannelMember invite_channel_member = 113;
-        RemoveChannelMember remove_channel_member = 114;
-        RespondToChannelInvite respond_to_channel_invite = 115;
-        UpdateChannels update_channels = 116;
-        JoinChannel join_channel = 117;
-        DeleteChannel delete_channel = 118;
-        GetChannelMembers get_channel_members = 119;
-        GetChannelMembersResponse get_channel_members_response = 120;
-        SetChannelMemberAdmin set_channel_member_admin = 121;
-        RenameChannel rename_channel = 122;
-        RenameChannelResponse rename_channel_response = 123;
+        CreateChannel create_channel = 113;
+        CreateChannelResponse create_channel_response = 114;
+        InviteChannelMember invite_channel_member = 115;
+        RemoveChannelMember remove_channel_member = 116;
+        RespondToChannelInvite respond_to_channel_invite = 117;
+        UpdateChannels update_channels = 118;
+        JoinChannel join_channel = 119;
+        DeleteChannel delete_channel = 120;
+        GetChannelMembers get_channel_members = 121;
+        GetChannelMembersResponse get_channel_members_response = 122;
+        SetChannelMemberRole set_channel_member_role = 123;
+        RenameChannel rename_channel = 124;
+        RenameChannelResponse rename_channel_response = 125;
 
-        JoinChannelBuffer join_channel_buffer = 124;
-        JoinChannelBufferResponse join_channel_buffer_response = 125;
-        UpdateChannelBuffer update_channel_buffer = 126;
-        LeaveChannelBuffer leave_channel_buffer = 127;
-        UpdateChannelBufferCollaborators update_channel_buffer_collaborators = 128;
-        RejoinChannelBuffers rejoin_channel_buffers = 129;
-        RejoinChannelBuffersResponse rejoin_channel_buffers_response = 130;
-        AckBufferOperation ack_buffer_operation = 143;
+        JoinChannelBuffer join_channel_buffer = 126;
+        JoinChannelBufferResponse join_channel_buffer_response = 127;
+        UpdateChannelBuffer update_channel_buffer = 128;
+        LeaveChannelBuffer leave_channel_buffer = 129;
+        UpdateChannelBufferCollaborators update_channel_buffer_collaborators = 130;
+        RejoinChannelBuffers rejoin_channel_buffers = 131;
+        RejoinChannelBuffersResponse rejoin_channel_buffers_response = 132;
+        AckBufferOperation ack_buffer_operation = 133;
 
-        JoinChannelChat join_channel_chat = 131;
-        JoinChannelChatResponse join_channel_chat_response = 132;
-        LeaveChannelChat leave_channel_chat = 133;
-        SendChannelMessage send_channel_message = 134;
-        SendChannelMessageResponse send_channel_message_response = 135;
-        ChannelMessageSent channel_message_sent = 136;
-        GetChannelMessages get_channel_messages = 137;
-        GetChannelMessagesResponse get_channel_messages_response = 138;
-        RemoveChannelMessage remove_channel_message = 139;
-        AckChannelMessage ack_channel_message = 144;
+        JoinChannelChat join_channel_chat = 134;
+        JoinChannelChatResponse join_channel_chat_response = 135;
+        LeaveChannelChat leave_channel_chat = 136;
+        SendChannelMessage send_channel_message = 137;
+        SendChannelMessageResponse send_channel_message_response = 138;
+        ChannelMessageSent channel_message_sent = 139;
+        GetChannelMessages get_channel_messages = 140;
+        GetChannelMessagesResponse get_channel_messages_response = 141;
+        RemoveChannelMessage remove_channel_message = 142;
+        AckChannelMessage ack_channel_message = 143;
+        GetChannelMessagesById get_channel_messages_by_id = 144;
 
-        LinkChannel link_channel = 140;
-        UnlinkChannel unlink_channel = 141;
-        MoveChannel move_channel = 142; // current max: 144
+        MoveChannel move_channel = 147;
+        SetChannelVisibility set_channel_visibility = 148;
+
+        AddNotification add_notification = 149;
+        GetNotifications get_notifications = 150;
+        GetNotificationsResponse get_notifications_response = 151;
+        DeleteNotification delete_notification = 152;
+        MarkNotificationRead mark_notification_read = 153; // Current max
     }
 }
 
@@ -332,6 +340,7 @@ message RoomUpdated {
 message LiveKitConnectionInfo {
     string server_url = 1;
     string token = 2;
+    bool can_publish = 3;
 }
 
 message ShareProject {
@@ -832,6 +841,17 @@ message ResolveState {
     }
 }
 
+message ResolveCompletionDocumentation {
+    uint64 project_id = 1;
+    uint64 language_server_id = 2;
+    bytes lsp_completion = 3;
+}
+
+message ResolveCompletionDocumentationResponse {
+    string text = 1;
+    bool is_markdown = 2;
+}
+
 message ResolveInlayHint {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
@@ -950,13 +970,10 @@ message LspDiskBasedDiagnosticsUpdated {}
 
 message UpdateChannels {
     repeated Channel channels = 1;
-    repeated ChannelEdge insert_edge = 2;
-    repeated ChannelEdge delete_edge = 3;
     repeated uint64 delete_channels = 4;
     repeated Channel channel_invitations = 5;
     repeated uint64 remove_channel_invitations = 6;
     repeated ChannelParticipants channel_participants = 7;
-    repeated ChannelPermission channel_permissions = 8;
     repeated UnseenChannelMessage unseen_channel_messages = 9;
     repeated UnseenChannelBufferChange unseen_channel_buffer_changes = 10;
 }
@@ -972,14 +989,9 @@ message UnseenChannelBufferChange {
     repeated VectorClockEntry version = 3;
 }
 
-message ChannelEdge {
-    uint64 channel_id = 1;
-    uint64 parent_id = 2;
-}
-
 message ChannelPermission {
     uint64 channel_id = 1;
-    bool is_admin = 2;
+    ChannelRole role = 3;
 }
 
 message ChannelParticipants {
@@ -1005,8 +1017,8 @@ message GetChannelMembersResponse {
 
 message ChannelMember {
     uint64 user_id = 1;
-    bool admin = 2;
     Kind kind = 3;
+    ChannelRole role = 4;
 
     enum Kind {
         Member = 0;
@@ -1028,7 +1040,7 @@ message CreateChannelResponse {
 message InviteChannelMember {
     uint64 channel_id = 1;
     uint64 user_id = 2;
-    bool admin = 3;
+    ChannelRole role = 4;
 }
 
 message RemoveChannelMember {
@@ -1036,10 +1048,22 @@ message RemoveChannelMember {
     uint64 user_id = 2;
 }
 
-message SetChannelMemberAdmin {
+enum ChannelRole {
+    Admin = 0;
+    Member = 1;
+    Guest = 2;
+    Banned = 3;
+}
+
+message SetChannelMemberRole {
     uint64 channel_id = 1;
     uint64 user_id = 2;
-    bool admin = 3;
+    ChannelRole role = 3;
+}
+
+message SetChannelVisibility {
+    uint64 channel_id = 1;
+    ChannelVisibility visibility = 2;
 }
 
 message RenameChannel {
@@ -1068,6 +1092,7 @@ message SendChannelMessage {
     uint64 channel_id = 1;
     string body = 2;
     Nonce nonce = 3;
+    repeated ChatMention mentions = 4;
 }
 
 message RemoveChannelMessage {
@@ -1099,20 +1124,13 @@ message GetChannelMessagesResponse {
     bool done = 2;
 }
 
-message LinkChannel {
-    uint64 channel_id = 1;
-    uint64 to = 2;
-}
-
-message UnlinkChannel {
-    uint64 channel_id = 1;
-    uint64 from = 2;
+message GetChannelMessagesById {
+    repeated uint64 message_ids = 1;
 }
 
 message MoveChannel {
     uint64 channel_id = 1;
-    uint64 from = 2;
-    uint64 to = 3;
+    optional uint64 to = 2;
 }
 
 message JoinChannelBuffer {
@@ -1125,6 +1143,12 @@ message ChannelMessage {
     uint64 timestamp = 3;
     uint64 sender_id = 4;
     Nonce nonce = 5;
+    repeated ChatMention mentions = 6;
+}
+
+message ChatMention {
+    Range range = 1;
+    uint64 user_id = 2;
 }
 
 message RejoinChannelBuffers {
@@ -1216,7 +1240,6 @@ message ShowContacts {}
 
 message IncomingContactRequest {
     uint64 requester_id = 1;
-    bool should_notify = 2;
 }
 
 message UpdateDiagnostics {
@@ -1533,16 +1556,23 @@ message Nonce {
     uint64 lower_half = 2;
 }
 
+enum ChannelVisibility {
+    Public = 0;
+    Members = 1;
+}
+
 message Channel {
     uint64 id = 1;
     string name = 2;
+    ChannelVisibility visibility = 3;
+    ChannelRole role = 4;
+    repeated uint64 parent_path = 5;
 }
 
 message Contact {
     uint64 user_id = 1;
     bool online = 2;
     bool busy = 3;
-    bool should_notify = 4;
 }
 
 message WorktreeMetadata {
@@ -1556,4 +1586,35 @@ message UpdateDiffBase {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     optional string diff_base = 3;
+}
+
+message GetNotifications {
+    optional uint64 before_id = 1;
+}
+
+message AddNotification {
+    Notification notification = 1;
+}
+
+message GetNotificationsResponse {
+    repeated Notification notifications = 1;
+    bool done = 2;
+}
+
+message DeleteNotification {
+    uint64 notification_id = 1;
+}
+
+message MarkNotificationRead {
+    uint64 notification_id = 1;
+}
+
+message Notification {
+    uint64 id = 1;
+    uint64 timestamp = 2;
+    string kind = 3;
+    optional uint64 entity_id = 4;
+    string content = 5;
+    bool is_read = 6;
+    optional bool response = 7;
 }

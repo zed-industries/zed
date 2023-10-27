@@ -7,10 +7,12 @@ mod message_tests;
 use super::*;
 use gpui::executor::Background;
 use parking_lot::Mutex;
-use rpc::proto::ChannelEdge;
 use sea_orm::ConnectionTrait;
 use sqlx::migrate::MigrateDatabase;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicI32, AtomicU32, Ordering::SeqCst},
+    Arc,
+};
 
 const TEST_RELEASE_CHANNEL: &'static str = "test";
 
@@ -31,7 +33,7 @@ impl TestDb {
         let mut db = runtime.block_on(async {
             let mut options = ConnectOptions::new(url);
             options.max_connections(5);
-            let db = Database::new(options, Executor::Deterministic(background))
+            let mut db = Database::new(options, Executor::Deterministic(background))
                 .await
                 .unwrap();
             let sql = include_str!(concat!(
@@ -45,6 +47,7 @@ impl TestDb {
                 ))
                 .await
                 .unwrap();
+            db.initialize_notification_kinds().await.unwrap();
             db
         });
 
@@ -79,11 +82,12 @@ impl TestDb {
             options
                 .max_connections(5)
                 .idle_timeout(Duration::from_secs(0));
-            let db = Database::new(options, Executor::Deterministic(background))
+            let mut db = Database::new(options, Executor::Deterministic(background))
                 .await
                 .unwrap();
             let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
             db.migrate(Path::new(migrations_path), false).await.unwrap();
+            db.initialize_notification_kinds().await.unwrap();
             db
         });
 
@@ -148,26 +152,39 @@ impl Drop for TestDb {
     }
 }
 
-/// The second tuples are (channel_id, parent)
-fn graph(channels: &[(ChannelId, &'static str)], edges: &[(ChannelId, ChannelId)]) -> ChannelGraph {
-    let mut graph = ChannelGraph {
-        channels: vec![],
-        edges: vec![],
-    };
-
-    for (id, name) in channels {
-        graph.channels.push(Channel {
+fn channel_tree(channels: &[(ChannelId, &[ChannelId], &'static str, ChannelRole)]) -> Vec<Channel> {
+    channels
+        .iter()
+        .map(|(id, parent_path, name, role)| Channel {
             id: *id,
             name: name.to_string(),
+            visibility: ChannelVisibility::Members,
+            role: *role,
+            parent_path: parent_path.to_vec(),
         })
-    }
+        .collect()
+}
 
-    for (channel, parent) in edges {
-        graph.edges.push(ChannelEdge {
-            channel_id: channel.to_proto(),
-            parent_id: parent.to_proto(),
-        })
-    }
+static GITHUB_USER_ID: AtomicI32 = AtomicI32::new(5);
 
-    graph
+async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
+    db.create_user(
+        email,
+        false,
+        NewUserParams {
+            github_login: email[0..email.find("@").unwrap()].to_string(),
+            github_user_id: GITHUB_USER_ID.fetch_add(1, SeqCst),
+        },
+    )
+    .await
+    .unwrap()
+    .user_id
+}
+
+static TEST_CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
+fn new_test_connection(server: ServerId) -> ConnectionId {
+    ConnectionId {
+        id: TEST_CONNECTION_ID.fetch_add(1, SeqCst),
+        owner_id: server.0 as u32,
+    }
 }

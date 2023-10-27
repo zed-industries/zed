@@ -2,30 +2,32 @@ pub mod channel_view;
 pub mod chat_panel;
 pub mod collab_panel;
 mod collab_titlebar_item;
-mod contact_notification;
 mod face_pile;
-mod incoming_call_notification;
-mod notifications;
+pub mod notification_panel;
+pub mod notifications;
 mod panel_settings;
-pub mod project_shared_notification;
-mod sharing_status_indicator;
 
 use call::{report_call_event_for_room, ActiveCall, Room};
+use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
 use gpui::{
     actions,
+    elements::{ContainerStyle, Empty, Image},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
     platform::{Screen, WindowBounds, WindowKind, WindowOptions},
-    AppContext, Task,
+    AnyElement, AppContext, Element, ImageData, Task,
 };
 use std::{rc::Rc, sync::Arc};
+use theme::AvatarStyle;
 use util::ResultExt;
 use workspace::AppState;
 
 pub use collab_titlebar_item::CollabTitlebarItem;
-pub use panel_settings::{ChatPanelSettings, CollaborationPanelSettings};
+pub use panel_settings::{
+    ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
+};
 
 actions!(
     collab,
@@ -35,14 +37,13 @@ actions!(
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     settings::register::<CollaborationPanelSettings>(cx);
     settings::register::<ChatPanelSettings>(cx);
+    settings::register::<NotificationPanelSettings>(cx);
 
     vcs_menu::init(cx);
     collab_titlebar_item::init(cx);
     collab_panel::init(cx);
     chat_panel::init(cx);
-    incoming_call_notification::init(&app_state, cx);
-    project_shared_notification::init(&app_state, cx);
-    sharing_status_indicator::init(cx);
+    notifications::init(&app_state, cx);
 
     cx.add_global_action(toggle_screen_sharing);
     cx.add_global_action(toggle_mute);
@@ -129,4 +130,36 @@ fn notification_window_options(
         is_movable: false,
         screen: Some(screen),
     }
+}
+
+fn render_avatar<T: 'static>(
+    avatar: Option<Arc<ImageData>>,
+    avatar_style: &AvatarStyle,
+    container: ContainerStyle,
+) -> AnyElement<T> {
+    avatar
+        .map(|avatar| {
+            Image::from_data(avatar)
+                .with_style(avatar_style.image)
+                .aligned()
+                .contained()
+                .with_corner_radius(avatar_style.outer_corner_radius)
+                .constrained()
+                .with_width(avatar_style.outer_width)
+                .with_height(avatar_style.outer_width)
+                .into_any()
+        })
+        .unwrap_or_else(|| {
+            Empty::new()
+                .constrained()
+                .with_width(avatar_style.outer_width)
+                .into_any()
+        })
+        .contained()
+        .with_style(container)
+        .into_any()
+}
+
+fn is_channels_feature_enabled(cx: &gpui::WindowContext<'_>) -> bool {
+    cx.is_staff() || cx.has_flag::<ChannelsAlpha>()
 }

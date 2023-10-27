@@ -1,27 +1,30 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
-use channel::{ChannelChat, ChannelMessageId};
+use channel::{ChannelChat, ChannelMessageId, MessageParams};
 use collab_ui::chat_panel::ChatPanel;
 use gpui::{executor::Deterministic, BorrowAppContext, ModelHandle, TestAppContext};
+use rpc::Notification;
 use std::sync::Arc;
 use workspace::dock::Panel;
 
 #[gpui::test]
 async fn test_basic_channel_messages(
     deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
+    mut cx_a: &mut TestAppContext,
+    mut cx_b: &mut TestAppContext,
+    mut cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
 
     let channel_id = server
         .make_channel(
             "the-channel",
             None,
             (&client_a, cx_a),
-            &mut [(&client_b, cx_b)],
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
         )
         .await;
 
@@ -36,8 +39,17 @@ async fn test_basic_channel_messages(
         .await
         .unwrap();
 
-    channel_chat_a
-        .update(cx_a, |c, cx| c.send_message("one".into(), cx).unwrap())
+    let message_id = channel_chat_a
+        .update(cx_a, |c, cx| {
+            c.send_message(
+                MessageParams {
+                    text: "hi @user_c!".into(),
+                    mentions: vec![(3..10, client_c.id())],
+                },
+                cx,
+            )
+            .unwrap()
+        })
         .await
         .unwrap();
     channel_chat_a
@@ -52,15 +64,55 @@ async fn test_basic_channel_messages(
         .unwrap();
 
     deterministic.run_until_parked();
-    channel_chat_a.update(cx_a, |c, _| {
+
+    let channel_chat_c = client_c
+        .channel_store()
+        .update(cx_c, |store, cx| store.open_channel_chat(channel_id, cx))
+        .await
+        .unwrap();
+
+    for (chat, cx) in [
+        (&channel_chat_a, &mut cx_a),
+        (&channel_chat_b, &mut cx_b),
+        (&channel_chat_c, &mut cx_c),
+    ] {
+        chat.update(*cx, |c, _| {
+            assert_eq!(
+                c.messages()
+                    .iter()
+                    .map(|m| (m.body.as_str(), m.mentions.as_slice()))
+                    .collect::<Vec<_>>(),
+                vec![
+                    ("hi @user_c!", [(3..10, client_c.id())].as_slice()),
+                    ("two", &[]),
+                    ("three", &[])
+                ],
+                "results for user {}",
+                c.client().id(),
+            );
+        });
+    }
+
+    client_c.notification_store().update(cx_c, |store, _| {
+        assert_eq!(store.notification_count(), 2);
+        assert_eq!(store.unread_notification_count(), 1);
         assert_eq!(
-            c.messages()
-                .iter()
-                .map(|m| m.body.as_str())
-                .collect::<Vec<_>>(),
-            vec!["one", "two", "three"]
+            store.notification_at(0).unwrap().notification,
+            Notification::ChannelMessageMention {
+                message_id,
+                sender_id: client_a.id(),
+                channel_id,
+            }
         );
-    })
+        assert_eq!(
+            store.notification_at(1).unwrap().notification,
+            Notification::ChannelInvitation {
+                channel_id,
+                channel_name: "the-channel".to_string(),
+                inviter_id: client_a.id()
+            }
+        );
+    });
 }
 
 #[gpui::test]
@@ -280,7 +332,7 @@ async fn test_channel_message_changes(
     chat_panel_b
         .update(cx_b, |chat_panel, cx| {
             chat_panel.set_active(true, cx);
-            chat_panel.select_channel(channel_id, cx)
+            chat_panel.select_channel(channel_id, None, cx)
         })
         .await
         .unwrap();
