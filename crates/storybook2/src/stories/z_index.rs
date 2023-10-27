@@ -1,4 +1,3 @@
-
 use gpui2::{px, rgb, Div, Hsla};
 use ui::prelude::*;
 

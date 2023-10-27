@@ -53,7 +53,10 @@ impl TaffyLayoutEngine {
         &mut self,
         style: Style,
         rem_size: Pixels,
-        measure: impl Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + Send + Sync + 'static,
+        measure: impl Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels>
+            + Send
+            + Sync
+            + 'static,
     ) -> LayoutId {
         let style = style.to_taffy(rem_size);
 
