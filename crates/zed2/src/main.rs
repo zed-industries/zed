@@ -188,7 +188,7 @@ fn main() {
         // workspace::init(app_state.clone(), cx);
         // recent_projects::init(cx);
 
-        // journal::init(app_state.clone(), cx);
+        // journal2::init(app_state.clone(), cx);
         // language_selector::init(cx);
         // theme_selector::init(cx);
         // activity_indicator::init(cx);

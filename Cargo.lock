@@ -4172,6 +4172,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "journal2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dirs 4.0.0",
+ "editor",
+ "gpui2",
+ "log",
+ "schemars",
+ "serde",
+ "settings2",
+ "shellexpand",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "jpeg-decoder"
 version = "0.1.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10903,6 +10921,7 @@ dependencies = [
  "indexmap 1.9.3",
  "install_cli",
  "isahc",
+ "journal2",
  "language2",
  "language_tools",
  "lazy_static",
