@@ -30,4 +30,17 @@ impl CredentialProvider for OpenAICredentialProvider {
             ProviderCredential::NoCredentials
         }
     }
+    fn save_credentials(&self, cx: &AppContext, credential: ProviderCredential) {
+        match credential {
+            ProviderCredential::Credentials { api_key } => {
+                cx.platform()
+                    .write_credentials(OPENAI_API_URL, "Bearer", api_key.as_bytes())
+                    .log_err();
+            }
+            _ => {}
+        }
+    }
+    fn delete_credentials(&self, cx: &AppContext) {
+        cx.platform().delete_credentials(OPENAI_API_URL).log_err();
+    }
 }

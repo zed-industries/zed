@@ -9,6 +9,8 @@ pub enum ProviderCredential {
 
 pub trait CredentialProvider: Send + Sync {
     fn retrieve_credentials(&self, cx: &AppContext) -> ProviderCredential;
+    fn save_credentials(&self, cx: &AppContext, credential: ProviderCredential);
+    fn delete_credentials(&self, cx: &AppContext);
 }
 
 #[derive(Clone)]
@@ -17,4 +19,6 @@ impl CredentialProvider for NullCredentialProvider {
     fn retrieve_credentials(&self, _cx: &AppContext) -> ProviderCredential {
         ProviderCredential::NotNeeded
     }
+    fn save_credentials(&self, cx: &AppContext, credential: ProviderCredential) {}
+    fn delete_credentials(&self, cx: &AppContext) {}
 }

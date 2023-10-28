@@ -17,6 +17,12 @@ pub trait CompletionProvider {
     fn retrieve_credentials(&self, cx: &AppContext) -> ProviderCredential {
         self.credential_provider().retrieve_credentials(cx)
     }
+    fn save_credentials(&self, cx: &AppContext, credential: ProviderCredential) {
+        self.credential_provider().save_credentials(cx, credential);
+    }
+    fn delete_credentials(&self, cx: &AppContext) {
+        self.credential_provider().delete_credentials(cx);
+    }
     fn complete(
         &self,
         prompt: Box<dyn CompletionRequest>,
