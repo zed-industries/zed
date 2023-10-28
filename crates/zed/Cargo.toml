@@ -76,7 +76,7 @@ semantic_index = { path = "../semantic_index" }
 vim = { path = "../vim" }
 workspace = { path = "../workspace" }
 welcome = { path = "../welcome" }
-zed-actions = {path = "../zed-actions"}
+zed_actions = {path = "../zed_actions"}
 anyhow.workspace = true
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-tar = "0.4.2"

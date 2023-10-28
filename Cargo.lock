@@ -1691,7 +1691,7 @@ dependencies = [
  "util",
  "vcs_menu",
  "workspace",
- "zed-actions",
+ "zed_actions",
 ]
 
 [[package]]
@@ -1741,7 +1741,7 @@ dependencies = [
  "theme",
  "util",
  "workspace",
- "zed-actions",
+ "zed_actions",
 ]
 
 [[package]]
@@ -9854,7 +9854,7 @@ dependencies = [
  "tokio",
  "util",
  "workspace",
- "zed-actions",
+ "zed_actions",
 ]
 
 [[package]]
@@ -10880,15 +10880,7 @@ dependencies = [
  "vim",
  "welcome",
  "workspace",
- "zed-actions",
-]
-
-[[package]]
-name = "zed-actions"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "serde",
+ "zed_actions",
 ]
 
 [[package]]
@@ -10986,6 +10978,14 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid 1.4.1",
+]
+
+[[package]]
+name = "zed_actions"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "serde",
 ]
 
 [[package]]

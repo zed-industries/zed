@@ -50,7 +50,7 @@ theme_selector = { path = "../theme_selector" }
 vcs_menu = { path = "../vcs_menu" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
-zed-actions = {path = "../zed-actions"}
+zed_actions = {path = "../zed_actions"}
 
 anyhow.workspace = true
 futures.workspace = true
