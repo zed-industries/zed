@@ -11,7 +11,6 @@ use parking_lot::Mutex;
 use parse_duration::parse;
 use postage::watch;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::ops::Add;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

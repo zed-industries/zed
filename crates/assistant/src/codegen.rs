@@ -336,18 +336,13 @@ fn strip_markdown_codeblock(
 mod tests {
     use super::*;
     use ai::test::TestCompletionProvider;
-    use futures::{
-        future::BoxFuture,
-        stream::{self, BoxStream},
-    };
+    use futures::stream::{self};
     use gpui::{executor::Deterministic, TestAppContext};
     use indoc::indoc;
     use language::{language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, Point};
-    use parking_lot::Mutex;
     use rand::prelude::*;
     use serde::Serialize;
     use settings::SettingsStore;
-    use smol::future::FutureExt;
 
     #[derive(Serialize)]
     pub struct DummyCompletionRequest {

@@ -155,6 +155,9 @@ impl CompletionProvider for TestCompletionProvider {
         let model: Box<dyn LanguageModel> = Box::new(FakeLanguageModel { capacity: 8190 });
         model
     }
+    fn credential_provider(&self) -> Box<dyn CredentialProvider> {
+        Box::new(NullCredentialProvider {})
+    }
     fn complete(
         &self,
         _prompt: Box<dyn CompletionRequest>,

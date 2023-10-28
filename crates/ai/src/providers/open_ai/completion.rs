@@ -13,11 +13,12 @@ use std::{
 };
 
 use crate::{
+    auth::CredentialProvider,
     completion::{CompletionProvider, CompletionRequest},
     models::LanguageModel,
 };
 
-use super::OpenAILanguageModel;
+use super::{auth::OpenAICredentialProvider, OpenAILanguageModel};
 
 pub const OPENAI_API_URL: &'static str = "https://api.openai.com/v1";
 
@@ -186,6 +187,7 @@ pub async fn stream_completion(
 
 pub struct OpenAICompletionProvider {
     model: OpenAILanguageModel,
+    credential_provider: OpenAICredentialProvider,
     api_key: String,
     executor: Arc<Background>,
 }
@@ -193,8 +195,10 @@ pub struct OpenAICompletionProvider {
 impl OpenAICompletionProvider {
     pub fn new(model_name: &str, api_key: String, executor: Arc<Background>) -> Self {
         let model = OpenAILanguageModel::load(model_name);
+        let credential_provider = OpenAICredentialProvider {};
         Self {
             model,
+            credential_provider,
             api_key,
             executor,
         }
@@ -205,6 +209,10 @@ impl CompletionProvider for OpenAICompletionProvider {
     fn base_model(&self) -> Box<dyn LanguageModel> {
         let model: Box<dyn LanguageModel> = Box::new(self.model.clone());
         model
+    }
+    fn credential_provider(&self) -> Box<dyn CredentialProvider> {
+        let provider: Box<dyn CredentialProvider> = Box::new(self.credential_provider.clone());
+        provider
     }
     fn complete(
         &self,
