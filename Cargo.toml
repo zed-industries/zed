@@ -48,6 +48,7 @@ members = [
     "crates/install_cli",
     "crates/install_cli2",
     "crates/journal",
+    "crates/journal2",
     "crates/language",
     "crates/language2",
     "crates/language_selector",
