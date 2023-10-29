@@ -1545,11 +1545,10 @@ impl CodeActionsMenu {
     fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item + 1 < self.actions.len() {
             self.selected_item += 1;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         } else {
             self.selected_item = 0;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         cx.notify();
     }
 
