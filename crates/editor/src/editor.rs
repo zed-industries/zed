@@ -967,7 +967,6 @@ impl CompletionsMenu {
             self.selected_item -= 1;
         } else {
             self.selected_item = self.matches.len() - 1;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         self.attempt_resolve_selected_completion_documentation(project, cx);
@@ -1538,7 +1537,6 @@ impl CodeActionsMenu {
             self.selected_item -= 1;
         } else {
             self.selected_item = self.actions.len() - 1;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         cx.notify();
