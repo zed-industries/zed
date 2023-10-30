@@ -93,7 +93,7 @@ impl Prettier {
                                 )
                             })?;
                         (worktree_root_data.unwrap_or_else(|| {
-                            panic!("cannot query prettier for non existing worktree root at {worktree_root_data:?}")
+                            panic!("cannot query prettier for non existing worktree root at {worktree_root:?}")
                         }), None)
                     } else {
                         let full_starting_path = worktree_root.join(&starting_path.starting_path);
@@ -106,7 +106,7 @@ impl Prettier {
                         })?;
                         (
                             worktree_root_data.unwrap_or_else(|| {
-                                panic!("cannot query prettier for non existing worktree root at {worktree_root_data:?}")
+                                panic!("cannot query prettier for non existing worktree root at {worktree_root:?}")
                             }),
                             start_path_data,
                         )
