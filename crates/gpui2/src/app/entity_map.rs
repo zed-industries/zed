@@ -1,4 +1,4 @@
-use crate::{AnyBox, AppContext, Context, EntityHandle};
+use crate::{AnyBox, AppContext, Context};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -53,29 +53,29 @@ impl EntityMap {
     /// Reserve a slot for an entity, which you can subsequently use with `insert`.
     pub fn reserve<T: 'static>(&self) -> Slot<T> {
         let id = self.ref_counts.write().counts.insert(1.into());
-        Slot(Handle::new(id, Arc::downgrade(&self.ref_counts)))
+        Slot(Model::new(id, Arc::downgrade(&self.ref_counts)))
     }
 
     /// Insert an entity into a slot obtained by calling `reserve`.
-    pub fn insert<T>(&mut self, slot: Slot<T>, entity: T) -> Handle<T>
+    pub fn insert<T>(&mut self, slot: Slot<T>, entity: T) -> Model<T>
     where
         T: 'static + Send,
     {
-        let handle = slot.0;
-        self.entities.insert(handle.entity_id, Box::new(entity));
-        handle
+        let model = slot.0;
+        self.entities.insert(model.entity_id, Box::new(entity));
+        model
     }
 
     /// Move an entity to the stack.
-    pub fn lease<'a, T>(&mut self, handle: &'a Handle<T>) -> Lease<'a, T> {
-        self.assert_valid_context(handle);
+    pub fn lease<'a, T>(&mut self, model: &'a Model<T>) -> Lease<'a, T> {
+        self.assert_valid_context(model);
         let entity = Some(
             self.entities
-                .remove(handle.entity_id)
+                .remove(model.entity_id)
                 .expect("Circular entity lease. Is the entity already being updated?"),
         );
         Lease {
-            handle,
+            model,
             entity,
             entity_type: PhantomData,
         }
@@ -84,18 +84,18 @@ impl EntityMap {
     /// Return an entity after moving it to the stack.
     pub fn end_lease<T>(&mut self, mut lease: Lease<T>) {
         self.entities
-            .insert(lease.handle.entity_id, lease.entity.take().unwrap());
+            .insert(lease.model.entity_id, lease.entity.take().unwrap());
     }
 
-    pub fn read<T: 'static>(&self, handle: &Handle<T>) -> &T {
-        self.assert_valid_context(handle);
-        self.entities[handle.entity_id].downcast_ref().unwrap()
+    pub fn read<T: 'static>(&self, model: &Model<T>) -> &T {
+        self.assert_valid_context(model);
+        self.entities[model.entity_id].downcast_ref().unwrap()
     }
 
-    fn assert_valid_context(&self, handle: &AnyHandle) {
+    fn assert_valid_context(&self, model: &AnyModel) {
         debug_assert!(
-            Weak::ptr_eq(&handle.entity_map, &Arc::downgrade(&self.ref_counts)),
-            "used a handle with the wrong context"
+            Weak::ptr_eq(&model.entity_map, &Arc::downgrade(&self.ref_counts)),
+            "used a model with the wrong context"
         );
     }
 
@@ -115,7 +115,7 @@ impl EntityMap {
 
 pub struct Lease<'a, T> {
     entity: Option<AnyBox>,
-    pub handle: &'a Handle<T>,
+    pub model: &'a Model<T>,
     entity_type: PhantomData<T>,
 }
 
@@ -143,15 +143,15 @@ impl<'a, T> Drop for Lease<'a, T> {
 }
 
 #[derive(Deref, DerefMut)]
-pub struct Slot<T>(Handle<T>);
+pub struct Slot<T>(Model<T>);
 
-pub struct AnyHandle {
+pub struct AnyModel {
     pub(crate) entity_id: EntityId,
-    entity_type: TypeId,
+    pub(crate) entity_type: TypeId,
     entity_map: Weak<RwLock<EntityRefCounts>>,
 }
 
-impl AnyHandle {
+impl AnyModel {
     fn new(id: EntityId, entity_type: TypeId, entity_map: Weak<RwLock<EntityRefCounts>>) -> Self {
         Self {
             entity_id: id,
@@ -164,18 +164,18 @@ impl AnyHandle {
         self.entity_id
     }
 
-    pub fn downgrade(&self) -> AnyWeakHandle {
-        AnyWeakHandle {
+    pub fn downgrade(&self) -> AnyWeakModel {
+        AnyWeakModel {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
             entity_ref_counts: self.entity_map.clone(),
         }
     }
 
-    pub fn downcast<T: 'static>(&self) -> Option<Handle<T>> {
+    pub fn downcast<T: 'static>(&self) -> Option<Model<T>> {
         if TypeId::of::<T>() == self.entity_type {
-            Some(Handle {
-                any_handle: self.clone(),
+            Some(Model {
+                any_model: self.clone(),
                 entity_type: PhantomData,
             })
         } else {
@@ -184,16 +184,16 @@ impl AnyHandle {
     }
 }
 
-impl Clone for AnyHandle {
+impl Clone for AnyModel {
     fn clone(&self) -> Self {
         if let Some(entity_map) = self.entity_map.upgrade() {
             let entity_map = entity_map.read();
             let count = entity_map
                 .counts
                 .get(self.entity_id)
-                .expect("detected over-release of a handle");
+                .expect("detected over-release of a model");
             let prev_count = count.fetch_add(1, SeqCst);
-            assert_ne!(prev_count, 0, "Detected over-release of a handle.");
+            assert_ne!(prev_count, 0, "Detected over-release of a model.");
         }
 
         Self {
@@ -204,16 +204,16 @@ impl Clone for AnyHandle {
     }
 }
 
-impl Drop for AnyHandle {
+impl Drop for AnyModel {
     fn drop(&mut self) {
         if let Some(entity_map) = self.entity_map.upgrade() {
             let entity_map = entity_map.upgradable_read();
             let count = entity_map
                 .counts
                 .get(self.entity_id)
-                .expect("Detected over-release of a handle.");
+                .expect("Detected over-release of a model.");
             let prev_count = count.fetch_sub(1, SeqCst);
-            assert_ne!(prev_count, 0, "Detected over-release of a handle.");
+            assert_ne!(prev_count, 0, "Detected over-release of a model.");
             if prev_count == 1 {
                 // We were the last reference to this entity, so we can remove it.
                 let mut entity_map = RwLockUpgradableReadGuard::upgrade(entity_map);
@@ -223,60 +223,65 @@ impl Drop for AnyHandle {
     }
 }
 
-impl<T> From<Handle<T>> for AnyHandle {
-    fn from(handle: Handle<T>) -> Self {
-        handle.any_handle
+impl<T> From<Model<T>> for AnyModel {
+    fn from(model: Model<T>) -> Self {
+        model.any_model
     }
 }
 
-impl Hash for AnyHandle {
+impl Hash for AnyModel {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.entity_id.hash(state);
     }
 }
 
-impl PartialEq for AnyHandle {
+impl PartialEq for AnyModel {
     fn eq(&self, other: &Self) -> bool {
         self.entity_id == other.entity_id
     }
 }
 
-impl Eq for AnyHandle {}
+impl Eq for AnyModel {}
 
 #[derive(Deref, DerefMut)]
-pub struct Handle<T> {
+pub struct Model<T> {
     #[deref]
     #[deref_mut]
-    any_handle: AnyHandle,
-    entity_type: PhantomData<T>,
+    pub(crate) any_model: AnyModel,
+    pub(crate) entity_type: PhantomData<T>,
 }
 
-unsafe impl<T> Send for Handle<T> {}
-unsafe impl<T> Sync for Handle<T> {}
+unsafe impl<T> Send for Model<T> {}
+unsafe impl<T> Sync for Model<T> {}
 
-impl<T: 'static> Handle<T> {
+impl<T: 'static> Model<T> {
     fn new(id: EntityId, entity_map: Weak<RwLock<EntityRefCounts>>) -> Self
     where
         T: 'static,
     {
         Self {
-            any_handle: AnyHandle::new(id, TypeId::of::<T>(), entity_map),
+            any_model: AnyModel::new(id, TypeId::of::<T>(), entity_map),
             entity_type: PhantomData,
         }
     }
 
-    pub fn downgrade(&self) -> WeakHandle<T> {
-        WeakHandle {
-            any_handle: self.any_handle.downgrade(),
+    pub fn downgrade(&self) -> WeakModel<T> {
+        WeakModel {
+            any_model: self.any_model.downgrade(),
             entity_type: self.entity_type,
         }
+    }
+
+    /// Convert this into a dynamically typed model.
+    pub fn into_any(self) -> AnyModel {
+        self.any_model
     }
 
     pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {
         cx.entities.read(self)
     }
 
-    /// Update the entity referenced by this handle with the given function.
+    /// Update the entity referenced by this model with the given function.
     ///
     /// The update function receives a context appropriate for its environment.
     /// When updating in an `AppContext`, it receives a `ModelContext`.
@@ -284,7 +289,7 @@ impl<T: 'static> Handle<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut C::EntityContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut C::ModelContext<'_, T>) -> R,
     ) -> C::Result<R>
     where
         C: Context,
@@ -293,73 +298,54 @@ impl<T: 'static> Handle<T> {
     }
 }
 
-impl<T> Clone for Handle<T> {
+impl<T> Clone for Model<T> {
     fn clone(&self) -> Self {
         Self {
-            any_handle: self.any_handle.clone(),
+            any_model: self.any_model.clone(),
             entity_type: self.entity_type,
         }
     }
 }
 
-impl<T> std::fmt::Debug for Handle<T> {
+impl<T> std::fmt::Debug for Model<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Handle {{ entity_id: {:?}, entity_type: {:?} }}",
-            self.any_handle.entity_id,
+            "Model {{ entity_id: {:?}, entity_type: {:?} }}",
+            self.any_model.entity_id,
             type_name::<T>()
         )
     }
 }
 
-impl<T> Hash for Handle<T> {
+impl<T> Hash for Model<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.any_handle.hash(state);
+        self.any_model.hash(state);
     }
 }
 
-impl<T> PartialEq for Handle<T> {
+impl<T> PartialEq for Model<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.any_handle == other.any_handle
+        self.any_model == other.any_model
     }
 }
 
-impl<T> Eq for Handle<T> {}
+impl<T> Eq for Model<T> {}
 
-impl<T> PartialEq<WeakHandle<T>> for Handle<T> {
-    fn eq(&self, other: &WeakHandle<T>) -> bool {
-        self.entity_id == other.entity_id
-    }
-}
-
-impl<T: 'static> EntityHandle<T> for Handle<T> {
-    type Weak = WeakHandle<T>;
-
-    fn entity_id(&self) -> EntityId {
-        self.entity_id
-    }
-
-    fn downgrade(&self) -> Self::Weak {
-        self.downgrade()
-    }
-
-    fn upgrade_from(weak: &Self::Weak) -> Option<Self>
-    where
-        Self: Sized,
-    {
-        weak.upgrade()
+impl<T> PartialEq<WeakModel<T>> for Model<T> {
+    fn eq(&self, other: &WeakModel<T>) -> bool {
+        self.entity_id() == other.entity_id()
     }
 }
 
 #[derive(Clone)]
-pub struct AnyWeakHandle {
+pub struct AnyWeakModel {
     pub(crate) entity_id: EntityId,
     entity_type: TypeId,
     entity_ref_counts: Weak<RwLock<EntityRefCounts>>,
 }
 
-impl AnyWeakHandle {
+impl AnyWeakModel {
     pub fn entity_id(&self) -> EntityId {
         self.entity_id
     }
@@ -373,14 +359,14 @@ impl AnyWeakHandle {
         ref_count > 0
     }
 
-    pub fn upgrade(&self) -> Option<AnyHandle> {
+    pub fn upgrade(&self) -> Option<AnyModel> {
         let entity_map = self.entity_ref_counts.upgrade()?;
         entity_map
             .read()
             .counts
             .get(self.entity_id)?
             .fetch_add(1, SeqCst);
-        Some(AnyHandle {
+        Some(AnyModel {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
             entity_map: self.entity_ref_counts.clone(),
@@ -388,55 +374,55 @@ impl AnyWeakHandle {
     }
 }
 
-impl<T> From<WeakHandle<T>> for AnyWeakHandle {
-    fn from(handle: WeakHandle<T>) -> Self {
-        handle.any_handle
+impl<T> From<WeakModel<T>> for AnyWeakModel {
+    fn from(model: WeakModel<T>) -> Self {
+        model.any_model
     }
 }
 
-impl Hash for AnyWeakHandle {
+impl Hash for AnyWeakModel {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.entity_id.hash(state);
     }
 }
 
-impl PartialEq for AnyWeakHandle {
+impl PartialEq for AnyWeakModel {
     fn eq(&self, other: &Self) -> bool {
         self.entity_id == other.entity_id
     }
 }
 
-impl Eq for AnyWeakHandle {}
+impl Eq for AnyWeakModel {}
 
 #[derive(Deref, DerefMut)]
-pub struct WeakHandle<T> {
+pub struct WeakModel<T> {
     #[deref]
     #[deref_mut]
-    any_handle: AnyWeakHandle,
+    any_model: AnyWeakModel,
     entity_type: PhantomData<T>,
 }
 
-unsafe impl<T> Send for WeakHandle<T> {}
-unsafe impl<T> Sync for WeakHandle<T> {}
+unsafe impl<T> Send for WeakModel<T> {}
+unsafe impl<T> Sync for WeakModel<T> {}
 
-impl<T> Clone for WeakHandle<T> {
+impl<T> Clone for WeakModel<T> {
     fn clone(&self) -> Self {
         Self {
-            any_handle: self.any_handle.clone(),
+            any_model: self.any_model.clone(),
             entity_type: self.entity_type,
         }
     }
 }
 
-impl<T: 'static> WeakHandle<T> {
-    pub fn upgrade(&self) -> Option<Handle<T>> {
-        Some(Handle {
-            any_handle: self.any_handle.upgrade()?,
+impl<T: 'static> WeakModel<T> {
+    pub fn upgrade(&self) -> Option<Model<T>> {
+        Some(Model {
+            any_model: self.any_model.upgrade()?,
             entity_type: self.entity_type,
         })
     }
 
-    /// Update the entity referenced by this handle with the given function if
+    /// Update the entity referenced by this model with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
     ///
@@ -446,7 +432,7 @@ impl<T: 'static> WeakHandle<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut C::EntityContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut C::ModelContext<'_, T>) -> R,
     ) -> Result<R>
     where
         C: Context,
@@ -460,22 +446,22 @@ impl<T: 'static> WeakHandle<T> {
     }
 }
 
-impl<T> Hash for WeakHandle<T> {
+impl<T> Hash for WeakModel<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.any_handle.hash(state);
+        self.any_model.hash(state);
     }
 }
 
-impl<T> PartialEq for WeakHandle<T> {
+impl<T> PartialEq for WeakModel<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.any_handle == other.any_handle
+        self.any_model == other.any_model
     }
 }
 
-impl<T> Eq for WeakHandle<T> {}
+impl<T> Eq for WeakModel<T> {}
 
-impl<T> PartialEq<Handle<T>> for WeakHandle<T> {
-    fn eq(&self, other: &Handle<T>) -> bool {
-        self.entity_id == other.entity_id
+impl<T> PartialEq<Model<T>> for WeakModel<T> {
+    fn eq(&self, other: &Model<T>) -> bool {
+        self.entity_id() == other.entity_id()
     }
 }

@@ -109,6 +109,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "futures 0.3.28",
+ "gpui2",
+ "isahc",
+ "language2",
+ "lazy_static",
+ "log",
+ "matrixmultiply",
+ "ordered-float 2.10.0",
+ "parking_lot 0.11.2",
+ "parse_duration",
+ "postage",
+ "rand 0.8.5",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tiktoken-rs",
+ "util",
+]
+
+[[package]]
 name = "alacritty_config"
 version = "0.1.2-dev"
 source = "git+https://github.com/zed-industries/alacritty?rev=33306142195b354ef3485ca2b1d8a85dfc6605ca#33306142195b354ef3485ca2b1d8a85dfc6605ca"
@@ -1138,7 +1165,7 @@ dependencies = [
  "audio2",
  "client2",
  "collections",
- "fs",
+ "fs2",
  "futures 0.3.28",
  "gpui2",
  "language2",
@@ -4796,6 +4823,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "menu2"
+version = "0.1.0"
+dependencies = [
+ "gpui2",
+]
+
+[[package]]
 name = "metal"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6000,7 +6034,7 @@ dependencies = [
  "anyhow",
  "client2",
  "collections",
- "fs",
+ "fs2",
  "futures 0.3.28",
  "gpui2",
  "language2",
@@ -6167,7 +6201,7 @@ dependencies = [
  "ctor",
  "db2",
  "env_logger 0.9.3",
- "fs",
+ "fs2",
  "fsevent",
  "futures 0.3.28",
  "fuzzy2",
@@ -8740,6 +8774,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap 4.4.4",
+ "convert_case 0.6.0",
  "gpui2",
  "log",
  "rust-embed",
@@ -10932,6 +10967,7 @@ dependencies = [
 name = "zed2"
 version = "0.109.0"
 dependencies = [
+ "ai2",
  "anyhow",
  "async-compression",
  "async-recursion 0.3.2",

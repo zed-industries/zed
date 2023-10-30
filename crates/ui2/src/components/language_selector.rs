@@ -38,15 +38,16 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use crate::Story;
-
     use super::*;
+    use crate::Story;
+    use gpui2::{Div, Render};
 
-    #[derive(Component)]
     pub struct LanguageSelectorStory;
 
-    impl LanguageSelectorStory {
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    impl Render for LanguageSelectorStory {
+        type Element = Div<Self>;
+
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
                 .child(Story::title_for::<_, LanguageSelector>(cx))
                 .child(Story::label(cx, "Default"))

@@ -1,15 +1,16 @@
-use gpui2::{px, rgb, Div, Hsla};
+use gpui2::{px, rgb, Div, Hsla, Render};
 use ui::prelude::*;
 
 use crate::story::Story;
 
 /// A reimplementation of the MDN `z-index` example, found here:
 /// [https://developer.mozilla.org/en-US/docs/Web/CSS/z-index](https://developer.mozilla.org/en-US/docs/Web/CSS/z-index).
-#[derive(Component)]
 pub struct ZIndexStory;
 
-impl ZIndexStory {
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+impl Render for ZIndexStory {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         Story::container(cx)
             .child(Story::title(cx, "z-index"))
             .child(

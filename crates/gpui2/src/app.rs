@@ -16,7 +16,7 @@ use crate::{
     current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AnyWindowHandle,
     AppMetadata, AssetSource, ClipboardItem, Context, DispatchPhase, DisplayId, Executor,
     FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly,
-    Pixels, Platform, Point, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    Pixels, Platform, Point, Render, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
     TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window, WindowContext,
     WindowHandle, WindowId,
 };
@@ -309,10 +309,17 @@ impl AppContext {
         update: impl FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> R,
     ) -> Result<R>
     where
-        V: 'static,
+        V: 'static + Send,
     {
         self.update_window(handle.any_handle, |cx| {
-            let root_view = cx.window.root_view.as_ref().unwrap().downcast().unwrap();
+            let root_view = cx
+                .window
+                .root_view
+                .as_ref()
+                .unwrap()
+                .clone()
+                .downcast()
+                .unwrap();
             root_view.update(cx, update)
         })
     }
@@ -685,7 +692,7 @@ impl AppContext {
 
     pub fn observe_release<E: 'static>(
         &mut self,
-        handle: &Handle<E>,
+        handle: &Model<E>,
         mut on_release: impl FnMut(&mut E, &mut AppContext) + Send + 'static,
     ) -> Subscription {
         self.release_listeners.insert(
@@ -750,35 +757,35 @@ impl AppContext {
 }
 
 impl Context for AppContext {
-    type EntityContext<'a, T> = ModelContext<'a, T>;
+    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
     /// Build an entity that is owned by the application. The given function will be invoked with
-    /// a `ModelContext` and must return an object representing the entity. A `Handle` will be returned
+    /// a `ModelContext` and must return an object representing the entity. A `Model` will be returned
     /// which can be used to access the entity in a context.
-    fn entity<T: 'static + Send>(
+    fn build_model<T: 'static + Send>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
-    ) -> Handle<T> {
+        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+    ) -> Model<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
-            let entity = build_entity(&mut ModelContext::mutable(cx, slot.downgrade()));
+            let entity = build_model(&mut ModelContext::mutable(cx, slot.downgrade()));
             cx.entities.insert(slot, entity)
         })
     }
 
-    /// Update the entity referenced by the given handle. The function is passed a mutable reference to the
+    /// Update the entity referenced by the given model. The function is passed a mutable reference to the
     /// entity along with a `ModelContext` for the entity.
     fn update_entity<T: 'static, R>(
         &mut self,
-        handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
+        model: &Model<T>,
+        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> R {
         self.update(|cx| {
-            let mut entity = cx.entities.lease(handle);
+            let mut entity = cx.entities.lease(model);
             let result = update(
                 &mut entity,
-                &mut ModelContext::mutable(cx, handle.downgrade()),
+                &mut ModelContext::mutable(cx, model.downgrade()),
             );
             cx.entities.end_lease(entity);
             result
@@ -861,10 +868,17 @@ impl MainThread<AppContext> {
         update: impl FnOnce(&mut V, &mut MainThread<ViewContext<'_, '_, V>>) -> R,
     ) -> Result<R>
     where
-        V: 'static,
+        V: 'static + Send,
     {
         self.update_window(handle.any_handle, |cx| {
-            let root_view = cx.window.root_view.as_ref().unwrap().downcast().unwrap();
+            let root_view = cx
+                .window
+                .root_view
+                .as_ref()
+                .unwrap()
+                .clone()
+                .downcast()
+                .unwrap();
             root_view.update(cx, update)
         })
     }
@@ -872,7 +886,7 @@ impl MainThread<AppContext> {
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
     /// functionality.
-    pub fn open_window<V: 'static>(
+    pub fn open_window<V: Render>(
         &mut self,
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut WindowContext) -> View<V> + Send + 'static,
@@ -955,10 +969,8 @@ impl<G: 'static> DerefMut for GlobalLease<G> {
 /// Contains state associated with an active drag operation, started by dragging an element
 /// within the window or by dragging into the app from the underlying platform.
 pub(crate) struct AnyDrag {
-    pub drag_handle_view: Option<AnyView>,
+    pub view: AnyView,
     pub cursor_offset: Point<Pixels>,
-    pub state: AnyBox,
-    pub state_type: TypeId,
 }
 
 #[cfg(test)]

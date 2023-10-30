@@ -1,45 +1,35 @@
 use crate::{
-    AnyBox, AnyElement, AppContext, AvailableSpace, BorrowWindow, Bounds, Component, Element,
-    ElementId, EntityHandle, EntityId, Flatten, Handle, LayoutId, Pixels, Size, ViewContext,
-    VisualContext, WeakHandle, WindowContext,
+    AnyBox, AnyElement, AnyModel, AppContext, AvailableSpace, BorrowWindow, Bounds, Component,
+    Element, ElementId, EntityHandle, EntityId, Flatten, LayoutId, Model, Pixels, Size,
+    ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
-use parking_lot::Mutex;
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     marker::PhantomData,
-    sync::{Arc, Weak},
+    sync::Arc,
 };
 
-pub struct View<V> {
-    pub(crate) state: Handle<V>,
-    render: Arc<Mutex<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyElement<V> + Send + 'static>>,
+pub trait Render: 'static + Sized {
+    type Element: Element<Self> + 'static + Send;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element;
 }
 
-impl<V: 'static> View<V> {
-    pub fn for_handle<E>(
-        state: Handle<V>,
-        render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
-    ) -> View<V>
-    where
-        E: Component<V>,
-    {
-        View {
-            state,
-            render: Arc::new(Mutex::new(
-                move |state: &mut V, cx: &mut ViewContext<'_, '_, V>| render(state, cx).render(),
-            )),
-        }
-    }
+pub struct View<V> {
+    pub(crate) model: Model<V>,
+}
 
+impl<V: Render> View<V> {
     pub fn into_any(self) -> AnyView {
         AnyView(Arc::new(self))
     }
+}
 
+impl<V: 'static> View<V> {
     pub fn downgrade(&self) -> WeakView<V> {
         WeakView {
-            state: self.state.downgrade(),
-            render: Arc::downgrade(&self.render),
+            model: self.model.downgrade(),
         }
     }
 
@@ -55,20 +45,19 @@ impl<V: 'static> View<V> {
     }
 
     pub fn read<'a>(&self, cx: &'a AppContext) -> &'a V {
-        cx.entities.read(&self.state)
+        self.model.read(cx)
     }
 }
 
 impl<V> Clone for View<V> {
     fn clone(&self) -> Self {
         Self {
-            state: self.state.clone(),
-            render: self.render.clone(),
+            model: self.model.clone(),
         }
     }
 }
 
-impl<V: 'static, ParentViewState: 'static> Component<ParentViewState> for View<V> {
+impl<V: Render, ParentViewState: 'static> Component<ParentViewState> for View<V> {
     fn render(self) -> AnyElement<ParentViewState> {
         AnyElement::new(EraseViewState {
             view: self,
@@ -77,11 +66,14 @@ impl<V: 'static, ParentViewState: 'static> Component<ParentViewState> for View<V
     }
 }
 
-impl<V: 'static> Element<()> for View<V> {
+impl<V> Element<()> for View<V>
+where
+    V: Render,
+{
     type ElementState = AnyElement<V>;
 
-    fn id(&self) -> Option<ElementId> {
-        Some(ElementId::View(self.state.entity_id))
+    fn id(&self) -> Option<crate::ElementId> {
+        Some(ElementId::View(self.model.entity_id))
     }
 
     fn initialize(
@@ -91,7 +83,7 @@ impl<V: 'static> Element<()> for View<V> {
         cx: &mut ViewContext<()>,
     ) -> Self::ElementState {
         self.update(cx, |state, cx| {
-            let mut any_element = (self.render.lock())(state, cx);
+            let mut any_element = AnyElement::new(state.render(cx));
             any_element.initialize(state, cx);
             any_element
         })
@@ -121,7 +113,7 @@ impl<T: 'static> EntityHandle<T> for View<T> {
     type Weak = WeakView<T>;
 
     fn entity_id(&self) -> EntityId {
-        self.state.entity_id
+        self.model.entity_id
     }
 
     fn downgrade(&self) -> Self::Weak {
@@ -137,15 +129,13 @@ impl<T: 'static> EntityHandle<T> for View<T> {
 }
 
 pub struct WeakView<V> {
-    pub(crate) state: WeakHandle<V>,
-    render: Weak<Mutex<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyElement<V> + Send + 'static>>,
+    pub(crate) model: WeakModel<V>,
 }
 
 impl<V: 'static> WeakView<V> {
     pub fn upgrade(&self) -> Option<View<V>> {
-        let state = self.state.upgrade()?;
-        let render = self.render.upgrade()?;
-        Some(View { state, render })
+        let model = self.model.upgrade()?;
+        Some(View { model })
     }
 
     pub fn update<C, R>(
@@ -165,8 +155,7 @@ impl<V: 'static> WeakView<V> {
 impl<V> Clone for WeakView<V> {
     fn clone(&self) -> Self {
         Self {
-            state: self.state.clone(),
-            render: self.render.clone(),
+            model: self.model.clone(),
         }
     }
 }
@@ -178,13 +167,13 @@ struct EraseViewState<V, ParentV> {
 
 unsafe impl<V, ParentV> Send for EraseViewState<V, ParentV> {}
 
-impl<V: 'static, ParentV: 'static> Component<ParentV> for EraseViewState<V, ParentV> {
+impl<V: Render, ParentV: 'static> Component<ParentV> for EraseViewState<V, ParentV> {
     fn render(self) -> AnyElement<ParentV> {
         AnyElement::new(self)
     }
 }
 
-impl<V: 'static, ParentV: 'static> Element<ParentV> for EraseViewState<V, ParentV> {
+impl<V: Render, ParentV: 'static> Element<ParentV> for EraseViewState<V, ParentV> {
     type ElementState = AnyBox;
 
     fn id(&self) -> Option<ElementId> {
@@ -221,30 +210,43 @@ impl<V: 'static, ParentV: 'static> Element<ParentV> for EraseViewState<V, Parent
 }
 
 trait ViewObject: Send + Sync {
+    fn entity_type(&self) -> TypeId;
     fn entity_id(&self) -> EntityId;
+    fn model(&self) -> AnyModel;
     fn initialize(&self, cx: &mut WindowContext) -> AnyBox;
     fn layout(&self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId;
     fn paint(&self, bounds: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext);
     fn as_any(&self) -> &dyn Any;
 }
 
-impl<V: 'static> ViewObject for View<V> {
+impl<V> ViewObject for View<V>
+where
+    V: Render,
+{
+    fn entity_type(&self) -> TypeId {
+        TypeId::of::<V>()
+    }
+
     fn entity_id(&self) -> EntityId {
-        self.state.entity_id
+        self.model.entity_id
+    }
+
+    fn model(&self) -> AnyModel {
+        self.model.clone().into_any()
     }
 
     fn initialize(&self, cx: &mut WindowContext) -> AnyBox {
-        cx.with_element_id(self.state.entity_id, |_global_id, cx| {
+        cx.with_element_id(self.model.entity_id, |_global_id, cx| {
             self.update(cx, |state, cx| {
-                let mut any_element = Box::new((self.render.lock())(state, cx));
+                let mut any_element = Box::new(AnyElement::new(state.render(cx)));
                 any_element.initialize(state, cx);
-                any_element as AnyBox
+                any_element
             })
         })
     }
 
     fn layout(&self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId {
-        cx.with_element_id(self.state.entity_id, |_global_id, cx| {
+        cx.with_element_id(self.model.entity_id, |_global_id, cx| {
             self.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<V>>().unwrap();
                 element.layout(state, cx)
@@ -253,7 +255,7 @@ impl<V: 'static> ViewObject for View<V> {
     }
 
     fn paint(&self, _: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext) {
-        cx.with_element_id(self.state.entity_id, |_global_id, cx| {
+        cx.with_element_id(self.model.entity_id, |_global_id, cx| {
             self.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<V>>().unwrap();
                 element.paint(state, cx);
@@ -270,8 +272,12 @@ impl<V: 'static> ViewObject for View<V> {
 pub struct AnyView(Arc<dyn ViewObject>);
 
 impl AnyView {
-    pub fn downcast<V: 'static>(&self) -> Option<View<V>> {
-        self.0.as_any().downcast_ref().cloned()
+    pub fn downcast<V: 'static + Send>(self) -> Option<View<V>> {
+        self.0.model().downcast().map(|model| View { model })
+    }
+
+    pub(crate) fn entity_type(&self) -> TypeId {
+        self.0.entity_type()
     }
 
     pub(crate) fn draw(&self, available_space: Size<AvailableSpace>, cx: &mut WindowContext) {
@@ -340,6 +346,18 @@ unsafe impl<ParentV> Send for EraseAnyViewState<ParentV> {}
 impl<ParentV: 'static> Component<ParentV> for EraseAnyViewState<ParentV> {
     fn render(self) -> AnyElement<ParentV> {
         AnyElement::new(self)
+    }
+}
+
+impl<T, E> Render for T
+where
+    T: 'static + FnMut(&mut WindowContext) -> E,
+    E: 'static + Send + Element<T>,
+{
+    type Element = E;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        (self)(cx)
     }
 }
 

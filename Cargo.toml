@@ -59,6 +59,7 @@ members = [
     "crates/lsp2",
     "crates/media",
     "crates/menu",
+    "crates/menu2",
     "crates/multi_buffer",
     "crates/node_runtime",
     "crates/notifications",

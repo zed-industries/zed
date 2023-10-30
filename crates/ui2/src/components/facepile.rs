@@ -31,15 +31,16 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use crate::{static_players, Story};
-
     use super::*;
+    use crate::{static_players, Story};
+    use gpui2::{Div, Render};
 
-    #[derive(Component)]
     pub struct FacepileStory;
 
-    impl FacepileStory {
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    impl Render for FacepileStory {
+        type Element = Div<Self>;
+
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let players = static_players();
 
             Story::container(cx)

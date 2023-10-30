@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use gpui2::{AppContext, Context, ModelContext, View};
+use gpui2::{Div, Render, View, VisualContext};
 
 use crate::prelude::*;
 use crate::settings::user_settings;
@@ -28,7 +28,7 @@ pub struct TitleBar {
 }
 
 impl TitleBar {
-    pub fn new(cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let is_active = Arc::new(AtomicBool::new(true));
         let active = is_active.clone();
 
@@ -80,15 +80,15 @@ impl TitleBar {
         cx.notify();
     }
 
-    pub fn view(cx: &mut AppContext, livestream: Option<Livestream>) -> View<Self> {
-        {
-            let state = cx.entity(|cx| Self::new(cx).set_livestream(livestream));
-            let render = Self::render;
-            View::for_handle(state, render)
-        }
+    pub fn view(cx: &mut WindowContext, livestream: Option<Livestream>) -> View<Self> {
+        cx.build_view(|cx| Self::new(cx).set_livestream(livestream))
     }
+}
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+impl Render for TitleBar {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
         let theme = theme(cx);
         let settings = user_settings(cx);
 
@@ -187,26 +187,25 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use crate::Story;
-
     use super::*;
+    use crate::Story;
 
     pub struct TitleBarStory {
         title_bar: View<TitleBar>,
     }
 
     impl TitleBarStory {
-        pub fn view(cx: &mut AppContext) -> View<Self> {
-            {
-                let state = cx.entity(|cx| Self {
-                    title_bar: TitleBar::view(cx, None),
-                });
-                let render = Self::render;
-                View::for_handle(state, render)
-            }
+        pub fn view(cx: &mut WindowContext) -> View<Self> {
+            cx.build_view(|cx| Self {
+                title_bar: TitleBar::view(cx, None),
+            })
         }
+    }
 
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+    impl Render for TitleBarStory {
+        type Element = Div<Self>;
+
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
             Story::container(cx)
                 .child(Story::title_for::<_, TitleBar>(cx))
                 .child(Story::label(cx, "Default"))

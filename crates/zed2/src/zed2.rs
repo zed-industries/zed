@@ -5,7 +5,7 @@ mod open_listener;
 pub use assets::*;
 use client2::{Client, UserStore};
 use collections::HashMap;
-use gpui2::{AsyncAppContext, Handle, Point};
+use gpui2::{AsyncAppContext, Model};
 pub use only_instance::*;
 pub use open_listener::*;
 
@@ -52,7 +52,7 @@ pub fn connect_to_cli(
 
 pub struct AppState {
     pub client: Arc<Client>,
-    pub user_store: Handle<UserStore>,
+    pub user_store: Model<UserStore>,
 }
 
 pub async fn handle_cli_connection(

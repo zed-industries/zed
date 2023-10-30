@@ -1,7 +1,6 @@
-use gpui2::{rems, AbsoluteLength};
-
 use crate::prelude::*;
 use crate::{Icon, IconButton, Label, Panel, PanelSide};
+use gpui2::{rems, AbsoluteLength};
 
 #[derive(Component)]
 pub struct AssistantPanel {
@@ -76,15 +75,15 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use crate::Story;
-
     use super::*;
-
-    #[derive(Component)]
+    use crate::Story;
+    use gpui2::{Div, Render};
     pub struct AssistantPanelStory;
 
-    impl AssistantPanelStory {
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    impl Render for AssistantPanelStory {
+        type Element = Div<Self>;
+
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
                 .child(Story::title_for::<_, AssistantPanel>(cx))
                 .child(Story::label(cx, "Default"))

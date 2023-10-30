@@ -1,6 +1,6 @@
 use crate::{
-    AnyWindowHandle, AppContext, Component, Context, Executor, Handle, MainThread, ModelContext,
-    Result, Task, View, ViewContext, VisualContext, WindowContext, WindowHandle,
+    AnyWindowHandle, AppContext, Context, Executor, MainThread, Model, ModelContext, Result, Task,
+    View, ViewContext, VisualContext, WindowContext, WindowHandle,
 };
 use anyhow::Context as _;
 use derive_more::{Deref, DerefMut};
@@ -14,25 +14,25 @@ pub struct AsyncAppContext {
 }
 
 impl Context for AsyncAppContext {
-    type EntityContext<'a, T> = ModelContext<'a, T>;
+    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = Result<T>;
 
-    fn entity<T: 'static>(
+    fn build_model<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
-    ) -> Self::Result<Handle<T>>
+        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>>
     where
         T: 'static + Send,
     {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.lock(); // Need this to compile
-        Ok(lock.entity(build_entity))
+        Ok(lock.build_model(build_model))
     }
 
     fn update_entity<T: 'static, R>(
         &mut self,
-        handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
+        handle: &Model<T>,
+        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.lock(); // Need this to compile
@@ -84,7 +84,7 @@ impl AsyncAppContext {
         update: impl FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> R,
     ) -> Result<R>
     where
-        V: 'static,
+        V: 'static + Send,
     {
         let app = self.app.upgrade().context("app was released")?;
         let mut app_context = app.lock();
@@ -234,24 +234,24 @@ impl AsyncWindowContext {
 }
 
 impl Context for AsyncWindowContext {
-    type EntityContext<'a, T> = ModelContext<'a, T>;
+    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = Result<T>;
 
-    fn entity<T>(
+    fn build_model<T>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
-    ) -> Result<Handle<T>>
+        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+    ) -> Result<Model<T>>
     where
         T: 'static + Send,
     {
         self.app
-            .update_window(self.window, |cx| cx.entity(build_entity))
+            .update_window(self.window, |cx| cx.build_model(build_model))
     }
 
     fn update_entity<T: 'static, R>(
         &mut self,
-        handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
+        handle: &Model<T>,
+        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Result<R> {
         self.app
             .update_window(self.window, |cx| cx.update_entity(handle, update))
@@ -261,17 +261,15 @@ impl Context for AsyncWindowContext {
 impl VisualContext for AsyncWindowContext {
     type ViewContext<'a, 'w, V> = ViewContext<'a, 'w, V>;
 
-    fn build_view<E, V>(
+    fn build_view<V>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
-        render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        E: Component<V>,
         V: 'static + Send,
     {
         self.app
-            .update_window(self.window, |cx| cx.build_view(build_entity, render))
+            .update_window(self.window, |cx| cx.build_view(build_view_state))
     }
 
     fn update_view<V: 'static, R>(

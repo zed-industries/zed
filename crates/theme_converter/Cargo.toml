@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 clap = { version = "4.4", features = ["derive", "string"] }
+convert_case = "0.6.0"
 gpui2 = { path = "../gpui2" }
 log.workspace = true
 rust-embed.workspace = true

@@ -1,6 +1,6 @@
 use crate::{
-    AppContext, AsyncAppContext, Context, Effect, EntityId, EventEmitter, Handle, MainThread,
-    Reference, Subscription, Task, WeakHandle,
+    AppContext, AsyncAppContext, Context, Effect, EntityId, EventEmitter, MainThread, Model,
+    Reference, Subscription, Task, WeakModel,
 };
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
@@ -15,11 +15,11 @@ pub struct ModelContext<'a, T> {
     #[deref]
     #[deref_mut]
     app: Reference<'a, AppContext>,
-    model_state: WeakHandle<T>,
+    model_state: WeakModel<T>,
 }
 
 impl<'a, T: 'static> ModelContext<'a, T> {
-    pub(crate) fn mutable(app: &'a mut AppContext, model_state: WeakHandle<T>) -> Self {
+    pub(crate) fn mutable(app: &'a mut AppContext, model_state: WeakModel<T>) -> Self {
         Self {
             app: Reference::Mutable(app),
             model_state,
@@ -30,20 +30,20 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         self.model_state.entity_id
     }
 
-    pub fn handle(&self) -> Handle<T> {
+    pub fn handle(&self) -> Model<T> {
         self.weak_handle()
             .upgrade()
             .expect("The entity must be alive if we have a model context")
     }
 
-    pub fn weak_handle(&self) -> WeakHandle<T> {
+    pub fn weak_handle(&self) -> WeakModel<T> {
         self.model_state.clone()
     }
 
     pub fn observe<T2: 'static>(
         &mut self,
-        handle: &Handle<T2>,
-        mut on_notify: impl FnMut(&mut T, Handle<T2>, &mut ModelContext<'_, T>) + Send + 'static,
+        handle: &Model<T2>,
+        mut on_notify: impl FnMut(&mut T, Model<T2>, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
         T: 'static + Send,
@@ -65,10 +65,8 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn subscribe<E: 'static + EventEmitter>(
         &mut self,
-        handle: &Handle<E>,
-        mut on_event: impl FnMut(&mut T, Handle<E>, &E::Event, &mut ModelContext<'_, T>)
-            + Send
-            + 'static,
+        handle: &Model<E>,
+        mut on_event: impl FnMut(&mut T, Model<E>, &E::Event, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
         T: 'static + Send,
@@ -107,7 +105,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn observe_release<E: 'static>(
         &mut self,
-        handle: &Handle<E>,
+        handle: &Model<E>,
         mut on_release: impl FnMut(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
@@ -182,7 +180,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn spawn<Fut, R>(
         &self,
-        f: impl FnOnce(WeakHandle<T>, AsyncAppContext) -> Fut + Send + 'static,
+        f: impl FnOnce(WeakModel<T>, AsyncAppContext) -> Fut + Send + 'static,
     ) -> Task<R>
     where
         T: 'static,
@@ -195,7 +193,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn spawn_on_main<Fut, R>(
         &self,
-        f: impl FnOnce(WeakHandle<T>, MainThread<AsyncAppContext>) -> Fut + Send + 'static,
+        f: impl FnOnce(WeakModel<T>, MainThread<AsyncAppContext>) -> Fut + Send + 'static,
     ) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
@@ -220,23 +218,23 @@ where
 }
 
 impl<'a, T> Context for ModelContext<'a, T> {
-    type EntityContext<'b, U> = ModelContext<'b, U>;
+    type ModelContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
-    fn entity<U>(
+    fn build_model<U>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, U>) -> U,
-    ) -> Handle<U>
+        build_model: impl FnOnce(&mut Self::ModelContext<'_, U>) -> U,
+    ) -> Model<U>
     where
         U: 'static + Send,
     {
-        self.app.entity(build_entity)
+        self.app.build_model(build_model)
     }
 
     fn update_entity<U: 'static, R>(
         &mut self,
-        handle: &Handle<U>,
-        update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, U>) -> R,
+        handle: &Model<U>,
+        update: impl FnOnce(&mut U, &mut Self::ModelContext<'_, U>) -> R,
     ) -> R {
         self.app.update_entity(handle, update)
     }

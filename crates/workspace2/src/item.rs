@@ -17,7 +17,7 @@ use theme2::Theme;
 // use gpui2::geometry::vector::Vector2F;
 // use gpui2::AnyWindowHandle;
 // use gpui2::{
-//     fonts::HighlightStyle, AnyElement, AnyViewHandle, AppContext, Handle, Task, View,
+//     fonts::HighlightStyle, AnyElement, AnyViewHandle, AppContext, Model, Task, View,
 //     ViewContext, View, WeakViewHandle, WindowContext,
 // };
 // use project2::{Project, ProjectEntryId, ProjectPath};
@@ -135,14 +135,14 @@ pub trait Item: EventEmitter + Sized {
     //     }
     //     fn save(
     //         &mut self,
-    //         _project: Handle<Project>,
+    //         _project: Model<Project>,
     //         _cx: &mut ViewContext<Self>,
     //     ) -> Task<Result<()>> {
     //         unimplemented!("save() must be implemented if can_save() returns true")
     //     }
     //     fn save_as(
     //         &mut self,
-    //         _project: Handle<Project>,
+    //         _project: Model<Project>,
     //         _abs_path: PathBuf,
     //         _cx: &mut ViewContext<Self>,
     //     ) -> Task<Result<()>> {
@@ -150,7 +150,7 @@ pub trait Item: EventEmitter + Sized {
     //     }
     //     fn reload(
     //         &mut self,
-    //         _project: Handle<Project>,
+    //         _project: Model<Project>,
     //         _cx: &mut ViewContext<Self>,
     //     ) -> Task<Result<()>> {
     //         unimplemented!("reload() must be implemented if can_save() returns true")
@@ -197,7 +197,7 @@ pub trait Item: EventEmitter + Sized {
     //     }
 
     //     fn deserialize(
-    //         _project: Handle<Project>,
+    //         _project: Model<Project>,
     //         _workspace: WeakViewHandle<Workspace>,
     //         _workspace_id: WorkspaceId,
     //         _item_id: ItemId,
@@ -229,8 +229,8 @@ use std::{
 };
 
 use gpui2::{
-    AnyElement, AnyWindowHandle, AppContext, EventEmitter, Handle, HighlightStyle, Pixels, Point,
-    SharedString, Task, View, ViewContext, VisualContext, WindowContext,
+    AnyElement, AnyWindowHandle, AppContext, EventEmitter, HighlightStyle, Model, Pixels, Point,
+    SharedString, Task, View, ViewContext, WindowContext,
 };
 use project2::{Project, ProjectEntryId, ProjectPath};
 use smallvec::SmallVec;
@@ -279,14 +279,14 @@ pub trait ItemHandle: 'static + Send {
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
-    fn save(&self, project: Handle<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
+    fn save(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
     fn save_as(
         &self,
-        project: Handle<Project>,
+        project: Model<Project>,
         abs_path: PathBuf,
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
-    fn reload(&self, project: Handle<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
+    fn reload(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
     // fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a AppContext) -> Option<&'a AnyViewHandle>; todo!()
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
     fn on_release(
@@ -587,20 +587,20 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).can_save(cx)
     }
 
-    fn save(&self, project: Handle<Project>, cx: &mut WindowContext) -> Task<Result<()>> {
+    fn save(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.save(project, cx))
     }
 
     fn save_as(
         &self,
-        project: Handle<Project>,
+        project: Model<Project>,
         abs_path: PathBuf,
         cx: &mut WindowContext,
     ) -> Task<anyhow::Result<()>> {
         self.update(cx, |item, cx| item.save_as(project, abs_path, cx))
     }
 
-    fn reload(&self, project: Handle<Project>, cx: &mut WindowContext) -> Task<Result<()>> {
+    fn reload(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.reload(project, cx))
     }
 
@@ -688,8 +688,8 @@ pub trait ProjectItem: Item {
     type Item: project2::Item;
 
     fn for_project_item(
-        project: Handle<Project>,
-        item: Handle<Self::Item>,
+        project: Model<Project>,
+        item: Model<Self::Item>,
         cx: &mut ViewContext<Self>,
     ) -> Self
     where
@@ -714,7 +714,7 @@ pub trait FollowableItem: Item {
     ) -> bool;
     fn apply_update_proto(
         &mut self,
-        project: &Handle<Project>,
+        project: &Model<Project>,
         message: proto::update_view::Variant,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>>;
@@ -736,7 +736,7 @@ pub trait FollowableItemHandle: ItemHandle {
     ) -> bool;
     fn apply_update_proto(
         &self,
-        project: &Handle<Project>,
+        project: &Model<Project>,
         message: proto::update_view::Variant,
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
@@ -777,7 +777,7 @@ pub trait FollowableItemHandle: ItemHandle {
 
 //     fn apply_update_proto(
 //         &self,
-//         project: &Handle<Project>,
+//         project: &Model<Project>,
 //         message: proto::update_view::Variant,
 //         cx: &mut WindowContext,
 //     ) -> Task<Result<()>> {
@@ -802,7 +802,7 @@ pub trait FollowableItemHandle: ItemHandle {
 //     use super::{Item, ItemEvent};
 //     use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
 //     use gpui2::{
-//         elements::Empty, AnyElement, AppContext, Element, Entity, Handle, Task, View,
+//         elements::Empty, AnyElement, AppContext, Element, Entity, Model, Task, View,
 //         ViewContext, View, WeakViewHandle,
 //     };
 //     use project2::{Project, ProjectEntryId, ProjectPath, WorktreeId};
@@ -824,7 +824,7 @@ pub trait FollowableItemHandle: ItemHandle {
 //         pub is_dirty: bool,
 //         pub is_singleton: bool,
 //         pub has_conflict: bool,
-//         pub project_items: Vec<Handle<TestProjectItem>>,
+//         pub project_items: Vec<Model<TestProjectItem>>,
 //         pub nav_history: Option<ItemNavHistory>,
 //         pub tab_descriptions: Option<Vec<&'static str>>,
 //         pub tab_detail: Cell<Option<usize>>,
@@ -869,7 +869,7 @@ pub trait FollowableItemHandle: ItemHandle {
 //     }
 
 //     impl TestProjectItem {
-//         pub fn new(id: u64, path: &str, cx: &mut AppContext) -> Handle<Self> {
+//         pub fn new(id: u64, path: &str, cx: &mut AppContext) -> Model<Self> {
 //             let entry_id = Some(ProjectEntryId::from_proto(id));
 //             let project_path = Some(ProjectPath {
 //                 worktree_id: WorktreeId::from_usize(0),
@@ -881,7 +881,7 @@ pub trait FollowableItemHandle: ItemHandle {
 //             })
 //         }
 
-//         pub fn new_untitled(cx: &mut AppContext) -> Handle<Self> {
+//         pub fn new_untitled(cx: &mut AppContext) -> Model<Self> {
 //             cx.add_model(|_| Self {
 //                 project_path: None,
 //                 entry_id: None,
@@ -934,7 +934,7 @@ pub trait FollowableItemHandle: ItemHandle {
 //             self
 //         }
 
-//         pub fn with_project_items(mut self, items: &[Handle<TestProjectItem>]) -> Self {
+//         pub fn with_project_items(mut self, items: &[Model<TestProjectItem>]) -> Self {
 //             self.project_items.clear();
 //             self.project_items.extend(items.iter().cloned());
 //             self
@@ -1045,7 +1045,7 @@ pub trait FollowableItemHandle: ItemHandle {
 
 //         fn save(
 //             &mut self,
-//             _: Handle<Project>,
+//             _: Model<Project>,
 //             _: &mut ViewContext<Self>,
 //         ) -> Task<anyhow::Result<()>> {
 //             self.save_count += 1;
@@ -1055,7 +1055,7 @@ pub trait FollowableItemHandle: ItemHandle {
 
 //         fn save_as(
 //             &mut self,
-//             _: Handle<Project>,
+//             _: Model<Project>,
 //             _: std::path::PathBuf,
 //             _: &mut ViewContext<Self>,
 //         ) -> Task<anyhow::Result<()>> {
@@ -1066,7 +1066,7 @@ pub trait FollowableItemHandle: ItemHandle {
 
 //         fn reload(
 //             &mut self,
-//             _: Handle<Project>,
+//             _: Model<Project>,
 //             _: &mut ViewContext<Self>,
 //         ) -> Task<anyhow::Result<()>> {
 //             self.reload_count += 1;
@@ -1083,7 +1083,7 @@ pub trait FollowableItemHandle: ItemHandle {
 //         }
 
 //         fn deserialize(
-//             _project: Handle<Project>,
+//             _project: Model<Project>,
 //             _workspace: WeakViewHandle<Workspace>,
 //             workspace_id: WorkspaceId,
 //             _item_id: ItemId,

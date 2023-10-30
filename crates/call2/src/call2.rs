@@ -12,8 +12,8 @@ use client2::{
 use collections::HashSet;
 use futures::{future::Shared, FutureExt};
 use gpui2::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Handle, ModelContext, Subscription, Task,
-    WeakHandle,
+    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Subscription, Task,
+    WeakModel,
 };
 use postage::watch;
 use project2::Project;
@@ -23,10 +23,10 @@ use std::sync::Arc;
 pub use participant::ParticipantLocation;
 pub use room::Room;
 
-pub fn init(client: Arc<Client>, user_store: Handle<UserStore>, cx: &mut AppContext) {
+pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     CallSettings::register(cx);
 
-    let active_call = cx.entity(|cx| ActiveCall::new(client, user_store, cx));
+    let active_call = cx.build_model(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(active_call);
 }
 
@@ -40,16 +40,16 @@ pub struct IncomingCall {
 
 /// Singleton global maintaining the user's participation in a room across workspaces.
 pub struct ActiveCall {
-    room: Option<(Handle<Room>, Vec<Subscription>)>,
-    pending_room_creation: Option<Shared<Task<Result<Handle<Room>, Arc<anyhow::Error>>>>>,
-    location: Option<WeakHandle<Project>>,
+    room: Option<(Model<Room>, Vec<Subscription>)>,
+    pending_room_creation: Option<Shared<Task<Result<Model<Room>, Arc<anyhow::Error>>>>>,
+    location: Option<WeakModel<Project>>,
     pending_invites: HashSet<u64>,
     incoming_call: (
         watch::Sender<Option<IncomingCall>>,
         watch::Receiver<Option<IncomingCall>>,
     ),
     client: Arc<Client>,
-    user_store: Handle<UserStore>,
+    user_store: Model<UserStore>,
     _subscriptions: Vec<client2::Subscription>,
 }
 
@@ -58,11 +58,7 @@ impl EventEmitter for ActiveCall {
 }
 
 impl ActiveCall {
-    fn new(
-        client: Arc<Client>,
-        user_store: Handle<UserStore>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
+    fn new(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut ModelContext<Self>) -> Self {
         Self {
             room: None,
             pending_room_creation: None,
@@ -84,7 +80,7 @@ impl ActiveCall {
     }
 
     async fn handle_incoming_call(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::IncomingCall>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -112,7 +108,7 @@ impl ActiveCall {
     }
 
     async fn handle_call_canceled(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::CallCanceled>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -129,14 +125,14 @@ impl ActiveCall {
         Ok(())
     }
 
-    pub fn global(cx: &AppContext) -> Handle<Self> {
-        cx.global::<Handle<Self>>().clone()
+    pub fn global(cx: &AppContext) -> Model<Self> {
+        cx.global::<Model<Self>>().clone()
     }
 
     pub fn invite(
         &mut self,
         called_user_id: u64,
-        initial_project: Option<Handle<Project>>,
+        initial_project: Option<Model<Project>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         if !self.pending_invites.insert(called_user_id) {
@@ -291,7 +287,7 @@ impl ActiveCall {
         &mut self,
         channel_id: u64,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Handle<Room>>> {
+    ) -> Task<Result<Model<Room>>> {
         if let Some(room) = self.room().cloned() {
             if room.read(cx).channel_id() == Some(channel_id) {
                 return Task::ready(Ok(room));
@@ -327,7 +323,7 @@ impl ActiveCall {
 
     pub fn share_project(
         &mut self,
-        project: Handle<Project>,
+        project: Model<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<u64>> {
         if let Some((room, _)) = self.room.as_ref() {
@@ -340,7 +336,7 @@ impl ActiveCall {
 
     pub fn unshare_project(
         &mut self,
-        project: Handle<Project>,
+        project: Model<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         if let Some((room, _)) = self.room.as_ref() {
@@ -351,13 +347,13 @@ impl ActiveCall {
         }
     }
 
-    pub fn location(&self) -> Option<&WeakHandle<Project>> {
+    pub fn location(&self) -> Option<&WeakModel<Project>> {
         self.location.as_ref()
     }
 
     pub fn set_location(
         &mut self,
-        project: Option<&Handle<Project>>,
+        project: Option<&Model<Project>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         if project.is_some() || !*ZED_ALWAYS_ACTIVE {
@@ -371,7 +367,7 @@ impl ActiveCall {
 
     fn set_room(
         &mut self,
-        room: Option<Handle<Room>>,
+        room: Option<Model<Room>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         if room.as_ref() != self.room.as_ref().map(|room| &room.0) {
@@ -407,7 +403,7 @@ impl ActiveCall {
         }
     }
 
-    pub fn room(&self) -> Option<&Handle<Room>> {
+    pub fn room(&self) -> Option<&Model<Room>> {
         self.room.as_ref().map(|(room, _)| room)
     }
 
