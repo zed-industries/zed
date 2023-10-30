@@ -36,7 +36,7 @@ impl IconColor {
             IconColor::Error => gpui2::red(),
             IconColor::Warning => gpui2::red(),
             IconColor::Success => gpui2::red(),
-            IconColor::Info => gpui2::red()
+            IconColor::Info => gpui2::red(),
         }
     }
 }

@@ -1,9 +1,9 @@
-use crate::templates::base::{PromptArguments, PromptTemplate};
+use crate::prompts::base::{PromptArguments, PromptTemplate};
 use std::fmt::Write;
 use std::{ops::Range, path::PathBuf};
 
-use gpui::{AsyncAppContext, ModelHandle};
-use language::{Anchor, Buffer};
+use gpui2::{AsyncAppContext, Model};
+use language2::{Anchor, Buffer};
 
 #[derive(Clone)]
 pub struct PromptCodeSnippet {
@@ -13,8 +13,12 @@ pub struct PromptCodeSnippet {
 }
 
 impl PromptCodeSnippet {
-    pub fn new(buffer: ModelHandle<Buffer>, range: Range<Anchor>, cx: &AsyncAppContext) -> Self {
-        let (content, language_name, file_path) = buffer.read_with(cx, |buffer, _| {
+    pub fn new(
+        buffer: Model<Buffer>,
+        range: Range<Anchor>,
+        cx: &mut AsyncAppContext,
+    ) -> anyhow::Result<Self> {
+        let (content, language_name, file_path) = buffer.update(cx, |buffer, _| {
             let snapshot = buffer.snapshot();
             let content = snapshot.text_for_range(range.clone()).collect::<String>();
 
@@ -27,13 +31,13 @@ impl PromptCodeSnippet {
                 .and_then(|file| Some(file.path().to_path_buf()));
 
             (content, language_name, file_path)
-        });
+        })?;
 
-        PromptCodeSnippet {
+        anyhow::Ok(PromptCodeSnippet {
             path: file_path,
             language_name,
             content,
-        }
+        })
     }
 }
 

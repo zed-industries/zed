@@ -81,7 +81,7 @@ mod tests {
     use super::*;
     use rand::prelude::*;
 
-    #[gpui::test]
+    #[gpui2::test]
     fn test_similarity(mut rng: StdRng) {
         assert_eq!(
             Embedding::from(vec![1., 0., 0., 0., 0.])
