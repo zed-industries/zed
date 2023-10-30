@@ -3,7 +3,7 @@ mod theme_printer;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -35,6 +35,8 @@ fn main() -> Result<()> {
 
     let themes_path = PathBuf::from_str("crates/theme2/src/themes")?;
 
+    let mut theme_modules = Vec::new();
+
     for theme_path in Assets.list("themes/")? {
         let (_, theme_name) = theme_path.split_once("themes/").unwrap();
 
@@ -46,16 +48,54 @@ fn main() -> Result<()> {
 
         let theme = convert_theme(json_theme, legacy_theme)?;
 
-        let theme_slug = theme.metadata.name.as_ref().to_case(Case::Snake);
+        let theme_slug = theme
+            .metadata
+            .name
+            .as_ref()
+            .replace("é", "e")
+            .to_case(Case::Snake);
 
         let mut output_file = File::create(themes_path.join(format!("{theme_slug}.rs")))?;
 
-        let theme_module = format!("{:#?}", ThemePrinter::new(theme));
+        let theme_module = format!(
+            r#"
+                use gpui2::rgba;
+
+                use crate::{{PlayerTheme, SyntaxTheme, Theme, ThemeMetadata}};
+
+                pub fn {theme_slug}() -> Theme {{
+                    {theme_definition}
+                }}
+            "#,
+            theme_definition = format!("{:#?}", ThemePrinter::new(theme))
+        );
 
         output_file.write_all(theme_module.as_bytes())?;
 
-        // println!("{:#?}", ThemePrinter::new(theme));
+        theme_modules.push(theme_slug);
     }
+
+    let mut mod_rs_file = File::create(themes_path.join(format!("mod.rs")))?;
+
+    let mod_rs_contents = format!(
+        r#"
+        {mod_statements}
+
+        {use_statements}
+        "#,
+        mod_statements = theme_modules
+            .iter()
+            .map(|module| format!("mod {module};"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        use_statements = theme_modules
+            .iter()
+            .map(|module| format!("pub use {module}::*;"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    mod_rs_file.write_all(mod_rs_contents.as_bytes())?;
 
     Ok(())
 }
