@@ -8,7 +8,7 @@ use collections::{HashMap, HashSet};
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui2::{
     AppContext, AsyncAppContext, Context, EntityId, EventEmitter, Model, ModelContext, Task,
-    WeakHandle,
+    WeakModel,
 };
 use language2::{
     language_settings::{all_language_settings, language_settings},
@@ -278,7 +278,7 @@ pub struct Copilot {
     http: Arc<dyn HttpClient>,
     node_runtime: Arc<dyn NodeRuntime>,
     server: CopilotServer,
-    buffers: HashSet<WeakHandle<Buffer>>,
+    buffers: HashSet<WeakModel<Buffer>>,
     server_id: LanguageServerId,
     _subscription: gpui2::Subscription,
 }
@@ -383,7 +383,7 @@ impl Copilot {
         new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
         node_runtime: Arc<dyn NodeRuntime>,
-        this: WeakHandle<Self>,
+        this: WeakModel<Self>,
         mut cx: AsyncAppContext,
     ) -> impl Future<Output = ()> {
         async move {
@@ -706,7 +706,7 @@ impl Copilot {
         Ok(())
     }
 
-    fn unregister_buffer(&mut self, buffer: &WeakHandle<Buffer>) {
+    fn unregister_buffer(&mut self, buffer: &WeakModel<Buffer>) {
         if let Ok(server) = self.server.as_running() {
             if let Some(buffer) = server.registered_buffers.remove(&buffer.entity_id()) {
                 server

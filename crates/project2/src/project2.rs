@@ -26,8 +26,8 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui2::{
-    AnyHandle, AppContext, AsyncAppContext, Context, EventEmitter, Executor, Model, ModelContext,
-    Task, WeakHandle,
+    AnyModel, AppContext, AsyncAppContext, Context, EventEmitter, Executor, Model, ModelContext,
+    Task, WeakModel,
 };
 use itertools::Itertools;
 use language2::{
@@ -153,7 +153,7 @@ pub struct Project {
     incomplete_remote_buffers: HashMap<u64, Option<Model<Buffer>>>,
     buffer_snapshots: HashMap<u64, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     buffers_being_formatted: HashSet<u64>,
-    buffers_needing_diff: HashSet<WeakHandle<Buffer>>,
+    buffers_needing_diff: HashSet<WeakModel<Buffer>>,
     git_diff_debouncer: DelayedDebounced,
     nonce: u128,
     _maintain_buffer_languages: Task<()>,
@@ -245,14 +245,14 @@ enum LocalProjectUpdate {
 
 enum OpenBuffer {
     Strong(Model<Buffer>),
-    Weak(WeakHandle<Buffer>),
+    Weak(WeakModel<Buffer>),
     Operations(Vec<Operation>),
 }
 
 #[derive(Clone)]
 enum WorktreeHandle {
     Strong(Model<Worktree>),
-    Weak(WeakHandle<Worktree>),
+    Weak(WeakModel<Worktree>),
 }
 
 enum ProjectClientState {
@@ -1671,7 +1671,7 @@ impl Project {
         &mut self,
         path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(ProjectEntryId, AnyHandle)>> {
+    ) -> Task<Result<(ProjectEntryId, AnyModel)>> {
         let task = self.open_buffer(path, cx);
         cx.spawn(move |_, mut cx| async move {
             let buffer = task.await?;
@@ -1681,7 +1681,7 @@ impl Project {
                 })?
                 .ok_or_else(|| anyhow!("no project entry"))?;
 
-            let buffer: &AnyHandle = &buffer;
+            let buffer: &AnyModel = &buffer;
             Ok((project_entry_id, buffer.clone()))
         })
     }
@@ -2158,7 +2158,7 @@ impl Project {
     }
 
     async fn send_buffer_ordered_messages(
-        this: WeakHandle<Self>,
+        this: WeakModel<Self>,
         rx: UnboundedReceiver<BufferOrderedMessage>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
@@ -2166,7 +2166,7 @@ impl Project {
 
         let mut operations_by_buffer_id = HashMap::default();
         async fn flush_operations(
-            this: &WeakHandle<Project>,
+            this: &WeakModel<Project>,
             operations_by_buffer_id: &mut HashMap<u64, Vec<proto::Operation>>,
             needs_resync_with_host: &mut bool,
             is_local: bool,
@@ -2931,7 +2931,7 @@ impl Project {
     }
 
     async fn setup_and_insert_language_server(
-        this: WeakHandle<Self>,
+        this: WeakModel<Self>,
         initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
@@ -2970,7 +2970,7 @@ impl Project {
     }
 
     async fn setup_pending_language_server(
-        this: WeakHandle<Self>,
+        this: WeakModel<Self>,
         initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
@@ -3748,7 +3748,7 @@ impl Project {
     }
 
     async fn on_lsp_workspace_edit(
-        this: WeakHandle<Self>,
+        this: WeakModel<Self>,
         params: lsp2::ApplyWorkspaceEditParams,
         server_id: LanguageServerId,
         adapter: Arc<CachedLspAdapter>,
@@ -4360,7 +4360,7 @@ impl Project {
     }
 
     async fn format_via_lsp(
-        this: &WeakHandle<Self>,
+        this: &WeakModel<Self>,
         buffer: &Model<Buffer>,
         abs_path: &Path,
         language_server: &Arc<LanguageServer>,

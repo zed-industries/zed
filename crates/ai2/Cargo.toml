@@ -1,20 +1,20 @@
 [package]
-name = "ai"
+name = "ai2"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [lib]
-path = "src/ai.rs"
+path = "src/ai2.rs"
 doctest = false
 
 [features]
 test-support = []
 
 [dependencies]
-gpui = { path = "../gpui" }
+gpui2 = { path = "../gpui2" }
 util = { path = "../util" }
-language = { path = "../language" }
+language2 = { path = "../language2" }
 async-trait.workspace = true
 anyhow.workspace = true
 futures.workspace = true
@@ -35,4 +35,4 @@ rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 bincode = "1.3.3"
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui2 = { path = "../gpui2", features = ["test-support"] }

@@ -1,5 +1,5 @@
 use crate::Project;
-use gpui2::{AnyWindowHandle, Context, Model, ModelContext, WeakHandle};
+use gpui2::{AnyWindowHandle, Context, Model, ModelContext, WeakModel};
 use settings2::Settings;
 use std::path::{Path, PathBuf};
 use terminal2::{
@@ -11,7 +11,7 @@ use terminal2::{
 use std::os::unix::ffi::OsStrExt;
 
 pub struct Terminals {
-    pub(crate) local_handles: Vec<WeakHandle<terminal2::Terminal>>,
+    pub(crate) local_handles: Vec<WeakModel<terminal2::Terminal>>,
 }
 
 impl Project {
@@ -121,7 +121,7 @@ impl Project {
         }
     }
 
-    pub fn local_terminal_handles(&self) -> &Vec<WeakHandle<terminal2::Terminal>> {
+    pub fn local_terminal_handles(&self) -> &Vec<WeakModel<terminal2::Terminal>> {
         &self.terminals.local_handles
     }
 }

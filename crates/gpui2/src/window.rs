@@ -7,7 +7,7 @@ use crate::{
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
     PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
     RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakHandle, WeakView,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakModel, WeakView,
     WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
@@ -1257,13 +1257,13 @@ impl Context for WindowContext<'_, '_> {
 
     fn update_entity<T: 'static, R>(
         &mut self,
-        handle: &Model<T>,
+        model: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> R {
-        let mut entity = self.entities.lease(handle);
+        let mut entity = self.entities.lease(model);
         let result = update(
             &mut *entity,
-            &mut ModelContext::mutable(&mut *self.app, handle.downgrade()),
+            &mut ModelContext::mutable(&mut *self.app, model.downgrade()),
         );
         self.entities.end_lease(entity);
         result
@@ -1555,7 +1555,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         self.view.clone()
     }
 
-    pub fn handle(&self) -> WeakHandle<V> {
+    pub fn model(&self) -> WeakModel<V> {
         self.view.state.clone()
     }
 
@@ -1872,10 +1872,10 @@ impl<'a, 'w, V> Context for ViewContext<'a, 'w, V> {
 
     fn update_entity<T: 'static, R>(
         &mut self,
-        handle: &Model<T>,
+        model: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> R {
-        self.window_cx.update_entity(handle, update)
+        self.window_cx.update_entity(model, update)
     }
 }
 

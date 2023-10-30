@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use client2::ParticipantIndex;
 use client2::{proto, User};
-use gpui2::WeakHandle;
+use gpui2::WeakModel;
 pub use live_kit_client::Frame;
 use project2::Project;
 use std::{fmt, sync::Arc};
@@ -33,7 +33,7 @@ impl ParticipantLocation {
 #[derive(Clone, Default)]
 pub struct LocalParticipant {
     pub projects: Vec<proto::ParticipantProject>,
-    pub active_project: Option<WeakHandle<Project>>,
+    pub active_project: Option<WeakModel<Project>>,
 }
 
 #[derive(Clone, Debug)]

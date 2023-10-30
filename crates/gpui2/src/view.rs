@@ -1,6 +1,6 @@
 use crate::{
     AnyBox, AnyElement, AvailableSpace, BorrowWindow, Bounds, Component, Element, ElementId,
-    EntityId, LayoutId, Model, Pixels, Size, ViewContext, VisualContext, WeakHandle, WindowContext,
+    EntityId, LayoutId, Model, Pixels, Size, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
@@ -116,7 +116,7 @@ impl<V: 'static> Element<()> for View<V> {
 }
 
 pub struct WeakView<V> {
-    pub(crate) state: WeakHandle<V>,
+    pub(crate) state: WeakModel<V>,
     render: Weak<Mutex<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyElement<V> + Send + 'static>>,
 }
 
