@@ -1,11 +1,11 @@
 use crate::{
     px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect,
-    EntityId, EventEmitter, ExternalPaths, FileDropEvent, FocusEvent, FontId, GlobalElementId,
-    GlyphId, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke,
-    LayoutId, MainThread, MainThreadOnly, Model, ModelContext, Modifiers, MonochromeSprite,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
+    EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla,
+    ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
+    MainThread, MainThreadOnly, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow,
+    Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
     RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
     TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakModel, WeakView,
     WindowOptions, SUBPIXEL_VARIANTS,
@@ -891,15 +891,13 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             root_view.draw(available_space, cx);
         });
 
-        if let Some(mut active_drag) = self.app.active_drag.take() {
+        if let Some(active_drag) = self.app.active_drag.take() {
             self.stack(1, |cx| {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
                 cx.with_element_offset(Some(offset), |cx| {
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    if let Some(drag_handle_view) = &mut active_drag.drag_handle_view {
-                        drag_handle_view.draw(available_space, cx);
-                    }
+                    active_drag.view.draw(available_space, cx);
                     cx.active_drag = Some(active_drag);
                 });
             });
@@ -967,12 +965,12 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             InputEvent::FileDrop(file_drop) => match file_drop {
                 FileDropEvent::Entered { position, files } => {
                     self.window.mouse_position = position;
-                    self.active_drag.get_or_insert_with(|| AnyDrag {
-                        drag_handle_view: None,
-                        cursor_offset: position,
-                        state: Box::new(files),
-                        state_type: TypeId::of::<ExternalPaths>(),
-                    });
+                    if self.active_drag.is_none() {
+                        self.active_drag = Some(AnyDrag {
+                            view: self.build_view(|_| files).into_any(),
+                            cursor_offset: position,
+                        });
+                    }
                     InputEvent::MouseDown(MouseDownEvent {
                         position,
                         button: MouseButton::Left,
@@ -1273,21 +1271,17 @@ impl Context for WindowContext<'_, '_> {
 impl VisualContext for WindowContext<'_, '_> {
     type ViewContext<'a, 'w, V> = ViewContext<'a, 'w, V>;
 
-    /// Builds a new view in the current window. The first argument is a function that builds
-    /// an entity representing the view's state. It is invoked with a `ViewContext` that provides
-    /// entity-specific access to the window and application state during construction. The second
-    /// argument is a render function that returns a component based on the view's state.
-    fn build_view<E, V>(
+    fn build_view<V>(
         &mut self,
         build_view_state: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
-        render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
     ) -> Self::Result<View<V>>
     where
-        E: crate::Component<V>,
         V: 'static + Send,
     {
         let slot = self.app.entities.reserve();
-        let view = View::for_handle(slot.clone(), render);
+        let view = View {
+            model: slot.clone(),
+        };
         let mut cx = ViewContext::mutable(&mut *self.app, &mut *self.window, view.downgrade());
         let entity = build_view_state(&mut cx);
         self.entities.insert(slot, entity);
@@ -1300,7 +1294,7 @@ impl VisualContext for WindowContext<'_, '_> {
         view: &View<T>,
         update: impl FnOnce(&mut T, &mut Self::ViewContext<'_, '_, T>) -> R,
     ) -> Self::Result<R> {
-        let mut lease = self.app.entities.lease(&view.state);
+        let mut lease = self.app.entities.lease(&view.model);
         let mut cx = ViewContext::mutable(&mut *self.app, &mut *self.window, view.downgrade());
         let result = update(&mut *lease, &mut cx);
         cx.app.entities.end_lease(lease);
@@ -1556,7 +1550,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     }
 
     pub fn model(&self) -> WeakModel<V> {
-        self.view.state.clone()
+        self.view.model.clone()
     }
 
     pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -1635,7 +1629,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     ) -> Subscription {
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
-            self.view.state.entity_id,
+            self.view.model.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
                 // todo!("are we okay with silently swallowing the error?")
@@ -1668,7 +1662,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn notify(&mut self) {
         self.window_cx.notify();
         self.window_cx.app.push_effect(Effect::Notify {
-            emitter: self.view.state.entity_id,
+            emitter: self.view.model.entity_id,
         });
     }
 
@@ -1848,7 +1842,7 @@ where
     V::Event: Any + Send,
 {
     pub fn emit(&mut self, event: V::Event) {
-        let emitter = self.view.state.entity_id;
+        let emitter = self.view.model.entity_id;
         self.app.push_effect(Effect::Emit {
             emitter,
             event: Box::new(event),
@@ -1882,16 +1876,11 @@ impl<'a, 'w, V> Context for ViewContext<'a, 'w, V> {
 impl<V: 'static> VisualContext for ViewContext<'_, '_, V> {
     type ViewContext<'a, 'w, V2> = ViewContext<'a, 'w, V2>;
 
-    fn build_view<E, V2>(
+    fn build_view<W: 'static + Send>(
         &mut self,
-        build_view: impl FnOnce(&mut Self::ViewContext<'_, '_, V2>) -> V2,
-        render: impl Fn(&mut V2, &mut ViewContext<'_, '_, V2>) -> E + Send + 'static,
-    ) -> Self::Result<View<V2>>
-    where
-        E: crate::Component<V2>,
-        V2: 'static + Send,
-    {
-        self.window_cx.build_view(build_view, render)
+        build_view: impl FnOnce(&mut Self::ViewContext<'_, '_, W>) -> W,
+    ) -> Self::Result<View<W>> {
+        self.window_cx.build_view(build_view)
     }
 
     fn update_view<V2: 'static, R>(

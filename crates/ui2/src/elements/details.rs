@@ -46,17 +46,18 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use crate::{Button, Story};
-
     use super::*;
+    use crate::{Button, Story};
+    use gpui2::{Div, Render};
 
-    #[derive(Component)]
     pub struct DetailsStory;
 
-    impl DetailsStory {
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    impl Render for DetailsStory {
+        type Element = Div<Self>;
+
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .child(Story::title_for::<_, Details<V>>(cx))
+                .child(Story::title_for::<_, Details<Self>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Details::new("The quick brown fox jumps over the lazy dog"))
                 .child(Story::label(cx, "With meta"))

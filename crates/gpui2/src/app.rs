@@ -15,7 +15,7 @@ pub use test_context::*;
 use crate::{
     current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AppMetadata, AssetSource,
     ClipboardItem, Context, DispatchPhase, DisplayId, Executor, FocusEvent, FocusHandle, FocusId,
-    KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly, Pixels, Platform, Point,
+    KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly, Pixels, Platform, Point, Render,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
     TextSystem, View, Window, WindowContext, WindowHandle, WindowId,
 };
@@ -815,7 +815,7 @@ impl MainThread<AppContext> {
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
     /// functionality.
-    pub fn open_window<V: 'static>(
+    pub fn open_window<V: Render>(
         &mut self,
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut WindowContext) -> View<V> + Send + 'static,
@@ -898,10 +898,8 @@ impl<G: 'static> DerefMut for GlobalLease<G> {
 /// Contains state associated with an active drag operation, started by dragging an element
 /// within the window or by dragging into the app from the underlying platform.
 pub(crate) struct AnyDrag {
-    pub drag_handle_view: Option<AnyView>,
+    pub view: AnyView,
     pub cursor_offset: Point<Pixels>,
-    pub state: AnyBox,
-    pub state_type: TypeId,
 }
 
 #[cfg(test)]

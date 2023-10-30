@@ -1,13 +1,13 @@
-use gpui2::px;
+use crate::story::Story;
+use gpui2::{px, Div, Render};
 use ui::prelude::*;
 
-use crate::story::Story;
-
-#[derive(Component)]
 pub struct ColorsStory;
 
-impl ColorsStory {
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+impl Render for ColorsStory {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let color_scales = theme2::default_color_scales();
 
         Story::container(cx)

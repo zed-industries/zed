@@ -90,13 +90,11 @@ pub trait Context {
 pub trait VisualContext: Context {
     type ViewContext<'a, 'w, V>;
 
-    fn build_view<E, V>(
+    fn build_view<V>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
-        render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        E: Component<V>,
         V: 'static + Send;
 
     fn update_view<V: 'static, R>(
@@ -171,27 +169,22 @@ impl<C: Context> Context for MainThread<C> {
 impl<C: VisualContext> VisualContext for MainThread<C> {
     type ViewContext<'a, 'w, V> = MainThread<C::ViewContext<'a, 'w, V>>;
 
-    fn build_view<E, V>(
+    fn build_view<V>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
-        render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        E: Component<V>,
         V: 'static + Send,
     {
-        self.0.build_view(
-            |cx| {
-                let cx = unsafe {
-                    mem::transmute::<
-                        &mut C::ViewContext<'_, '_, V>,
-                        &mut MainThread<C::ViewContext<'_, '_, V>>,
-                    >(cx)
-                };
-                build_model(cx)
-            },
-            render,
-        )
+        self.0.build_view(|cx| {
+            let cx = unsafe {
+                mem::transmute::<
+                    &mut C::ViewContext<'_, '_, V>,
+                    &mut MainThread<C::ViewContext<'_, '_, V>>,
+                >(cx)
+            };
+            build_view_state(cx)
+        })
     }
 
     fn update_view<V: 'static, R>(

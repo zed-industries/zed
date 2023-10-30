@@ -1,7 +1,7 @@
 use crate::{
-    point, px, Action, AnyBox, AnyDrag, AppContext, BorrowWindow, Bounds, Component,
-    DispatchContext, DispatchPhase, Element, ElementId, FocusHandle, KeyMatch, Keystroke,
-    Modifiers, Overflow, Pixels, Point, SharedString, Size, Style, StyleRefinement, View,
+    div, point, px, Action, AnyDrag, AnyView, AppContext, BorrowWindow, Bounds, Component,
+    DispatchContext, DispatchPhase, Div, Element, ElementId, FocusHandle, KeyMatch, Keystroke,
+    Modifiers, Overflow, Pixels, Point, Render, SharedString, Size, Style, StyleRefinement, View,
     ViewContext,
 };
 use collections::HashMap;
@@ -258,17 +258,17 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
         self
     }
 
-    fn on_drop<S: 'static>(
+    fn on_drop<W: 'static + Send>(
         mut self,
-        listener: impl Fn(&mut V, S, &mut ViewContext<V>) + Send + 'static,
+        listener: impl Fn(&mut V, View<W>, &mut ViewContext<V>) + Send + 'static,
     ) -> Self
     where
         Self: Sized,
     {
         self.stateless_interaction().drop_listeners.push((
-            TypeId::of::<S>(),
-            Box::new(move |view, drag_state, cx| {
-                listener(view, *drag_state.downcast().unwrap(), cx);
+            TypeId::of::<W>(),
+            Box::new(move |view, dragged_view, cx| {
+                listener(view, dragged_view.downcast().unwrap(), cx);
             }),
         ));
         self
@@ -314,36 +314,22 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
         self
     }
 
-    fn on_drag<S, R, E>(
+    fn on_drag<W>(
         mut self,
-        listener: impl Fn(&mut V, &mut ViewContext<V>) -> Drag<S, R, V, E> + Send + 'static,
+        listener: impl Fn(&mut V, &mut ViewContext<V>) -> View<W> + Send + 'static,
     ) -> Self
     where
         Self: Sized,
-        S: Any + Send,
-        R: Fn(&mut V, &mut ViewContext<V>) -> E,
-        R: 'static + Send,
-        E: Component<V>,
+        W: 'static + Send + Render,
     {
         debug_assert!(
             self.stateful_interaction().drag_listener.is_none(),
             "calling on_drag more than once on the same element is not supported"
         );
         self.stateful_interaction().drag_listener =
-            Some(Box::new(move |view_state, cursor_offset, cx| {
-                let drag = listener(view_state, cx);
-                let drag_handle_view = Some(
-                    View::for_handle(cx.model().upgrade().unwrap(), move |view_state, cx| {
-                        (drag.render_drag_handle)(view_state, cx)
-                    })
-                    .into_any(),
-                );
-                AnyDrag {
-                    drag_handle_view,
-                    cursor_offset,
-                    state: Box::new(drag.state),
-                    state_type: TypeId::of::<S>(),
-                }
+            Some(Box::new(move |view_state, cursor_offset, cx| AnyDrag {
+                view: listener(view_state, cx).into_any(),
+                cursor_offset,
             }));
         self
     }
@@ -412,7 +398,7 @@ pub trait ElementInteraction<V: 'static>: 'static + Send {
         if let Some(drag) = cx.active_drag.take() {
             for (state_type, group_drag_style) in &self.as_stateless().group_drag_over_styles {
                 if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
-                    if *state_type == drag.state_type
+                    if *state_type == drag.view.entity_type()
                         && group_bounds.contains_point(&mouse_position)
                     {
                         style.refine(&group_drag_style.style);
@@ -421,7 +407,8 @@ pub trait ElementInteraction<V: 'static>: 'static + Send {
             }
 
             for (state_type, drag_over_style) in &self.as_stateless().drag_over_styles {
-                if *state_type == drag.state_type && bounds.contains_point(&mouse_position) {
+                if *state_type == drag.view.entity_type() && bounds.contains_point(&mouse_position)
+                {
                     style.refine(drag_over_style);
                 }
             }
@@ -509,7 +496,7 @@ pub trait ElementInteraction<V: 'static>: 'static + Send {
             cx.on_mouse_event(move |view, event: &MouseUpEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     if let Some(drag_state_type) =
-                        cx.active_drag.as_ref().map(|drag| drag.state_type)
+                        cx.active_drag.as_ref().map(|drag| drag.view.entity_type())
                     {
                         for (drop_state_type, listener) in &drop_listeners {
                             if *drop_state_type == drag_state_type {
@@ -517,7 +504,7 @@ pub trait ElementInteraction<V: 'static>: 'static + Send {
                                     .active_drag
                                     .take()
                                     .expect("checked for type drag state type above");
-                                listener(view, drag.state, cx);
+                                listener(view, drag.view.clone(), cx);
                                 cx.notify();
                                 cx.stop_propagation();
                             }
@@ -685,7 +672,7 @@ impl<V> From<ElementId> for StatefulInteraction<V> {
     }
 }
 
-type DropListener<V> = dyn Fn(&mut V, AnyBox, &mut ViewContext<V>) + 'static + Send;
+type DropListener<V> = dyn Fn(&mut V, AnyView, &mut ViewContext<V>) + 'static + Send;
 
 pub struct StatelessInteraction<V> {
     pub dispatch_context: DispatchContext,
@@ -866,7 +853,7 @@ pub struct Drag<S, R, V, E>
 where
     R: Fn(&mut V, &mut ViewContext<V>) -> E,
     V: 'static,
-    E: Component<V>,
+    E: Component<()>,
 {
     pub state: S,
     pub render_drag_handle: R,
@@ -877,7 +864,7 @@ impl<S, R, V, E> Drag<S, R, V, E>
 where
     R: Fn(&mut V, &mut ViewContext<V>) -> E,
     V: 'static,
-    E: Component<V>,
+    E: Component<()>,
 {
     pub fn new(state: S, render_drag_handle: R) -> Self {
         Drag {
@@ -887,6 +874,10 @@ where
         }
     }
 }
+
+// impl<S, R, V, E> Render for Drag<S, R, V, E> {
+//     // fn render(&mut self, cx: ViewContext<Self>) ->
+// }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum MouseButton {
@@ -994,6 +985,14 @@ impl Deref for MouseExitEvent {
 
 #[derive(Debug, Clone, Default)]
 pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
+
+impl Render for ExternalPaths {
+    type Element = Div<Self>;
+
+    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
+        div() // Intentionally left empty because the platform will render icons for the dragged files
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum FileDropEvent {

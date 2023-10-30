@@ -219,22 +219,21 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui2::rems;
+    use super::*;
+    use crate::{h_stack, v_stack, LabelColor, Story};
+    use gpui2::{rems, Div, Render};
     use strum::IntoEnumIterator;
 
-    use crate::{h_stack, v_stack, LabelColor, Story};
-
-    use super::*;
-
-    #[derive(Component)]
     pub struct ButtonStory;
 
-    impl ButtonStory {
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    impl Render for ButtonStory {
+        type Element = Div<Self>;
+
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let states = InteractionState::iter();
 
             Story::container(cx)
-                .child(Story::title_for::<_, Button<V>>(cx))
+                .child(Story::title_for::<_, Button<Self>>(cx))
                 .child(
                     div()
                         .flex()
