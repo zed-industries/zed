@@ -2,7 +2,7 @@ use crate::prompts::base::{PromptArguments, PromptTemplate};
 use std::fmt::Write;
 use std::{ops::Range, path::PathBuf};
 
-use gpui2::{AsyncAppContext, Handle};
+use gpui2::{AsyncAppContext, Model};
 use language2::{Anchor, Buffer};
 
 #[derive(Clone)]
@@ -14,7 +14,7 @@ pub struct PromptCodeSnippet {
 
 impl PromptCodeSnippet {
     pub fn new(
-        buffer: Handle<Buffer>,
+        buffer: Model<Buffer>,
         range: Range<Anchor>,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<Self> {
