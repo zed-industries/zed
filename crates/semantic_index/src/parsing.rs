@@ -1,4 +1,7 @@
-use ai::embedding::{Embedding, EmbeddingProvider};
+use ai::{
+    embedding::{Embedding, EmbeddingProvider},
+    models::TruncationDirection,
+};
 use anyhow::{anyhow, Result};
 use language::{Grammar, Language};
 use rusqlite::{
@@ -108,7 +111,14 @@ impl CodeContextRetriever {
             .replace("<language>", language_name.as_ref())
             .replace("<item>", &content);
         let digest = SpanDigest::from(document_span.as_str());
-        let (document_span, token_count) = self.embedding_provider.truncate(&document_span);
+        let model = self.embedding_provider.base_model();
+        let document_span = model.truncate(
+            &document_span,
+            model.capacity()?,
+            ai::models::TruncationDirection::End,
+        )?;
+        let token_count = model.count_tokens(&document_span)?;
+
         Ok(vec![Span {
             range: 0..content.len(),
             content: document_span,
@@ -131,7 +141,15 @@ impl CodeContextRetriever {
             )
             .replace("<item>", &content);
         let digest = SpanDigest::from(document_span.as_str());
-        let (document_span, token_count) = self.embedding_provider.truncate(&document_span);
+
+        let model = self.embedding_provider.base_model();
+        let document_span = model.truncate(
+            &document_span,
+            model.capacity()?,
+            ai::models::TruncationDirection::End,
+        )?;
+        let token_count = model.count_tokens(&document_span)?;
+
         Ok(vec![Span {
             range: 0..content.len(),
             content: document_span,
@@ -222,8 +240,13 @@ impl CodeContextRetriever {
                 .replace("<language>", language_name.as_ref())
                 .replace("item", &span.content);
 
-            let (document_content, token_count) =
-                self.embedding_provider.truncate(&document_content);
+            let model = self.embedding_provider.base_model();
+            let document_content = model.truncate(
+                &document_content,
+                model.capacity()?,
+                TruncationDirection::End,
+            )?;
+            let token_count = model.count_tokens(&document_content)?;
 
             span.content = document_content;
             span.token_count = token_count;

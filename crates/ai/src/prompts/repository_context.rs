@@ -1,4 +1,4 @@
-use crate::templates::base::{PromptArguments, PromptTemplate};
+use crate::prompts::base::{PromptArguments, PromptTemplate};
 use std::fmt::Write;
 use std::{ops::Range, path::PathBuf};
 

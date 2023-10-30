@@ -8,6 +8,9 @@ publish = false
 path = "src/ai.rs"
 doctest = false
 
+[features]
+test-support = []
+
 [dependencies]
 gpui = { path = "../gpui" }
 util = { path = "../util" }

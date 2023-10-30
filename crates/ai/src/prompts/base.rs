@@ -6,7 +6,7 @@ use language::BufferSnapshot;
 use util::ResultExt;
 
 use crate::models::LanguageModel;
-use crate::templates::repository_context::PromptCodeSnippet;
+use crate::prompts::repository_context::PromptCodeSnippet;
 
 pub(crate) enum PromptFileType {
     Text,
@@ -125,6 +125,9 @@ impl PromptChain {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::models::TruncationDirection;
+    use crate::test::FakeLanguageModel;
+
     use super::*;
 
     #[test]
@@ -141,7 +144,11 @@ pub(crate) mod tests {
                 let mut token_count = args.model.count_tokens(&content)?;
                 if let Some(max_token_length) = max_token_length {
                     if token_count > max_token_length {
-                        content = args.model.truncate(&content, max_token_length)?;
+                        content = args.model.truncate(
+                            &content,
+                            max_token_length,
+                            TruncationDirection::End,
+                        )?;
                         token_count = max_token_length;
                     }
                 }
@@ -162,7 +169,11 @@ pub(crate) mod tests {
                 let mut token_count = args.model.count_tokens(&content)?;
                 if let Some(max_token_length) = max_token_length {
                     if token_count > max_token_length {
-                        content = args.model.truncate(&content, max_token_length)?;
+                        content = args.model.truncate(
+                            &content,
+                            max_token_length,
+                            TruncationDirection::End,
+                        )?;
                         token_count = max_token_length;
                     }
                 }
@@ -171,38 +182,7 @@ pub(crate) mod tests {
             }
         }
 
-        #[derive(Clone)]
-        struct DummyLanguageModel {
-            capacity: usize,
-        }
-
-        impl LanguageModel for DummyLanguageModel {
-            fn name(&self) -> String {
-                "dummy".to_string()
-            }
-            fn count_tokens(&self, content: &str) -> anyhow::Result<usize> {
-                anyhow::Ok(content.chars().collect::<Vec<char>>().len())
-            }
-            fn truncate(&self, content: &str, length: usize) -> anyhow::Result<String> {
-                anyhow::Ok(
-                    content.chars().collect::<Vec<char>>()[..length]
-                        .into_iter()
-                        .collect::<String>(),
-                )
-            }
-            fn truncate_start(&self, content: &str, length: usize) -> anyhow::Result<String> {
-                anyhow::Ok(
-                    content.chars().collect::<Vec<char>>()[length..]
-                        .into_iter()
-                        .collect::<String>(),
-                )
-            }
-            fn capacity(&self) -> anyhow::Result<usize> {
-                anyhow::Ok(self.capacity)
-            }
-        }
-
-        let model: Arc<dyn LanguageModel> = Arc::new(DummyLanguageModel { capacity: 100 });
+        let model: Arc<dyn LanguageModel> = Arc::new(FakeLanguageModel { capacity: 100 });
         let args = PromptArguments {
             model: model.clone(),
             language_name: None,
@@ -238,7 +218,7 @@ pub(crate) mod tests {
 
         // Testing with Truncation Off
         // Should ignore capacity and return all prompts
-        let model: Arc<dyn LanguageModel> = Arc::new(DummyLanguageModel { capacity: 20 });
+        let model: Arc<dyn LanguageModel> = Arc::new(FakeLanguageModel { capacity: 20 });
         let args = PromptArguments {
             model: model.clone(),
             language_name: None,
@@ -275,7 +255,7 @@ pub(crate) mod tests {
         // Testing with Truncation Off
         // Should ignore capacity and return all prompts
         let capacity = 20;
-        let model: Arc<dyn LanguageModel> = Arc::new(DummyLanguageModel { capacity });
+        let model: Arc<dyn LanguageModel> = Arc::new(FakeLanguageModel { capacity });
         let args = PromptArguments {
             model: model.clone(),
             language_name: None,
@@ -311,7 +291,7 @@ pub(crate) mod tests {
         // Change Ordering of Prompts Based on Priority
         let capacity = 120;
         let reserved_tokens = 10;
-        let model: Arc<dyn LanguageModel> = Arc::new(DummyLanguageModel { capacity });
+        let model: Arc<dyn LanguageModel> = Arc::new(FakeLanguageModel { capacity });
         let args = PromptArguments {
             model: model.clone(),
             language_name: None,
