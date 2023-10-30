@@ -57,6 +57,13 @@ impl<V: 'static> View<V> {
     {
         cx.update_view(self, f)
     }
+
+    pub fn read<C>(&self, cx: &mut C) -> &V
+    where
+        C: VisualContext,
+    {
+        todo!()
+    }
 }
 
 impl<V> Clone for View<V> {

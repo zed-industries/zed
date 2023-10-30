@@ -159,9 +159,9 @@ pub trait Item: EventEmitter + Sized {
     //     ) -> Task<Result<()>> {
     //         unimplemented!("reload() must be implemented if can_save() returns true")
     //     }
-    //     fn to_item_events(_event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
-    //         SmallVec::new()
-    //     }
+    fn to_item_events(_event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
+        SmallVec::new()
+    }
     //     fn should_close_item_on_event(_: &Self::Event) -> bool {
     //         false
     //     }
