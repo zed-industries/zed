@@ -1,7 +1,7 @@
 use crate::{
-    AnyBox, AnyElement, AvailableSpace, BorrowWindow, Bounds, Component, Element, ElementId,
-    EntityId, Flatten, Handle, LayoutId, Pixels, Size, ViewContext, VisualContext, WeakHandle,
-    WindowContext,
+    AnyBox, AnyElement, AppContext, AvailableSpace, BorrowWindow, Bounds, Component, Element,
+    ElementId, EntityHandle, EntityId, Flatten, Handle, LayoutId, Pixels, Size, ViewContext,
+    VisualContext, WeakHandle, WindowContext,
 };
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
@@ -31,9 +31,7 @@ impl<V: 'static> View<V> {
             )),
         }
     }
-}
 
-impl<V: 'static> View<V> {
     pub fn into_any(self) -> AnyView {
         AnyView(Arc::new(self))
     }
@@ -44,9 +42,7 @@ impl<V: 'static> View<V> {
             render: Arc::downgrade(&self.render),
         }
     }
-}
 
-impl<V: 'static> View<V> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -58,11 +54,8 @@ impl<V: 'static> View<V> {
         cx.update_view(self, f)
     }
 
-    pub fn read<C>(&self, cx: &mut C) -> &V
-    where
-        C: VisualContext,
-    {
-        todo!()
+    pub fn read<'a>(&self, cx: &'a AppContext) -> &'a V {
+        cx.entities.read(&self.state)
     }
 }
 
@@ -121,6 +114,25 @@ impl<V: 'static> Element<()> for View<V> {
         cx: &mut ViewContext<()>,
     ) {
         self.update(cx, |state, cx| element.paint(state, cx))
+    }
+}
+
+impl<T: 'static> EntityHandle<T> for View<T> {
+    type Weak = WeakView<T>;
+
+    fn entity_id(&self) -> EntityId {
+        self.state.entity_id
+    }
+
+    fn downgrade(&self) -> Self::Weak {
+        self.downgrade()
+    }
+
+    fn upgrade_from(weak: &Self::Weak) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        weak.upgrade()
     }
 }
 

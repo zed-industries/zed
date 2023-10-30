@@ -1,14 +1,14 @@
 use crate::{
     px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect,
-    EntityId, EventEmitter, ExternalPaths, FileDropEvent, FocusEvent, FontId, GlobalElementId,
-    GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher,
-    Keystroke, LayoutId, MainThread, MainThreadOnly, ModelContext, Modifiers, MonochromeSprite,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakHandle, WeakView,
-    WindowOptions, SUBPIXEL_VARIANTS,
+    EntityHandle, EntityId, EventEmitter, ExternalPaths, FileDropEvent, FocusEvent, FontId,
+    GlobalElementId, GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch,
+    KeyMatcher, Keystroke, LayoutId, MainThread, MainThreadOnly, ModelContext, Modifiers,
+    MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
+    Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
+    WeakHandle, WeakView, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -374,6 +374,35 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             focused: None,
         });
         self.notify();
+    }
+
+    pub fn subscribe<E, H>(
+        &mut self,
+        handle: &H,
+        mut on_event: impl FnMut(H, &E::Event, &mut WindowContext<'_, '_>) + Send + 'static,
+    ) -> Subscription
+    where
+        E: EventEmitter,
+        H: EntityHandle<E>,
+    {
+        let entity_id = handle.entity_id();
+        let handle = handle.downgrade();
+        let window_handle = self.window.handle;
+        self.app.event_listeners.insert(
+            entity_id,
+            Box::new(move |event, cx| {
+                cx.update_window(window_handle, |cx| {
+                    if let Some(handle) = H::upgrade_from(&handle) {
+                        let event = event.downcast_ref().expect("invalid event type");
+                        on_event(handle, event, cx);
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false)
+            }),
+        )
     }
 
     /// Schedule the given closure to be run on the main thread. It will be invoked with
@@ -1600,21 +1629,24 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         )
     }
 
-    pub fn subscribe<E: EventEmitter>(
+    pub fn subscribe<E, H>(
         &mut self,
-        handle: &Handle<E>,
-        mut on_event: impl FnMut(&mut V, Handle<E>, &E::Event, &mut ViewContext<'_, '_, V>)
-            + Send
-            + 'static,
-    ) -> Subscription {
+        handle: &H,
+        mut on_event: impl FnMut(&mut V, H, &E::Event, &mut ViewContext<'_, '_, V>) + Send + 'static,
+    ) -> Subscription
+    where
+        E: EventEmitter,
+        H: EntityHandle<E>,
+    {
         let view = self.view();
+        let entity_id = handle.entity_id();
         let handle = handle.downgrade();
         let window_handle = self.window.handle;
         self.app.event_listeners.insert(
-            handle.entity_id,
+            entity_id,
             Box::new(move |event, cx| {
                 cx.update_window(window_handle, |cx| {
-                    if let Some(handle) = handle.upgrade() {
+                    if let Some(handle) = H::upgrade_from(&handle) {
                         let event = event.downcast_ref().expect("invalid event type");
                         view.update(cx, |this, cx| on_event(this, handle, event, cx))
                             .is_ok()

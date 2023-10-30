@@ -106,6 +106,16 @@ pub trait VisualContext: Context {
     ) -> Self::Result<R>;
 }
 
+pub trait EntityHandle<T> {
+    type Weak: 'static + Send;
+
+    fn entity_id(&self) -> EntityId;
+    fn downgrade(&self) -> Self::Weak;
+    fn upgrade_from(weak: &Self::Weak) -> Option<Self>
+    where
+        Self: Sized;
+}
+
 pub enum GlobalKey {
     Numeric(usize),
     View(EntityId),

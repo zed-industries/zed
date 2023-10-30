@@ -104,30 +104,26 @@ pub trait Item: EventEmitter + Sized {
     //     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
     //         false
     //     }
-    //     fn tab_tooltip_text(&self, _: &AppContext) -> Option<Cow<str>> {
-    //         None
-    //     }
-    //     fn tab_description<'a>(&'a self, _: usize, _: &'a AppContext) -> Option<Cow<str>> {
-    //         None
-    //     }
-    //     fn tab_content<V: 'static>(
-    //         &self,
-    //         detail: Option<usize>,
-    //         style: &theme2::Tab,
-    //         cx: &AppContext,
-    //     ) -> AnyElement<V>;
-    //     fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project2::Item)) {
-    //     } // (model id, Item)
+    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
+        None
+    }
+    fn tab_description(&self, _: usize, _: &AppContext) -> Option<SharedString> {
+        None
+    }
+    fn tab_content<V: 'static>(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<V>;
+
+    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project2::Item)) {
+    } // (model id, Item)
     fn is_singleton(&self, _cx: &AppContext) -> bool {
         false
     }
     //     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
-    //     fn clone_on_split(&self, _workspace_id: WorkspaceId, _: &mut ViewContext<Self>) -> Option<Self>
-    //     where
-    //         Self: Sized,
-    //     {
-    //         None
-    //     }
+    fn clone_on_split(&self, _workspace_id: WorkspaceId, _: &mut ViewContext<Self>) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        None
+    }
     //     fn is_dirty(&self, _: &AppContext) -> bool {
     //         false
     //     }
@@ -221,7 +217,6 @@ pub trait Item: EventEmitter + Sized {
 
 use std::{
     any::Any,
-    borrow::Cow,
     cell::RefCell,
     ops::Range,
     path::PathBuf,
@@ -235,7 +230,7 @@ use std::{
 
 use gpui2::{
     AnyElement, AnyWindowHandle, AppContext, EventEmitter, Handle, HighlightStyle, Pixels, Point,
-    Task, View, ViewContext, WindowContext,
+    SharedString, Task, View, ViewContext, VisualContext, WindowContext,
 };
 use project2::{Project, ProjectEntryId, ProjectPath};
 use smallvec::SmallVec;
@@ -252,10 +247,10 @@ pub trait ItemHandle: 'static + Send {
     fn subscribe_to_item_events(
         &self,
         cx: &mut WindowContext,
-        handler: Box<dyn Fn(ItemEvent, &mut WindowContext)>,
+        handler: Box<dyn Fn(ItemEvent, &mut WindowContext) + Send>,
     ) -> gpui2::Subscription;
-    fn tab_tooltip_text<'a>(&self, cx: &'a AppContext) -> Option<Cow<'a, str>>;
-    fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
+    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
+    fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<Pane>;
     fn dragged_tab_content(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<Workspace>;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
@@ -329,7 +324,7 @@ impl<T: Item> ItemHandle for View<T> {
     fn subscribe_to_item_events(
         &self,
         cx: &mut WindowContext,
-        handler: Box<dyn Fn(ItemEvent, &mut WindowContext)>,
+        handler: Box<dyn Fn(ItemEvent, &mut WindowContext) + Send>,
     ) -> gpui2::Subscription {
         cx.subscribe(self, move |_, event, cx| {
             for item_event in T::to_item_events(event) {
@@ -338,11 +333,11 @@ impl<T: Item> ItemHandle for View<T> {
         })
     }
 
-    fn tab_tooltip_text<'a>(&self, cx: &'a AppContext) -> Option<Cow<'a, str>> {
+    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
         self.read(cx).tab_tooltip_text(cx)
     }
 
-    fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>> {
+    fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString> {
         self.read(cx).tab_description(detail, cx)
     }
 

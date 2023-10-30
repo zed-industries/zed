@@ -1,4 +1,4 @@
-use crate::{AnyBox, AppContext, Context};
+use crate::{AnyBox, AppContext, Context, EntityHandle};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -329,7 +329,26 @@ impl<T> Eq for Handle<T> {}
 
 impl<T> PartialEq<WeakHandle<T>> for Handle<T> {
     fn eq(&self, other: &WeakHandle<T>) -> bool {
-        self.entity_id() == other.entity_id()
+        self.entity_id == other.entity_id
+    }
+}
+
+impl<T: 'static> EntityHandle<T> for Handle<T> {
+    type Weak = WeakHandle<T>;
+
+    fn entity_id(&self) -> EntityId {
+        self.entity_id
+    }
+
+    fn downgrade(&self) -> Self::Weak {
+        self.downgrade()
+    }
+
+    fn upgrade_from(weak: &Self::Weak) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        weak.upgrade()
     }
 }
 
@@ -457,6 +476,6 @@ impl<T> Eq for WeakHandle<T> {}
 
 impl<T> PartialEq<Handle<T>> for WeakHandle<T> {
     fn eq(&self, other: &Handle<T>) -> bool {
-        self.entity_id() == other.entity_id()
+        self.entity_id == other.entity_id
     }
 }
