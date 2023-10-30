@@ -48,8 +48,8 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
     serde_json, AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem,
-    CursorRegion, Element, Entity, ModelHandle, MouseRegion, Subscription, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle, WindowContext,
+    CursorRegion, Element, Entity, ModelContext, ModelHandle, MouseRegion, Subscription, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -884,6 +884,305 @@ impl CodeActionsProvider for ModelHandle<CodeActions> {
     }
 }
 
+trait GoToDefinitionProvider {
+    fn go_to_definition_of_kind(
+        &mut self,
+        editor: &mut Editor,
+        kind: GotoDefinitionKind,
+        split: bool,
+        cx: &mut ViewContext<Editor>,
+    );
+    fn navigate_to_definitions(
+        &mut self,
+        editor: &mut Editor,
+        definitions: Vec<GoToDefinitionLink>,
+        split: bool,
+        cx: &mut ViewContext<Editor>,
+    );
+}
+
+struct GoToDefinition2 {
+    workspace: WeakViewHandle<Workspace>,
+    project: ModelHandle<Project>,
+}
+
+impl gpui::Entity for GoToDefinition2 {
+    type Event = ();
+}
+
+/// Opens a multibuffer with the given project locations in it
+fn open_locations_in_multibuffer(
+    workspace: &mut Workspace,
+    mut locations: Vec<Location>,
+    replica_id: ReplicaId,
+    title: String,
+    split: bool,
+    cx: &mut ViewContext<Workspace>,
+) {
+    // If there are multiple definitions, open them in a multibuffer
+    locations.sort_by_key(|location| location.buffer.read(cx).remote_id());
+    let mut locations = locations.into_iter().peekable();
+    let mut ranges_to_highlight = Vec::new();
+
+    let excerpt_buffer = cx.add_model(|cx| {
+        let mut multibuffer = MultiBuffer::new(replica_id);
+        while let Some(location) = locations.next() {
+            let buffer = location.buffer.read(cx);
+            let mut ranges_for_buffer = Vec::new();
+            let range = location.range.to_offset(buffer);
+            ranges_for_buffer.push(range.clone());
+
+            while let Some(next_location) = locations.peek() {
+                if next_location.buffer == location.buffer {
+                    ranges_for_buffer.push(next_location.range.to_offset(buffer));
+                    locations.next();
+                } else {
+                    break;
+                }
+            }
+
+            ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
+            ranges_to_highlight.extend(multibuffer.push_excerpts_with_context_lines(
+                location.buffer.clone(),
+                ranges_for_buffer,
+                1,
+                cx,
+            ))
+        }
+
+        multibuffer.with_title(title)
+    });
+
+    let editor = cx.add_view(|cx| {
+        Editor::for_multibuffer(excerpt_buffer, Some(workspace.project().clone()), cx)
+    });
+    editor.update(cx, |editor, cx| {
+        editor.highlight_background::<Editor>(
+            ranges_to_highlight,
+            |theme| theme.editor.highlighted_line_background,
+            cx,
+        );
+    });
+    if split {
+        workspace.split_item(SplitDirection::Right, Box::new(editor), cx);
+    } else {
+        workspace.add_item(Box::new(editor), cx);
+    }
+}
+
+fn compute_target_location(
+    this: &ModelHandle<GoToDefinition2>,
+    lsp_location: lsp::Location,
+    server_id: LanguageServerId,
+    cx: &mut ViewContext<Editor>,
+) -> Task<anyhow::Result<Option<Location>>> {
+    let project = this.read(cx).project.clone();
+    cx.spawn(move |editor, mut cx| async move {
+        let location_task = editor.update(&mut cx, |editor, cx| {
+            project.update(cx, |project, cx| {
+                let language_server_name =
+                    editor.buffer.read(cx).as_singleton().and_then(|buffer| {
+                        project
+                            .language_server_for_buffer(buffer.read(cx), server_id, cx)
+                            .map(|(_, lsp_adapter)| {
+                                LanguageServerName(Arc::from(lsp_adapter.name()))
+                            })
+                    });
+                language_server_name.map(|language_server_name| {
+                    project.open_local_buffer_via_lsp(
+                        lsp_location.uri.clone(),
+                        server_id,
+                        language_server_name,
+                        cx,
+                    )
+                })
+            })
+        })?;
+        let location = match location_task {
+            Some(task) => Some({
+                let target_buffer_handle = task.await.context("open local buffer")?;
+                let range = {
+                    target_buffer_handle.update(&mut cx, |target_buffer, _| {
+                        let target_start = target_buffer
+                            .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
+                        let target_end = target_buffer
+                            .clip_point_utf16(point_from_lsp(lsp_location.range.end), Bias::Left);
+                        target_buffer.anchor_after(target_start)
+                            ..target_buffer.anchor_before(target_end)
+                    })
+                };
+                Location {
+                    buffer: target_buffer_handle,
+                    range,
+                }
+            }),
+            None => None,
+        };
+        Ok(location)
+    })
+}
+
+impl GoToDefinitionProvider for ModelHandle<GoToDefinition2> {
+    fn go_to_definition_of_kind(
+        &mut self,
+        editor: &mut Editor,
+        kind: GotoDefinitionKind,
+        split: bool,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let this = self.read(cx);
+        let Some(workspace) = this.workspace.upgrade(cx) else {
+            return;
+        };
+        let buffer = editor.buffer.read(cx);
+        let head = editor.selections.newest::<usize>(cx).head();
+        let (buffer, head) = if let Some(text_anchor) = buffer.text_anchor_for_position(head, cx) {
+            text_anchor
+        } else {
+            return;
+        };
+
+        let project = workspace.read(cx).project().clone();
+        let definitions = project.update(cx, |project, cx| match kind {
+            GotoDefinitionKind::Symbol => project.definition(&buffer, head, cx),
+            GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
+        });
+
+        cx.spawn_labeled("Fetching Definition...", |editor, mut cx| async move {
+            let definitions = definitions.await?;
+            editor.update(&mut cx, |editor, cx| {
+                editor.navigate_to_definitions(
+                    definitions
+                        .into_iter()
+                        .map(GoToDefinitionLink::Text)
+                        .collect(),
+                    split,
+                    cx,
+                );
+            })?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn navigate_to_definitions(
+        &mut self,
+        editor: &mut Editor,
+        mut definitions: Vec<GoToDefinitionLink>,
+        split: bool,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let Some(workspace) = self.read_with(cx, |this, cx| this.workspace.upgrade(cx)) else {
+            return;
+        };
+        let pane = workspace.read(cx).active_pane().clone();
+        // If there is one definition, just open it directly
+        if definitions.len() == 1 {
+            let definition = definitions.pop().unwrap();
+            let target_task = match definition {
+                GoToDefinitionLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
+                GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
+                    compute_target_location(self, lsp_location, server_id, cx)
+                }
+            };
+            cx.spawn(|editor, mut cx| async move {
+                let target = target_task.await.context("target resolution task")?;
+                if let Some(target) = target {
+                    editor.update(&mut cx, |editor, cx| {
+                        let range = target.range.to_offset(target.buffer.read(cx));
+                        let range = editor.range_for_match(&range);
+                        if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
+                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                                s.select_ranges([range]);
+                            });
+                        } else {
+                            cx.window_context().defer(move |cx| {
+                                let target_editor: ViewHandle<Editor> =
+                                    workspace.update(cx, |workspace, cx| {
+                                        if split {
+                                            workspace.split_project_item(target.buffer.clone(), cx)
+                                        } else {
+                                            workspace.open_project_item(target.buffer.clone(), cx)
+                                        }
+                                    });
+                                target_editor.update(cx, |target_editor, cx| {
+                                    // When selecting a definition in a different buffer, disable the nav history
+                                    // to avoid creating a history entry at the previous cursor location.
+                                    pane.update(cx, |pane, _| pane.disable_history());
+                                    target_editor.change_selections(
+                                        Some(Autoscroll::fit()),
+                                        cx,
+                                        |s| {
+                                            s.select_ranges([range]);
+                                        },
+                                    );
+                                    pane.update(cx, |pane, _| pane.enable_history());
+                                });
+                            });
+                        }
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+            .detach_and_log_err(cx);
+        } else if !definitions.is_empty() {
+            let replica_id = editor.replica_id(cx);
+            let this = self.clone();
+            cx.spawn(|editor, mut cx| async move {
+                let (title, location_tasks) = editor
+                    .update(&mut cx, |editor, cx| {
+                        let title = definitions
+                            .iter()
+                            .find_map(|definition| match definition {
+                                GoToDefinitionLink::Text(link) => {
+                                    link.origin.as_ref().map(|origin| {
+                                        let buffer = origin.buffer.read(cx);
+                                        format!(
+                                            "Definitions for {}",
+                                            buffer
+                                                .text_for_range(origin.range.clone())
+                                                .collect::<String>()
+                                        )
+                                    })
+                                }
+                                GoToDefinitionLink::InlayHint(_, _) => None,
+                            })
+                            .unwrap_or("Definitions".to_string());
+                        let location_tasks = definitions
+                            .into_iter()
+                            .map(|definition| match definition {
+                                GoToDefinitionLink::Text(link) => {
+                                    Task::Ready(Some(Ok(Some(link.target))))
+                                }
+                                GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
+                                    compute_target_location(&this, lsp_location, server_id, cx)
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        (title, location_tasks)
+                    })
+                    .context("location tasks preparation")?;
+
+                let locations = futures::future::join_all(location_tasks)
+                    .await
+                    .into_iter()
+                    .filter_map(|location| location.transpose())
+                    .collect::<Result<_>>()
+                    .context("location tasks")?;
+                workspace.update(&mut cx, |workspace, cx| {
+                    open_locations_in_multibuffer(
+                        workspace, locations, replica_id, title, split, cx,
+                    )
+                });
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
+    }
+}
+
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
@@ -940,6 +1239,7 @@ pub struct Editor {
     pixel_position_of_newest_cursor: Option<Vector2F>,
     completions_provider: Option<Box<dyn CodeCompletionsProvider>>,
     actions_provider: Option<Box<dyn CodeActionsProvider>>,
+    go_to_definition_provider: Option<Box<dyn GoToDefinitionProvider>>,
 }
 
 pub struct EditorSnapshot {
@@ -2200,6 +2500,7 @@ impl Editor {
         } else {
             None
         };
+        let go_to_definition_provider = None;
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -2273,6 +2574,7 @@ impl Editor {
             ],
             completions_provider,
             actions_provider,
+            go_to_definition_provider,
         };
 
         this._subscriptions.extend(project_subscriptions);
@@ -3830,11 +4132,11 @@ impl Editor {
     }
 
     fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
-        let mut provider = std::mem::take(&mut self.completions_provider);
-        if let Some(provider) = &mut provider {
-            provider.show_completions(self, cx)
-        }
-        self.completions_provider = provider;
+        let Some(mut provider) = std::mem::take(&mut self.completions_provider) else {
+            return;
+        };
+        provider.show_completions(self, cx);
+        self.completions_provider = Some(provider);
     }
 
     pub fn confirm_completion(
@@ -7505,212 +7807,26 @@ impl Editor {
         split: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(workspace) = self.workspace(cx) else {
+        let Some(mut provider) = std::mem::take(&mut self.go_to_definition_provider) else {
+            // No need to set it back as it's already None
             return;
         };
-        let buffer = self.buffer.read(cx);
-        let head = self.selections.newest::<usize>(cx).head();
-        let (buffer, head) = if let Some(text_anchor) = buffer.text_anchor_for_position(head, cx) {
-            text_anchor
-        } else {
-            return;
-        };
-
-        let project = workspace.read(cx).project().clone();
-        let definitions = project.update(cx, |project, cx| match kind {
-            GotoDefinitionKind::Symbol => project.definition(&buffer, head, cx),
-            GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
-        });
-
-        cx.spawn_labeled("Fetching Definition...", |editor, mut cx| async move {
-            let definitions = definitions.await?;
-            editor.update(&mut cx, |editor, cx| {
-                editor.navigate_to_definitions(
-                    definitions
-                        .into_iter()
-                        .map(GoToDefinitionLink::Text)
-                        .collect(),
-                    split,
-                    cx,
-                );
-            })?;
-            Ok::<(), anyhow::Error>(())
-        })
-        .detach_and_log_err(cx);
+        provider.go_to_definition_of_kind(self, kind, split, cx);
+        self.go_to_definition_provider = Some(provider);
     }
 
     pub fn navigate_to_definitions(
         &mut self,
-        mut definitions: Vec<GoToDefinitionLink>,
+        definitions: Vec<GoToDefinitionLink>,
         split: bool,
         cx: &mut ViewContext<Editor>,
     ) {
-        let Some(workspace) = self.workspace(cx) else {
+        let Some(mut provider) = std::mem::take(&mut self.go_to_definition_provider) else {
+            // No need to set it back as it's already None
             return;
         };
-        let pane = workspace.read(cx).active_pane().clone();
-        // If there is one definition, just open it directly
-        if definitions.len() == 1 {
-            let definition = definitions.pop().unwrap();
-            let target_task = match definition {
-                GoToDefinitionLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
-                GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
-                    self.compute_target_location(lsp_location, server_id, cx)
-                }
-            };
-            cx.spawn(|editor, mut cx| async move {
-                let target = target_task.await.context("target resolution task")?;
-                if let Some(target) = target {
-                    editor.update(&mut cx, |editor, cx| {
-                        let range = target.range.to_offset(target.buffer.read(cx));
-                        let range = editor.range_for_match(&range);
-                        if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
-                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                                s.select_ranges([range]);
-                            });
-                        } else {
-                            cx.window_context().defer(move |cx| {
-                                let target_editor: ViewHandle<Self> =
-                                    workspace.update(cx, |workspace, cx| {
-                                        if split {
-                                            workspace.split_project_item(target.buffer.clone(), cx)
-                                        } else {
-                                            workspace.open_project_item(target.buffer.clone(), cx)
-                                        }
-                                    });
-                                target_editor.update(cx, |target_editor, cx| {
-                                    // When selecting a definition in a different buffer, disable the nav history
-                                    // to avoid creating a history entry at the previous cursor location.
-                                    pane.update(cx, |pane, _| pane.disable_history());
-                                    target_editor.change_selections(
-                                        Some(Autoscroll::fit()),
-                                        cx,
-                                        |s| {
-                                            s.select_ranges([range]);
-                                        },
-                                    );
-                                    pane.update(cx, |pane, _| pane.enable_history());
-                                });
-                            });
-                        }
-                    })
-                } else {
-                    Ok(())
-                }
-            })
-            .detach_and_log_err(cx);
-        } else if !definitions.is_empty() {
-            let replica_id = self.replica_id(cx);
-            cx.spawn(|editor, mut cx| async move {
-                let (title, location_tasks) = editor
-                    .update(&mut cx, |editor, cx| {
-                        let title = definitions
-                            .iter()
-                            .find_map(|definition| match definition {
-                                GoToDefinitionLink::Text(link) => {
-                                    link.origin.as_ref().map(|origin| {
-                                        let buffer = origin.buffer.read(cx);
-                                        format!(
-                                            "Definitions for {}",
-                                            buffer
-                                                .text_for_range(origin.range.clone())
-                                                .collect::<String>()
-                                        )
-                                    })
-                                }
-                                GoToDefinitionLink::InlayHint(_, _) => None,
-                            })
-                            .unwrap_or("Definitions".to_string());
-                        let location_tasks = definitions
-                            .into_iter()
-                            .map(|definition| match definition {
-                                GoToDefinitionLink::Text(link) => {
-                                    Task::Ready(Some(Ok(Some(link.target))))
-                                }
-                                GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
-                                    editor.compute_target_location(lsp_location, server_id, cx)
-                                }
-                            })
-                            .collect::<Vec<_>>();
-                        (title, location_tasks)
-                    })
-                    .context("location tasks preparation")?;
-
-                let locations = futures::future::join_all(location_tasks)
-                    .await
-                    .into_iter()
-                    .filter_map(|location| location.transpose())
-                    .collect::<Result<_>>()
-                    .context("location tasks")?;
-                workspace.update(&mut cx, |workspace, cx| {
-                    Self::open_locations_in_multibuffer(
-                        workspace, locations, replica_id, title, split, cx,
-                    )
-                });
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        }
-    }
-
-    fn compute_target_location(
-        &self,
-        lsp_location: lsp::Location,
-        server_id: LanguageServerId,
-        cx: &mut ViewContext<Editor>,
-    ) -> Task<anyhow::Result<Option<Location>>> {
-        let Some(project) = self.project.clone() else {
-            return Task::Ready(Some(Ok(None)));
-        };
-
-        cx.spawn(move |editor, mut cx| async move {
-            let location_task = editor.update(&mut cx, |editor, cx| {
-                project.update(cx, |project, cx| {
-                    let language_server_name =
-                        editor.buffer.read(cx).as_singleton().and_then(|buffer| {
-                            project
-                                .language_server_for_buffer(buffer.read(cx), server_id, cx)
-                                .map(|(_, lsp_adapter)| {
-                                    LanguageServerName(Arc::from(lsp_adapter.name()))
-                                })
-                        });
-                    language_server_name.map(|language_server_name| {
-                        project.open_local_buffer_via_lsp(
-                            lsp_location.uri.clone(),
-                            server_id,
-                            language_server_name,
-                            cx,
-                        )
-                    })
-                })
-            })?;
-            let location = match location_task {
-                Some(task) => Some({
-                    let target_buffer_handle = task.await.context("open local buffer")?;
-                    let range = {
-                        target_buffer_handle.update(&mut cx, |target_buffer, _| {
-                            let target_start = target_buffer.clip_point_utf16(
-                                point_from_lsp(lsp_location.range.start),
-                                Bias::Left,
-                            );
-                            let target_end = target_buffer.clip_point_utf16(
-                                point_from_lsp(lsp_location.range.end),
-                                Bias::Left,
-                            );
-                            target_buffer.anchor_after(target_start)
-                                ..target_buffer.anchor_before(target_end)
-                        })
-                    };
-                    Location {
-                        buffer: target_buffer_handle,
-                        range,
-                    }
-                }),
-                None => None,
-            };
-            Ok(location)
-        })
+        provider.navigate_to_definitions(self, definitions, split, cx);
+        self.go_to_definition_provider = Some(provider);
     }
 
     fn find_all_references(
@@ -7751,7 +7867,7 @@ impl Editor {
                             )
                         })
                         .unwrap();
-                    Self::open_locations_in_multibuffer(
+                    open_locations_in_multibuffer(
                         workspace, locations, replica_id, title, false, cx,
                     );
                 })?;
@@ -7759,66 +7875,6 @@ impl Editor {
                 Ok(())
             },
         ))
-    }
-
-    /// Opens a multibuffer with the given project locations in it
-    fn open_locations_in_multibuffer(
-        workspace: &mut Workspace,
-        mut locations: Vec<Location>,
-        replica_id: ReplicaId,
-        title: String,
-        split: bool,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        // If there are multiple definitions, open them in a multibuffer
-        locations.sort_by_key(|location| location.buffer.read(cx).remote_id());
-        let mut locations = locations.into_iter().peekable();
-        let mut ranges_to_highlight = Vec::new();
-
-        let excerpt_buffer = cx.add_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(replica_id);
-            while let Some(location) = locations.next() {
-                let buffer = location.buffer.read(cx);
-                let mut ranges_for_buffer = Vec::new();
-                let range = location.range.to_offset(buffer);
-                ranges_for_buffer.push(range.clone());
-
-                while let Some(next_location) = locations.peek() {
-                    if next_location.buffer == location.buffer {
-                        ranges_for_buffer.push(next_location.range.to_offset(buffer));
-                        locations.next();
-                    } else {
-                        break;
-                    }
-                }
-
-                ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
-                ranges_to_highlight.extend(multibuffer.push_excerpts_with_context_lines(
-                    location.buffer.clone(),
-                    ranges_for_buffer,
-                    1,
-                    cx,
-                ))
-            }
-
-            multibuffer.with_title(title)
-        });
-
-        let editor = cx.add_view(|cx| {
-            Editor::for_multibuffer(excerpt_buffer, Some(workspace.project().clone()), cx)
-        });
-        editor.update(cx, |editor, cx| {
-            editor.highlight_background::<Self>(
-                ranges_to_highlight,
-                |theme| theme.editor.highlighted_line_background,
-                cx,
-            );
-        });
-        if split {
-            workspace.split_item(SplitDirection::Right, Box::new(editor), cx);
-        } else {
-            workspace.add_item(Box::new(editor), cx);
-        }
     }
 
     fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
