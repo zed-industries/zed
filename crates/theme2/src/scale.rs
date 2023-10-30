@@ -133,7 +133,7 @@ impl ColorScaleSet {
     }
 
     pub fn dark_alpha(&self, step: ColorScaleStep) -> Hsla {
-        self.dark[step - 1]
+        self.dark_alpha[step - 1]
     }
 
     fn current_appearance(cx: &AppContext) -> Appearance {
