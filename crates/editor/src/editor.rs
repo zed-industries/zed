@@ -2483,7 +2483,7 @@ impl Editor {
         );
 
         let completions_provider = if let Some(ref project) = project {
-            Some(Box::new(cx.add_model(|cx| CodeCompletions {
+            Some(Box::new(cx.add_model(|_| CodeCompletions {
                 completion_tasks: vec![],
                 project: project.clone(),
                 next_completion_id: 0,
@@ -2492,7 +2492,7 @@ impl Editor {
             None
         };
         let actions_provider = if let Some(ref project) = project {
-            Some(Box::new(cx.add_model(|cx| CodeActions {
+            Some(Box::new(cx.add_model(|_| CodeActions {
                 available_code_actions: None,
                 project: project.clone(),
                 code_actions_task: None,
