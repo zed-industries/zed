@@ -1237,16 +1237,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 }
 
-impl<'a, 'w> MainThread<WindowContext<'a, 'w>> {
-    fn platform_window(&self) -> &dyn PlatformWindow {
-        self.window.platform_window.borrow_on_main_thread().as_ref()
-    }
-
-    pub fn activate_window(&self) {
-        self.platform_window().activate();
-    }
-}
-
 impl Context for WindowContext<'_, '_> {
     type EntityContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
@@ -1864,6 +1854,16 @@ where
     }
 }
 
+impl<'a, 'w, V: 'static> MainThread<ViewContext<'a, 'w, V>> {
+    fn platform_window(&self) -> &dyn PlatformWindow {
+        self.window.platform_window.borrow_on_main_thread().as_ref()
+    }
+
+    pub fn activate_window(&self) {
+        self.platform_window().activate();
+    }
+}
+
 impl<'a, 'w, V> Context for ViewContext<'a, 'w, V> {
     type EntityContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
@@ -1934,38 +1934,40 @@ impl WindowId {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Deref, DerefMut)]
 pub struct WindowHandle<V> {
-    id: WindowId,
+    #[deref]
+    #[deref_mut]
+    pub(crate) any_handle: AnyWindowHandle,
     state_type: PhantomData<V>,
 }
 
-impl<S> Copy for WindowHandle<S> {}
+impl<V> Copy for WindowHandle<V> {}
 
-impl<S> Clone for WindowHandle<S> {
+impl<V> Clone for WindowHandle<V> {
     fn clone(&self) -> Self {
         WindowHandle {
-            id: self.id,
+            any_handle: self.any_handle,
             state_type: PhantomData,
         }
     }
 }
 
-impl<S> WindowHandle<S> {
+impl<V: 'static> WindowHandle<V> {
     pub fn new(id: WindowId) -> Self {
         WindowHandle {
-            id,
+            any_handle: AnyWindowHandle {
+                id,
+                state_type: TypeId::of::<V>(),
+            },
             state_type: PhantomData,
         }
     }
 }
 
-impl<S: 'static> Into<AnyWindowHandle> for WindowHandle<S> {
+impl<V: 'static> Into<AnyWindowHandle> for WindowHandle<V> {
     fn into(self) -> AnyWindowHandle {
-        AnyWindowHandle {
-            id: self.id,
-            state_type: TypeId::of::<S>(),
-        }
+        self.any_handle
     }
 }
 
@@ -1978,6 +1980,17 @@ pub struct AnyWindowHandle {
 impl AnyWindowHandle {
     pub fn window_id(&self) -> WindowId {
         self.id
+    }
+
+    pub fn downcast<T: 'static>(&self) -> Option<WindowHandle<T>> {
+        if TypeId::of::<T>() == self.state_type {
+            Some(WindowHandle {
+                any_handle: *self,
+                state_type: PhantomData,
+            })
+        } else {
+            None
+        }
     }
 }
 

@@ -1,11 +1,12 @@
 use crate::{
     AnyBox, AnyElement, AvailableSpace, BorrowWindow, Bounds, Component, Element, ElementId,
-    EntityId, Handle, LayoutId, Pixels, Size, ViewContext, VisualContext, WeakHandle,
+    EntityId, Flatten, Handle, LayoutId, Pixels, Size, ViewContext, VisualContext, WeakHandle,
     WindowContext,
 };
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use std::{
+    any::Any,
     marker::PhantomData,
     sync::{Arc, Weak},
 };
@@ -128,13 +129,17 @@ impl<V: 'static> WeakView<V> {
         Some(View { state, render })
     }
 
-    pub fn update<R>(
+    pub fn update<C, R>(
         &self,
-        cx: &mut WindowContext,
-        f: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
-    ) -> Result<R> {
+        cx: &mut C,
+        f: impl FnOnce(&mut V, &mut C::ViewContext<'_, '_, V>) -> R,
+    ) -> Result<R>
+    where
+        C: VisualContext,
+        Result<C::Result<R>>: Flatten<R>,
+    {
         let view = self.upgrade().context("error upgrading view")?;
-        Ok(view.update(cx, f))
+        Ok(view.update(cx, f)).flatten()
     }
 }
 
@@ -201,15 +206,16 @@ trait ViewObject: Send + Sync {
     fn initialize(&self, cx: &mut WindowContext) -> AnyBox;
     fn layout(&self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId;
     fn paint(&self, bounds: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext);
+    fn as_any(&self) -> &dyn Any;
 }
 
 impl<V: 'static> ViewObject for View<V> {
     fn entity_id(&self) -> EntityId {
-        self.state.entity_id()
+        self.state.entity_id
     }
 
     fn initialize(&self, cx: &mut WindowContext) -> AnyBox {
-        cx.with_element_id(self.entity_id(), |_global_id, cx| {
+        cx.with_element_id(self.state.entity_id, |_global_id, cx| {
             self.update(cx, |state, cx| {
                 let mut any_element = Box::new((self.render.lock())(state, cx));
                 any_element.initialize(state, cx);
@@ -219,7 +225,7 @@ impl<V: 'static> ViewObject for View<V> {
     }
 
     fn layout(&self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId {
-        cx.with_element_id(self.entity_id(), |_global_id, cx| {
+        cx.with_element_id(self.state.entity_id, |_global_id, cx| {
             self.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<V>>().unwrap();
                 element.layout(state, cx)
@@ -228,12 +234,16 @@ impl<V: 'static> ViewObject for View<V> {
     }
 
     fn paint(&self, _: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext) {
-        cx.with_element_id(self.entity_id(), |_global_id, cx| {
+        cx.with_element_id(self.state.entity_id, |_global_id, cx| {
             self.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<V>>().unwrap();
                 element.paint(state, cx);
             });
         });
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -241,6 +251,10 @@ impl<V: 'static> ViewObject for View<V> {
 pub struct AnyView(Arc<dyn ViewObject>);
 
 impl AnyView {
+    pub fn downcast<V: 'static>(&self) -> Option<View<V>> {
+        self.0.as_any().downcast_ref().cloned()
+    }
+
     pub(crate) fn draw(&self, available_space: Size<AvailableSpace>, cx: &mut WindowContext) {
         let mut rendered_element = self.0.initialize(cx);
         let layout_id = self.0.layout(&mut rendered_element, cx);

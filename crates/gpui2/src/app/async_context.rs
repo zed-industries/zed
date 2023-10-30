@@ -1,6 +1,6 @@
 use crate::{
-    AnyWindowHandle, AppContext, Context, Executor, Handle, MainThread, ModelContext, Result, Task,
-    WindowContext,
+    AnyWindowHandle, AppContext, Component, Context, Executor, Handle, MainThread, ModelContext,
+    Result, Task, View, ViewContext, VisualContext, WindowContext, WindowHandle,
 };
 use anyhow::Context as _;
 use derive_more::{Deref, DerefMut};
@@ -76,6 +76,19 @@ impl AsyncAppContext {
         let app = self.app.upgrade().context("app was released")?;
         let mut app_context = app.lock();
         app_context.update_window(handle, update)
+    }
+
+    pub fn update_window_root<V, R>(
+        &mut self,
+        handle: &WindowHandle<V>,
+        update: impl FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> R,
+    ) -> Result<R>
+    where
+        V: 'static,
+    {
+        let app = self.app.upgrade().context("app was released")?;
+        let mut app_context = app.lock();
+        app_context.update_window_root(handle, update)
     }
 
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static) -> Task<R>
@@ -242,6 +255,32 @@ impl Context for AsyncWindowContext {
     ) -> Result<R> {
         self.app
             .update_window(self.window, |cx| cx.update_entity(handle, update))
+    }
+}
+
+impl VisualContext for AsyncWindowContext {
+    type ViewContext<'a, 'w, V> = ViewContext<'a, 'w, V>;
+
+    fn build_view<E, V>(
+        &mut self,
+        build_entity: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
+        render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    ) -> Self::Result<View<V>>
+    where
+        E: Component<V>,
+        V: 'static + Send,
+    {
+        self.app
+            .update_window(self.window, |cx| cx.build_view(build_entity, render))
+    }
+
+    fn update_view<V: 'static, R>(
+        &mut self,
+        view: &View<V>,
+        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, '_, V>) -> R,
+    ) -> Self::Result<R> {
+        self.app
+            .update_window(self.window, |cx| cx.update_view(view, update))
     }
 }
 

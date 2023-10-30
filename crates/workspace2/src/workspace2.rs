@@ -4103,25 +4103,28 @@ pub struct Workspace {
 pub async fn activate_workspace_for_project(
     cx: &mut AsyncAppContext,
     predicate: impl Fn(&Project, &AppContext) -> bool + Send + 'static,
-) -> Option<WeakHandle<Workspace>> {
+) -> Option<WindowHandle<Workspace>> {
     cx.run_on_main(move |cx| {
         for window in cx.windows() {
-            let handle = cx
-                .update_window(window, |cx| {
-                    if let Some(workspace_handle) = cx.root_view()?.downcast::<Workspace>() {
-                        let project = workspace_handle.read(cx).project.clone();
-                        if project.update(cx, |project, cx| predicate(project, cx)) {
-                            cx.activate_window();
-                            return Some(workspace_handle.clone());
-                        }
+            let Some(workspace) = window.downcast::<Workspace>() else {
+                continue;
+            };
+
+            let predicate = cx
+                .update_window_root(&workspace, |workspace, cx| {
+                    let project = workspace.project.read(cx);
+                    if predicate(project, cx) {
+                        cx.activate_window();
+                        true
+                    } else {
+                        false
                     }
-                    None
                 })
                 .log_err()
-                .flatten();
+                .unwrap_or(false);
 
-            if let Some(handle) = handle {
-                return Some(handle.downgrade());
+            if predicate {
+                return Some(workspace);
             }
         }
 

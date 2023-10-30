@@ -17,8 +17,8 @@ use crate::{
     AppMetadata, AssetSource, ClipboardItem, Context, DispatchPhase, DisplayId, Executor,
     FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly,
     Pixels, Platform, Point, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextStyle, TextStyleRefinement, TextSystem, View, Window, WindowContext, WindowHandle,
-    WindowId,
+    TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window, WindowContext,
+    WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -300,6 +300,20 @@ impl AppContext {
                 .replace(window);
 
             Ok(result)
+        })
+    }
+
+    pub fn update_window_root<V, R>(
+        &mut self,
+        handle: &WindowHandle<V>,
+        update: impl FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> R,
+    ) -> Result<R>
+    where
+        V: 'static,
+    {
+        self.update_window(handle.any_handle, |cx| {
+            let root_view = cx.window.root_view.as_ref().unwrap().downcast().unwrap();
+            root_view.update(cx, update)
         })
     }
 
@@ -838,6 +852,20 @@ impl MainThread<AppContext> {
             update(unsafe {
                 std::mem::transmute::<&mut WindowContext, &mut MainThread<WindowContext>>(cx)
             })
+        })
+    }
+
+    pub fn update_window_root<V, R>(
+        &mut self,
+        handle: &WindowHandle<V>,
+        update: impl FnOnce(&mut V, &mut MainThread<ViewContext<'_, '_, V>>) -> R,
+    ) -> Result<R>
+    where
+        V: 'static,
+    {
+        self.update_window(handle.any_handle, |cx| {
+            let root_view = cx.window.root_view.as_ref().unwrap().downcast().unwrap();
+            root_view.update(cx, update)
         })
     }
 
