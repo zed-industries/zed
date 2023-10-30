@@ -4,7 +4,7 @@ pub(crate) use smallvec::SmallVec;
 use std::{any::Any, mem};
 
 pub trait Element<V: 'static> {
-    type ElementState: 'static;
+    type ElementState: 'static + Send;
 
     fn id(&self) -> Option<ElementId>;
 

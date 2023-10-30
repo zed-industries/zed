@@ -333,12 +333,19 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
             Some(Box::new(move |view_state, cursor_offset, cx| {
                 let drag = listener(view_state, cx);
                 let drag_handle_view = Some(
-                    View::for_handle(cx.model().upgrade().unwrap(), move |view_state, cx| {
-                        (drag.render_drag_handle)(view_state, cx)
+                    cx.build_view(|cx| DragView {
+                        model: cx.model().upgrade().unwrap(),
+                        drag,
                     })
                     .into_any(),
                 );
                 AnyDrag {
+                    render: {
+                        let view = cx.view();
+                        Box::new(move |cx| {
+                            view.update(cx, |view, cx| drag.render_drag_handle(view, cx))
+                        })
+                    },
                     drag_handle_view,
                     cursor_offset,
                     state: Box::new(drag.state),
@@ -887,6 +894,10 @@ where
         }
     }
 }
+
+// impl<S, R, V, E> Render for Drag<S, R, V, E> {
+//     // fn render(&mut self, cx: ViewContext<Self>) ->
+// }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum MouseButton {

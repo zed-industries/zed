@@ -900,6 +900,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     if let Some(drag_handle_view) = &mut active_drag.drag_handle_view {
                         drag_handle_view.draw(available_space, cx);
                     }
+                    if let Some(render) = &mut active_drag.render {
+                        (render)()
+                    }
                     cx.active_drag = Some(active_drag);
                 });
             });
@@ -1300,7 +1303,7 @@ impl VisualContext for WindowContext<'_, '_> {
         view: &View<T>,
         update: impl FnOnce(&mut T, &mut Self::ViewContext<'_, '_, T>) -> R,
     ) -> Self::Result<R> {
-        let mut lease = self.app.entities.lease(&view.state);
+        let mut lease = self.app.entities.lease(&view.model);
         let mut cx = ViewContext::mutable(&mut *self.app, &mut *self.window, view.downgrade());
         let result = update(&mut *lease, &mut cx);
         cx.app.entities.end_lease(lease);
@@ -1556,7 +1559,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     }
 
     pub fn model(&self) -> WeakModel<V> {
-        self.view.state.clone()
+        self.view.model.clone()
     }
 
     pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -1635,7 +1638,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     ) -> Subscription {
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
-            self.view.state.entity_id,
+            self.view.model.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
                 // todo!("are we okay with silently swallowing the error?")
@@ -1668,7 +1671,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn notify(&mut self) {
         self.window_cx.notify();
         self.window_cx.app.push_effect(Effect::Notify {
-            emitter: self.view.state.entity_id,
+            emitter: self.view.model.entity_id,
         });
     }
 
@@ -1848,7 +1851,7 @@ where
     V::Event: Any + Send,
 {
     pub fn emit(&mut self, event: V::Event) {
-        let emitter = self.view.state.entity_id;
+        let emitter = self.view.model.entity_id;
         self.app.push_effect(Effect::Emit {
             emitter,
             event: Box::new(event),
