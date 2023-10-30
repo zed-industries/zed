@@ -48,8 +48,8 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
     serde_json, AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem,
-    CursorRegion, Element, Entity, ModelContext, ModelHandle, MouseRegion, Subscription, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    CursorRegion, Element, Entity, ModelHandle, MouseRegion, Subscription, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -664,7 +664,7 @@ impl CodeCompletionsProvider for ModelHandle<CodeCompletions> {
                 project.completions(&buffer, buffer_position, cx)
             })
         });
-        let id = self.update(cx, |this, cx| post_inc(&mut this.next_completion_id));
+        let id = self.update(cx, |this, _| post_inc(&mut this.next_completion_id));
         let that = self.clone();
         let task = cx.spawn(move |this, mut cx| {
             async move {
@@ -747,7 +747,7 @@ impl CodeCompletionsProvider for ModelHandle<CodeCompletions> {
             }
             .log_err()
         });
-        self.update(cx, |this, cx| this.completion_tasks.push((id, task)));
+        self.update(cx, |this, _| this.completion_tasks.push((id, task)));
     }
 
     fn is_empty(&self, cx: &AppContext) -> bool {
@@ -791,7 +791,6 @@ impl CodeActionsProvider for ModelHandle<CodeActions> {
         editor: &mut Editor,
         cx: &mut ViewContext<Editor>,
     ) -> Option<()> {
-        let project = &self.read(cx).project;
         let buffer = editor.buffer.read(cx);
         let newest_selection = editor.selections.newest_anchor().clone();
         let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
@@ -846,7 +845,7 @@ impl CodeActionsProvider for ModelHandle<CodeActions> {
         cx.spawn(|this, mut cx| async move {
             while let Some(prev_task) = task {
                 prev_task.await;
-                task = provider.update(&mut cx, |provider, cx| provider.code_actions_task.take());
+                task = provider.update(&mut cx, |provider, _| provider.code_actions_task.take());
             }
 
             this.update(&mut cx, |this, cx| {
@@ -1131,7 +1130,7 @@ impl GoToDefinitionProvider for ModelHandle<GoToDefinition2> {
             let this = self.clone();
             cx.spawn(|editor, mut cx| async move {
                 let (title, location_tasks) = editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(&mut cx, |_, cx| {
                         let title = definitions
                             .iter()
                             .find_map(|definition| match definition {
@@ -2643,10 +2642,6 @@ impl Editor {
 
     pub fn buffer(&self) -> &ModelHandle<MultiBuffer> {
         &self.buffer
-    }
-
-    fn workspace(&self, cx: &AppContext) -> Option<ViewHandle<Workspace>> {
-        self.workspace.as_ref()?.0.upgrade(cx)
     }
 
     pub fn title<'a>(&self, cx: &'a AppContext) -> Cow<'a, str> {
