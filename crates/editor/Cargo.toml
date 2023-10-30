@@ -80,6 +80,7 @@ util = { path = "../util", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
+multi_buffer = { path = "../multi_buffer", features = ["test-support"] }
 
 ctor.workspace = true
 env_logger.workspace = true
