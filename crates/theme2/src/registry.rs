@@ -1,7 +1,4 @@
-use crate::{
-    themes::{one_dark, rose_pine, rose_pine_dawn, rose_pine_moon, sandcastle},
-    Theme, ThemeMetadata,
-};
+use crate::{themes, Theme, ThemeMetadata};
 use anyhow::{anyhow, Result};
 use gpui2::SharedString;
 use std::{collections::HashMap, sync::Arc};
@@ -41,11 +38,45 @@ impl Default for ThemeRegistry {
         };
 
         this.insert_themes([
-            one_dark(),
-            rose_pine(),
-            rose_pine_dawn(),
-            rose_pine_moon(),
-            sandcastle(),
+            themes::andromeda(),
+            themes::atelier_cave_dark(),
+            themes::atelier_cave_light(),
+            themes::atelier_dune_dark(),
+            themes::atelier_dune_light(),
+            themes::atelier_estuary_dark(),
+            themes::atelier_estuary_light(),
+            themes::atelier_forest_dark(),
+            themes::atelier_forest_light(),
+            themes::atelier_heath_dark(),
+            themes::atelier_heath_light(),
+            themes::atelier_lakeside_dark(),
+            themes::atelier_lakeside_light(),
+            themes::atelier_plateau_dark(),
+            themes::atelier_plateau_light(),
+            themes::atelier_savanna_dark(),
+            themes::atelier_savanna_light(),
+            themes::atelier_seaside_dark(),
+            themes::atelier_seaside_light(),
+            themes::atelier_sulphurpool_dark(),
+            themes::atelier_sulphurpool_light(),
+            themes::ayu_dark(),
+            themes::ayu_light(),
+            themes::ayu_mirage(),
+            themes::gruvbox_dark(),
+            themes::gruvbox_dark_hard(),
+            themes::gruvbox_dark_soft(),
+            themes::gruvbox_light(),
+            themes::gruvbox_light_hard(),
+            themes::gruvbox_light_soft(),
+            themes::one_dark(),
+            themes::one_light(),
+            themes::rose_pine(),
+            themes::rose_pine_dawn(),
+            themes::rose_pine_moon(),
+            themes::sandcastle(),
+            themes::solarized_dark(),
+            themes::solarized_light(),
+            themes::summercamp(),
         ]);
 
         this
