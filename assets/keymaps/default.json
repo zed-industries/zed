@@ -370,42 +370,15 @@
   {
     "context": "Pane",
     "bindings": {
-      "ctrl-1": [
-        "pane::ActivateItem",
-        0
-      ],
-      "ctrl-2": [
-        "pane::ActivateItem",
-        1
-      ],
-      "ctrl-3": [
-        "pane::ActivateItem",
-        2
-      ],
-      "ctrl-4": [
-        "pane::ActivateItem",
-        3
-      ],
-      "ctrl-5": [
-        "pane::ActivateItem",
-        4
-      ],
-      "ctrl-6": [
-        "pane::ActivateItem",
-        5
-      ],
-      "ctrl-7": [
-        "pane::ActivateItem",
-        6
-      ],
-      "ctrl-8": [
-        "pane::ActivateItem",
-        7
-      ],
-      "ctrl-9": [
-        "pane::ActivateItem",
-        8
-      ],
+      "ctrl-1": ["pane::ActivateItem", 0],
+      "ctrl-2": ["pane::ActivateItem", 1],
+      "ctrl-3": ["pane::ActivateItem", 2],
+      "ctrl-4": ["pane::ActivateItem", 3],
+      "ctrl-5": ["pane::ActivateItem", 4],
+      "ctrl-6": ["pane::ActivateItem", 5],
+      "ctrl-7": ["pane::ActivateItem", 6],
+      "ctrl-8": ["pane::ActivateItem", 7],
+      "ctrl-9": ["pane::ActivateItem", 8],
       "ctrl-0": "pane::ActivateLastItem",
       "ctrl--": "pane::GoBack",
       "ctrl-_": "pane::GoForward",
@@ -416,42 +389,15 @@
   {
     "context": "Workspace",
     "bindings": {
-      "cmd-1": [
-        "workspace::ActivatePane",
-        0
-      ],
-      "cmd-2": [
-        "workspace::ActivatePane",
-        1
-      ],
-      "cmd-3": [
-        "workspace::ActivatePane",
-        2
-      ],
-      "cmd-4": [
-        "workspace::ActivatePane",
-        3
-      ],
-      "cmd-5": [
-        "workspace::ActivatePane",
-        4
-      ],
-      "cmd-6": [
-        "workspace::ActivatePane",
-        5
-      ],
-      "cmd-7": [
-        "workspace::ActivatePane",
-        6
-      ],
-      "cmd-8": [
-        "workspace::ActivatePane",
-        7
-      ],
-      "cmd-9": [
-        "workspace::ActivatePane",
-        8
-      ],
+      "cmd-1": ["workspace::ActivatePane", 0],
+      "cmd-2": ["workspace::ActivatePane", 1],
+      "cmd-3": ["workspace::ActivatePane", 2],
+      "cmd-4": ["workspace::ActivatePane", 3],
+      "cmd-5": ["workspace::ActivatePane", 4],
+      "cmd-6": ["workspace::ActivatePane", 5],
+      "cmd-7": ["workspace::ActivatePane", 6],
+      "cmd-8": ["workspace::ActivatePane", 7],
+      "cmd-9": ["workspace::ActivatePane", 8],
       "cmd-b": "workspace::ToggleLeftDock",
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
@@ -494,38 +440,14 @@
   },
   {
     "bindings": {
-      "cmd-k cmd-left": [
-        "workspace::ActivatePaneInDirection",
-        "Left"
-      ],
-      "cmd-k cmd-right": [
-        "workspace::ActivatePaneInDirection",
-        "Right"
-      ],
-      "cmd-k cmd-up": [
-        "workspace::ActivatePaneInDirection",
-        "Up"
-      ],
-      "cmd-k cmd-down": [
-        "workspace::ActivatePaneInDirection",
-        "Down"
-      ],
-      "cmd-k shift-left": [
-        "workspace::SwapPaneInDirection",
-        "Left"
-      ],
-      "cmd-k shift-right": [
-        "workspace::SwapPaneInDirection",
-        "Right"
-      ],
-      "cmd-k shift-up": [
-        "workspace::SwapPaneInDirection",
-        "Up"
-      ],
-      "cmd-k shift-down": [
-        "workspace::SwapPaneInDirection",
-        "Down"
-      ]
+      "cmd-k cmd-left": ["workspace::ActivatePaneInDirection", "Left"],
+      "cmd-k cmd-right": ["workspace::ActivatePaneInDirection", "Right"],
+      "cmd-k cmd-up": ["workspace::ActivatePaneInDirection", "Up"],
+      "cmd-k cmd-down": ["workspace::ActivatePaneInDirection", "Down"],
+      "cmd-k shift-left": ["workspace::SwapPaneInDirection", "Left"],
+      "cmd-k shift-right": ["workspace::SwapPaneInDirection", "Right"],
+      "cmd-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
+      "cmd-k shift-down": ["workspace::SwapPaneInDirection", "Down"]
     }
   },
   // Bindings from Atom
@@ -628,14 +550,6 @@
     }
   },
   {
-    "context": "(CollabPanel && not_editing) > Editor",
-    "bindings": {
-      "cmd-c": "collab_panel::StartLinkChannel",
-      "cmd-x": "collab_panel::StartMoveChannel",
-      "cmd-v": "collab_panel::MoveOrLinkToSelected"
-    }
-  },
-  {
     "context": "ChannelModal",
     "bindings": {
       "tab": "channel_modal::ToggleMode"
@@ -655,57 +569,21 @@
       "cmd-v": "terminal::Paste",
       "cmd-k": "terminal::Clear",
       // Some nice conveniences
-      "cmd-backspace": [
-        "terminal::SendText",
-        "\u0015"
-      ],
-      "cmd-right": [
-        "terminal::SendText",
-        "\u0005"
-      ],
-      "cmd-left": [
-        "terminal::SendText",
-        "\u0001"
-      ],
+      "cmd-backspace": ["terminal::SendText", "\u0015"],
+      "cmd-right": ["terminal::SendText", "\u0005"],
+      "cmd-left": ["terminal::SendText", "\u0001"],
       // Terminal.app compatibility
-      "alt-left": [
-        "terminal::SendText",
-        "\u001bb"
-      ],
-      "alt-right": [
-        "terminal::SendText",
-        "\u001bf"
-      ],
+      "alt-left": ["terminal::SendText", "\u001bb"],
+      "alt-right": ["terminal::SendText", "\u001bf"],
       // There are conflicting bindings for these keys in the global context.
       // these bindings override them, remove at your own risk:
-      "up": [
-        "terminal::SendKeystroke",
-        "up"
-      ],
-      "pageup": [
-        "terminal::SendKeystroke",
-        "pageup"
-      ],
-      "down": [
-        "terminal::SendKeystroke",
-        "down"
-      ],
-      "pagedown": [
-        "terminal::SendKeystroke",
-        "pagedown"
-      ],
-      "escape": [
-        "terminal::SendKeystroke",
-        "escape"
-      ],
-      "enter": [
-        "terminal::SendKeystroke",
-        "enter"
-      ],
-      "ctrl-c": [
-        "terminal::SendKeystroke",
-        "ctrl-c"
-      ]
+      "up": ["terminal::SendKeystroke", "up"],
+      "pageup": ["terminal::SendKeystroke", "pageup"],
+      "down": ["terminal::SendKeystroke", "down"],
+      "pagedown": ["terminal::SendKeystroke", "pagedown"],
+      "escape": ["terminal::SendKeystroke", "escape"],
+      "enter": ["terminal::SendKeystroke", "enter"],
+      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"]
     }
   }
 ]

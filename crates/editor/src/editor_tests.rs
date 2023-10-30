@@ -19,8 +19,8 @@ use gpui::{
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
-    BracketPairConfig, BundledFormatter, FakeLspAdapter, LanguageConfig, LanguageConfigOverride,
-    LanguageRegistry, Override, Point,
+    BracketPairConfig, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageRegistry,
+    Override, Point,
 };
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -851,7 +851,7 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
 
     let view = cx
         .add_window(|cx| {
-            let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx);
+            let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcde\nαβγδε", cx);
             build_editor(buffer.clone(), cx)
         })
         .root(cx);
@@ -869,7 +869,7 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
             true,
             cx,
         );
-        assert_eq!(view.display_text(cx), "ⓐⓑ⋯ⓔ\nab⋯e\nαβ⋯ε\n");
+        assert_eq!(view.display_text(cx), "ⓐⓑ⋯ⓔ\nab⋯e\nαβ⋯ε");
 
         view.move_right(&MoveRight, cx);
         assert_eq!(
@@ -888,6 +888,11 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
         );
 
         view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(1, "ab⋯e".len())]
+        );
+        view.move_left(&MoveLeft, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[empty_range(1, "ab⋯".len())]
@@ -929,17 +934,18 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
             view.selections.display_ranges(cx),
             &[empty_range(1, "ab⋯e".len())]
         );
+        view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(2, "αβ⋯ε".len())]
+        );
         view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ⋯ⓔ".len())]
+            &[empty_range(1, "ab⋯e".len())]
         );
-        view.move_left(&MoveLeft, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ⋯".len())]
-        );
-        view.move_left(&MoveLeft, cx);
+
+        view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[empty_range(0, "ⓐⓑ".len())]
@@ -948,6 +954,11 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             &[empty_range(0, "ⓐ".len())]
+        );
+        view.move_left(&MoveLeft, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(0, "".len())]
         );
     });
 }
@@ -5084,6 +5095,9 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         LanguageConfig {
             name: "Rust".into(),
             path_suffixes: vec!["rs".to_string()],
+            // Enable Prettier formatting for the same buffer, and ensure
+            // LSP is called instead of Prettier.
+            prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5094,12 +5108,6 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
                 document_formatting_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
             },
-            // Enable Prettier formatting for the same buffer, and ensure
-            // LSP is called instead of Prettier.
-            enabled_formatters: vec![BundledFormatter::Prettier {
-                parser_name: Some("test_parser"),
-                plugin_names: Vec::new(),
-            }],
             ..Default::default()
         }))
         .await;
@@ -5109,7 +5117,6 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
     project.update(cx, |project, _| {
-        project.enable_test_prettier(&[]);
         project.languages().add(Arc::new(language));
     });
     let buffer = project
@@ -5430,9 +5437,9 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
         additional edit
     "});
     cx.simulate_keystroke(" ");
-    assert!(cx.editor(|e, _| e.context_menu.is_none()));
+    assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
     cx.simulate_keystroke("s");
-    assert!(cx.editor(|e, _| e.context_menu.is_none()));
+    assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
 
     cx.assert_editor_state(indoc! {"
         one.second_completion
@@ -5494,12 +5501,12 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     });
     cx.set_state("editorˇ");
     cx.simulate_keystroke(".");
-    assert!(cx.editor(|e, _| e.context_menu.is_none()));
+    assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
     cx.simulate_keystroke("c");
     cx.simulate_keystroke("l");
     cx.simulate_keystroke("o");
     cx.assert_editor_state("editor.cloˇ");
-    assert!(cx.editor(|e, _| e.context_menu.is_none()));
+    assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
     cx.update_editor(|editor, cx| {
         editor.show_completions(&ShowCompletions, cx);
     });
@@ -6711,6 +6718,102 @@ fn test_combine_syntax_and_fuzzy_match_highlights() {
 }
 
 #[gpui::test]
+async fn go_to_prev_overlapping_diagnostic(
+    deterministic: Arc<Deterministic>,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let project = cx.update_editor(|editor, _| editor.project.clone().unwrap());
+
+    cx.set_state(indoc! {"
+        ˇfn func(abc def: i32) -> u32 {
+        }
+    "});
+
+    cx.update(|cx| {
+        project.update(cx, |project, cx| {
+            project
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path("/root/file").unwrap(),
+                        version: None,
+                        diagnostics: vec![
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 11),
+                                    lsp::Position::new(0, 12),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 12),
+                                    lsp::Position::new(0, 15),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 25),
+                                    lsp::Position::new(0, 28),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                        ],
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+
+    deterministic.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    cx.update_editor(|editor, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    cx.update_editor(|editor, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    cx.update_editor(|editor, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+}
+
+#[gpui::test]
 async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -6773,6 +6876,46 @@ async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppCon
     cx.update_editor(|editor, cx| {
         //Wrap around the top of the buffer
         for _ in 0..2 {
+            editor.go_to_prev_hunk(&GoToPrevHunk, cx);
+        }
+    });
+
+    cx.assert_editor_state(
+        &r#"
+        use some::modified;
+
+
+        fn main() {
+        ˇ    println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        editor.go_to_prev_hunk(&GoToPrevHunk, cx);
+    });
+
+    cx.assert_editor_state(
+        &r#"
+        use some::modified;
+
+        ˇ
+        fn main() {
+            println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        for _ in 0..3 {
             editor.go_to_prev_hunk(&GoToPrevHunk, cx);
         }
     });
@@ -7788,7 +7931,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.simulate_keystroke("-");
     cx.foreground().run_until_parked();
     cx.update_editor(|editor, _| {
-        if let Some(ContextMenu::Completions(menu)) = &editor.context_menu {
+        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["bg-red", "bg-blue", "bg-yellow"]
@@ -7801,7 +7944,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.simulate_keystroke("l");
     cx.foreground().run_until_parked();
     cx.update_editor(|editor, _| {
-        if let Some(ContextMenu::Completions(menu)) = &editor.context_menu {
+        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["bg-blue", "bg-yellow"]
@@ -7817,7 +7960,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.simulate_keystroke("l");
     cx.foreground().run_until_parked();
     cx.update_editor(|editor, _| {
-        if let Some(ContextMenu::Completions(menu)) = &editor.context_menu {
+        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["bg-yellow"]
@@ -7838,6 +7981,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         LanguageConfig {
             name: "Rust".into(),
             path_suffixes: vec!["rs".to_string()],
+            prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -7846,10 +7990,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     let test_plugin = "test_plugin";
     let _ = language
         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-            enabled_formatters: vec![BundledFormatter::Prettier {
-                parser_name: Some("test_parser"),
-                plugin_names: vec![test_plugin],
-            }],
+            prettier_plugins: vec![test_plugin],
             ..Default::default()
         }))
         .await;
@@ -7858,10 +7999,9 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     fs.insert_file("/file.rs", Default::default()).await;
 
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-    let prettier_format_suffix = project.update(cx, |project, _| {
-        let suffix = project.enable_test_prettier(&[test_plugin]);
+    let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
+    project.update(cx, |project, _| {
         project.languages().add(Arc::new(language));
-        suffix
     });
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))

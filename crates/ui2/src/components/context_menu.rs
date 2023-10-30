@@ -42,7 +42,8 @@ impl ContextMenu {
             items: items.into_iter().collect(),
         }
     }
-    fn render<S: 'static>(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         v_stack()
@@ -53,7 +54,7 @@ impl ContextMenu {
             .child(
                 List::new(
                     self.items
-                        .drain(..)
+                        .into_iter()
                         .map(ContextMenuItem::to_list_item)
                         .collect(),
                 )
@@ -75,11 +76,7 @@ mod stories {
     pub struct ContextMenuStory;
 
     impl ContextMenuStory {
-        pub fn new() -> Self {
-            Self
-        }
-
-        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
                 .child(Story::title_for::<_, ContextMenu>(cx))
                 .child(Story::label(cx, "Default"))

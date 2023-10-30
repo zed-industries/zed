@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use gpui2::{view, Context, View};
+use gpui2::{AppContext, Context, ModelContext, View};
 
 use crate::prelude::*;
 use crate::settings::user_settings;
@@ -28,7 +28,7 @@ pub struct TitleBar {
 }
 
 impl TitleBar {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(cx: &mut ModelContext<Self>) -> Self {
         let is_active = Arc::new(AtomicBool::new(true));
         let active = is_active.clone();
 
@@ -80,11 +80,12 @@ impl TitleBar {
         cx.notify();
     }
 
-    pub fn view(cx: &mut WindowContext, livestream: Option<Livestream>) -> View<Self> {
-        view(
-            cx.entity(|cx| Self::new(cx).set_livestream(livestream)),
-            Self::render,
-        )
+    pub fn view(cx: &mut AppContext, livestream: Option<Livestream>) -> View<Self> {
+        {
+            let state = cx.entity(|cx| Self::new(cx).set_livestream(livestream));
+            let render = Self::render;
+            View::for_handle(state, render)
+        }
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
@@ -195,13 +196,14 @@ mod stories {
     }
 
     impl TitleBarStory {
-        pub fn view(cx: &mut WindowContext) -> View<Self> {
-            view(
-                cx.entity(|cx| Self {
+        pub fn view(cx: &mut AppContext) -> View<Self> {
+            {
+                let state = cx.entity(|cx| Self {
                     title_bar: TitleBar::view(cx, None),
-                }),
-                Self::render,
-            )
+                });
+                let render = Self::render;
+                View::for_handle(state, render)
+            }
         }
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {

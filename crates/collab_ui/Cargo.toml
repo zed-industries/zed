@@ -37,10 +37,12 @@ fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 menu = { path = "../menu" }
+notifications = { path = "../notifications" }
 rich_text = { path = "../rich_text" }
 picker = { path = "../picker" }
 project = { path = "../project" }
-recent_projects = {path = "../recent_projects"}
+recent_projects = { path = "../recent_projects" }
+rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 feature_flags = {path = "../feature_flags"}
 theme = { path = "../theme" }
@@ -52,12 +54,14 @@ zed-actions = {path = "../zed-actions"}
 
 anyhow.workspace = true
 futures.workspace = true
+lazy_static.workspace = true
 log.workspace = true
 schemars.workspace = true
 postage.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 time.workspace = true
+smallvec.workspace = true
 
 [dev-dependencies]
 call = { path = "../call", features = ["test-support"] }
@@ -65,7 +69,12 @@ client = { path = "../client", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
+notifications = { path = "../notifications", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
+rpc = { path = "../rpc", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
+
+pretty_assertions.workspace = true
+tree-sitter-markdown.workspace = true

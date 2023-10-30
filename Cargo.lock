@@ -91,6 +91,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "isahc",
+ "language",
  "lazy_static",
  "log",
  "matrixmultiply",
@@ -103,7 +104,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "tiktoken-rs 0.5.4",
+ "tiktoken-rs",
  "util",
 ]
 
@@ -309,6 +310,7 @@ dependencies = [
  "language",
  "log",
  "menu",
+ "multi_buffer",
  "ordered-float 2.10.0",
  "parking_lot 0.11.2",
  "project",
@@ -316,12 +318,13 @@ dependencies = [
  "regex",
  "schemars",
  "search",
+ "semantic_index",
  "serde",
  "serde_json",
  "settings",
  "smol",
  "theme",
- "tiktoken-rs 0.4.5",
+ "tiktoken-rs",
  "util",
  "uuid 1.4.1",
  "workspace",
@@ -1573,7 +1576,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.24.0"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1609,6 +1612,7 @@ dependencies = [
  "lsp",
  "nanoid",
  "node_runtime",
+ "notifications",
  "parking_lot 0.11.2",
  "pretty_assertions",
  "project",
@@ -1664,20 +1668,26 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "lazy_static",
  "log",
  "menu",
+ "notifications",
  "picker",
  "postage",
+ "pretty_assertions",
  "project",
  "recent_projects",
  "rich_text",
+ "rpc",
  "schemars",
  "serde",
  "serde_derive",
  "settings",
+ "smallvec",
  "theme",
  "theme_selector",
  "time",
+ "tree-sitter-markdown",
  "util",
  "vcs_menu",
  "workspace",
@@ -1731,6 +1741,7 @@ dependencies = [
  "theme",
  "util",
  "workspace",
+ "zed-actions",
 ]
 
 [[package]]
@@ -1810,6 +1821,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "parking_lot 0.11.2",
  "rpc",
  "serde",
  "serde_derive",
@@ -2556,11 +2568,11 @@ dependencies = [
  "lazy_static",
  "log",
  "lsp",
+ "multi_buffer",
  "ordered-float 2.10.0",
  "parking_lot 0.11.2",
  "postage",
  "project",
- "pulldown-cmark",
  "rand 0.8.5",
  "rich_text",
  "rpc",
@@ -4160,6 +4172,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "journal2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dirs 4.0.0",
+ "editor",
+ "gpui2",
+ "log",
+ "schemars",
+ "serde",
+ "settings2",
+ "shellexpand",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "jpeg-decoder"
 version = "0.1.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4244,6 +4274,7 @@ dependencies = [
  "lsp",
  "parking_lot 0.11.2",
  "postage",
+ "pulldown-cmark",
  "rand 0.8.5",
  "regex",
  "rpc",
@@ -4304,7 +4335,6 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "settings",
  "settings2",
  "similar",
  "smallvec",
@@ -4923,6 +4953,55 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7843ec2de400bcbc6a6328c958dc38e5359da6e93e72e37bc5246bf1ae776389"
 
 [[package]]
+name = "multi_buffer"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "anyhow",
+ "client",
+ "clock",
+ "collections",
+ "context_menu",
+ "convert_case 0.6.0",
+ "copilot",
+ "ctor",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "git",
+ "gpui",
+ "indoc",
+ "itertools 0.10.5",
+ "language",
+ "lazy_static",
+ "log",
+ "lsp",
+ "ordered-float 2.10.0",
+ "parking_lot 0.11.2",
+ "postage",
+ "project",
+ "pulldown-cmark",
+ "rand 0.8.5",
+ "rich_text",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "settings",
+ "smallvec",
+ "smol",
+ "snippet",
+ "sum_tree",
+ "text",
+ "theme",
+ "tree-sitter",
+ "tree-sitter-html",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "unindent",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "multimap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5069,6 +5148,26 @@ checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
 dependencies = [
  "memchr",
  "minimal-lexical",
+]
+
+[[package]]
+name = "notifications"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "channel",
+ "client",
+ "clock",
+ "collections",
+ "db",
+ "feature_flags",
+ "gpui",
+ "rpc",
+ "settings",
+ "sum_tree",
+ "text",
+ "time",
+ "util",
 ]
 
 [[package]]
@@ -5887,6 +5986,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "parking_lot 0.11.2",
  "serde",
  "serde_derive",
  "serde_json",
@@ -6832,8 +6932,10 @@ dependencies = [
  "rsa 0.4.0",
  "serde",
  "serde_derive",
+ "serde_json",
  "smol",
  "smol-timeout",
+ "strum",
  "tempdir",
  "tracing",
  "util",
@@ -7408,7 +7510,7 @@ dependencies = [
  "smol",
  "tempdir",
  "theme",
- "tiktoken-rs 0.5.4",
+ "tiktoken-rs",
  "tree-sitter",
  "tree-sitter-cpp",
  "tree-sitter-elixir",
@@ -7422,7 +7524,6 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
- "zed",
 ]
 
 [[package]]
@@ -8716,21 +8817,6 @@ dependencies = [
 
 [[package]]
 name = "tiktoken-rs"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52aacc1cff93ba9d5f198c62c49c77fa0355025c729eed3326beaf7f33bc8614"
-dependencies = [
- "anyhow",
- "base64 0.21.4",
- "bstr",
- "fancy-regex",
- "lazy_static",
- "parking_lot 0.12.1",
- "rustc-hash",
-]
-
-[[package]]
-name = "tiktoken-rs"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9ae5a3c24361e5f038af22517ba7f8e3af4099e30e78a3d56f86b48238fce9d"
@@ -9149,8 +9235,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-bash"
-version = "0.19.0"
-source = "git+https://github.com/tree-sitter/tree-sitter-bash?rev=1b0321ee85701d5036c334a6f04761cdc672e64c#1b0321ee85701d5036c334a6f04761cdc672e64c"
+version = "0.20.4"
+source = "git+https://github.com/tree-sitter/tree-sitter-bash?rev=7331995b19b8f8aba2d5e26deb51d2195c18bc94#7331995b19b8f8aba2d5e26deb51d2195c18bc94"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -9390,6 +9476,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-vue"
+version = "0.0.1"
+source = "git+https://github.com/zed-industries/tree-sitter-vue?rev=95b2890#95b28908d90e928c308866f7631e73ef6e1d4b5f"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-yaml"
 version = "0.0.1"
 source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=f545a41f57502e1b5ddf2a6668896c1b0620f930#f545a41f57502e1b5ddf2a6668896c1b0620f930"
@@ -9470,10 +9565,8 @@ dependencies = [
  "itertools 0.11.0",
  "rand 0.8.5",
  "serde",
- "settings",
  "smallvec",
  "strum",
- "theme",
  "theme2",
 ]
 
@@ -9715,6 +9808,7 @@ name = "vcs_menu"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "fs",
  "fuzzy",
  "gpui",
  "picker",
@@ -10696,9 +10790,10 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.109.0"
+version = "0.111.0"
 dependencies = [
  "activity_indicator",
+ "ai",
  "anyhow",
  "assistant",
  "async-compression",
@@ -10750,6 +10845,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "notifications",
  "num_cpus",
  "outline",
  "parking_lot 0.11.2",
@@ -10811,6 +10907,7 @@ dependencies = [
  "tree-sitter-svelte",
  "tree-sitter-toml",
  "tree-sitter-typescript",
+ "tree-sitter-vue",
  "tree-sitter-yaml",
  "unindent",
  "url",
@@ -10828,6 +10925,7 @@ name = "zed-actions"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "serde",
 ]
 
 [[package]]
@@ -10860,6 +10958,7 @@ dependencies = [
  "indexmap 1.9.3",
  "install_cli",
  "isahc",
+ "journal2",
  "language2",
  "language_tools",
  "lazy_static",

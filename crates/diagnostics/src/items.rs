@@ -38,6 +38,10 @@ impl DiagnosticIndicator {
                 this.in_progress_checks.remove(language_server_id);
                 cx.notify();
             }
+            project::Event::DiagnosticsUpdated { .. } => {
+                this.summary = project.read(cx).diagnostic_summary(cx);
+                cx.notify();
+            }
             _ => {}
         })
         .detach();

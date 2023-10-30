@@ -1,8 +1,13 @@
-use crate::codegen::CodegenKind;
+use ai::models::{LanguageModel, OpenAILanguageModel};
+use ai::templates::base::{PromptArguments, PromptChain, PromptPriority, PromptTemplate};
+use ai::templates::file_context::FileContext;
+use ai::templates::generate::GenerateInlineContent;
+use ai::templates::preamble::EngineerPreamble;
+use ai::templates::repository_context::{PromptCodeSnippet, RepositoryContext};
 use language::{BufferSnapshot, OffsetRangeExt, ToOffset};
 use std::cmp::{self, Reverse};
-use std::fmt::Write;
 use std::ops::Range;
+use std::sync::Arc;
 
 #[allow(dead_code)]
 fn summarize(buffer: &BufferSnapshot, selected_range: Range<impl ToOffset>) -> String {
@@ -118,86 +123,50 @@ fn summarize(buffer: &BufferSnapshot, selected_range: Range<impl ToOffset>) -> S
 pub fn generate_content_prompt(
     user_prompt: String,
     language_name: Option<&str>,
-    buffer: &BufferSnapshot,
-    range: Range<impl ToOffset>,
-    kind: CodegenKind,
-) -> String {
-    let range = range.to_offset(buffer);
-    let mut prompt = String::new();
-
-    // General Preamble
-    if let Some(language_name) = language_name {
-        writeln!(prompt, "You're an expert {language_name} engineer.\n").unwrap();
+    buffer: BufferSnapshot,
+    range: Range<usize>,
+    search_results: Vec<PromptCodeSnippet>,
+    model: &str,
+    project_name: Option<String>,
+) -> anyhow::Result<String> {
+    // Using new Prompt Templates
+    let openai_model: Arc<dyn LanguageModel> = Arc::new(OpenAILanguageModel::load(model));
+    let lang_name = if let Some(language_name) = language_name {
+        Some(language_name.to_string())
     } else {
-        writeln!(prompt, "You're an expert engineer.\n").unwrap();
-    }
+        None
+    };
 
-    let mut content = String::new();
-    content.extend(buffer.text_for_range(0..range.start));
-    if range.start == range.end {
-        content.push_str("<|START|>");
-    } else {
-        content.push_str("<|START|");
-    }
-    content.extend(buffer.text_for_range(range.clone()));
-    if range.start != range.end {
-        content.push_str("|END|>");
-    }
-    content.extend(buffer.text_for_range(range.end..buffer.len()));
+    let args = PromptArguments {
+        model: openai_model,
+        language_name: lang_name.clone(),
+        project_name,
+        snippets: search_results.clone(),
+        reserved_tokens: 1000,
+        buffer: Some(buffer),
+        selected_range: Some(range),
+        user_prompt: Some(user_prompt.clone()),
+    };
 
-    writeln!(
-        prompt,
-        "The file you are currently working on has the following content:"
-    )
-    .unwrap();
-    if let Some(language_name) = language_name {
-        let language_name = language_name.to_lowercase();
-        writeln!(prompt, "```{language_name}\n{content}\n```").unwrap();
-    } else {
-        writeln!(prompt, "```\n{content}\n```").unwrap();
-    }
+    let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
+        (PromptPriority::Mandatory, Box::new(EngineerPreamble {})),
+        (
+            PromptPriority::Ordered { order: 1 },
+            Box::new(RepositoryContext {}),
+        ),
+        (
+            PromptPriority::Ordered { order: 0 },
+            Box::new(FileContext {}),
+        ),
+        (
+            PromptPriority::Mandatory,
+            Box::new(GenerateInlineContent {}),
+        ),
+    ];
+    let chain = PromptChain::new(args, templates);
+    let (prompt, _) = chain.generate(true)?;
 
-    match kind {
-        CodegenKind::Generate { position: _ } => {
-            writeln!(prompt, "In particular, the user's cursor is current on the '<|START|>' span in the above outline, with no text selected.").unwrap();
-            writeln!(
-                prompt,
-                "Assume the cursor is located where the `<|START|` marker is."
-            )
-            .unwrap();
-            writeln!(
-                prompt,
-                "Text can't be replaced, so assume your answer will be inserted at the cursor."
-            )
-            .unwrap();
-            writeln!(
-                prompt,
-                "Generate text based on the users prompt: {user_prompt}"
-            )
-            .unwrap();
-        }
-        CodegenKind::Transform { range: _ } => {
-            writeln!(prompt, "In particular, the user has selected a section of the text between the '<|START|' and '|END|>' spans.").unwrap();
-            writeln!(
-                prompt,
-                "Modify the users code selected text based upon the users prompt: {user_prompt}"
-            )
-            .unwrap();
-            writeln!(
-                prompt,
-                "You MUST reply with only the adjusted code (within the '<|START|' and '|END|>' spans), not the entire file."
-            )
-            .unwrap();
-        }
-    }
-
-    if let Some(language_name) = language_name {
-        writeln!(prompt, "Your answer MUST always be valid {language_name}").unwrap();
-    }
-    writeln!(prompt, "Always wrap your response in a Markdown codeblock").unwrap();
-    writeln!(prompt, "Never make remarks about the output.").unwrap();
-
-    prompt
+    anyhow::Ok(prompt)
 }
 
 #[cfg(test)]

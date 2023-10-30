@@ -150,11 +150,14 @@ impl TerminalView {
                 cx.notify();
                 cx.emit(Event::Wakeup);
             }
+
             Event::Bell => {
                 this.has_bell = true;
                 cx.emit(Event::Wakeup);
             }
+
             Event::BlinkChanged => this.blinking_on = !this.blinking_on,
+
             Event::TitleChanged => {
                 if let Some(foreground_info) = &this.terminal().read(cx).foreground_process_info {
                     let cwd = foreground_info.cwd.clone();
@@ -171,6 +174,7 @@ impl TerminalView {
                         .detach();
                 }
             }
+
             Event::NewNavigationTarget(maybe_navigation_target) => {
                 this.can_navigate_to_selected_word = match maybe_navigation_target {
                     Some(MaybeNavigationTarget::Url(_)) => true,
@@ -180,8 +184,10 @@ impl TerminalView {
                     None => false,
                 }
             }
+
             Event::Open(maybe_navigation_target) => match maybe_navigation_target {
                 MaybeNavigationTarget::Url(url) => cx.platform().open_url(url),
+
                 MaybeNavigationTarget::PathLike(maybe_path) => {
                     if !this.can_navigate_to_selected_word {
                         return;
@@ -246,6 +252,7 @@ impl TerminalView {
                     }
                 }
             },
+
             _ => cx.emit(event.clone()),
         })
         .detach();

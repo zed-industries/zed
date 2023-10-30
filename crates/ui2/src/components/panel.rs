@@ -39,17 +39,17 @@ pub enum PanelSide {
 use std::collections::HashSet;
 
 #[derive(Component)]
-pub struct Panel<S: 'static> {
+pub struct Panel<V: 'static> {
     id: ElementId,
     current_side: PanelSide,
     /// Defaults to PanelAllowedSides::LeftAndRight
     allowed_sides: PanelAllowedSides,
     initial_width: AbsoluteLength,
     width: Option<AbsoluteLength>,
-    children: SmallVec<[AnyElement<S>; 2]>,
+    children: SmallVec<[AnyElement<V>; 2]>,
 }
 
-impl<S: 'static> Panel<S> {
+impl<V: 'static> Panel<V> {
     pub fn new(id: impl Into<ElementId>, cx: &mut WindowContext) -> Self {
         let settings = user_settings(cx);
 
@@ -92,7 +92,7 @@ impl<S: 'static> Panel<S> {
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         let current_size = self.width.unwrap_or(self.initial_width);
@@ -113,12 +113,12 @@ impl<S: 'static> Panel<S> {
             })
             .bg(theme.surface)
             .border_color(theme.border)
-            .children(self.children.drain(..))
+            .children(self.children)
     }
 }
 
-impl<S: 'static> ParentElement<S> for Panel<S> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
+impl<V: 'static> ParentElement<V> for Panel<V> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
 }
@@ -136,13 +136,9 @@ mod stories {
     pub struct PanelStory;
 
     impl PanelStory {
-        pub fn new() -> Self {
-            Self
-        }
-
-        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
-                .child(Story::title_for::<_, Panel<S>>(cx))
+                .child(Story::title_for::<_, Panel<V>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
                     Panel::new("panel", cx).child(

@@ -1,7 +1,7 @@
 use crate::{
     black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
     Corners, CornersRefinement, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures,
-    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems, Result,
+    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems, Result, Rgba,
     SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext, WindowContext,
 };
 use refineable::{Cascade, Refineable};
@@ -413,6 +413,15 @@ impl From<Hsla> for HighlightStyle {
     fn from(color: Hsla) -> Self {
         Self {
             color: Some(color),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<Rgba> for HighlightStyle {
+    fn from(color: Rgba) -> Self {
+        Self {
+            color: Some(color.into()),
             ..Default::default()
         }
     }

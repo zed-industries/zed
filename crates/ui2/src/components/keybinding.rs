@@ -29,7 +29,7 @@ impl Keybinding {
         }
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div()
             .flex()
             .gap_2()
@@ -59,7 +59,7 @@ impl Key {
         Self { key: key.into() }
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         div()
@@ -168,10 +168,6 @@ mod stories {
     pub struct KeybindingStory;
 
     impl KeybindingStory {
-        pub fn new() -> Self {
-            Self
-        }
-
         fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let all_modifier_permutations = ModifierKey::iter().permutations(2);
 

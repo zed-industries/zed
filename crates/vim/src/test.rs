@@ -654,6 +654,63 @@ async fn test_selection_goal(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_wrapped_motions(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_wrap(12).await;
+
+    cx.set_shared_state(indoc! {"
+                aaˇaa
+                😃😃"
+    })
+    .await;
+    cx.simulate_shared_keystrokes(["j"]).await;
+    cx.assert_shared_state(indoc! {"
+                aaaa
+                😃ˇ😃"
+    })
+    .await;
+
+    cx.set_shared_state(indoc! {"
+                123456789012aaˇaa
+                123456789012😃😃"
+    })
+    .await;
+    cx.simulate_shared_keystrokes(["j"]).await;
+    cx.assert_shared_state(indoc! {"
+        123456789012aaaa
+        123456789012😃ˇ😃"
+    })
+    .await;
+
+    cx.set_shared_state(indoc! {"
+                123456789012aaˇaa
+                123456789012😃😃"
+    })
+    .await;
+    cx.simulate_shared_keystrokes(["j"]).await;
+    cx.assert_shared_state(indoc! {"
+        123456789012aaaa
+        123456789012😃ˇ😃"
+    })
+    .await;
+
+    cx.set_shared_state(indoc! {"
+        123456789012aaaaˇaaaaaaaa123456789012
+        wow
+        123456789012😃😃😃😃😃😃123456789012"
+    })
+    .await;
+    cx.simulate_shared_keystrokes(["j", "j"]).await;
+    cx.assert_shared_state(indoc! {"
+        123456789012aaaaaaaaaaaa123456789012
+        wow
+        123456789012😃😃ˇ😃😃😃😃123456789012"
+    })
+    .await;
+}
+
+#[gpui::test]
 async fn test_paragraphs_dont_wrap(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -676,4 +733,27 @@ async fn test_paragraphs_dont_wrap(cx: &mut gpui::TestAppContext) {
 
         two"})
         .await;
+}
+
+#[gpui::test]
+async fn test_select_all_issue_2170(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state(
+        indoc! {"
+        defmodule Test do
+            def test(a, ˇ[_, _] = b), do: IO.puts('hi')
+        end
+    "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes(["g", "a"]);
+    cx.assert_state(
+        indoc! {"
+        defmodule Test do
+            def test(a, «[ˇ»_, _] = b), do: IO.puts('hi')
+        end
+    "},
+        Mode::Visual,
+    );
 }

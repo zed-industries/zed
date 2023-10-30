@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.109.0"
+version = "0.111.0"
 publish = false
 
 [lib]
@@ -14,6 +14,9 @@ doctest = false
 [[bin]]
 name = "Zed"
 path = "src/main.rs"
+
+[[example]]
+name = "semantic_index_eval"
 
 [dependencies]
 audio = { path = "../audio" }
@@ -50,6 +53,7 @@ language_selector = { path = "../language_selector" }
 lsp = { path = "../lsp" }
 language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
+notifications = { path = "../notifications" }
 assistant = { path = "../assistant" }
 outline = { path = "../outline" }
 plugin_runtime = { path = "../plugin_runtime",optional = true }
@@ -135,12 +139,14 @@ tree-sitter-yaml.workspace = true
 tree-sitter-lua.workspace = true
 tree-sitter-nix.workspace = true
 tree-sitter-nu.workspace = true
+tree-sitter-vue.workspace = true
 
 url = "2.2"
 urlencoding = "2.1.2"
 uuid.workspace = true
 
 [dev-dependencies]
+ai = { path = "../ai" }
 call = { path = "../call", features = ["test-support"] }
 client = { path = "../client", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::DateTime;
-use gpui2::{px, relative, rems, view, Context, Size, View};
+use gpui2::{px, relative, rems, AppContext, Context, Size, View};
 
 use crate::{
     old_theme, static_livestream, user_settings_mut, v_stack, AssistantPanel, Button, ChatMessage,
@@ -44,7 +44,7 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(cx: &mut AppContext) -> Self {
         Self {
             title_bar: TitleBar::view(cx, None),
             editor_1: EditorPane::view(cx),
@@ -170,8 +170,12 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn view(cx: &mut WindowContext) -> View<Self> {
-        view(cx.entity(|cx| Self::new(cx)), Self::render)
+    pub fn view(cx: &mut AppContext) -> View<Self> {
+        {
+            let state = cx.entity(|cx| Self::new(cx));
+            let render = Self::render;
+            View::for_handle(state, render)
+        }
     }
 
     pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
@@ -351,6 +355,8 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
+    use gpui2::VisualContext;
+
     use super::*;
 
     pub struct WorkspaceStory {
@@ -359,10 +365,10 @@ mod stories {
 
     impl WorkspaceStory {
         pub fn view(cx: &mut WindowContext) -> View<Self> {
-            view(
-                cx.entity(|cx| Self {
+            cx.build_view(
+                |cx| Self {
                     workspace: Workspace::view(cx),
-                }),
+                },
                 |view, cx| view.workspace.clone(),
             )
         }

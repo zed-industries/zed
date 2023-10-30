@@ -7,10 +7,11 @@ use gpui::{AppContext, ModelHandle};
 use std::sync::Arc;
 
 pub use channel_buffer::{ChannelBuffer, ChannelBufferEvent, ACKNOWLEDGE_DEBOUNCE_INTERVAL};
-pub use channel_chat::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId};
-pub use channel_store::{
-    Channel, ChannelData, ChannelEvent, ChannelId, ChannelMembership, ChannelPath, ChannelStore,
+pub use channel_chat::{
+    mentions_to_proto, ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId,
+    MessageParams,
 };
+pub use channel_store::{Channel, ChannelEvent, ChannelId, ChannelMembership, ChannelStore};
 
 #[cfg(test)]
 mod channel_store_tests;

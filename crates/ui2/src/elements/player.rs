@@ -138,12 +138,12 @@ impl Player {
         self
     }
 
-    pub fn cursor_color<S: 'static>(&self, cx: &mut ViewContext<S>) -> Hsla {
+    pub fn cursor_color<V: 'static>(&self, cx: &mut ViewContext<V>) -> Hsla {
         let theme = theme(cx);
         theme.players[self.index].cursor
     }
 
-    pub fn selection_color<S: 'static>(&self, cx: &mut ViewContext<S>) -> Hsla {
+    pub fn selection_color<V: 'static>(&self, cx: &mut ViewContext<V>) -> Hsla {
         let theme = theme(cx);
         theme.players[self.index].selection
     }

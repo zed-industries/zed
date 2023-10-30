@@ -11,7 +11,7 @@ impl CommandPalette {
         Self { id: id.into() }
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(example_editor_actions())
@@ -35,11 +35,7 @@ mod stories {
     pub struct CommandPaletteStory;
 
     impl CommandPaletteStory {
-        pub fn new() -> Self {
-            Self
-        }
-
-        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
                 .child(Story::title_for::<_, CommandPalette>(cx))
                 .child(Story::label(cx, "Default"))

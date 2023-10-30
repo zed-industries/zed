@@ -42,7 +42,7 @@ impl Palette {
         self
     }
 
-    fn render<S: 'static>(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         v_stack()
@@ -81,7 +81,7 @@ impl Palette {
                                 .into_iter()
                                 .flatten(),
                             )
-                            .children(self.items.drain(..).enumerate().map(|(index, item)| {
+                            .children(self.items.into_iter().enumerate().map(|(index, item)| {
                                 h_stack()
                                     .id(index)
                                     .justify_between()
@@ -131,7 +131,7 @@ impl PaletteItem {
         self
     }
 
-    fn render<S: 'static>(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div()
             .flex()
             .flex_row()
@@ -142,7 +142,7 @@ impl PaletteItem {
                     .child(Label::new(self.label.clone()))
                     .children(self.sublabel.clone().map(|sublabel| Label::new(sublabel))),
             )
-            .children(self.keybinding.take())
+            .children(self.keybinding)
     }
 }
 
@@ -160,10 +160,6 @@ mod stories {
     pub struct PaletteStory;
 
     impl PaletteStory {
-        pub fn new() -> Self {
-            Self
-        }
-
         fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
                 .child(Story::title_for::<_, Palette>(cx))

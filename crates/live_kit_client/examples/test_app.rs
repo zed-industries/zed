@@ -61,7 +61,7 @@ fn main() {
 
             let mut audio_track_updates = room_b.remote_audio_track_updates();
             let audio_track = LocalAudioTrack::create();
-            let audio_track_publication = room_a.publish_audio_track(&audio_track).await.unwrap();
+            let audio_track_publication = room_a.publish_audio_track(audio_track).await.unwrap();
 
             if let RemoteAudioTrackUpdate::Subscribed(track, _) =
                 audio_track_updates.next().await.unwrap()
@@ -132,10 +132,8 @@ fn main() {
             let display = displays.into_iter().next().unwrap();
 
             let local_video_track = LocalVideoTrack::screen_share_for_display(&display);
-            let local_video_track_publication = room_a
-                .publish_video_track(&local_video_track)
-                .await
-                .unwrap();
+            let local_video_track_publication =
+                room_a.publish_video_track(local_video_track).await.unwrap();
 
             if let RemoteVideoTrackUpdate::Subscribed(track) =
                 video_track_updates.next().await.unwrap()

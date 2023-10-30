@@ -154,7 +154,7 @@ impl Buffer {
         self
     }
 
-    fn render_row<S: 'static>(row: BufferRow, cx: &WindowContext) -> impl Component<S> {
+    fn render_row<V: 'static>(row: BufferRow, cx: &WindowContext) -> impl Component<V> {
         let theme = theme(cx);
 
         let line_background = if row.current {
@@ -166,7 +166,7 @@ impl Buffer {
         let line_number_color = if row.current {
             theme.text
         } else {
-            theme.syntax.comment
+            theme.syntax.get("comment").color.unwrap_or_default()
         };
 
         h_stack()
@@ -204,7 +204,7 @@ impl Buffer {
             }))
     }
 
-    fn render_rows<S: 'static>(&self, cx: &WindowContext) -> Vec<impl Component<S>> {
+    fn render_rows<V: 'static>(&self, cx: &WindowContext) -> Vec<impl Component<V>> {
         match &self.rows {
             Some(rows) => rows
                 .rows
@@ -215,7 +215,7 @@ impl Buffer {
         }
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
         let rows = self.render_rows(cx);
 
@@ -246,11 +246,7 @@ mod stories {
     pub struct BufferStory;
 
     impl BufferStory {
-        pub fn new() -> Self {
-            Self
-        }
-
-        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let theme = theme(cx);
 
             Story::container(cx)

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use gpui2::{
-    div, px, size, view, AnyView, AppContext, Bounds, Context, ViewContext, WindowBounds,
+    div, px, size, AnyView, AppContext, Bounds, ViewContext, VisualContext, WindowBounds,
     WindowOptions,
 };
 use log::LevelFilter;
@@ -85,8 +85,8 @@ fn main() {
                 ..Default::default()
             },
             move |cx| {
-                view(
-                    cx.entity(|cx| StoryWrapper::new(selector.story(cx), theme)),
+                cx.build_view(
+                    |cx| StoryWrapper::new(selector.story(cx), theme),
                     StoryWrapper::render,
                 )
             },

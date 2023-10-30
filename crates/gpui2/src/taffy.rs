@@ -179,7 +179,7 @@ struct Measureable<F>(F);
 
 impl<F> taffy::tree::Measurable for Measureable<F>
 where
-    F: Send + Sync + Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels>,
+    F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + Send + Sync,
 {
     fn measure(
         &self,

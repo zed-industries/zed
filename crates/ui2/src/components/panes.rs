@@ -96,7 +96,7 @@ impl<V: 'static> PaneGroup<V> {
         }
     }
 
-    fn render(mut self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         if !self.panes.is_empty() {
@@ -106,7 +106,7 @@ impl<V: 'static> PaneGroup<V> {
                 .gap_px()
                 .w_full()
                 .h_full()
-                .children(self.panes.drain(..).map(|pane| pane.render(view, cx)));
+                .children(self.panes.into_iter().map(|pane| pane.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
                 return el;
@@ -123,7 +123,7 @@ impl<V: 'static> PaneGroup<V> {
                 .w_full()
                 .h_full()
                 .bg(theme.editor)
-                .children(self.groups.drain(..).map(|group| group.render(view, cx)));
+                .children(self.groups.into_iter().map(|group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
                 return el;

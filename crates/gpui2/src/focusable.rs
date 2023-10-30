@@ -4,12 +4,11 @@ use crate::{
 };
 use refineable::Refineable;
 use smallvec::SmallVec;
-use std::sync::Arc;
 
 pub type FocusListeners<V> = SmallVec<[FocusListener<V>; 2]>;
 
 pub type FocusListener<V> =
-    Arc<dyn Fn(&mut V, &FocusHandle, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
+    Box<dyn Fn(&mut V, &FocusHandle, &FocusEvent, &mut ViewContext<V>) + Send + 'static>;
 
 pub trait Focusable<V: 'static>: Element<V> {
     fn focus_listeners(&mut self) -> &mut FocusListeners<V>;
@@ -43,13 +42,13 @@ pub trait Focusable<V: 'static>: Element<V> {
 
     fn on_focus(
         mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + 'static,
     ) -> Self
     where
         Self: Sized,
     {
         self.focus_listeners()
-            .push(Arc::new(move |view, focus_handle, event, cx| {
+            .push(Box::new(move |view, focus_handle, event, cx| {
                 if event.focused.as_ref() == Some(focus_handle) {
                     listener(view, event, cx)
                 }
@@ -59,13 +58,13 @@ pub trait Focusable<V: 'static>: Element<V> {
 
     fn on_blur(
         mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + 'static,
     ) -> Self
     where
         Self: Sized,
     {
         self.focus_listeners()
-            .push(Arc::new(move |view, focus_handle, event, cx| {
+            .push(Box::new(move |view, focus_handle, event, cx| {
                 if event.blurred.as_ref() == Some(focus_handle) {
                     listener(view, event, cx)
                 }
@@ -75,13 +74,13 @@ pub trait Focusable<V: 'static>: Element<V> {
 
     fn on_focus_in(
         mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + 'static,
     ) -> Self
     where
         Self: Sized,
     {
         self.focus_listeners()
-            .push(Arc::new(move |view, focus_handle, event, cx| {
+            .push(Box::new(move |view, focus_handle, event, cx| {
                 let descendant_blurred = event
                     .blurred
                     .as_ref()
@@ -100,13 +99,13 @@ pub trait Focusable<V: 'static>: Element<V> {
 
     fn on_focus_out(
         mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + 'static,
     ) -> Self
     where
         Self: Sized,
     {
         self.focus_listeners()
-            .push(Arc::new(move |view, focus_handle, event, cx| {
+            .push(Box::new(move |view, focus_handle, event, cx| {
                 let descendant_blurred = event
                     .blurred
                     .as_ref()
@@ -123,7 +122,7 @@ pub trait Focusable<V: 'static>: Element<V> {
     }
 }
 
-pub trait ElementFocus<V: 'static>: 'static + Send + Sync {
+pub trait ElementFocus<V: 'static>: 'static + Send {
     fn as_focusable(&self) -> Option<&FocusEnabled<V>>;
     fn as_focusable_mut(&mut self) -> Option<&mut FocusEnabled<V>>;
 
@@ -138,7 +137,7 @@ pub trait ElementFocus<V: 'static>: 'static + Send + Sync {
                 .focus_handle
                 .get_or_insert_with(|| focus_handle.unwrap_or_else(|| cx.focus_handle()))
                 .clone();
-            for listener in focusable.focus_listeners.iter().cloned() {
+            for listener in focusable.focus_listeners.drain(..) {
                 let focus_handle = focus_handle.clone();
                 cx.on_focus_changed(move |view, event, cx| {
                     listener(view, &focus_handle, event, cx)

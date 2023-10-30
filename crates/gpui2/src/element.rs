@@ -16,8 +16,6 @@ pub trait Element<V: 'static> {
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState;
-    // where
-    //     V: Any + Send + Sync;
 
     fn layout(
         &mut self,
@@ -25,8 +23,6 @@ pub trait Element<V: 'static> {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) -> LayoutId;
-    // where
-    //     V: Any + Send + Sync;
 
     fn paint(
         &mut self,
@@ -35,9 +31,6 @@ pub trait Element<V: 'static> {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     );
-
-    // where
-    //     Self::ViewState: Any + Send + Sync;
 }
 
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
@@ -104,8 +97,7 @@ impl<V, E: Element<V>> RenderedElement<V, E> {
 impl<V, E> ElementObject<V> for RenderedElement<V, E>
 where
     E: Element<V>,
-    // E::ViewState: Any + Send + Sync,
-    E::ElementState: Any + Send + Sync,
+    E::ElementState: 'static + Send,
 {
     fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
         let frame_state = if let Some(id) = self.element.id() {
@@ -178,18 +170,16 @@ where
     }
 }
 
-pub struct AnyElement<V>(Box<dyn ElementObject<V> + Send + Sync>);
+pub struct AnyElement<V>(Box<dyn ElementObject<V> + Send>);
 
 unsafe impl<V> Send for AnyElement<V> {}
-unsafe impl<V> Sync for AnyElement<V> {}
 
 impl<V> AnyElement<V> {
     pub fn new<E>(element: E) -> Self
     where
         V: 'static,
-        E: 'static + Send + Sync,
-        E: Element<V>,
-        E::ElementState: Any + Send + Sync,
+        E: 'static + Element<V> + Send,
+        E::ElementState: Any + Send,
     {
         AnyElement(Box::new(RenderedElement::new(element)))
     }
@@ -230,8 +220,8 @@ impl<V> Component<V> for AnyElement<V> {
 impl<V, E, F> Element<V> for Option<F>
 where
     V: 'static,
-    E: 'static + Component<V> + Send + Sync,
-    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + Sync + 'static,
+    E: 'static + Component<V> + Send,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
 {
     type ElementState = AnyElement<V>;
 
@@ -274,8 +264,8 @@ where
 impl<V, E, F> Component<V> for Option<F>
 where
     V: 'static,
-    E: 'static + Component<V> + Send + Sync,
-    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + Sync + 'static,
+    E: 'static + Component<V> + Send,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
 {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
@@ -285,8 +275,8 @@ where
 impl<V, E, F> Component<V> for F
 where
     V: 'static,
-    E: 'static + Component<V> + Send + Sync,
-    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + Sync + 'static,
+    E: 'static + Component<V> + Send,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
 {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(Some(self))

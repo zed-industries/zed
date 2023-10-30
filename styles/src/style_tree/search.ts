@@ -2,7 +2,6 @@ import { with_opacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
 import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
-import { text_button } from "../component/text_button"
 
 const search_results = () => {
     const theme = useTheme()
@@ -36,7 +35,7 @@ export default function search(): any {
             left: 10,
             right: 4,
         },
-        margin: { right: SEARCH_ROW_SPACING }
+        margin: { right: SEARCH_ROW_SPACING },
     }
 
     const include_exclude_editor = {
@@ -378,7 +377,7 @@ export default function search(): any {
         modes_container: {
             padding: {
                 right: SEARCH_ROW_SPACING,
-            }
+            },
         },
         replace_icon: {
             icon: {

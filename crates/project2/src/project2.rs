@@ -92,6 +92,8 @@ use util::{
 pub use fs::*;
 pub use worktree::*;
 
+const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
+
 pub trait Item {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
@@ -875,16 +877,6 @@ impl Project {
     //     }
     //     project
     // }
-
-    /// Enables a prettier mock that avoids interacting with node runtime, prettier LSP wrapper, or any real file changes.
-    /// Instead, if appends the suffix to every input, this suffix is returned by this method.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn enable_test_prettier(&mut self, plugins: &[&'static str]) -> &'static str {
-        self.node = Some(node_runtime::FakeNodeRuntime::with_prettier_support(
-            plugins,
-        ));
-        Prettier::FORMAT_SUFFIX
-    }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
         let mut language_servers_to_start = Vec::new();
@@ -2774,6 +2766,10 @@ impl Project {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
+        if adapter.reinstall_attempt_count.load(SeqCst) > MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
+            return;
+        }
+
         let key = (worktree_id, adapter.name.clone());
         if self.language_server_ids.contains_key(&key) {
             return;
@@ -2833,27 +2829,33 @@ impl Project {
                     }
 
                     Err(err) => {
-                        log::error!("failed to start language server {:?}: {}", server_name, err);
+                        log::error!("failed to start language server {server_name:?}: {err}");
                         log::error!("server stderr: {:?}", stderr_capture.lock().take());
 
-                        if let Some(this) = this.upgrade() {
-                            if let Some(container_dir) = container_dir {
-                                let installation_test_binary = adapter
-                                    .installation_test_binary(container_dir.to_path_buf())
-                                    .await;
+                        let this = this.upgrade()?;
+                        let container_dir = container_dir?;
 
-                                this.update(&mut cx, |_, cx| {
-                                    Self::check_errored_server(
-                                        language,
-                                        adapter,
-                                        server_id,
-                                        installation_test_binary,
-                                        cx,
-                                    )
-                                })
-                                .ok();
-                            }
+                        let attempt_count = adapter.reinstall_attempt_count.fetch_add(1, SeqCst);
+                        if attempt_count >= MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
+                            let max = MAX_SERVER_REINSTALL_ATTEMPT_COUNT;
+                            log::error!("Hit {max} reinstallation attempts for {server_name:?}");
+                            return None;
                         }
+
+                        let installation_test_binary = adapter
+                            .installation_test_binary(container_dir.to_path_buf())
+                            .await;
+
+                        this.update(&mut cx, |_, cx| {
+                            Self::check_errored_server(
+                                language,
+                                adapter,
+                                server_id,
+                                installation_test_binary,
+                                cx,
+                            )
+                        })
+                        .ok();
 
                         None
                     }

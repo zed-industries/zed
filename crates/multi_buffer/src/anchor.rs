@@ -8,9 +8,9 @@ use sum_tree::Bias;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
-    pub(crate) buffer_id: Option<u64>,
-    pub(crate) excerpt_id: ExcerptId,
-    pub(crate) text_anchor: text::Anchor,
+    pub buffer_id: Option<u64>,
+    pub excerpt_id: ExcerptId,
+    pub text_anchor: text::Anchor,
 }
 
 impl Anchor {
@@ -28,10 +28,6 @@ impl Anchor {
             excerpt_id: ExcerptId::max(),
             text_anchor: text::Anchor::MAX,
         }
-    }
-
-    pub fn excerpt_id(&self) -> ExcerptId {
-        self.excerpt_id
     }
 
     pub fn cmp(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Ordering {

@@ -208,8 +208,7 @@ impl<T: RandomizedTest> TestPlan<T> {
                     false,
                     NewUserParams {
                         github_login: username.clone(),
-                        github_user_id: (ix + 1) as i32,
-                        invite_count: 0,
+                        github_user_id: ix as i32,
                     },
                 )
                 .await

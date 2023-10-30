@@ -3,7 +3,7 @@ use crate::{
     tests::TestServer,
 };
 use call::ActiveCall;
-use channel::{Channel, ACKNOWLEDGE_DEBOUNCE_INTERVAL};
+use channel::ACKNOWLEDGE_DEBOUNCE_INTERVAL;
 use client::ParticipantIndex;
 use client::{Collaborator, UserId};
 use collab_ui::channel_view::ChannelView;
@@ -407,11 +407,8 @@ async fn test_channel_buffer_disconnect(
     server.disconnect_client(client_a.peer_id().unwrap());
     deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
 
-    channel_buffer_a.update(cx_a, |buffer, _| {
-        assert_eq!(
-            buffer.channel().as_ref(),
-            &channel(channel_id, "the-channel")
-        );
+    channel_buffer_a.update(cx_a, |buffer, cx| {
+        assert_eq!(buffer.channel(cx).unwrap().name, "the-channel");
         assert!(!buffer.is_connected());
     });
 
@@ -432,22 +429,10 @@ async fn test_channel_buffer_disconnect(
     deterministic.run_until_parked();
 
     // Channel buffer observed the deletion
-    channel_buffer_b.update(cx_b, |buffer, _| {
-        assert_eq!(
-            buffer.channel().as_ref(),
-            &channel(channel_id, "the-channel")
-        );
+    channel_buffer_b.update(cx_b, |buffer, cx| {
+        assert!(buffer.channel(cx).is_none());
         assert!(!buffer.is_connected());
     });
-}
-
-fn channel(id: u64, name: &'static str) -> Channel {
-    Channel {
-        id,
-        name: name.to_string(),
-        unseen_note_version: None,
-        unseen_message_id: None,
-    }
 }
 
 #[gpui::test]
@@ -694,7 +679,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
         .await
         .unwrap();
     channel_view_1_a.update(cx_a, |notes, cx| {
-        assert_eq!(notes.channel(cx).name, "channel-1");
+        assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
         notes.editor.update(cx, |editor, cx| {
             editor.insert("Hello from A.", cx);
             editor.change_selections(None, cx, |selections| {
@@ -726,7 +711,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
             .expect("active item is not a channel view")
     });
     channel_view_1_b.read_with(cx_b, |notes, cx| {
-        assert_eq!(notes.channel(cx).name, "channel-1");
+        assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
         let editor = notes.editor.read(cx);
         assert_eq!(editor.text(cx), "Hello from A.");
         assert_eq!(editor.selections.ranges::<usize>(cx), &[3..4]);
@@ -738,7 +723,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
         .await
         .unwrap();
     channel_view_2_a.read_with(cx_a, |notes, cx| {
-        assert_eq!(notes.channel(cx).name, "channel-2");
+        assert_eq!(notes.channel(cx).unwrap().name, "channel-2");
     });
 
     // Client B is taken to the notes for channel 2.
@@ -755,7 +740,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
             .expect("active item is not a channel view")
     });
     channel_view_2_b.read_with(cx_b, |notes, cx| {
-        assert_eq!(notes.channel(cx).name, "channel-2");
+        assert_eq!(notes.channel(cx).unwrap().name, "channel-2");
     });
 }
 

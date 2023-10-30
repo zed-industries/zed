@@ -303,7 +303,7 @@ impl MultiBuffer {
         self.snapshot.borrow().clone()
     }
 
-    pub(crate) fn read(&self, cx: &AppContext) -> Ref<MultiBufferSnapshot> {
+    pub fn read(&self, cx: &AppContext) -> Ref<MultiBufferSnapshot> {
         self.sync(cx);
         self.snapshot.borrow()
     }
@@ -498,84 +498,98 @@ impl MultiBuffer {
             }
         }
 
-        for (buffer_id, mut edits) in buffer_edits {
-            edits.sort_unstable_by_key(|edit| edit.range.start);
-            self.buffers.borrow()[&buffer_id]
-                .buffer
-                .update(cx, |buffer, cx| {
-                    let mut edits = edits.into_iter().peekable();
-                    let mut insertions = Vec::new();
-                    let mut original_indent_columns = Vec::new();
-                    let mut deletions = Vec::new();
-                    let empty_str: Arc<str> = "".into();
-                    while let Some(BufferEdit {
-                        mut range,
-                        new_text,
-                        mut is_insertion,
-                        original_indent_column,
-                    }) = edits.next()
-                    {
+        drop(cursor);
+        drop(snapshot);
+        // Non-generic part of edit, hoisted out to avoid blowing up LLVM IR.
+        fn tail(
+            this: &mut MultiBuffer,
+            buffer_edits: HashMap<u64, Vec<BufferEdit>>,
+            autoindent_mode: Option<AutoindentMode>,
+            edited_excerpt_ids: Vec<ExcerptId>,
+            cx: &mut ModelContext<MultiBuffer>,
+        ) {
+            for (buffer_id, mut edits) in buffer_edits {
+                edits.sort_unstable_by_key(|edit| edit.range.start);
+                this.buffers.borrow()[&buffer_id]
+                    .buffer
+                    .update(cx, |buffer, cx| {
+                        let mut edits = edits.into_iter().peekable();
+                        let mut insertions = Vec::new();
+                        let mut original_indent_columns = Vec::new();
+                        let mut deletions = Vec::new();
+                        let empty_str: Arc<str> = "".into();
                         while let Some(BufferEdit {
-                            range: next_range,
-                            is_insertion: next_is_insertion,
-                            ..
-                        }) = edits.peek()
+                            mut range,
+                            new_text,
+                            mut is_insertion,
+                            original_indent_column,
+                        }) = edits.next()
                         {
-                            if range.end >= next_range.start {
-                                range.end = cmp::max(next_range.end, range.end);
-                                is_insertion |= *next_is_insertion;
-                                edits.next();
-                            } else {
-                                break;
+                            while let Some(BufferEdit {
+                                range: next_range,
+                                is_insertion: next_is_insertion,
+                                ..
+                            }) = edits.peek()
+                            {
+                                if range.end >= next_range.start {
+                                    range.end = cmp::max(next_range.end, range.end);
+                                    is_insertion |= *next_is_insertion;
+                                    edits.next();
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            if is_insertion {
+                                original_indent_columns.push(original_indent_column);
+                                insertions.push((
+                                    buffer.anchor_before(range.start)
+                                        ..buffer.anchor_before(range.end),
+                                    new_text.clone(),
+                                ));
+                            } else if !range.is_empty() {
+                                deletions.push((
+                                    buffer.anchor_before(range.start)
+                                        ..buffer.anchor_before(range.end),
+                                    empty_str.clone(),
+                                ));
                             }
                         }
 
-                        if is_insertion {
-                            original_indent_columns.push(original_indent_column);
-                            insertions.push((
-                                buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
-                                new_text.clone(),
-                            ));
-                        } else if !range.is_empty() {
-                            deletions.push((
-                                buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
-                                empty_str.clone(),
-                            ));
-                        }
-                    }
+                        let deletion_autoindent_mode =
+                            if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
+                                Some(AutoindentMode::Block {
+                                    original_indent_columns: Default::default(),
+                                })
+                            } else {
+                                None
+                            };
+                        let insertion_autoindent_mode =
+                            if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
+                                Some(AutoindentMode::Block {
+                                    original_indent_columns,
+                                })
+                            } else {
+                                None
+                            };
 
-                    let deletion_autoindent_mode =
-                        if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
-                            Some(AutoindentMode::Block {
-                                original_indent_columns: Default::default(),
-                            })
-                        } else {
-                            None
-                        };
-                    let insertion_autoindent_mode =
-                        if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
-                            Some(AutoindentMode::Block {
-                                original_indent_columns,
-                            })
-                        } else {
-                            None
-                        };
+                        buffer.edit(deletions, deletion_autoindent_mode, cx);
+                        buffer.edit(insertions, insertion_autoindent_mode, cx);
+                    })
+            }
 
-                    buffer.edit(deletions, deletion_autoindent_mode, cx);
-                    buffer.edit(insertions, insertion_autoindent_mode, cx);
-                })
+            cx.emit(Event::ExcerptsEdited {
+                ids: edited_excerpt_ids,
+            });
         }
-
-        cx.emit(Event::ExcerptsEdited {
-            ids: edited_excerpt_ids,
-        });
+        tail(self, buffer_edits, autoindent_mode, edited_excerpt_ids, cx);
     }
 
     pub fn start_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         self.start_transaction_at(Instant::now(), cx)
     }
 
-    pub(crate) fn start_transaction_at(
+    pub fn start_transaction_at(
         &mut self,
         now: Instant,
         cx: &mut ModelContext<Self>,
@@ -594,7 +608,7 @@ impl MultiBuffer {
         self.end_transaction_at(Instant::now(), cx)
     }
 
-    pub(crate) fn end_transaction_at(
+    pub fn end_transaction_at(
         &mut self,
         now: Instant,
         cx: &mut ModelContext<Self>,
@@ -1494,7 +1508,7 @@ impl MultiBuffer {
         "untitled".into()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self, cx: &AppContext) -> bool {
         self.as_singleton().unwrap().read(cx).is_parsing()
     }
@@ -3184,7 +3198,7 @@ impl MultiBufferSnapshot {
         theme: Option<&SyntaxTheme>,
     ) -> Option<(u64, Vec<OutlineItem<Anchor>>)> {
         let anchor = self.anchor_before(offset);
-        let excerpt_id = anchor.excerpt_id();
+        let excerpt_id = anchor.excerpt_id;
         let excerpt = self.excerpt(excerpt_id)?;
         Some((
             excerpt.buffer_id,
@@ -4115,17 +4129,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::editor_tests::init_test;
-
     use super::*;
     use futures::StreamExt;
     use gpui::{AppContext, TestAppContext};
     use language::{Buffer, Rope};
-    use project::{FakeFs, Project};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::{env, rc::Rc};
-    use unindent::Unindent;
     use util::test::sample_text;
 
     #[gpui::test]
@@ -4821,190 +4831,6 @@ mod tests {
         assert_eq!(
             snapshot_3.summaries_for_anchors::<usize, _>(new_anchors.iter().map(|a| &a.1)),
             &[0, 2, 7, 13]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
-        use git::diff::DiffHunkStatus;
-        init_test(cx, |_| {});
-
-        let fs = FakeFs::new(cx.background());
-        let project = Project::test(fs, [], cx).await;
-
-        // buffer has two modified hunks with two rows each
-        let buffer_1 = project
-            .update(cx, |project, cx| {
-                project.create_buffer(
-                    "
-                        1.zero
-                        1.ONE
-                        1.TWO
-                        1.three
-                        1.FOUR
-                        1.FIVE
-                        1.six
-                    "
-                    .unindent()
-                    .as_str(),
-                    None,
-                    cx,
-                )
-            })
-            .unwrap();
-        buffer_1.update(cx, |buffer, cx| {
-            buffer.set_diff_base(
-                Some(
-                    "
-                        1.zero
-                        1.one
-                        1.two
-                        1.three
-                        1.four
-                        1.five
-                        1.six
-                    "
-                    .unindent(),
-                ),
-                cx,
-            );
-        });
-
-        // buffer has a deletion hunk and an insertion hunk
-        let buffer_2 = project
-            .update(cx, |project, cx| {
-                project.create_buffer(
-                    "
-                        2.zero
-                        2.one
-                        2.two
-                        2.three
-                        2.four
-                        2.five
-                        2.six
-                    "
-                    .unindent()
-                    .as_str(),
-                    None,
-                    cx,
-                )
-            })
-            .unwrap();
-        buffer_2.update(cx, |buffer, cx| {
-            buffer.set_diff_base(
-                Some(
-                    "
-                        2.zero
-                        2.one
-                        2.one-and-a-half
-                        2.two
-                        2.three
-                        2.four
-                        2.six
-                    "
-                    .unindent(),
-                ),
-                cx,
-            );
-        });
-
-        cx.foreground().run_until_parked();
-
-        let multibuffer = cx.add_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0);
-            multibuffer.push_excerpts(
-                buffer_1.clone(),
-                [
-                    // excerpt ends in the middle of a modified hunk
-                    ExcerptRange {
-                        context: Point::new(0, 0)..Point::new(1, 5),
-                        primary: Default::default(),
-                    },
-                    // excerpt begins in the middle of a modified hunk
-                    ExcerptRange {
-                        context: Point::new(5, 0)..Point::new(6, 5),
-                        primary: Default::default(),
-                    },
-                ],
-                cx,
-            );
-            multibuffer.push_excerpts(
-                buffer_2.clone(),
-                [
-                    // excerpt ends at a deletion
-                    ExcerptRange {
-                        context: Point::new(0, 0)..Point::new(1, 5),
-                        primary: Default::default(),
-                    },
-                    // excerpt starts at a deletion
-                    ExcerptRange {
-                        context: Point::new(2, 0)..Point::new(2, 5),
-                        primary: Default::default(),
-                    },
-                    // excerpt fully contains a deletion hunk
-                    ExcerptRange {
-                        context: Point::new(1, 0)..Point::new(2, 5),
-                        primary: Default::default(),
-                    },
-                    // excerpt fully contains an insertion hunk
-                    ExcerptRange {
-                        context: Point::new(4, 0)..Point::new(6, 5),
-                        primary: Default::default(),
-                    },
-                ],
-                cx,
-            );
-            multibuffer
-        });
-
-        let snapshot = multibuffer.read_with(cx, |b, cx| b.snapshot(cx));
-
-        assert_eq!(
-            snapshot.text(),
-            "
-                1.zero
-                1.ONE
-                1.FIVE
-                1.six
-                2.zero
-                2.one
-                2.two
-                2.one
-                2.two
-                2.four
-                2.five
-                2.six"
-                .unindent()
-        );
-
-        let expected = [
-            (DiffHunkStatus::Modified, 1..2),
-            (DiffHunkStatus::Modified, 2..3),
-            //TODO: Define better when and where removed hunks show up at range extremities
-            (DiffHunkStatus::Removed, 6..6),
-            (DiffHunkStatus::Removed, 8..8),
-            (DiffHunkStatus::Added, 10..11),
-        ];
-
-        assert_eq!(
-            snapshot
-                .git_diff_hunks_in_range(0..12)
-                .map(|hunk| (hunk.status(), hunk.buffer_range))
-                .collect::<Vec<_>>(),
-            &expected,
-        );
-
-        assert_eq!(
-            snapshot
-                .git_diff_hunks_in_range_rev(0..12)
-                .map(|hunk| (hunk.status(), hunk.buffer_range))
-                .collect::<Vec<_>>(),
-            expected
-                .iter()
-                .rev()
-                .cloned()
-                .collect::<Vec<_>>()
-                .as_slice(),
         );
     }
 

@@ -229,7 +229,7 @@ impl Room {
 
     pub fn publish_video_track(
         self: &Arc<Self>,
-        track: &LocalVideoTrack,
+        track: LocalVideoTrack,
     ) -> impl Future<Output = Result<LocalTrackPublication>> {
         let (tx, rx) = oneshot::channel::<Result<LocalTrackPublication>>();
         extern "C" fn callback(tx: *mut c_void, publication: *mut c_void, error: CFStringRef) {
@@ -255,7 +255,7 @@ impl Room {
 
     pub fn publish_audio_track(
         self: &Arc<Self>,
-        track: &LocalAudioTrack,
+        track: LocalAudioTrack,
     ) -> impl Future<Output = Result<LocalTrackPublication>> {
         let (tx, rx) = oneshot::channel::<Result<LocalTrackPublication>>();
         extern "C" fn callback(tx: *mut c_void, publication: *mut c_void, error: CFStringRef) {
@@ -621,6 +621,7 @@ impl Drop for RoomDelegate {
 }
 
 pub struct LocalAudioTrack(*const c_void);
+unsafe impl Send for LocalAudioTrack {}
 
 impl LocalAudioTrack {
     pub fn create() -> Self {
@@ -635,6 +636,7 @@ impl Drop for LocalAudioTrack {
 }
 
 pub struct LocalVideoTrack(*const c_void);
+unsafe impl Send for LocalVideoTrack {}
 
 impl LocalVideoTrack {
     pub fn screen_share_for_display(display: &MacOSDisplay) -> Self {
@@ -649,6 +651,7 @@ impl Drop for LocalVideoTrack {
 }
 
 pub struct LocalTrackPublication(*const c_void);
+unsafe impl Send for LocalTrackPublication {}
 
 impl LocalTrackPublication {
     pub fn new(native_track_publication: *const c_void) -> Self {
@@ -691,6 +694,8 @@ impl Drop for LocalTrackPublication {
 }
 
 pub struct RemoteTrackPublication(*const c_void);
+
+unsafe impl Send for RemoteTrackPublication {}
 
 impl RemoteTrackPublication {
     pub fn new(native_track_publication: *const c_void) -> Self {
@@ -747,6 +752,8 @@ pub struct RemoteAudioTrack {
     publisher_id: String,
 }
 
+unsafe impl Send for RemoteAudioTrack {}
+
 impl RemoteAudioTrack {
     fn new(native_track: *const c_void, sid: Sid, publisher_id: String) -> Self {
         unsafe {
@@ -782,6 +789,8 @@ pub struct RemoteVideoTrack {
     sid: Sid,
     publisher_id: String,
 }
+
+unsafe impl Send for RemoteVideoTrack {}
 
 impl RemoteVideoTrack {
     fn new(native_track: *const c_void, sid: Sid, publisher_id: String) -> Self {
@@ -863,6 +872,8 @@ pub enum RemoteAudioTrackUpdate {
 }
 
 pub struct MacOSDisplay(*const c_void);
+
+unsafe impl Send for MacOSDisplay {}
 
 impl MacOSDisplay {
     fn new(ptr: *const c_void) -> Self {

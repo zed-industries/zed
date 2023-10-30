@@ -8,7 +8,7 @@ use std::{
 pub fn run_test(
     mut num_iterations: u64,
     max_retries: usize,
-    test_fn: &mut (dyn RefUnwindSafe + Fn(TestDispatcher)),
+    test_fn: &mut (dyn RefUnwindSafe + Fn(TestDispatcher, u64)),
     on_fail_fn: Option<fn()>,
     _fn_name: String, // todo!("re-enable fn_name")
 ) {
@@ -28,7 +28,7 @@ pub fn run_test(
             }
             let result = panic::catch_unwind(|| {
                 let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(seed));
-                test_fn(dispatcher);
+                test_fn(dispatcher, seed);
             });
 
             match result {

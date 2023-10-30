@@ -10,7 +10,7 @@ impl CopilotModal {
         Self { id: id.into() }
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div().id(self.id.clone()).child(
             Modal::new("some-id")
                 .title("Connect Copilot to Zed")
@@ -33,11 +33,7 @@ mod stories {
     pub struct CopilotModalStory;
 
     impl CopilotModalStory {
-        pub fn new() -> Self {
-            Self
-        }
-
-        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
                 .child(Story::title_for::<_, CopilotModal>(cx))
                 .child(Story::label(cx, "Default"))

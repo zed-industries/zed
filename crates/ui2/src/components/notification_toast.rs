@@ -10,10 +10,7 @@ pub struct NotificationToast {
 
 impl NotificationToast {
     pub fn new(label: SharedString) -> Self {
-        Self {
-            label,
-            icon: None,
-        }
+        Self { label, icon: None }
     }
 
     pub fn icon<I>(mut self, icon: I) -> Self
@@ -24,7 +21,7 @@ impl NotificationToast {
         self
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         h_stack()

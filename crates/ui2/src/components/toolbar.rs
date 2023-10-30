@@ -7,12 +7,12 @@ use crate::prelude::*;
 pub struct ToolbarItem {}
 
 #[derive(Component)]
-pub struct Toolbar<S: 'static> {
-    left_items: SmallVec<[AnyElement<S>; 2]>,
-    right_items: SmallVec<[AnyElement<S>; 2]>,
+pub struct Toolbar<V: 'static> {
+    left_items: SmallVec<[AnyElement<V>; 2]>,
+    right_items: SmallVec<[AnyElement<V>; 2]>,
 }
 
-impl<S: 'static> Toolbar<S> {
+impl<V: 'static> Toolbar<V> {
     pub fn new() -> Self {
         Self {
             left_items: SmallVec::new(),
@@ -20,7 +20,7 @@ impl<S: 'static> Toolbar<S> {
         }
     }
 
-    pub fn left_item(mut self, child: impl Component<S>) -> Self
+    pub fn left_item(mut self, child: impl Component<V>) -> Self
     where
         Self: Sized,
     {
@@ -28,7 +28,7 @@ impl<S: 'static> Toolbar<S> {
         self
     }
 
-    pub fn left_items(mut self, iter: impl IntoIterator<Item = impl Component<S>>) -> Self
+    pub fn left_items(mut self, iter: impl IntoIterator<Item = impl Component<V>>) -> Self
     where
         Self: Sized,
     {
@@ -37,7 +37,7 @@ impl<S: 'static> Toolbar<S> {
         self
     }
 
-    pub fn right_item(mut self, child: impl Component<S>) -> Self
+    pub fn right_item(mut self, child: impl Component<V>) -> Self
     where
         Self: Sized,
     {
@@ -45,7 +45,7 @@ impl<S: 'static> Toolbar<S> {
         self
     }
 
-    pub fn right_items(mut self, iter: impl IntoIterator<Item = impl Component<S>>) -> Self
+    pub fn right_items(mut self, iter: impl IntoIterator<Item = impl Component<V>>) -> Self
     where
         Self: Sized,
     {
@@ -54,7 +54,7 @@ impl<S: 'static> Toolbar<S> {
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         div()
@@ -62,8 +62,8 @@ impl<S: 'static> Toolbar<S> {
             .p_2()
             .flex()
             .justify_between()
-            .child(div().flex().children(self.left_items.drain(..)))
-            .child(div().flex().children(self.right_items.drain(..)))
+            .child(div().flex().children(self.left_items))
+            .child(div().flex().children(self.right_items))
     }
 }
 
@@ -83,10 +83,6 @@ mod stories {
     pub struct ToolbarStory;
 
     impl ToolbarStory {
-        pub fn new() -> Self {
-            Self
-        }
-
         fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let theme = theme(cx);
 
@@ -101,21 +97,21 @@ mod stories {
                                 Symbol(vec![
                                     HighlightedText {
                                         text: "impl ".to_string(),
-                                        color: theme.syntax.keyword,
+                                        color: theme.syntax.color("keyword"),
                                     },
                                     HighlightedText {
                                         text: "ToolbarStory".to_string(),
-                                        color: theme.syntax.function,
+                                        color: theme.syntax.color("function"),
                                     },
                                 ]),
                                 Symbol(vec![
                                     HighlightedText {
                                         text: "fn ".to_string(),
-                                        color: theme.syntax.keyword,
+                                        color: theme.syntax.color("keyword"),
                                     },
                                     HighlightedText {
                                         text: "render".to_string(),
-                                        color: theme.syntax.function,
+                                        color: theme.syntax.color("function"),
                                     },
                                 ]),
                             ],

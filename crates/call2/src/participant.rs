@@ -1,10 +1,8 @@
 use anyhow::{anyhow, Result};
 use client2::ParticipantIndex;
 use client2::{proto, User};
-use collections::HashMap;
 use gpui2::WeakHandle;
 pub use live_kit_client::Frame;
-use live_kit_client::RemoteAudioTrack;
 use project2::Project;
 use std::{fmt, sync::Arc};
 
@@ -47,14 +45,18 @@ pub struct RemoteParticipant {
     pub participant_index: ParticipantIndex,
     pub muted: bool,
     pub speaking: bool,
-    pub video_tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,
-    pub audio_tracks: HashMap<live_kit_client::Sid, Arc<RemoteAudioTrack>>,
+    // pub video_tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,
+    // pub audio_tracks: HashMap<live_kit_client::Sid, Arc<RemoteAudioTrack>>,
 }
 
 #[derive(Clone)]
 pub struct RemoteVideoTrack {
     pub(crate) live_kit_track: Arc<live_kit_client::RemoteVideoTrack>,
 }
+
+unsafe impl Send for RemoteVideoTrack {}
+// todo!("remove this sync because it's not legit")
+unsafe impl Sync for RemoteVideoTrack {}
 
 impl fmt::Debug for RemoteVideoTrack {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

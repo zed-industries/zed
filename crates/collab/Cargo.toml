@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathan@zed.dev>"]
 default-run = "collab"
 edition = "2021"
 name = "collab"
-version = "0.24.0"
+version = "0.27.0"
 publish = false
 
 [[bin]]
@@ -73,6 +73,7 @@ git = { path = "../git", features = ["test-support"] }
 live_kit_client = { path = "../live_kit_client", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 node_runtime = { path = "../node_runtime" }
+notifications = { path = "../notifications", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }

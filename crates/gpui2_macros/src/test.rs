@@ -86,7 +86,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     let last_segment = ty.path.segments.last();
                     match last_segment.map(|s| s.ident.to_string()).as_deref() {
                         Some("StdRng") => {
-                            inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed),));
+                            inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
                             continue;
                         }
                         Some("Executor") => {
@@ -133,7 +133,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                 gpui2::run_test(
                     #num_iterations as u64,
                     #max_retries,
-                    &mut |dispatcher| {
+                    &mut |dispatcher, _seed| {
                         let executor = gpui2::Executor::new(std::sync::Arc::new(dispatcher.clone()));
                         #cx_vars
                         executor.block(#inner_fn_name(#inner_fn_args));
@@ -156,7 +156,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     let last_segment = ty.path.segments.last();
 
                     if let Some("StdRng") = last_segment.map(|s| s.ident.to_string()).as_deref() {
-                        inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed),));
+                        inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
                         continue;
                     }
                 } else if let Type::Reference(ty) = &*arg.ty {
@@ -212,7 +212,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                 gpui2::run_test(
                     #num_iterations as u64,
                     #max_retries,
-                    &mut |dispatcher| {
+                    &mut |dispatcher, _seed| {
                         #cx_vars
                         #inner_fn_name(#inner_fn_args);
                         #cx_teardowns

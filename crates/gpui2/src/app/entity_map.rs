@@ -4,7 +4,7 @@ use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{SecondaryMap, SlotMap};
 use std::{
-    any::{type_name, Any, TypeId},
+    any::{type_name, TypeId},
     fmt::{self, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -59,7 +59,7 @@ impl EntityMap {
     /// Insert an entity into a slot obtained by calling `reserve`.
     pub fn insert<T>(&mut self, slot: Slot<T>, entity: T) -> Handle<T>
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
         let handle = slot.0;
         self.entities.insert(handle.entity_id, Box::new(entity));
@@ -100,10 +100,15 @@ impl EntityMap {
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, AnyBox)> {
-        let dropped_entity_ids = mem::take(&mut self.ref_counts.write().dropped_entity_ids);
+        let mut ref_counts = self.ref_counts.write();
+        let dropped_entity_ids = mem::take(&mut ref_counts.dropped_entity_ids);
+
         dropped_entity_ids
             .into_iter()
-            .map(|entity_id| (entity_id, self.entities.remove(entity_id).unwrap()))
+            .map(|entity_id| {
+                ref_counts.counts.remove(entity_id);
+                (entity_id, self.entities.remove(entity_id).unwrap())
+            })
             .collect()
     }
 }
@@ -212,7 +217,6 @@ impl Drop for AnyHandle {
             if prev_count == 1 {
                 // We were the last reference to this entity, so we can remove it.
                 let mut entity_map = RwLockUpgradableReadGuard::upgrade(entity_map);
-                entity_map.counts.remove(self.entity_id);
                 entity_map.dropped_entity_ids.push(self.entity_id);
             }
         }
@@ -280,7 +284,7 @@ impl<T: 'static> Handle<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut C::EntityContext<'_, '_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut C::EntityContext<'_, T>) -> R,
     ) -> C::Result<R>
     where
         C: Context,
@@ -423,7 +427,7 @@ impl<T: 'static> WeakHandle<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut C::EntityContext<'_, '_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut C::EntityContext<'_, T>) -> R,
     ) -> Result<R>
     where
         C: Context,

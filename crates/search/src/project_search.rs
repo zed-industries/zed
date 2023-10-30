@@ -351,33 +351,32 @@ impl View for ProjectSearchView {
                     SemanticIndexStatus::NotAuthenticated => {
                         major_text = Cow::Borrowed("Not Authenticated");
                         show_minor_text = false;
-                        Some(
-                            "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables"
-                                .to_string(),
-                        )
+                        Some(vec![
+                            "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables."
+                                .to_string(), "If you authenticated using the Assistant Panel, please restart Zed to Authenticate.".to_string()])
                     }
-                    SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
+                    SemanticIndexStatus::Indexed => Some(vec!["Indexing complete".to_string()]),
                     SemanticIndexStatus::Indexing {
                         remaining_files,
                         rate_limit_expiry,
                     } => {
                         if remaining_files == 0 {
-                            Some(format!("Indexing..."))
+                            Some(vec![format!("Indexing...")])
                         } else {
                             if let Some(rate_limit_expiry) = rate_limit_expiry {
                                 let remaining_seconds =
                                     rate_limit_expiry.duration_since(Instant::now());
                                 if remaining_seconds > Duration::from_secs(0) {
-                                    Some(format!(
+                                    Some(vec![format!(
                                         "Remaining files to index (rate limit resets in {}s): {}",
                                         remaining_seconds.as_secs(),
                                         remaining_files
-                                    ))
+                                    )])
                                 } else {
-                                    Some(format!("Remaining files to index: {}", remaining_files))
+                                    Some(vec![format!("Remaining files to index: {}", remaining_files)])
                                 }
                             } else {
-                                Some(format!("Remaining files to index: {}", remaining_files))
+                                Some(vec![format!("Remaining files to index: {}", remaining_files)])
                             }
                         }
                     }
@@ -394,9 +393,11 @@ impl View for ProjectSearchView {
             } else {
                 match current_mode {
                     SearchMode::Semantic => {
-                        let mut minor_text = Vec::new();
+                        let mut minor_text: Vec<String> = Vec::new();
                         minor_text.push("".into());
-                        minor_text.extend(semantic_status);
+                        if let Some(semantic_status) = semantic_status {
+                            minor_text.extend(semantic_status);
+                        }
                         if show_minor_text {
                             minor_text
                                 .push("Simply explain the code you are looking to find.".into());

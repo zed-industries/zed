@@ -43,10 +43,10 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe<T2: 'static>(
         &mut self,
         handle: &Handle<T2>,
-        mut on_notify: impl FnMut(&mut T, Handle<T2>, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+        mut on_notify: impl FnMut(&mut T, Handle<T2>, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
         let this = self.weak_handle();
         let handle = handle.downgrade();
@@ -68,18 +68,17 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         handle: &Handle<E>,
         mut on_event: impl FnMut(&mut T, Handle<E>, &E::Event, &mut ModelContext<'_, T>)
             + Send
-            + Sync
             + 'static,
     ) -> Subscription
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
         let this = self.weak_handle();
         let handle = handle.downgrade();
         self.app.event_listeners.insert(
             handle.entity_id,
             Box::new(move |event, cx| {
-                let event = event.downcast_ref().expect("invalid event type");
+                let event: &E::Event = event.downcast_ref().expect("invalid event type");
                 if let Some((this, handle)) = this.upgrade().zip(handle.upgrade()) {
                     this.update(cx, |this, cx| on_event(this, handle, event, cx));
                     true
@@ -92,7 +91,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn on_release(
         &mut self,
-        mut on_release: impl FnMut(&mut T, &mut AppContext) + Send + Sync + 'static,
+        mut on_release: impl FnMut(&mut T, &mut AppContext) + Send + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -109,10 +108,10 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe_release<E: 'static>(
         &mut self,
         handle: &Handle<E>,
-        mut on_release: impl FnMut(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+        mut on_release: impl FnMut(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
-        T: Any + Send + Sync,
+        T: Any + Send,
     {
         let this = self.weak_handle();
         self.app.observe_release(handle, move |entity, cx| {
@@ -124,10 +123,10 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        mut f: impl FnMut(&mut T, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+        mut f: impl FnMut(&mut T, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
         let handle = self.weak_handle();
         self.global_observers.insert(
@@ -138,11 +137,11 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn on_app_quit<Fut>(
         &mut self,
-        mut on_quit: impl FnMut(&mut T, &mut ModelContext<T>) -> Fut + Send + Sync + 'static,
+        mut on_quit: impl FnMut(&mut T, &mut ModelContext<T>) -> Fut + Send + 'static,
     ) -> Subscription
     where
         Fut: 'static + Future<Output = ()> + Send,
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
         let handle = self.weak_handle();
         self.app.quit_observers.insert(
@@ -173,7 +172,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static + Send + Sync,
+        G: 'static + Send,
     {
         let mut global = self.app.lease_global::<G>();
         let result = f(&mut global, self);
@@ -210,7 +209,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 impl<'a, T> ModelContext<'a, T>
 where
     T: EventEmitter,
-    T::Event: Send + Sync,
+    T::Event: Send,
 {
     pub fn emit(&mut self, event: T::Event) {
         self.app.pending_effects.push_back(Effect::Emit {
@@ -221,15 +220,15 @@ where
 }
 
 impl<'a, T> Context for ModelContext<'a, T> {
-    type EntityContext<'b, 'c, U> = ModelContext<'b, U>;
+    type EntityContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
     fn entity<U>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, U>) -> U,
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, U>) -> U,
     ) -> Handle<U>
     where
-        U: 'static + Send + Sync,
+        U: 'static + Send,
     {
         self.app.entity(build_entity)
     }
@@ -237,7 +236,7 @@ impl<'a, T> Context for ModelContext<'a, T> {
     fn update_entity<U: 'static, R>(
         &mut self,
         handle: &Handle<U>,
-        update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,
+        update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, U>) -> R,
     ) -> R {
         self.app.update_entity(handle, update)
     }

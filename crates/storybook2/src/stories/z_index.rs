@@ -1,4 +1,3 @@
-
 use gpui2::{px, rgb, Div, Hsla};
 use ui::prelude::*;
 
@@ -10,11 +9,7 @@ use crate::story::Story;
 pub struct ZIndexStory;
 
 impl ZIndexStory {
-    pub fn new() -> Self {
-        Self
-    }
-
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         Story::container(cx)
             .child(Story::title(cx, "z-index"))
             .child(

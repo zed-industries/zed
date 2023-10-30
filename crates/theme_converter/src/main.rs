@@ -24,9 +24,9 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let legacy_theme = load_theme(args.theme)?;
+    let (json_theme, legacy_theme) = load_theme(args.theme)?;
 
-    let theme = convert_theme(legacy_theme)?;
+    let theme = convert_theme(json_theme, legacy_theme)?;
 
     println!("{:#?}", ThemePrinter(theme));
 
@@ -89,129 +89,77 @@ impl From<PlayerThemeColors> for PlayerTheme {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct SyntaxColor {
-    pub comment: Hsla,
-    pub string: Hsla,
-    pub function: Hsla,
-    pub keyword: Hsla,
-}
-
-impl Debug for SyntaxColor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SyntaxColor")
-            .field("comment", &HslaPrinter(self.comment))
-            .field("string", &HslaPrinter(self.string))
-            .field("function", &HslaPrinter(self.function))
-            .field("keyword", &HslaPrinter(self.keyword))
-            .finish()
-    }
-}
-
-impl SyntaxColor {
-    pub fn new(theme: &LegacyTheme) -> Self {
-        Self {
-            comment: theme
-                .syntax
-                .get("comment")
-                .cloned()
-                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
-            string: theme
-                .syntax
-                .get("string")
-                .cloned()
-                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
-            function: theme
-                .syntax
-                .get("function")
-                .cloned()
-                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
-            keyword: theme
-                .syntax
-                .get("keyword")
-                .cloned()
-                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
-        }
-    }
-}
-
-impl From<SyntaxColor> for SyntaxTheme {
-    fn from(value: SyntaxColor) -> Self {
-        Self {
-            comment: value.comment,
-            string: value.string,
-            keyword: value.keyword,
-            function: value.function,
-            highlights: Vec::new(),
-        }
-    }
-}
-
-fn convert_theme(theme: LegacyTheme) -> Result<theme2::Theme> {
+fn convert_theme(json_theme: JsonTheme, legacy_theme: LegacyTheme) -> Result<theme2::Theme> {
     let transparent = hsla(0.0, 0.0, 0.0, 0.0);
 
     let players: [PlayerTheme; 8] = [
-        PlayerThemeColors::new(&theme, 0).into(),
-        PlayerThemeColors::new(&theme, 1).into(),
-        PlayerThemeColors::new(&theme, 2).into(),
-        PlayerThemeColors::new(&theme, 3).into(),
-        PlayerThemeColors::new(&theme, 4).into(),
-        PlayerThemeColors::new(&theme, 5).into(),
-        PlayerThemeColors::new(&theme, 6).into(),
-        PlayerThemeColors::new(&theme, 7).into(),
+        PlayerThemeColors::new(&legacy_theme, 0).into(),
+        PlayerThemeColors::new(&legacy_theme, 1).into(),
+        PlayerThemeColors::new(&legacy_theme, 2).into(),
+        PlayerThemeColors::new(&legacy_theme, 3).into(),
+        PlayerThemeColors::new(&legacy_theme, 4).into(),
+        PlayerThemeColors::new(&legacy_theme, 5).into(),
+        PlayerThemeColors::new(&legacy_theme, 6).into(),
+        PlayerThemeColors::new(&legacy_theme, 7).into(),
     ];
 
     let theme = theme2::Theme {
         metadata: theme2::ThemeMetadata {
-            name: theme.name.clone().into(),
-            is_light: theme.is_light,
+            name: legacy_theme.name.clone().into(),
+            is_light: legacy_theme.is_light,
         },
         transparent,
         mac_os_traffic_light_red: rgb::<Hsla>(0xEC695E),
         mac_os_traffic_light_yellow: rgb::<Hsla>(0xF4BF4F),
         mac_os_traffic_light_green: rgb::<Hsla>(0x62C554),
-        border: theme.lowest.base.default.border,
-        border_variant: theme.lowest.variant.default.border,
-        border_focused: theme.lowest.accent.default.border,
+        border: legacy_theme.lowest.base.default.border,
+        border_variant: legacy_theme.lowest.variant.default.border,
+        border_focused: legacy_theme.lowest.accent.default.border,
         border_transparent: transparent,
-        elevated_surface: theme.lowest.base.default.background,
-        surface: theme.middle.base.default.background,
-        background: theme.lowest.base.default.background,
-        filled_element: theme.lowest.base.default.background,
+        elevated_surface: legacy_theme.lowest.base.default.background,
+        surface: legacy_theme.middle.base.default.background,
+        background: legacy_theme.lowest.base.default.background,
+        filled_element: legacy_theme.lowest.base.default.background,
         filled_element_hover: hsla(0.0, 0.0, 100.0, 0.12),
         filled_element_active: hsla(0.0, 0.0, 100.0, 0.16),
-        filled_element_selected: theme.lowest.accent.default.background,
+        filled_element_selected: legacy_theme.lowest.accent.default.background,
         filled_element_disabled: transparent,
         ghost_element: transparent,
         ghost_element_hover: hsla(0.0, 0.0, 100.0, 0.08),
         ghost_element_active: hsla(0.0, 0.0, 100.0, 0.12),
-        ghost_element_selected: theme.lowest.accent.default.background,
+        ghost_element_selected: legacy_theme.lowest.accent.default.background,
         ghost_element_disabled: transparent,
-        text: theme.lowest.base.default.foreground,
-        text_muted: theme.lowest.variant.default.foreground,
+        text: legacy_theme.lowest.base.default.foreground,
+        text_muted: legacy_theme.lowest.variant.default.foreground,
         /// TODO: map this to a real value
-        text_placeholder: theme.lowest.negative.default.foreground,
-        text_disabled: theme.lowest.base.disabled.foreground,
-        text_accent: theme.lowest.accent.default.foreground,
-        icon_muted: theme.lowest.variant.default.foreground,
-        syntax: SyntaxColor::new(&theme).into(),
+        text_placeholder: legacy_theme.lowest.negative.default.foreground,
+        text_disabled: legacy_theme.lowest.base.disabled.foreground,
+        text_accent: legacy_theme.lowest.accent.default.foreground,
+        icon_muted: legacy_theme.lowest.variant.default.foreground,
+        syntax: SyntaxTheme {
+            highlights: json_theme
+                .editor
+                .syntax
+                .iter()
+                .map(|(token, style)| (token.clone(), style.color.clone().into()))
+                .collect(),
+        },
+        status_bar: legacy_theme.lowest.base.default.background,
+        title_bar: legacy_theme.lowest.base.default.background,
+        toolbar: legacy_theme.highest.base.default.background,
+        tab_bar: legacy_theme.middle.base.default.background,
+        editor: legacy_theme.highest.base.default.background,
+        editor_subheader: legacy_theme.middle.base.default.background,
+        terminal: legacy_theme.highest.base.default.background,
+        editor_active_line: legacy_theme.highest.on.default.background,
+        image_fallback_background: legacy_theme.lowest.base.default.background,
 
-        status_bar: theme.lowest.base.default.background,
-        title_bar: theme.lowest.base.default.background,
-        toolbar: theme.highest.base.default.background,
-        tab_bar: theme.middle.base.default.background,
-        editor: theme.highest.base.default.background,
-        editor_subheader: theme.middle.base.default.background,
-        terminal: theme.highest.base.default.background,
-        editor_active_line: theme.highest.on.default.background,
-        image_fallback_background: theme.lowest.base.default.background,
-
-        git_created: theme.lowest.positive.default.foreground,
-        git_modified: theme.lowest.accent.default.foreground,
-        git_deleted: theme.lowest.negative.default.foreground,
-        git_conflict: theme.lowest.warning.default.foreground,
-        git_ignored: theme.lowest.base.disabled.foreground,
-        git_renamed: theme.lowest.warning.default.foreground,
+        git_created: legacy_theme.lowest.positive.default.foreground,
+        git_modified: legacy_theme.lowest.accent.default.foreground,
+        git_deleted: legacy_theme.lowest.negative.default.foreground,
+        git_conflict: legacy_theme.lowest.warning.default.foreground,
+        git_ignored: legacy_theme.lowest.base.disabled.foreground,
+        git_renamed: legacy_theme.lowest.warning.default.foreground,
 
         players,
     };
@@ -221,11 +169,22 @@ fn convert_theme(theme: LegacyTheme) -> Result<theme2::Theme> {
 
 #[derive(Deserialize)]
 struct JsonTheme {
+    pub editor: JsonEditorTheme,
     pub base_theme: serde_json::Value,
 }
 
+#[derive(Deserialize)]
+struct JsonEditorTheme {
+    pub syntax: HashMap<String, JsonSyntaxStyle>,
+}
+
+#[derive(Deserialize)]
+struct JsonSyntaxStyle {
+    pub color: Hsla,
+}
+
 /// Loads the [`Theme`] with the given name.
-pub fn load_theme(name: String) -> Result<LegacyTheme> {
+fn load_theme(name: String) -> Result<(JsonTheme, LegacyTheme)> {
     let theme_contents = Assets::get(&format!("themes/{name}.json"))
         .with_context(|| format!("theme file not found: '{name}'"))?;
 
@@ -235,7 +194,7 @@ pub fn load_theme(name: String) -> Result<LegacyTheme> {
     let legacy_theme: LegacyTheme = serde_json::from_value(json_theme.base_theme.clone())
         .context("failed to parse `base_theme`")?;
 
-    Ok(legacy_theme)
+    Ok((json_theme, legacy_theme))
 }
 
 #[derive(Deserialize, Clone, Default, Debug)]
@@ -491,11 +450,19 @@ pub struct SyntaxThemePrinter(SyntaxTheme);
 impl Debug for SyntaxThemePrinter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SyntaxTheme")
-            .field("comment", &HslaPrinter(self.0.comment))
-            .field("string", &HslaPrinter(self.0.string))
-            .field("function", &HslaPrinter(self.0.function))
-            .field("keyword", &HslaPrinter(self.0.keyword))
-            .field("highlights", &VecPrinter(&self.0.highlights))
+            .field(
+                "highlights",
+                &VecPrinter(
+                    &self
+                        .0
+                        .highlights
+                        .iter()
+                        .map(|(token, highlight)| {
+                            (IntoPrinter(token), HslaPrinter(highlight.color.unwrap()))
+                        })
+                        .collect(),
+                ),
+            )
             .finish()
     }
 }

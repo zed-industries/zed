@@ -53,6 +53,7 @@ pub struct Theme {
     pub collab_panel: CollabPanel,
     pub project_panel: ProjectPanel,
     pub chat_panel: ChatPanel,
+    pub notification_panel: NotificationPanel,
     pub command_palette: CommandPalette,
     pub picker: Picker,
     pub editor: Editor,
@@ -249,6 +250,7 @@ pub struct CollabPanel {
     pub add_contact_button: Toggleable<Interactive<IconButton>>,
     pub add_channel_button: Toggleable<Interactive<IconButton>>,
     pub header_row: ContainedText,
+    pub dragged_over_header: ContainerStyle,
     pub subheader_row: Toggleable<Interactive<ContainedText>>,
     pub leave_call: Interactive<ContainedText>,
     pub contact_row: Toggleable<Interactive<ContainerStyle>>,
@@ -286,6 +288,8 @@ pub struct TabbedModal {
     pub header: ContainerStyle,
     pub body: ContainerStyle,
     pub title: ContainedText,
+    pub visibility_toggle: Interactive<ContainedText>,
+    pub channel_link: Interactive<ContainedText>,
     pub picker: Picker,
     pub max_height: f32,
     pub max_width: f32,
@@ -636,21 +640,43 @@ pub struct ChatPanel {
     pub input_editor: FieldEditor,
     pub avatar: AvatarStyle,
     pub avatar_container: ContainerStyle,
-    pub message: ChatMessage,
-    pub continuation_message: ChatMessage,
+    pub rich_text: RichTextStyle,
+    pub message_sender: ContainedText,
+    pub message_timestamp: ContainedText,
+    pub message: Interactive<ContainerStyle>,
+    pub continuation_message: Interactive<ContainerStyle>,
+    pub pending_message: Interactive<ContainerStyle>,
     pub last_message_bottom_spacing: f32,
-    pub pending_message: ChatMessage,
     pub sign_in_prompt: Interactive<TextStyle>,
     pub icon_button: Interactive<IconButton>,
 }
 
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct RichTextStyle {
+    pub text: TextStyle,
+    pub mention_highlight: HighlightStyle,
+    pub mention_background: Option<Color>,
+    pub self_mention_highlight: HighlightStyle,
+    pub self_mention_background: Option<Color>,
+    pub code_background: Option<Color>,
+}
+
 #[derive(Deserialize, Default, JsonSchema)]
-pub struct ChatMessage {
+pub struct NotificationPanel {
     #[serde(flatten)]
-    pub container: Interactive<ContainerStyle>,
-    pub body: TextStyle,
-    pub sender: ContainedText,
+    pub container: ContainerStyle,
+    pub title: ContainedText,
+    pub title_icon: SvgStyle,
+    pub title_height: f32,
+    pub list: ContainerStyle,
+    pub avatar: AvatarStyle,
+    pub avatar_container: ContainerStyle,
+    pub sign_in_prompt: Interactive<TextStyle>,
+    pub icon_button: Interactive<IconButton>,
+    pub unread_text: ContainedText,
+    pub read_text: ContainedText,
     pub timestamp: ContainedText,
+    pub button: Interactive<ContainedText>,
 }
 
 #[derive(Deserialize, Default, JsonSchema)]
@@ -867,9 +893,13 @@ pub struct AutocompleteStyle {
     pub selected_item: ContainerStyle,
     pub hovered_item: ContainerStyle,
     pub match_highlight: HighlightStyle,
-    pub server_name_container: ContainerStyle,
-    pub server_name_color: Color,
-    pub server_name_size_percent: f32,
+    pub completion_min_width: f32,
+    pub completion_max_width: f32,
+    pub inline_docs_container: ContainerStyle,
+    pub inline_docs_color: Color,
+    pub inline_docs_size_percent: f32,
+    pub alongside_docs_max_width: f32,
+    pub alongside_docs_container: ContainerStyle,
 }
 
 #[derive(Clone, Copy, Default, Deserialize, JsonSchema)]
@@ -1195,6 +1225,15 @@ pub struct InlineAssistantStyle {
     pub disabled_editor: FieldEditor,
     pub pending_edit_background: Color,
     pub include_conversation: ToggleIconButtonStyle,
+    pub retrieve_context: ToggleIconButtonStyle,
+    pub context_status: ContextStatusStyle,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct ContextStatusStyle {
+    pub error_icon: Icon,
+    pub in_progress_icon: Icon,
+    pub complete_icon: Icon,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

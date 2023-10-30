@@ -537,6 +537,7 @@ impl BufferSearchBar {
         self.active_searchable_item
             .as_ref()
             .map(|searchable_item| searchable_item.query_suggestion(cx))
+            .filter(|suggestion| !suggestion.is_empty())
     }
 
     pub fn set_replacement(&mut self, replacement: Option<&str>, cx: &mut ViewContext<Self>) {

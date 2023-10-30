@@ -7,7 +7,7 @@ pub struct Details<V: 'static> {
     actions: Option<ButtonGroup<V>>,
 }
 
-impl<S: 'static> Details<S> {
+impl<V: 'static> Details<V> {
     pub fn new(text: &'static str) -> Self {
         Self {
             text,
@@ -21,12 +21,12 @@ impl<S: 'static> Details<S> {
         self
     }
 
-    pub fn actions(mut self, actions: ButtonGroup<S>) -> Self {
+    pub fn actions(mut self, actions: ButtonGroup<V>) -> Self {
         self.actions = Some(actions);
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         v_stack()
@@ -37,7 +37,7 @@ impl<S: 'static> Details<S> {
             .size_full()
             .child(self.text)
             .children(self.meta.map(|m| m))
-            .children(self.actions.take().map(|a| a))
+            .children(self.actions.map(|a| a))
     }
 }
 
@@ -54,10 +54,6 @@ mod stories {
     pub struct DetailsStory;
 
     impl DetailsStory {
-        pub fn new() -> Self {
-            Self
-        }
-
         fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
                 .child(Story::title_for::<_, Details<V>>(cx))

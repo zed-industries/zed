@@ -5,27 +5,27 @@ use gpui2::MouseButton;
 use crate::{h_stack, prelude::*};
 use crate::{ClickHandler, Icon, IconColor, IconElement};
 
-struct IconButtonHandlers<S: 'static> {
-    click: Option<ClickHandler<S>>,
+struct IconButtonHandlers<V: 'static> {
+    click: Option<ClickHandler<V>>,
 }
 
-impl<S: 'static> Default for IconButtonHandlers<S> {
+impl<V: 'static> Default for IconButtonHandlers<V> {
     fn default() -> Self {
         Self { click: None }
     }
 }
 
 #[derive(Component)]
-pub struct IconButton<S: 'static> {
+pub struct IconButton<V: 'static> {
     id: ElementId,
     icon: Icon,
     color: IconColor,
     variant: ButtonVariant,
     state: InteractionState,
-    handlers: IconButtonHandlers<S>,
+    handlers: IconButtonHandlers<V>,
 }
 
-impl<S: 'static> IconButton<S> {
+impl<V: 'static> IconButton<V> {
     pub fn new(id: impl Into<ElementId>, icon: Icon) -> Self {
         Self {
             id: id.into(),
@@ -57,12 +57,15 @@ impl<S: 'static> IconButton<S> {
         self
     }
 
-    pub fn on_click(mut self, handler: impl 'static + Fn(&mut S, &mut ViewContext<S>) + Send + Sync) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl 'static + Fn(&mut V, &mut ViewContext<V>) + Send + Sync,
+    ) -> Self {
         self.handlers.click = Some(Arc::new(handler));
         self
     }
 
-    fn render(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         let icon_color = match (self.state, self.color) {

@@ -67,23 +67,42 @@ use std::{
 };
 use taffy::TaffyLayoutEngine;
 
-type AnyBox = Box<dyn Any + Send + Sync>;
+type AnyBox = Box<dyn Any + Send>;
 
 pub trait Context {
-    type EntityContext<'a, 'w, T>;
+    type EntityContext<'a, T>;
     type Result<T>;
 
     fn entity<T>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
     ) -> Self::Result<Handle<T>>
     where
-        T: 'static + Send + Sync;
+        T: 'static + Send;
 
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
+    ) -> Self::Result<R>;
+}
+
+pub trait VisualContext: Context {
+    type ViewContext<'a, 'w, V>;
+
+    fn build_view<E, V>(
+        &mut self,
+        build_entity: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
+        render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    ) -> Self::Result<View<V>>
+    where
+        E: Component<V>,
+        V: 'static + Send;
+
+    fn update_view<V: 'static, R>(
+        &mut self,
+        view: &View<V>,
+        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, '_, V>) -> R,
     ) -> Self::Result<R>;
 }
 
@@ -111,21 +130,21 @@ impl<T> DerefMut for MainThread<T> {
 }
 
 impl<C: Context> Context for MainThread<C> {
-    type EntityContext<'a, 'w, T> = MainThread<C::EntityContext<'a, 'w, T>>;
+    type EntityContext<'a, T> = MainThread<C::EntityContext<'a, T>>;
     type Result<T> = C::Result<T>;
 
     fn entity<T>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
     ) -> Self::Result<Handle<T>>
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
         self.0.entity(|cx| {
             let cx = unsafe {
                 mem::transmute::<
-                    &mut C::EntityContext<'_, '_, T>,
-                    &mut MainThread<C::EntityContext<'_, '_, T>>,
+                    &mut C::EntityContext<'_, T>,
+                    &mut MainThread<C::EntityContext<'_, T>>,
                 >(cx)
             };
             build_entity(cx)
@@ -135,16 +154,59 @@ impl<C: Context> Context for MainThread<C> {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         self.0.update_entity(handle, |entity, cx| {
             let cx = unsafe {
                 mem::transmute::<
-                    &mut C::EntityContext<'_, '_, T>,
-                    &mut MainThread<C::EntityContext<'_, '_, T>>,
+                    &mut C::EntityContext<'_, T>,
+                    &mut MainThread<C::EntityContext<'_, T>>,
                 >(cx)
             };
             update(entity, cx)
+        })
+    }
+}
+
+impl<C: VisualContext> VisualContext for MainThread<C> {
+    type ViewContext<'a, 'w, V> = MainThread<C::ViewContext<'a, 'w, V>>;
+
+    fn build_view<E, V>(
+        &mut self,
+        build_entity: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
+        render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    ) -> Self::Result<View<V>>
+    where
+        E: Component<V>,
+        V: 'static + Send,
+    {
+        self.0.build_view(
+            |cx| {
+                let cx = unsafe {
+                    mem::transmute::<
+                        &mut C::ViewContext<'_, '_, V>,
+                        &mut MainThread<C::ViewContext<'_, '_, V>>,
+                    >(cx)
+                };
+                build_entity(cx)
+            },
+            render,
+        )
+    }
+
+    fn update_view<V: 'static, R>(
+        &mut self,
+        view: &View<V>,
+        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, '_, V>) -> R,
+    ) -> Self::Result<R> {
+        self.0.update_view(view, |view_state, cx| {
+            let cx = unsafe {
+                mem::transmute::<
+                    &mut C::ViewContext<'_, '_, V>,
+                    &mut MainThread<C::ViewContext<'_, '_, V>>,
+                >(cx)
+            };
+            update(view_state, cx)
         })
     }
 }
@@ -154,7 +216,7 @@ pub trait BorrowAppContext {
     where
         F: FnOnce(&mut Self) -> R;
 
-    fn set_global<T: Send + Sync + 'static>(&mut self, global: T);
+    fn set_global<T: Send + 'static>(&mut self, global: T);
 }
 
 impl<C> BorrowAppContext for C
@@ -171,7 +233,7 @@ where
         result
     }
 
-    fn set_global<G: 'static + Send + Sync>(&mut self, global: G) {
+    fn set_global<G: 'static + Send>(&mut self, global: G) {
         self.borrow_mut().set_global(global)
     }
 }

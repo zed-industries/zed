@@ -1,9 +1,9 @@
+use std::path::PathBuf;
 #[cfg(feature = "neovim")]
 use std::{
     cmp,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Range},
 };
-use std::{ops::Range, path::PathBuf};
 
 #[cfg(feature = "neovim")]
 use async_compat::Compat;
@@ -12,6 +12,7 @@ use async_trait::async_trait;
 #[cfg(feature = "neovim")]
 use gpui::keymap_matcher::Keystroke;
 
+#[cfg(feature = "neovim")]
 use language::Point;
 
 #[cfg(feature = "neovim")]
@@ -109,7 +110,12 @@ impl NeovimConnection {
     // Sends a keystroke to the neovim process.
     #[cfg(feature = "neovim")]
     pub async fn send_keystroke(&mut self, keystroke_text: &str) {
-        let keystroke = Keystroke::parse(keystroke_text).unwrap();
+        let mut keystroke = Keystroke::parse(keystroke_text).unwrap();
+
+        if keystroke.key == "<" {
+            keystroke.key = "lt".to_string()
+        }
+
         let special = keystroke.shift
             || keystroke.ctrl
             || keystroke.alt
@@ -296,7 +302,7 @@ impl NeovimConnection {
     }
 
     #[cfg(feature = "neovim")]
-    pub async fn state(&mut self) -> (Option<Mode>, String, Vec<Range<Point>>) {
+    pub async fn state(&mut self) -> (Option<Mode>, String) {
         let nvim_buffer = self
             .nvim
             .get_current_buf()
@@ -405,37 +411,33 @@ impl NeovimConnection {
                 .push(Point::new(selection_row, selection_col)..Point::new(cursor_row, cursor_col)),
         }
 
+        let ranges = encode_ranges(&text, &selections);
         let state = NeovimData::Get {
             mode,
-            state: encode_ranges(&text, &selections),
+            state: ranges.clone(),
         };
 
         if self.data.back() != Some(&state) {
             self.data.push_back(state.clone());
         }
 
-        (mode, text, selections)
+        (mode, ranges)
     }
 
     #[cfg(not(feature = "neovim"))]
-    pub async fn state(&mut self) -> (Option<Mode>, String, Vec<Range<Point>>) {
-        if let Some(NeovimData::Get { state: text, mode }) = self.data.front() {
-            let (text, ranges) = parse_state(text);
-            (*mode, text, ranges)
+    pub async fn state(&mut self) -> (Option<Mode>, String) {
+        if let Some(NeovimData::Get { state: raw, mode }) = self.data.front() {
+            (*mode, raw.to_string())
         } else {
             panic!("operation does not match recorded script. re-record with --features=neovim");
         }
-    }
-
-    pub async fn selections(&mut self) -> Vec<Range<Point>> {
-        self.state().await.2
     }
 
     pub async fn mode(&mut self) -> Option<Mode> {
         self.state().await.0
     }
 
-    pub async fn text(&mut self) -> String {
+    pub async fn marked_text(&mut self) -> String {
         self.state().await.1
     }
 
@@ -527,6 +529,7 @@ impl Handler for NvimHandler {
     }
 }
 
+#[cfg(feature = "neovim")]
 fn parse_state(marked_text: &str) -> (String, Vec<Range<Point>>) {
     let (text, ranges) = util::test::marked_text_ranges(marked_text, true);
     let point_ranges = ranges

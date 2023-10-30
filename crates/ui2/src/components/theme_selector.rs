@@ -11,7 +11,7 @@ impl ThemeSelector {
         Self { id: id.into() }
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div().child(
             Palette::new(self.id.clone())
                 .items(vec![
@@ -47,11 +47,7 @@ mod stories {
     pub struct ThemeSelectorStory;
 
     impl ThemeSelectorStory {
-        pub fn new() -> Self {
-            Self
-        }
-
-        fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
                 .child(Story::title_for::<_, ThemeSelector>(cx))
                 .child(Story::label(cx, "Default"))

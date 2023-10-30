@@ -136,6 +136,7 @@ struct Error {
 
 impl LanguageServer {
     pub fn new(
+        stderr_capture: Arc<Mutex<Option<String>>>,
         server_id: LanguageServerId,
         binary: LanguageServerBinary,
         root_path: &Path,
@@ -165,6 +166,7 @@ impl LanguageServer {
             stdin,
             stdout,
             Some(stderr),
+            stderr_capture,
             Some(server),
             root_path,
             code_action_kinds,
@@ -197,6 +199,7 @@ impl LanguageServer {
         stdin: Stdin,
         stdout: Stdout,
         stderr: Option<Stderr>,
+        stderr_capture: Arc<Mutex<Option<String>>>,
         server: Option<Child>,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
@@ -218,20 +221,23 @@ impl LanguageServer {
         let io_handlers = Arc::new(Mutex::new(HashMap::default()));
 
         let stdout_input_task = cx.spawn(|cx| {
-            {
-                Self::handle_input(
-                    stdout,
-                    on_unhandled_notification.clone(),
-                    notification_handlers.clone(),
-                    response_handlers.clone(),
-                    io_handlers.clone(),
-                    cx,
-                )
-            }
+            Self::handle_input(
+                stdout,
+                on_unhandled_notification.clone(),
+                notification_handlers.clone(),
+                response_handlers.clone(),
+                io_handlers.clone(),
+                cx,
+            )
             .log_err()
         });
         let stderr_input_task = stderr
-            .map(|stderr| cx.spawn(|_| Self::handle_stderr(stderr, io_handlers.clone()).log_err()))
+            .map(|stderr| {
+                cx.spawn(|_| {
+                    Self::handle_stderr(stderr, io_handlers.clone(), stderr_capture.clone())
+                        .log_err()
+                })
+            })
             .unwrap_or_else(|| Task::Ready(Some(None)));
         let input_task = cx.spawn(|_| async move {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
@@ -353,12 +359,14 @@ impl LanguageServer {
     async fn handle_stderr<Stderr>(
         stderr: Stderr,
         io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
+        stderr_capture: Arc<Mutex<Option<String>>>,
     ) -> anyhow::Result<()>
     where
         Stderr: AsyncRead + Unpin + Send + 'static,
     {
         let mut stderr = BufReader::new(stderr);
         let mut buffer = Vec::new();
+
         loop {
             buffer.clear();
             stderr.read_until(b'\n', &mut buffer).await?;
@@ -366,6 +374,10 @@ impl LanguageServer {
                 log::trace!("incoming stderr message:{message}");
                 for handler in io_handlers.lock().values_mut() {
                     handler(IoKind::StdErr, message);
+                }
+
+                if let Some(stderr) = stderr_capture.lock().as_mut() {
+                    stderr.push_str(message);
                 }
             }
 
@@ -466,7 +478,10 @@ impl LanguageServer {
                         completion_item: Some(CompletionItemCapability {
                             snippet_support: Some(true),
                             resolve_support: Some(CompletionItemCapabilityResolveSupport {
-                                properties: vec!["additionalTextEdits".to_string()],
+                                properties: vec![
+                                    "documentation".to_string(),
+                                    "additionalTextEdits".to_string(),
+                                ],
                             }),
                             ..Default::default()
                         }),
@@ -748,6 +763,15 @@ impl LanguageServer {
         )
     }
 
+    // some child of string literal (be it "" or ``) which is the child of an attribute
+
+    // <Foo className="bar" />
+    // <Foo className={`bar`} />
+    // <Foo className={something + "bar"} />
+    // <Foo className={something + "bar"} />
+    // const classes = "awesome ";
+    // <Foo className={classes} />
+
     fn request_internal<T: request::Request>(
         next_id: &AtomicUsize,
         response_handlers: &Mutex<Option<HashMap<usize, ResponseHandler>>>,
@@ -926,6 +950,7 @@ impl LanguageServer {
             stdin_writer,
             stdout_reader,
             None::<async_pipe::PipeReader>,
+            Arc::new(Mutex::new(None)),
             None,
             Path::new("/"),
             None,
@@ -938,6 +963,7 @@ impl LanguageServer {
                 stdout_writer,
                 stdin_reader,
                 None::<async_pipe::PipeReader>,
+                Arc::new(Mutex::new(None)),
                 None,
                 Path::new("/"),
                 None,

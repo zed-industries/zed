@@ -210,6 +210,14 @@ export default function contacts_panel(): any {
                 right: SPACING,
             },
         },
+        dragged_over_header: {
+            margin: { top: SPACING },
+            padding: {
+                left: SPACING,
+                right: SPACING,
+            },
+            background: background(layer, "hovered"),
+        },
         subheader_row,
         leave_call: interactive({
             base: {
@@ -279,7 +287,7 @@ export default function contacts_panel(): any {
                 margin: {
                     left: CHANNEL_SPACING,
                 },
-            }
+            },
         },
         list_empty_label_container: {
             margin: {

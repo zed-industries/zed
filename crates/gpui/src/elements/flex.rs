@@ -2,7 +2,8 @@ use std::{any::Any, cell::Cell, f32::INFINITY, ops::Range, rc::Rc};
 
 use crate::{
     json::{self, ToJson, Value},
-    AnyElement, Axis, Element, ElementStateHandle, SizeConstraint, Vector2FExt, ViewContext,
+    AnyElement, Axis, Element, ElementStateHandle, SizeConstraint, TypeTag, Vector2FExt,
+    ViewContext,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -10,10 +11,10 @@ use pathfinder_geometry::{
 };
 use serde_json::json;
 
-#[derive(Default)]
 struct ScrollState {
     scroll_to: Cell<Option<usize>>,
     scroll_position: Cell<f32>,
+    type_tag: TypeTag,
 }
 
 pub struct Flex<V> {
@@ -66,8 +67,14 @@ impl<V: 'static> Flex<V> {
     where
         Tag: 'static,
     {
-        let scroll_state = cx.default_element_state::<Tag, Rc<ScrollState>>(element_id);
-        scroll_state.read(cx).scroll_to.set(scroll_to);
+        let scroll_state = cx.element_state::<Tag, Rc<ScrollState>>(
+            element_id,
+            Rc::new(ScrollState {
+                scroll_to: Cell::new(scroll_to),
+                scroll_position: Default::default(),
+                type_tag: TypeTag::new::<Tag>(),
+            }),
+        );
         self.scroll_state = Some((scroll_state, cx.handle().id()));
         self
     }
@@ -276,38 +283,44 @@ impl<V: 'static> Element<V> for Flex<V> {
         if let Some((scroll_state, id)) = &self.scroll_state {
             let scroll_state = scroll_state.read(cx).clone();
             cx.scene().push_mouse_region(
-                crate::MouseRegion::new::<Self>(*id, 0, bounds)
-                    .on_scroll({
-                        let axis = self.axis;
-                        move |e, _: &mut V, cx| {
-                            if remaining_space < 0. {
-                                let scroll_delta = e.delta.raw();
+                crate::MouseRegion::from_handlers(
+                    scroll_state.type_tag,
+                    *id,
+                    0,
+                    bounds,
+                    Default::default(),
+                )
+                .on_scroll({
+                    let axis = self.axis;
+                    move |e, _: &mut V, cx| {
+                        if remaining_space < 0. {
+                            let scroll_delta = e.delta.raw();
 
-                                let mut delta = match axis {
-                                    Axis::Horizontal => {
-                                        if scroll_delta.x().abs() >= scroll_delta.y().abs() {
-                                            scroll_delta.x()
-                                        } else {
-                                            scroll_delta.y()
-                                        }
+                            let mut delta = match axis {
+                                Axis::Horizontal => {
+                                    if scroll_delta.x().abs() >= scroll_delta.y().abs() {
+                                        scroll_delta.x()
+                                    } else {
+                                        scroll_delta.y()
                                     }
-                                    Axis::Vertical => scroll_delta.y(),
-                                };
-                                if !e.delta.precise() {
-                                    delta *= 20.;
                                 }
-
-                                scroll_state
-                                    .scroll_position
-                                    .set(scroll_state.scroll_position.get() - delta);
-
-                                cx.notify();
-                            } else {
-                                cx.propagate_event();
+                                Axis::Vertical => scroll_delta.y(),
+                            };
+                            if !e.delta.precise() {
+                                delta *= 20.;
                             }
+
+                            scroll_state
+                                .scroll_position
+                                .set(scroll_state.scroll_position.get() - delta);
+
+                            cx.notify();
+                        } else {
+                            cx.propagate_event();
                         }
-                    })
-                    .on_move(|_, _: &mut V, _| { /* Capture move events */ }),
+                    }
+                })
+                .on_move(|_, _: &mut V, _| { /* Capture move events */ }),
             )
         }
 

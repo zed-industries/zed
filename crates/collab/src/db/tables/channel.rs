@@ -1,4 +1,4 @@
-use crate::db::ChannelId;
+use crate::db::{ChannelId, ChannelVisibility};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel)]
@@ -7,6 +7,29 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: ChannelId,
     pub name: String,
+    pub visibility: ChannelVisibility,
+    pub parent_path: String,
+}
+
+impl Model {
+    pub fn parent_id(&self) -> Option<ChannelId> {
+        self.ancestors().last()
+    }
+
+    pub fn ancestors(&self) -> impl Iterator<Item = ChannelId> + '_ {
+        self.parent_path
+            .trim_end_matches('/')
+            .split('/')
+            .filter_map(|id| Some(ChannelId::from_proto(id.parse().ok()?)))
+    }
+
+    pub fn ancestors_including_self(&self) -> impl Iterator<Item = ChannelId> + '_ {
+        self.ancestors().chain(Some(self.id))
+    }
+
+    pub fn path(&self) -> String {
+        format!("{}{}/", self.parent_path, self.id)
+    }
 }
 
 impl ActiveModelBehavior for ActiveModel {}

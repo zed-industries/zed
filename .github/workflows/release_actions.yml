@@ -20,9 +20,7 @@ jobs:
       id: get-content
       with:
         stringToTruncate: |
-          📣 Zed ${{ github.event.release.tag_name }} was just released!
-
-          Restart your Zed or head to ${{ steps.get-release-url.outputs.URL }} to grab it.
+          📣 Zed [${{ github.event.release.tag_name }}](${{ steps.get-release-url.outputs.URL }}) was just released!
 
           ${{ github.event.release.body }}
         maxLength: 2000

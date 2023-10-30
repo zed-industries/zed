@@ -56,7 +56,7 @@ impl Input {
         self
     }
 
-    fn render<S: 'static>(self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         let (input_bg, input_hover_bg, input_active_bg) = match self.variant {
@@ -120,10 +120,6 @@ mod stories {
     pub struct InputStory;
 
     impl InputStory {
-        pub fn new() -> Self {
-            Self
-        }
-
         fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             Story::container(cx)
                 .child(Story::title_for::<_, Input>(cx))

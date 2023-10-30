@@ -48,10 +48,6 @@ mod stories {
     pub struct MultiBufferStory;
 
     impl MultiBufferStory {
-        pub fn new() -> Self {
-            Self
-        }
-
         fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
             let theme = theme(cx);
 

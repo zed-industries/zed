@@ -4,15 +4,15 @@ use smallvec::SmallVec;
 use crate::{h_stack, prelude::*, v_stack, Button, Icon, IconButton, Label};
 
 #[derive(Component)]
-pub struct Modal<S: 'static> {
+pub struct Modal<V: 'static> {
     id: ElementId,
     title: Option<SharedString>,
-    primary_action: Option<Button<S>>,
-    secondary_action: Option<Button<S>>,
-    children: SmallVec<[AnyElement<S>; 2]>,
+    primary_action: Option<Button<V>>,
+    secondary_action: Option<Button<V>>,
+    children: SmallVec<[AnyElement<V>; 2]>,
 }
 
-impl<S: 'static> Modal<S> {
+impl<V: 'static> Modal<V> {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
@@ -28,17 +28,17 @@ impl<S: 'static> Modal<S> {
         self
     }
 
-    pub fn primary_action(mut self, action: Button<S>) -> Self {
+    pub fn primary_action(mut self, action: Button<V>) -> Self {
         self.primary_action = Some(action);
         self
     }
 
-    pub fn secondary_action(mut self, action: Button<S>) -> Self {
+    pub fn secondary_action(mut self, action: Button<V>) -> Self {
         self.secondary_action = Some(action);
         self
     }
 
-    fn render(mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Component<S> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let theme = theme(cx);
 
         v_stack()
@@ -58,7 +58,7 @@ impl<S: 'static> Modal<S> {
                     .child(div().children(self.title.clone().map(|t| Label::new(t))))
                     .child(IconButton::new("close", Icon::Close)),
             )
-            .child(v_stack().p_1().children(self.children.drain(..)))
+            .child(v_stack().p_1().children(self.children))
             .when(
                 self.primary_action.is_some() || self.secondary_action.is_some(),
                 |this| {
@@ -68,16 +68,16 @@ impl<S: 'static> Modal<S> {
                             .border_color(theme.border)
                             .p_1()
                             .justify_end()
-                            .children(self.secondary_action.take())
-                            .children(self.primary_action.take()),
+                            .children(self.secondary_action)
+                            .children(self.primary_action),
                     )
                 },
             )
     }
 }
 
-impl<S: 'static> ParentElement<S> for Modal<S> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
+impl<V: 'static> ParentElement<V> for Modal<V> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
 }
