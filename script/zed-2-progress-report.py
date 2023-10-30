@@ -3,7 +3,6 @@ from pathlib import Path
 
 THIS_SCRIPT_PATH: Path = Path(__file__)
 CRATES_DIR: Path = THIS_SCRIPT_PATH.parent.parent / "crates"
-print(CRATES_DIR)
 
 zed_1_crate_count: int = 0
 zed_2_crate_count: int = 0
