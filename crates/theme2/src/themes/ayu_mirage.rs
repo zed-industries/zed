@@ -1,4 +1,3 @@
-
 use gpui2::rgba;
 
 use crate::{PlayerTheme, SyntaxTheme, Theme, ThemeMetadata};
