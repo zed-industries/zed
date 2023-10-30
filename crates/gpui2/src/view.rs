@@ -1,7 +1,6 @@
 use crate::{
     AnyBox, AnyElement, AvailableSpace, BorrowWindow, Bounds, Component, Element, ElementId,
-    EntityId, Handle, LayoutId, Pixels, Size, ViewContext, VisualContext, WeakHandle,
-    WindowContext,
+    EntityId, LayoutId, Model, Pixels, Size, ViewContext, VisualContext, WeakHandle, WindowContext,
 };
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
@@ -11,13 +10,13 @@ use std::{
 };
 
 pub struct View<V> {
-    pub(crate) state: Handle<V>,
+    pub(crate) state: Model<V>,
     render: Arc<Mutex<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyElement<V> + Send + 'static>>,
 }
 
 impl<V: 'static> View<V> {
     pub fn for_handle<E>(
-        state: Handle<V>,
+        state: Model<V>,
         render: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
     ) -> View<V>
     where

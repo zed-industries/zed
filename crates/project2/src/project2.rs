@@ -26,7 +26,7 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui2::{
-    AnyHandle, AppContext, AsyncAppContext, Context, EventEmitter, Executor, Handle, ModelContext,
+    AnyHandle, AppContext, AsyncAppContext, Context, EventEmitter, Executor, Model, ModelContext,
     Task, WeakHandle,
 };
 use itertools::Itertools;
@@ -128,7 +128,7 @@ pub struct Project {
     next_entry_id: Arc<AtomicUsize>,
     join_project_response_message_id: u32,
     next_diagnostic_group_id: usize,
-    user_store: Handle<UserStore>,
+    user_store: Model<UserStore>,
     fs: Arc<dyn Fs>,
     client_state: Option<ProjectClientState>,
     collaborators: HashMap<proto::PeerId, Collaborator>,
@@ -140,17 +140,17 @@ pub struct Project {
     #[allow(clippy::type_complexity)]
     loading_buffers_by_path: HashMap<
         ProjectPath,
-        postage::watch::Receiver<Option<Result<Handle<Buffer>, Arc<anyhow::Error>>>>,
+        postage::watch::Receiver<Option<Result<Model<Buffer>, Arc<anyhow::Error>>>>,
     >,
     #[allow(clippy::type_complexity)]
     loading_local_worktrees:
-        HashMap<Arc<Path>, Shared<Task<Result<Handle<Worktree>, Arc<anyhow::Error>>>>>,
+        HashMap<Arc<Path>, Shared<Task<Result<Model<Worktree>, Arc<anyhow::Error>>>>>,
     opened_buffers: HashMap<u64, OpenBuffer>,
     local_buffer_ids_by_path: HashMap<ProjectPath, u64>,
     local_buffer_ids_by_entry_id: HashMap<ProjectEntryId, u64>,
     /// A mapping from a buffer ID to None means that we've started waiting for an ID but haven't finished loading it.
     /// Used for re-issuing buffer requests when peers temporarily disconnect
-    incomplete_remote_buffers: HashMap<u64, Option<Handle<Buffer>>>,
+    incomplete_remote_buffers: HashMap<u64, Option<Model<Buffer>>>,
     buffer_snapshots: HashMap<u64, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     buffers_being_formatted: HashSet<u64>,
     buffers_needing_diff: HashSet<WeakHandle<Buffer>>,
@@ -244,14 +244,14 @@ enum LocalProjectUpdate {
 }
 
 enum OpenBuffer {
-    Strong(Handle<Buffer>),
+    Strong(Model<Buffer>),
     Weak(WeakHandle<Buffer>),
     Operations(Vec<Operation>),
 }
 
 #[derive(Clone)]
 enum WorktreeHandle {
-    Strong(Handle<Worktree>),
+    Strong(Model<Worktree>),
     Weak(WeakHandle<Worktree>),
 }
 
@@ -344,7 +344,7 @@ pub struct DiagnosticSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
-    pub buffer: Handle<Buffer>,
+    pub buffer: Model<Buffer>,
     pub range: Range<language2::Anchor>,
 }
 
@@ -457,7 +457,7 @@ impl Hover {
 }
 
 #[derive(Default)]
-pub struct ProjectTransaction(pub HashMap<Handle<Buffer>, language2::Transaction>);
+pub struct ProjectTransaction(pub HashMap<Model<Buffer>, language2::Transaction>);
 
 impl DiagnosticSummary {
     fn new<'a, T: 'a>(diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<T>>) -> Self {
@@ -527,7 +527,7 @@ pub enum FormatTrigger {
 }
 
 struct ProjectLspAdapterDelegate {
-    project: Handle<Project>,
+    project: Model<Project>,
     http_client: Arc<dyn HttpClient>,
 }
 
@@ -543,7 +543,7 @@ impl FormatTrigger {
 #[derive(Clone, Debug, PartialEq)]
 enum SearchMatchCandidate {
     OpenBuffer {
-        buffer: Handle<Buffer>,
+        buffer: Model<Buffer>,
         // This might be an unnamed file without representation on filesystem
         path: Option<Arc<Path>>,
     },
@@ -621,12 +621,12 @@ impl Project {
     pub fn local(
         client: Arc<Client>,
         node: Arc<dyn NodeRuntime>,
-        user_store: Handle<UserStore>,
+        user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
-    ) -> Handle<Self> {
-        cx.entity(|cx: &mut ModelContext<Self>| {
+    ) -> Model<Self> {
+        cx.build_model(|cx: &mut ModelContext<Self>| {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
@@ -687,11 +687,11 @@ impl Project {
     pub async fn remote(
         remote_id: u64,
         client: Arc<Client>,
-        user_store: Handle<UserStore>,
+        user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         mut cx: AsyncAppContext,
-    ) -> Result<Handle<Self>> {
+    ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
         let subscription = client.subscribe_to_entity(remote_id)?;
@@ -700,7 +700,7 @@ impl Project {
                 project_id: remote_id,
             })
             .await?;
-        let this = cx.entity(|cx| {
+        let this = cx.build_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
 
             let mut worktrees = Vec::new();
@@ -981,7 +981,7 @@ impl Project {
         cx.notify();
     }
 
-    pub fn buffer_for_id(&self, remote_id: u64) -> Option<Handle<Buffer>> {
+    pub fn buffer_for_id(&self, remote_id: u64) -> Option<Model<Buffer>> {
         self.opened_buffers
             .get(&remote_id)
             .and_then(|buffer| buffer.upgrade())
@@ -995,11 +995,11 @@ impl Project {
         self.client.clone()
     }
 
-    pub fn user_store(&self) -> Handle<UserStore> {
+    pub fn user_store(&self) -> Model<UserStore> {
         self.user_store.clone()
     }
 
-    pub fn opened_buffers(&self) -> Vec<Handle<Buffer>> {
+    pub fn opened_buffers(&self) -> Vec<Model<Buffer>> {
         self.opened_buffers
             .values()
             .filter_map(|b| b.upgrade())
@@ -1061,7 +1061,7 @@ impl Project {
     }
 
     /// Collect all worktrees, including ones that don't appear in the project panel
-    pub fn worktrees<'a>(&'a self) -> impl 'a + DoubleEndedIterator<Item = Handle<Worktree>> {
+    pub fn worktrees<'a>(&'a self) -> impl 'a + DoubleEndedIterator<Item = Model<Worktree>> {
         self.worktrees
             .iter()
             .filter_map(move |worktree| worktree.upgrade())
@@ -1071,7 +1071,7 @@ impl Project {
     pub fn visible_worktrees<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl 'a + DoubleEndedIterator<Item = Handle<Worktree>> {
+    ) -> impl 'a + DoubleEndedIterator<Item = Model<Worktree>> {
         self.worktrees.iter().filter_map(|worktree| {
             worktree.upgrade().and_then(|worktree| {
                 if worktree.read(cx).is_visible() {
@@ -1088,7 +1088,7 @@ impl Project {
             .map(|tree| tree.read(cx).root_name())
     }
 
-    pub fn worktree_for_id(&self, id: WorktreeId, cx: &AppContext) -> Option<Handle<Worktree>> {
+    pub fn worktree_for_id(&self, id: WorktreeId, cx: &AppContext) -> Option<Model<Worktree>> {
         self.worktrees()
             .find(|worktree| worktree.read(cx).id() == id)
     }
@@ -1097,7 +1097,7 @@ impl Project {
         &self,
         entry_id: ProjectEntryId,
         cx: &AppContext,
-    ) -> Option<Handle<Worktree>> {
+    ) -> Option<Model<Worktree>> {
         self.worktrees()
             .find(|worktree| worktree.read(cx).contains_entry(entry_id))
     }
@@ -1652,12 +1652,12 @@ impl Project {
         text: &str,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<Handle<Buffer>> {
+    ) -> Result<Model<Buffer>> {
         if self.is_remote() {
             return Err(anyhow!("creating buffers as a guest is not supported yet"));
         }
         let id = post_inc(&mut self.next_buffer_id);
-        let buffer = cx.entity(|cx| {
+        let buffer = cx.build_model(|cx| {
             Buffer::new(self.replica_id(), id, text).with_language(
                 language.unwrap_or_else(|| language2::PLAIN_TEXT.clone()),
                 cx,
@@ -1690,7 +1690,7 @@ impl Project {
         &mut self,
         abs_path: impl AsRef<Path>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Handle<Buffer>>> {
+    ) -> Task<Result<Model<Buffer>>> {
         if let Some((worktree, relative_path)) = self.find_local_worktree(abs_path.as_ref(), cx) {
             self.open_buffer((worktree.read(cx).id(), relative_path), cx)
         } else {
@@ -1702,7 +1702,7 @@ impl Project {
         &mut self,
         path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Handle<Buffer>>> {
+    ) -> Task<Result<Model<Buffer>>> {
         let project_path = path.into();
         let worktree = if let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) {
             worktree
@@ -1757,9 +1757,9 @@ impl Project {
     fn open_local_buffer_internal(
         &mut self,
         path: &Arc<Path>,
-        worktree: &Handle<Worktree>,
+        worktree: &Model<Worktree>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Handle<Buffer>>> {
+    ) -> Task<Result<Model<Buffer>>> {
         let buffer_id = post_inc(&mut self.next_buffer_id);
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let worktree = worktree.as_local_mut().unwrap();
@@ -1775,9 +1775,9 @@ impl Project {
     fn open_remote_buffer_internal(
         &mut self,
         path: &Arc<Path>,
-        worktree: &Handle<Worktree>,
+        worktree: &Model<Worktree>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Handle<Buffer>>> {
+    ) -> Task<Result<Model<Buffer>>> {
         let rpc = self.client.clone();
         let project_id = self.remote_id().unwrap();
         let remote_worktree_id = worktree.read(cx).id();
@@ -1805,7 +1805,7 @@ impl Project {
         language_server_id: LanguageServerId,
         language_server_name: LanguageServerName,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Handle<Buffer>>> {
+    ) -> Task<Result<Model<Buffer>>> {
         cx.spawn(move |this, mut cx| async move {
             let abs_path = abs_path
                 .to_file_path()
@@ -1843,7 +1843,7 @@ impl Project {
         &mut self,
         id: u64,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Handle<Buffer>>> {
+    ) -> Task<Result<Model<Buffer>>> {
         if let Some(buffer) = self.buffer_for_id(id) {
             Task::ready(Ok(buffer))
         } else if self.is_local() {
@@ -1866,7 +1866,7 @@ impl Project {
 
     pub fn save_buffers(
         &self,
-        buffers: HashSet<Handle<Buffer>>,
+        buffers: HashSet<Model<Buffer>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         cx.spawn(move |this, mut cx| async move {
@@ -1881,7 +1881,7 @@ impl Project {
 
     pub fn save_buffer(
         &self,
-        buffer: Handle<Buffer>,
+        buffer: Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
@@ -1897,7 +1897,7 @@ impl Project {
 
     pub fn save_buffer_as(
         &mut self,
-        buffer: Handle<Buffer>,
+        buffer: Model<Buffer>,
         abs_path: PathBuf,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
@@ -1933,7 +1933,7 @@ impl Project {
         &mut self,
         path: &ProjectPath,
         cx: &mut ModelContext<Self>,
-    ) -> Option<Handle<Buffer>> {
+    ) -> Option<Model<Buffer>> {
         let worktree = self.worktree_for_id(path.worktree_id, cx)?;
         self.opened_buffers.values().find_map(|buffer| {
             let buffer = buffer.upgrade()?;
@@ -1948,7 +1948,7 @@ impl Project {
 
     fn register_buffer(
         &mut self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         self.request_buffer_diff_recalculation(buffer, cx);
@@ -2030,7 +2030,7 @@ impl Project {
 
     fn register_buffer_with_language_servers(
         &mut self,
-        buffer_handle: &Handle<Buffer>,
+        buffer_handle: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) {
         let buffer = buffer_handle.read(cx);
@@ -2114,7 +2114,7 @@ impl Project {
 
     fn unregister_buffer_from_language_servers(
         &mut self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         old_file: &File,
         cx: &mut ModelContext<Self>,
     ) {
@@ -2149,7 +2149,7 @@ impl Project {
 
     fn register_buffer_with_copilot(
         &self,
-        buffer_handle: &Handle<Buffer>,
+        buffer_handle: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(copilot) = Copilot::global(cx) {
@@ -2267,7 +2267,7 @@ impl Project {
 
     fn on_buffer_event(
         &mut self,
-        buffer: Handle<Buffer>,
+        buffer: Model<Buffer>,
         event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
@@ -2480,7 +2480,7 @@ impl Project {
 
     fn request_buffer_diff_recalculation(
         &mut self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) {
         self.buffers_needing_diff.insert(buffer.downgrade());
@@ -2676,7 +2676,7 @@ impl Project {
 
     fn detect_language_for_buffer(
         &mut self,
-        buffer_handle: &Handle<Buffer>,
+        buffer_handle: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         // If the buffer has a language, set it and start the language server if we haven't already.
@@ -2694,7 +2694,7 @@ impl Project {
 
     pub fn set_language_for_buffer(
         &mut self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         new_language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
@@ -2735,7 +2735,7 @@ impl Project {
 
     fn start_language_servers(
         &mut self,
-        worktree: &Handle<Worktree>,
+        worktree: &Model<Worktree>,
         worktree_path: Arc<Path>,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
@@ -3350,10 +3350,10 @@ impl Project {
 
     pub fn restart_language_servers_for_buffers(
         &mut self,
-        buffers: impl IntoIterator<Item = Handle<Buffer>>,
+        buffers: impl IntoIterator<Item = Model<Buffer>>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        let language_server_lookup_info: HashSet<(Handle<Worktree>, Arc<Language>)> = buffers
+        let language_server_lookup_info: HashSet<(Model<Worktree>, Arc<Language>)> = buffers
             .into_iter()
             .filter_map(|buffer| {
                 let buffer = buffer.read(cx);
@@ -3377,7 +3377,7 @@ impl Project {
     // TODO This will break in the case where the adapter's root paths and worktrees are not equal
     fn restart_language_servers(
         &mut self,
-        worktree: Handle<Worktree>,
+        worktree: Model<Worktree>,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
@@ -3949,7 +3949,7 @@ impl Project {
 
     fn update_buffer_diagnostics(
         &mut self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         server_id: LanguageServerId,
         version: Option<i32>,
         mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
@@ -4022,7 +4022,7 @@ impl Project {
 
     pub fn reload_buffers(
         &self,
-        buffers: HashSet<Handle<Buffer>>,
+        buffers: HashSet<Model<Buffer>>,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
@@ -4088,7 +4088,7 @@ impl Project {
 
     pub fn format(
         &self,
-        buffers: HashSet<Handle<Buffer>>,
+        buffers: HashSet<Model<Buffer>>,
         push_to_history: bool,
         trigger: FormatTrigger,
         cx: &mut ModelContext<Project>,
@@ -4361,7 +4361,7 @@ impl Project {
 
     async fn format_via_lsp(
         this: &WeakHandle<Self>,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         abs_path: &Path,
         language_server: &Arc<LanguageServer>,
         tab_size: NonZeroU32,
@@ -4410,7 +4410,7 @@ impl Project {
     }
 
     async fn format_via_external_command(
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         buffer_abs_path: &Path,
         command: &str,
         arguments: &[String],
@@ -4470,7 +4470,7 @@ impl Project {
 
     pub fn definition<T: ToPointUtf16>(
         &self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
@@ -4485,7 +4485,7 @@ impl Project {
 
     pub fn type_definition<T: ToPointUtf16>(
         &self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
@@ -4500,7 +4500,7 @@ impl Project {
 
     pub fn references<T: ToPointUtf16>(
         &self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Location>>> {
@@ -4515,7 +4515,7 @@ impl Project {
 
     pub fn document_highlights<T: ToPointUtf16>(
         &self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
@@ -4694,7 +4694,7 @@ impl Project {
         &mut self,
         symbol: &Symbol,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Handle<Buffer>>> {
+    ) -> Task<Result<Model<Buffer>>> {
         if self.is_local() {
             let language_server_id = if let Some(id) = self.language_server_ids.get(&(
                 symbol.source_worktree_id,
@@ -4748,7 +4748,7 @@ impl Project {
 
     pub fn hover<T: ToPointUtf16>(
         &self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Hover>>> {
@@ -4763,7 +4763,7 @@ impl Project {
 
     pub fn completions<T: ToOffset + ToPointUtf16>(
         &self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
@@ -4817,7 +4817,7 @@ impl Project {
 
     pub fn apply_additional_edits_for_completion(
         &self,
-        buffer_handle: Handle<Buffer>,
+        buffer_handle: Model<Buffer>,
         completion: Completion,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
@@ -4928,7 +4928,7 @@ impl Project {
 
     pub fn code_actions<T: Clone + ToOffset>(
         &self,
-        buffer_handle: &Handle<Buffer>,
+        buffer_handle: &Model<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
@@ -4944,7 +4944,7 @@ impl Project {
 
     pub fn apply_code_action(
         &self,
-        buffer_handle: Handle<Buffer>,
+        buffer_handle: Model<Buffer>,
         mut action: CodeAction,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
@@ -5052,7 +5052,7 @@ impl Project {
 
     fn apply_on_type_formatting(
         &self,
-        buffer: Handle<Buffer>,
+        buffer: Model<Buffer>,
         position: Anchor,
         trigger: String,
         cx: &mut ModelContext<Self>,
@@ -5113,8 +5113,8 @@ impl Project {
     }
 
     async fn deserialize_edits(
-        this: Handle<Self>,
-        buffer_to_edit: Handle<Buffer>,
+        this: Model<Self>,
+        buffer_to_edit: Model<Buffer>,
         edits: Vec<lsp2::TextEdit>,
         push_to_history: bool,
         _: Arc<CachedLspAdapter>,
@@ -5155,7 +5155,7 @@ impl Project {
     }
 
     async fn deserialize_workspace_edit(
-        this: Handle<Self>,
+        this: Model<Self>,
         edit: lsp2::WorkspaceEdit,
         push_to_history: bool,
         lsp_adapter: Arc<CachedLspAdapter>,
@@ -5310,7 +5310,7 @@ impl Project {
 
     pub fn prepare_rename<T: ToPointUtf16>(
         &self,
-        buffer: Handle<Buffer>,
+        buffer: Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Range<Anchor>>>> {
@@ -5325,7 +5325,7 @@ impl Project {
 
     pub fn perform_rename<T: ToPointUtf16>(
         &self,
-        buffer: Handle<Buffer>,
+        buffer: Model<Buffer>,
         position: T,
         new_name: String,
         push_to_history: bool,
@@ -5346,7 +5346,7 @@ impl Project {
 
     pub fn on_type_format<T: ToPointUtf16>(
         &self,
-        buffer: Handle<Buffer>,
+        buffer: Model<Buffer>,
         position: T,
         trigger: String,
         push_to_history: bool,
@@ -5375,7 +5375,7 @@ impl Project {
 
     pub fn inlay_hints<T: ToOffset>(
         &self,
-        buffer_handle: Handle<Buffer>,
+        buffer_handle: Model<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
@@ -5436,7 +5436,7 @@ impl Project {
     pub fn resolve_inlay_hint(
         &self,
         hint: InlayHint,
-        buffer_handle: Handle<Buffer>,
+        buffer_handle: Model<Buffer>,
         server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) -> Task<anyhow::Result<InlayHint>> {
@@ -5501,7 +5501,7 @@ impl Project {
         &self,
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
-    ) -> Receiver<(Handle<Buffer>, Vec<Range<Anchor>>)> {
+    ) -> Receiver<(Model<Buffer>, Vec<Range<Anchor>>)> {
         if self.is_local() {
             self.search_local(query, cx)
         } else if let Some(project_id) = self.remote_id() {
@@ -5545,7 +5545,7 @@ impl Project {
         &self,
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
-    ) -> Receiver<(Handle<Buffer>, Vec<Range<Anchor>>)> {
+    ) -> Receiver<(Model<Buffer>, Vec<Range<Anchor>>)> {
         // Local search is split into several phases.
         // TL;DR is that we do 2 passes; initial pass to pick files which contain at least one match
         // and the second phase that finds positions of all the matches found in the candidate files.
@@ -5638,7 +5638,7 @@ impl Project {
                     .scoped(|scope| {
                         #[derive(Clone)]
                         struct FinishedStatus {
-                            entry: Option<(Handle<Buffer>, Vec<Range<Anchor>>)>,
+                            entry: Option<(Model<Buffer>, Vec<Range<Anchor>>)>,
                             buffer_index: SearchMatchCandidateIndex,
                         }
 
@@ -5728,8 +5728,8 @@ impl Project {
 
     /// Pick paths that might potentially contain a match of a given search query.
     async fn background_search(
-        unnamed_buffers: Vec<Handle<Buffer>>,
-        opened_buffers: HashMap<Arc<Path>, (Handle<Buffer>, BufferSnapshot)>,
+        unnamed_buffers: Vec<Model<Buffer>>,
+        opened_buffers: HashMap<Arc<Path>, (Model<Buffer>, BufferSnapshot)>,
         executor: Executor,
         fs: Arc<dyn Fs>,
         workers: usize,
@@ -5829,7 +5829,7 @@ impl Project {
 
     fn request_lsp<R: LspCommand>(
         &self,
-        buffer_handle: Handle<Buffer>,
+        buffer_handle: Model<Buffer>,
         server: LanguageServerToQuery,
         request: R,
         cx: &mut ModelContext<Self>,
@@ -5893,7 +5893,7 @@ impl Project {
 
     fn send_lsp_proto_request<R: LspCommand>(
         &self,
-        buffer: Handle<Buffer>,
+        buffer: Model<Buffer>,
         project_id: u64,
         request: R,
         cx: &mut ModelContext<'_, Project>,
@@ -5922,7 +5922,7 @@ impl Project {
     ) -> (
         futures::channel::oneshot::Receiver<Vec<SearchMatchCandidate>>,
         Receiver<(
-            Option<(Handle<Buffer>, BufferSnapshot)>,
+            Option<(Model<Buffer>, BufferSnapshot)>,
             SearchMatchCandidateIndex,
         )>,
     ) {
@@ -5976,7 +5976,7 @@ impl Project {
         abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(Handle<Worktree>, PathBuf)>> {
+    ) -> Task<Result<(Model<Worktree>, PathBuf)>> {
         let abs_path = abs_path.as_ref();
         if let Some((tree, relative_path)) = self.find_local_worktree(abs_path, cx) {
             Task::ready(Ok((tree, relative_path)))
@@ -5991,7 +5991,7 @@ impl Project {
         &self,
         abs_path: &Path,
         cx: &AppContext,
-    ) -> Option<(Handle<Worktree>, PathBuf)> {
+    ) -> Option<(Model<Worktree>, PathBuf)> {
         for tree in &self.worktrees {
             if let Some(tree) = tree.upgrade() {
                 if let Some(relative_path) = tree
@@ -6018,7 +6018,7 @@ impl Project {
         abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Handle<Worktree>>> {
+    ) -> Task<Result<Model<Worktree>>> {
         let fs = self.fs.clone();
         let client = self.client.clone();
         let next_entry_id = self.next_entry_id.clone();
@@ -6078,7 +6078,7 @@ impl Project {
         self.metadata_changed(cx);
     }
 
-    fn add_worktree(&mut self, worktree: &Handle<Worktree>, cx: &mut ModelContext<Self>) {
+    fn add_worktree(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(worktree, |_, _, cx| cx.notify()).detach();
         if worktree.read(cx).is_local() {
             cx.subscribe(worktree, |this, worktree, event, cx| match event {
@@ -6128,7 +6128,7 @@ impl Project {
 
     fn update_local_worktree_buffers(
         &mut self,
-        worktree_handle: &Handle<Worktree>,
+        worktree_handle: &Model<Worktree>,
         changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
         cx: &mut ModelContext<Self>,
     ) {
@@ -6242,7 +6242,7 @@ impl Project {
 
     fn update_local_worktree_language_servers(
         &mut self,
-        worktree_handle: &Handle<Worktree>,
+        worktree_handle: &Model<Worktree>,
         changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
         cx: &mut ModelContext<Self>,
     ) {
@@ -6304,7 +6304,7 @@ impl Project {
 
     fn update_local_worktree_buffers_git_repos(
         &mut self,
-        worktree_handle: Handle<Worktree>,
+        worktree_handle: Model<Worktree>,
         changed_repos: &UpdatedGitRepositoriesSet,
         cx: &mut ModelContext<Self>,
     ) {
@@ -6407,7 +6407,7 @@ impl Project {
 
     fn update_local_worktree_settings(
         &mut self,
-        worktree: &Handle<Worktree>,
+        worktree: &Model<Worktree>,
         changes: &UpdatedEntriesSet,
         cx: &mut ModelContext<Self>,
     ) {
@@ -6473,7 +6473,7 @@ impl Project {
 
     fn update_prettier_settings(
         &self,
-        worktree: &Handle<Worktree>,
+        worktree: &Model<Worktree>,
         changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
         cx: &mut ModelContext<'_, Project>,
     ) {
@@ -6636,7 +6636,7 @@ impl Project {
     // RPC message handlers
 
     async fn handle_unshare_project(
-        this: Handle<Self>,
+        this: Model<Self>,
         _: TypedEnvelope<proto::UnshareProject>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -6652,7 +6652,7 @@ impl Project {
     }
 
     async fn handle_add_collaborator(
-        this: Handle<Self>,
+        this: Model<Self>,
         mut envelope: TypedEnvelope<proto::AddProjectCollaborator>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -6676,7 +6676,7 @@ impl Project {
     }
 
     async fn handle_update_project_collaborator(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateProjectCollaborator>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -6726,7 +6726,7 @@ impl Project {
     }
 
     async fn handle_remove_collaborator(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::RemoveProjectCollaborator>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -6755,7 +6755,7 @@ impl Project {
     }
 
     async fn handle_update_project(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateProject>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -6770,7 +6770,7 @@ impl Project {
     }
 
     async fn handle_update_worktree(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateWorktree>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -6788,7 +6788,7 @@ impl Project {
     }
 
     async fn handle_update_worktree_settings(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateWorktreeSettings>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -6812,7 +6812,7 @@ impl Project {
     }
 
     async fn handle_create_project_entry(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::CreateProjectEntry>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -6837,7 +6837,7 @@ impl Project {
     }
 
     async fn handle_rename_project_entry(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::RenameProjectEntry>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -6865,7 +6865,7 @@ impl Project {
     }
 
     async fn handle_copy_project_entry(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::CopyProjectEntry>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -6893,7 +6893,7 @@ impl Project {
     }
 
     async fn handle_delete_project_entry(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::DeleteProjectEntry>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -6923,7 +6923,7 @@ impl Project {
     }
 
     async fn handle_expand_project_entry(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::ExpandProjectEntry>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -6946,7 +6946,7 @@ impl Project {
     }
 
     async fn handle_update_diagnostic_summary(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateDiagnosticSummary>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -6976,7 +6976,7 @@ impl Project {
     }
 
     async fn handle_start_language_server(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::StartLanguageServer>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7001,7 +7001,7 @@ impl Project {
     }
 
     async fn handle_update_language_server(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateLanguageServer>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7058,7 +7058,7 @@ impl Project {
     }
 
     async fn handle_update_buffer(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateBuffer>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7094,7 +7094,7 @@ impl Project {
     }
 
     async fn handle_create_buffer_for_peer(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::CreateBufferForPeer>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7117,7 +7117,7 @@ impl Project {
                     }
 
                     let buffer_id = state.id;
-                    let buffer = cx.entity(|_| {
+                    let buffer = cx.build_model(|_| {
                         Buffer::from_proto(this.replica_id(), state, buffer_file).unwrap()
                     });
                     this.incomplete_remote_buffers
@@ -7154,7 +7154,7 @@ impl Project {
     }
 
     async fn handle_update_diff_base(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateDiffBase>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7180,7 +7180,7 @@ impl Project {
     }
 
     async fn handle_update_buffer_file(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateBufferFile>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7215,7 +7215,7 @@ impl Project {
     }
 
     async fn handle_save_buffer(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::SaveBuffer>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7251,7 +7251,7 @@ impl Project {
     }
 
     async fn handle_reload_buffers(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::ReloadBuffers>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7280,7 +7280,7 @@ impl Project {
     }
 
     async fn handle_synchronize_buffers(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::SynchronizeBuffers>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7373,7 +7373,7 @@ impl Project {
     }
 
     async fn handle_format_buffers(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::FormatBuffers>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7403,7 +7403,7 @@ impl Project {
     }
 
     async fn handle_apply_additional_edits_for_completion(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7440,7 +7440,7 @@ impl Project {
     }
 
     async fn handle_apply_code_action(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::ApplyCodeAction>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7471,7 +7471,7 @@ impl Project {
     }
 
     async fn handle_on_type_formatting(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::OnTypeFormatting>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7503,7 +7503,7 @@ impl Project {
     }
 
     async fn handle_inlay_hints(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::InlayHints>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7553,7 +7553,7 @@ impl Project {
     }
 
     async fn handle_resolve_inlay_hint(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::ResolveInlayHint>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7587,7 +7587,7 @@ impl Project {
     }
 
     async fn handle_refresh_inlay_hints(
-        this: Handle<Self>,
+        this: Model<Self>,
         _: TypedEnvelope<proto::RefreshInlayHints>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7599,7 +7599,7 @@ impl Project {
     }
 
     async fn handle_lsp_command<T: LspCommand>(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<T::ProtoRequest>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7641,7 +7641,7 @@ impl Project {
     }
 
     async fn handle_get_project_symbols(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::GetProjectSymbols>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7658,7 +7658,7 @@ impl Project {
     }
 
     async fn handle_search_project(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::SearchProject>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7689,7 +7689,7 @@ impl Project {
     }
 
     async fn handle_open_buffer_for_symbol(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::OpenBufferForSymbol>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7730,7 +7730,7 @@ impl Project {
     }
 
     async fn handle_open_buffer_by_id(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::OpenBufferById>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7749,7 +7749,7 @@ impl Project {
     }
 
     async fn handle_open_buffer_by_path(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::OpenBufferByPath>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -7834,7 +7834,7 @@ impl Project {
 
     fn create_buffer_for_peer(
         &mut self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         peer_id: proto::PeerId,
         cx: &mut AppContext,
     ) -> u64 {
@@ -7851,7 +7851,7 @@ impl Project {
         &mut self,
         id: u64,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Handle<Buffer>>> {
+    ) -> Task<Result<Model<Buffer>>> {
         let mut opened_buffer_rx = self.opened_buffer.1.clone();
 
         cx.spawn(move |this, mut cx| async move {
@@ -8108,7 +8108,7 @@ impl Project {
     }
 
     async fn handle_buffer_saved(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::BufferSaved>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -8141,7 +8141,7 @@ impl Project {
     }
 
     async fn handle_buffer_reloaded(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::BufferReloaded>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -8180,7 +8180,7 @@ impl Project {
     #[allow(clippy::type_complexity)]
     fn edits_from_lsp(
         &mut self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         lsp_edits: impl 'static + Send + IntoIterator<Item = lsp2::TextEdit>,
         server_id: LanguageServerId,
         version: Option<i32>,
@@ -8284,7 +8284,7 @@ impl Project {
 
     fn buffer_snapshot_for_lsp_version(
         &mut self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         server_id: LanguageServerId,
         version: Option<i32>,
         cx: &AppContext,
@@ -8402,7 +8402,7 @@ impl Project {
 
     fn prettier_instance_for_buffer(
         &mut self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Option<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>> {
         let buffer = buffer.read(cx);
@@ -8638,7 +8638,7 @@ impl Project {
 }
 
 fn subscribe_for_copilot_events(
-    copilot: &Handle<Copilot>,
+    copilot: &Model<Copilot>,
     cx: &mut ModelContext<'_, Project>,
 ) -> gpui2::Subscription {
     cx.subscribe(
@@ -8691,7 +8691,7 @@ fn glob_literal_prefix<'a>(glob: &'a str) -> &'a str {
 }
 
 impl WorktreeHandle {
-    pub fn upgrade(&self) -> Option<Handle<Worktree>> {
+    pub fn upgrade(&self) -> Option<Model<Worktree>> {
         match self {
             WorktreeHandle::Strong(handle) => Some(handle.clone()),
             WorktreeHandle::Weak(handle) => handle.upgrade(),
@@ -8707,7 +8707,7 @@ impl WorktreeHandle {
 }
 
 impl OpenBuffer {
-    pub fn upgrade(&self) -> Option<Handle<Buffer>> {
+    pub fn upgrade(&self) -> Option<Model<Buffer>> {
         match self {
             OpenBuffer::Strong(handle) => Some(handle.clone()),
             OpenBuffer::Weak(handle) => handle.upgrade(),
@@ -8871,8 +8871,8 @@ impl Item for Buffer {
 }
 
 async fn wait_for_loading_buffer(
-    mut receiver: postage::watch::Receiver<Option<Result<Handle<Buffer>, Arc<anyhow::Error>>>>,
-) -> Result<Handle<Buffer>, Arc<anyhow::Error>> {
+    mut receiver: postage::watch::Receiver<Option<Result<Model<Buffer>, Arc<anyhow::Error>>>>,
+) -> Result<Model<Buffer>, Arc<anyhow::Error>> {
     loop {
         if let Some(result) = receiver.borrow().as_ref() {
             match result {

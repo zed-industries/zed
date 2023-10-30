@@ -707,19 +707,19 @@ impl AppContext {
 }
 
 impl Context for AppContext {
-    type EntityContext<'a, T> = ModelContext<'a, T>;
+    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
     /// Build an entity that is owned by the application. The given function will be invoked with
     /// a `ModelContext` and must return an object representing the entity. A `Handle` will be returned
     /// which can be used to access the entity in a context.
-    fn entity<T: 'static + Send>(
+    fn build_model<T: 'static + Send>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
-    ) -> Handle<T> {
+        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+    ) -> Model<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
-            let entity = build_entity(&mut ModelContext::mutable(cx, slot.downgrade()));
+            let entity = build_model(&mut ModelContext::mutable(cx, slot.downgrade()));
             cx.entities.insert(slot, entity)
         })
     }
@@ -728,8 +728,8 @@ impl Context for AppContext {
     /// entity along with a `ModelContext` for the entity.
     fn update_entity<T: 'static, R>(
         &mut self,
-        handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
+        handle: &Model<T>,
+        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> R {
         self.update(|cx| {
             let mut entity = cx.entities.lease(handle);

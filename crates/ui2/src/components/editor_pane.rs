@@ -44,7 +44,7 @@ impl EditorPane {
 
     pub fn view(cx: &mut AppContext) -> View<Self> {
         {
-            let state = cx.entity(|cx| hello_world_rust_editor_with_status_example(cx));
+            let state = cx.build_model(|cx| hello_world_rust_editor_with_status_example(cx));
             let render = Self::render;
             View::for_handle(state, render)
         }

@@ -1,7 +1,7 @@
 use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
 use anyhow::{anyhow, Result};
 use futures::{stream::BoxStream, StreamExt};
-use gpui2::{Context, Executor, Handle, TestAppContext};
+use gpui2::{Context, Executor, Model, TestAppContext};
 use parking_lot::Mutex;
 use rpc2::{
     proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
@@ -194,9 +194,9 @@ impl FakeServer {
         &self,
         client: Arc<Client>,
         cx: &mut TestAppContext,
-    ) -> Handle<UserStore> {
+    ) -> Model<UserStore> {
         let http_client = FakeHttpClient::with_404_response();
-        let user_store = cx.entity(|cx| UserStore::new(client, http_client, cx));
+        let user_store = cx.build_model(|cx| UserStore::new(client, http_client, cx));
         assert_eq!(
             self.receive::<proto::GetUsers>()
                 .await

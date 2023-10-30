@@ -120,7 +120,7 @@ fn main() {
         let node_runtime = RealNodeRuntime::new(http.clone());
 
         language2::init(cx);
-        let user_store = cx.entity(|cx| UserStore::new(client.clone(), http.clone(), cx));
+        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         // let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         cx.set_global(client.clone());

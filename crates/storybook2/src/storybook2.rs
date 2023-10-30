@@ -18,7 +18,7 @@ use settings2::{default_settings, Settings, SettingsStore};
 use simplelog::SimpleLogger;
 use story_selector::ComponentStory;
 use theme2::{ThemeRegistry, ThemeSettings};
-use ui::{prelude::*, themed};
+use ui::prelude::*;
 
 use crate::assets::Assets;
 use crate::story_selector::StorySelector;
@@ -86,7 +86,7 @@ fn main() {
             },
             move |cx| {
                 cx.build_view(
-                    |cx| StoryWrapper::new(selector.story(cx), theme),
+                    |cx| StoryWrapper::new(selector.story(cx)),
                     StoryWrapper::render,
                 )
             },
@@ -99,22 +99,19 @@ fn main() {
 #[derive(Clone)]
 pub struct StoryWrapper {
     story: AnyView,
-    theme: Theme,
 }
 
 impl StoryWrapper {
-    pub(crate) fn new(story: AnyView, theme: Theme) -> Self {
-        Self { story, theme }
+    pub(crate) fn new(story: AnyView) -> Self {
+        Self { story }
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
-        themed(self.theme.clone(), cx, |cx| {
-            div()
-                .flex()
-                .flex_col()
-                .size_full()
-                .child(self.story.clone())
-        })
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(self.story.clone())
     }
 }
 

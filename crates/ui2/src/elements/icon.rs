@@ -2,7 +2,6 @@ use gpui2::{svg, Hsla};
 use strum::EnumIter;
 
 use crate::prelude::*;
-use crate::theme::old_theme;
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
@@ -27,17 +26,17 @@ pub enum IconColor {
 
 impl IconColor {
     pub fn color(self, cx: &WindowContext) -> Hsla {
-        let theme = old_theme(cx);
+        let theme = theme(cx);
         match self {
-            IconColor::Default => theme.lowest.base.default.foreground,
-            IconColor::Muted => theme.lowest.variant.default.foreground,
-            IconColor::Disabled => theme.lowest.base.disabled.foreground,
-            IconColor::Placeholder => theme.lowest.base.disabled.foreground,
-            IconColor::Accent => theme.lowest.accent.default.foreground,
-            IconColor::Error => theme.lowest.negative.default.foreground,
-            IconColor::Warning => theme.lowest.warning.default.foreground,
-            IconColor::Success => theme.lowest.positive.default.foreground,
-            IconColor::Info => theme.lowest.accent.default.foreground,
+            IconColor::Default => gpui2::red(),
+            IconColor::Muted => gpui2::red(),
+            IconColor::Disabled => gpui2::red(),
+            IconColor::Placeholder => gpui2::red(),
+            IconColor::Accent => gpui2::red(),
+            IconColor::Error => gpui2::red(),
+            IconColor::Warning => gpui2::red(),
+            IconColor::Success => gpui2::red(),
+            IconColor::Info => gpui2::red()
         }
     }
 }

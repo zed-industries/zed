@@ -7,7 +7,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client2::proto::{self, PeerId};
 use futures::future;
-use gpui2::{AppContext, AsyncAppContext, Handle};
+use gpui2::{AppContext, AsyncAppContext, Model};
 use language2::{
     language_settings::{language_settings, InlayHintKind},
     point_from_lsp, point_to_lsp,
@@ -53,8 +53,8 @@ pub(crate) trait LspCommand: 'static + Sized + Send {
     async fn response_from_lsp(
         self,
         message: <Self::LspRequest as lsp2::request::Request>::Result,
-        project: Handle<Project>,
-        buffer: Handle<Buffer>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
         server_id: LanguageServerId,
         cx: AsyncAppContext,
     ) -> Result<Self::Response>;
@@ -63,8 +63,8 @@ pub(crate) trait LspCommand: 'static + Sized + Send {
 
     async fn from_proto(
         message: Self::ProtoRequest,
-        project: Handle<Project>,
-        buffer: Handle<Buffer>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
         cx: AsyncAppContext,
     ) -> Result<Self>;
 
@@ -79,8 +79,8 @@ pub(crate) trait LspCommand: 'static + Sized + Send {
     async fn response_from_proto(
         self,
         message: <Self::ProtoRequest as proto::RequestMessage>::Response,
-        project: Handle<Project>,
-        buffer: Handle<Buffer>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
         cx: AsyncAppContext,
     ) -> Result<Self::Response>;
 
@@ -180,8 +180,8 @@ impl LspCommand for PrepareRename {
     async fn response_from_lsp(
         self,
         message: Option<lsp2::PrepareRenameResponse>,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         _: LanguageServerId,
         mut cx: AsyncAppContext,
     ) -> Result<Option<Range<Anchor>>> {
@@ -215,8 +215,8 @@ impl LspCommand for PrepareRename {
 
     async fn from_proto(
         message: proto::PrepareRename,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let position = message
@@ -256,8 +256,8 @@ impl LspCommand for PrepareRename {
     async fn response_from_proto(
         self,
         message: proto::PrepareRenameResponse,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Option<Range<Anchor>>> {
         if message.can_rename {
@@ -307,8 +307,8 @@ impl LspCommand for PerformRename {
     async fn response_from_lsp(
         self,
         message: Option<lsp2::WorkspaceEdit>,
-        project: Handle<Project>,
-        buffer: Handle<Buffer>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
         server_id: LanguageServerId,
         mut cx: AsyncAppContext,
     ) -> Result<ProjectTransaction> {
@@ -343,8 +343,8 @@ impl LspCommand for PerformRename {
 
     async fn from_proto(
         message: proto::PerformRename,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let position = message
@@ -379,8 +379,8 @@ impl LspCommand for PerformRename {
     async fn response_from_proto(
         self,
         message: proto::PerformRenameResponse,
-        project: Handle<Project>,
-        _: Handle<Buffer>,
+        project: Model<Project>,
+        _: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<ProjectTransaction> {
         let message = message
@@ -426,8 +426,8 @@ impl LspCommand for GetDefinition {
     async fn response_from_lsp(
         self,
         message: Option<lsp2::GotoDefinitionResponse>,
-        project: Handle<Project>,
-        buffer: Handle<Buffer>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
         server_id: LanguageServerId,
         cx: AsyncAppContext,
     ) -> Result<Vec<LocationLink>> {
@@ -447,8 +447,8 @@ impl LspCommand for GetDefinition {
 
     async fn from_proto(
         message: proto::GetDefinition,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let position = message
@@ -479,8 +479,8 @@ impl LspCommand for GetDefinition {
     async fn response_from_proto(
         self,
         message: proto::GetDefinitionResponse,
-        project: Handle<Project>,
-        _: Handle<Buffer>,
+        project: Model<Project>,
+        _: Model<Buffer>,
         cx: AsyncAppContext,
     ) -> Result<Vec<LocationLink>> {
         location_links_from_proto(message.links, project, cx).await
@@ -527,8 +527,8 @@ impl LspCommand for GetTypeDefinition {
     async fn response_from_lsp(
         self,
         message: Option<lsp2::GotoTypeDefinitionResponse>,
-        project: Handle<Project>,
-        buffer: Handle<Buffer>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
         server_id: LanguageServerId,
         cx: AsyncAppContext,
     ) -> Result<Vec<LocationLink>> {
@@ -548,8 +548,8 @@ impl LspCommand for GetTypeDefinition {
 
     async fn from_proto(
         message: proto::GetTypeDefinition,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let position = message
@@ -580,8 +580,8 @@ impl LspCommand for GetTypeDefinition {
     async fn response_from_proto(
         self,
         message: proto::GetTypeDefinitionResponse,
-        project: Handle<Project>,
-        _: Handle<Buffer>,
+        project: Model<Project>,
+        _: Model<Buffer>,
         cx: AsyncAppContext,
     ) -> Result<Vec<LocationLink>> {
         location_links_from_proto(message.links, project, cx).await
@@ -593,8 +593,8 @@ impl LspCommand for GetTypeDefinition {
 }
 
 fn language_server_for_buffer(
-    project: &Handle<Project>,
-    buffer: &Handle<Buffer>,
+    project: &Model<Project>,
+    buffer: &Model<Buffer>,
     server_id: LanguageServerId,
     cx: &mut AsyncAppContext,
 ) -> Result<(Arc<CachedLspAdapter>, Arc<LanguageServer>)> {
@@ -609,7 +609,7 @@ fn language_server_for_buffer(
 
 async fn location_links_from_proto(
     proto_links: Vec<proto::LocationLink>,
-    project: Handle<Project>,
+    project: Model<Project>,
     mut cx: AsyncAppContext,
 ) -> Result<Vec<LocationLink>> {
     let mut links = Vec::new();
@@ -671,8 +671,8 @@ async fn location_links_from_proto(
 
 async fn location_links_from_lsp(
     message: Option<lsp2::GotoDefinitionResponse>,
-    project: Handle<Project>,
-    buffer: Handle<Buffer>,
+    project: Model<Project>,
+    buffer: Model<Buffer>,
     server_id: LanguageServerId,
     mut cx: AsyncAppContext,
 ) -> Result<Vec<LocationLink>> {
@@ -814,8 +814,8 @@ impl LspCommand for GetReferences {
     async fn response_from_lsp(
         self,
         locations: Option<Vec<lsp2::Location>>,
-        project: Handle<Project>,
-        buffer: Handle<Buffer>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
         server_id: LanguageServerId,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Location>> {
@@ -868,8 +868,8 @@ impl LspCommand for GetReferences {
 
     async fn from_proto(
         message: proto::GetReferences,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let position = message
@@ -910,8 +910,8 @@ impl LspCommand for GetReferences {
     async fn response_from_proto(
         self,
         message: proto::GetReferencesResponse,
-        project: Handle<Project>,
-        _: Handle<Buffer>,
+        project: Model<Project>,
+        _: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Location>> {
         let mut locations = Vec::new();
@@ -977,8 +977,8 @@ impl LspCommand for GetDocumentHighlights {
     async fn response_from_lsp(
         self,
         lsp_highlights: Option<Vec<lsp2::DocumentHighlight>>,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         _: LanguageServerId,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<DocumentHighlight>> {
@@ -1016,8 +1016,8 @@ impl LspCommand for GetDocumentHighlights {
 
     async fn from_proto(
         message: proto::GetDocumentHighlights,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let position = message
@@ -1060,8 +1060,8 @@ impl LspCommand for GetDocumentHighlights {
     async fn response_from_proto(
         self,
         message: proto::GetDocumentHighlightsResponse,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<DocumentHighlight>> {
         let mut highlights = Vec::new();
@@ -1123,8 +1123,8 @@ impl LspCommand for GetHover {
     async fn response_from_lsp(
         self,
         message: Option<lsp2::Hover>,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         _: LanguageServerId,
         mut cx: AsyncAppContext,
     ) -> Result<Self::Response> {
@@ -1206,8 +1206,8 @@ impl LspCommand for GetHover {
 
     async fn from_proto(
         message: Self::ProtoRequest,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let position = message
@@ -1272,8 +1272,8 @@ impl LspCommand for GetHover {
     async fn response_from_proto(
         self,
         message: proto::GetHoverResponse,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self::Response> {
         let contents: Vec<_> = message
@@ -1341,8 +1341,8 @@ impl LspCommand for GetCompletions {
     async fn response_from_lsp(
         self,
         completions: Option<lsp2::CompletionResponse>,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         server_id: LanguageServerId,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Completion>> {
@@ -1484,8 +1484,8 @@ impl LspCommand for GetCompletions {
 
     async fn from_proto(
         message: proto::GetCompletions,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let version = deserialize_version(&message.version);
@@ -1523,8 +1523,8 @@ impl LspCommand for GetCompletions {
     async fn response_from_proto(
         self,
         message: proto::GetCompletionsResponse,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Completion>> {
         buffer
@@ -1589,8 +1589,8 @@ impl LspCommand for GetCodeActions {
     async fn response_from_lsp(
         self,
         actions: Option<lsp2::CodeActionResponse>,
-        _: Handle<Project>,
-        _: Handle<Buffer>,
+        _: Model<Project>,
+        _: Model<Buffer>,
         server_id: LanguageServerId,
         _: AsyncAppContext,
     ) -> Result<Vec<CodeAction>> {
@@ -1623,8 +1623,8 @@ impl LspCommand for GetCodeActions {
 
     async fn from_proto(
         message: proto::GetCodeActions,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let start = message
@@ -1663,8 +1663,8 @@ impl LspCommand for GetCodeActions {
     async fn response_from_proto(
         self,
         message: proto::GetCodeActionsResponse,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<CodeAction>> {
         buffer
@@ -1726,8 +1726,8 @@ impl LspCommand for OnTypeFormatting {
     async fn response_from_lsp(
         self,
         message: Option<Vec<lsp2::TextEdit>>,
-        project: Handle<Project>,
-        buffer: Handle<Buffer>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
         server_id: LanguageServerId,
         mut cx: AsyncAppContext,
     ) -> Result<Option<Transaction>> {
@@ -1763,8 +1763,8 @@ impl LspCommand for OnTypeFormatting {
 
     async fn from_proto(
         message: proto::OnTypeFormatting,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let position = message
@@ -1805,8 +1805,8 @@ impl LspCommand for OnTypeFormatting {
     async fn response_from_proto(
         self,
         message: proto::OnTypeFormattingResponse,
-        _: Handle<Project>,
-        _: Handle<Buffer>,
+        _: Model<Project>,
+        _: Model<Buffer>,
         _: AsyncAppContext,
     ) -> Result<Option<Transaction>> {
         let Some(transaction) = message.transaction else {
@@ -1825,7 +1825,7 @@ impl LspCommand for OnTypeFormatting {
 impl InlayHints {
     pub async fn lsp_to_project_hint(
         lsp_hint: lsp2::InlayHint,
-        buffer_handle: &Handle<Buffer>,
+        buffer_handle: &Model<Buffer>,
         server_id: LanguageServerId,
         resolve_state: ResolveState,
         force_no_type_left_padding: bool,
@@ -2230,8 +2230,8 @@ impl LspCommand for InlayHints {
     async fn response_from_lsp(
         self,
         message: Option<Vec<lsp2::InlayHint>>,
-        project: Handle<Project>,
-        buffer: Handle<Buffer>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
         server_id: LanguageServerId,
         mut cx: AsyncAppContext,
     ) -> anyhow::Result<Vec<InlayHint>> {
@@ -2286,8 +2286,8 @@ impl LspCommand for InlayHints {
 
     async fn from_proto(
         message: proto::InlayHints,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let start = message
@@ -2326,8 +2326,8 @@ impl LspCommand for InlayHints {
     async fn response_from_proto(
         self,
         message: proto::InlayHintsResponse,
-        _: Handle<Project>,
-        buffer: Handle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> anyhow::Result<Vec<InlayHint>> {
         buffer

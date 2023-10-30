@@ -2,8 +2,8 @@ use crate::{
     px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect,
     EntityId, EventEmitter, ExternalPaths, FileDropEvent, FocusEvent, FontId, GlobalElementId,
-    GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher,
-    Keystroke, LayoutId, MainThread, MainThreadOnly, ModelContext, Modifiers, MonochromeSprite,
+    GlyphId, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke,
+    LayoutId, MainThread, MainThreadOnly, Model, ModelContext, Modifiers, MonochromeSprite,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
     PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
     RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
@@ -1240,25 +1240,25 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 }
 
 impl Context for WindowContext<'_, '_> {
-    type EntityContext<'a, T> = ModelContext<'a, T>;
+    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
-    fn entity<T>(
+    fn build_model<T>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
-    ) -> Handle<T>
+        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+    ) -> Model<T>
     where
         T: 'static + Send,
     {
         let slot = self.app.entities.reserve();
-        let entity = build_entity(&mut ModelContext::mutable(&mut *self.app, slot.downgrade()));
-        self.entities.insert(slot, entity)
+        let model = build_model(&mut ModelContext::mutable(&mut *self.app, slot.downgrade()));
+        self.entities.insert(slot, model)
     }
 
     fn update_entity<T: 'static, R>(
         &mut self,
-        handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
+        handle: &Model<T>,
+        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> R {
         let mut entity = self.entities.lease(handle);
         let result = update(
@@ -1576,8 +1576,8 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn observe<E>(
         &mut self,
-        handle: &Handle<E>,
-        mut on_notify: impl FnMut(&mut V, Handle<E>, &mut ViewContext<'_, '_, V>) + Send + 'static,
+        handle: &Model<E>,
+        mut on_notify: impl FnMut(&mut V, Model<E>, &mut ViewContext<'_, '_, V>) + Send + 'static,
     ) -> Subscription
     where
         E: 'static,
@@ -1604,8 +1604,8 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn subscribe<E: EventEmitter>(
         &mut self,
-        handle: &Handle<E>,
-        mut on_event: impl FnMut(&mut V, Handle<E>, &E::Event, &mut ViewContext<'_, '_, V>)
+        handle: &Model<E>,
+        mut on_event: impl FnMut(&mut V, Model<E>, &E::Event, &mut ViewContext<'_, '_, V>)
             + Send
             + 'static,
     ) -> Subscription {
@@ -1646,7 +1646,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn observe_release<T: 'static>(
         &mut self,
-        handle: &Handle<T>,
+        handle: &Model<T>,
         mut on_release: impl FnMut(&mut V, &mut T, &mut ViewContext<'_, '_, V>) + Send + 'static,
     ) -> Subscription
     where
@@ -1857,23 +1857,23 @@ where
 }
 
 impl<'a, 'w, V> Context for ViewContext<'a, 'w, V> {
-    type EntityContext<'b, U> = ModelContext<'b, U>;
+    type ModelContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
-    fn entity<T>(
+    fn build_model<T>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
-    ) -> Handle<T>
+        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+    ) -> Model<T>
     where
         T: 'static + Send,
     {
-        self.window_cx.entity(build_entity)
+        self.window_cx.build_model(build_model)
     }
 
     fn update_entity<T: 'static, R>(
         &mut self,
-        handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
+        handle: &Model<T>,
+        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> R {
         self.window_cx.update_entity(handle, update)
     }
@@ -1884,14 +1884,14 @@ impl<V: 'static> VisualContext for ViewContext<'_, '_, V> {
 
     fn build_view<E, V2>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::ViewContext<'_, '_, V2>) -> V2,
+        build_view: impl FnOnce(&mut Self::ViewContext<'_, '_, V2>) -> V2,
         render: impl Fn(&mut V2, &mut ViewContext<'_, '_, V2>) -> E + Send + 'static,
     ) -> Self::Result<View<V2>>
     where
         E: crate::Component<V2>,
         V2: 'static + Send,
     {
-        self.window_cx.build_view(build_entity, render)
+        self.window_cx.build_view(build_view, render)
     }
 
     fn update_view<V2: 'static, R>(

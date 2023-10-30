@@ -5,7 +5,7 @@ pub use gpui2::{
 
 pub use crate::elevation::*;
 use crate::settings::user_settings;
-pub use crate::{old_theme, theme, ButtonVariant, Theme};
+pub use crate::{theme, ButtonVariant};
 
 use gpui2::{rems, Hsla, Rems};
 use strum::EnumIter;

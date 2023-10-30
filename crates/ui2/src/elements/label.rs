@@ -2,8 +2,6 @@ use gpui2::{relative, Hsla, WindowContext};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
-use crate::theme::old_theme;
-
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum LabelColor {
     #[default]
@@ -21,19 +19,17 @@ pub enum LabelColor {
 impl LabelColor {
     pub fn hsla(&self, cx: &WindowContext) -> Hsla {
         let theme = theme(cx);
-        // TODO: Remove
-        let old_theme = old_theme(cx);
 
         match self {
             Self::Default => theme.text,
             Self::Muted => theme.text_muted,
-            Self::Created => old_theme.middle.positive.default.foreground,
-            Self::Modified => old_theme.middle.warning.default.foreground,
-            Self::Deleted => old_theme.middle.negative.default.foreground,
+            Self::Created => gpui2::red(),
+            Self::Modified => gpui2::red(),
+            Self::Deleted => gpui2::red(),
             Self::Disabled => theme.text_disabled,
-            Self::Hidden => old_theme.middle.variant.default.foreground,
+            Self::Hidden => gpui2::red(),
             Self::Placeholder => theme.text_placeholder,
-            Self::Accent => old_theme.middle.accent.default.foreground,
+            Self::Accent => gpui2::red(),
         }
     }
 }

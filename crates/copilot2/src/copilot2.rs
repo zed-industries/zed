@@ -7,7 +7,7 @@ use async_tar::Archive;
 use collections::{HashMap, HashSet};
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui2::{
-    AppContext, AsyncAppContext, Context, EntityId, EventEmitter, Handle, ModelContext, Task,
+    AppContext, AsyncAppContext, Context, EntityId, EventEmitter, Model, ModelContext, Task,
     WeakHandle,
 };
 use language2::{
@@ -49,7 +49,7 @@ pub fn init(
     node_runtime: Arc<dyn NodeRuntime>,
     cx: &mut AppContext,
 ) {
-    let copilot = cx.entity({
+    let copilot = cx.build_model({
         let node_runtime = node_runtime.clone();
         move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
     });
@@ -183,7 +183,7 @@ struct RegisteredBuffer {
 impl RegisteredBuffer {
     fn report_changes(
         &mut self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         cx: &mut ModelContext<Copilot>,
     ) -> oneshot::Receiver<(i32, BufferSnapshot)> {
         let (done_tx, done_rx) = oneshot::channel();
@@ -292,9 +292,9 @@ impl EventEmitter for Copilot {
 }
 
 impl Copilot {
-    pub fn global(cx: &AppContext) -> Option<Handle<Self>> {
-        if cx.has_global::<Handle<Self>>() {
-            Some(cx.global::<Handle<Self>>().clone())
+    pub fn global(cx: &AppContext) -> Option<Model<Self>> {
+        if cx.has_global::<Model<Self>>() {
+            Some(cx.global::<Model<Self>>().clone())
         } else {
             None
         }
@@ -590,7 +590,7 @@ impl Copilot {
         }
     }
 
-    pub fn register_buffer(&mut self, buffer: &Handle<Buffer>, cx: &mut ModelContext<Self>) {
+    pub fn register_buffer(&mut self, buffer: &Model<Buffer>, cx: &mut ModelContext<Self>) {
         let weak_buffer = buffer.downgrade();
         self.buffers.insert(weak_buffer.clone());
 
@@ -646,7 +646,7 @@ impl Copilot {
 
     fn handle_buffer_event(
         &mut self,
-        buffer: Handle<Buffer>,
+        buffer: Model<Buffer>,
         event: &language2::Event,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
@@ -723,7 +723,7 @@ impl Copilot {
 
     pub fn completions<T>(
         &mut self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>>
@@ -735,7 +735,7 @@ impl Copilot {
 
     pub fn completions_cycling<T>(
         &mut self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>>
@@ -792,7 +792,7 @@ impl Copilot {
 
     fn request_completions<R, T>(
         &mut self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>>
@@ -926,7 +926,7 @@ fn id_for_language(language: Option<&Arc<Language>>) -> String {
     }
 }
 
-fn uri_for_buffer(buffer: &Handle<Buffer>, cx: &AppContext) -> lsp2::Url {
+fn uri_for_buffer(buffer: &Model<Buffer>, cx: &AppContext) -> lsp2::Url {
     if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
         lsp2::Url::from_file_path(file.abs_path(cx)).unwrap()
     } else {

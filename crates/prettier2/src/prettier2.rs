@@ -1,7 +1,7 @@
 use anyhow::Context;
 use collections::{HashMap, HashSet};
 use fs::Fs;
-use gpui2::{AsyncAppContext, Handle};
+use gpui2::{AsyncAppContext, Model};
 use language2::{language_settings::language_settings, Buffer, BundledFormatter, Diff};
 use lsp2::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
@@ -183,7 +183,7 @@ impl Prettier {
 
     pub async fn format(
         &self,
-        buffer: &Handle<Buffer>,
+        buffer: &Model<Buffer>,
         buffer_path: Option<PathBuf>,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<Diff> {
