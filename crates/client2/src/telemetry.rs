@@ -5,7 +5,9 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use settings2::Settings;
 use std::{env, io::Write, mem, path::PathBuf, sync::Arc, time::Duration};
-use sysinfo::{Pid, PidExt, ProcessExt, System, SystemExt};
+use sysinfo::{
+    CpuRefreshKind, Pid, PidExt, ProcessExt, ProcessRefreshKind, RefreshKind, System, SystemExt,
+};
 use tempfile::NamedTempFile;
 use util::http::HttpClient;
 use util::{channel::ReleaseChannel, TryFutureExt};
@@ -161,8 +163,16 @@ impl Telemetry {
 
         let this = self.clone();
         cx.spawn(|cx| async move {
-            let mut system = System::new_all();
-            system.refresh_all();
+            // Avoiding calling `System::new_all()`, as there have been crashes related to it
+            let refresh_kind = RefreshKind::new()
+                .with_memory() // For memory usage
+                .with_processes(ProcessRefreshKind::everything()) // For process usage
+                .with_cpu(CpuRefreshKind::everything()); // For core count
+
+            let mut system = System::new_with_specifics(refresh_kind);
+
+            // Avoiding calling `refresh_all()`, just update what we need
+            system.refresh_specifics(refresh_kind);
 
             loop {
                 // Waiting some amount of time before the first query is important to get a reasonable value
@@ -170,8 +180,7 @@ impl Telemetry {
                 const DURATION_BETWEEN_SYSTEM_EVENTS: Duration = Duration::from_secs(60);
                 smol::Timer::after(DURATION_BETWEEN_SYSTEM_EVENTS).await;
 
-                system.refresh_memory();
-                system.refresh_processes();
+                system.refresh_specifics(refresh_kind);
 
                 let current_process = Pid::from_u32(std::process::id());
                 let Some(process) = system.processes().get(&current_process) else {
