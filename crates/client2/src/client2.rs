@@ -14,7 +14,7 @@ use futures::{
     future::BoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryFutureExt as _, TryStreamExt,
 };
 use gpui2::{
-    serde_json, AnyHandle, AnyWeakHandle, AppContext, AsyncAppContext, Handle, SemanticVersion,
+    serde_json, AnyHandle, AnyWeakHandle, AppContext, AsyncAppContext, Model, SemanticVersion,
     Task, WeakHandle,
 };
 use lazy_static::lazy_static;
@@ -314,7 +314,7 @@ impl<T> PendingEntitySubscription<T>
 where
     T: 'static + Send,
 {
-    pub fn set_model(mut self, model: &Handle<T>, cx: &mut AsyncAppContext) -> Subscription {
+    pub fn set_model(mut self, model: &Model<T>, cx: &mut AsyncAppContext) -> Subscription {
         self.consumed = true;
         let mut state = self.client.state.write();
         let id = (TypeId::of::<T>(), self.remote_id);
@@ -558,7 +558,7 @@ impl Client {
     where
         M: EnvelopedMessage,
         E: 'static + Send,
-        H: 'static + Send + Sync + Fn(Handle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        H: 'static + Send + Sync + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<()>> + Send,
     {
         let message_type_id = TypeId::of::<M>();
@@ -600,7 +600,7 @@ impl Client {
     where
         M: RequestMessage,
         E: 'static + Send,
-        H: 'static + Send + Sync + Fn(Handle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        H: 'static + Send + Sync + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<M::Response>> + Send,
     {
         self.add_message_handler(model, move |handle, envelope, this, cx| {
@@ -616,7 +616,7 @@ impl Client {
     where
         M: EntityMessage,
         E: 'static + Send,
-        H: 'static + Send + Sync + Fn(Handle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        H: 'static + Send + Sync + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<()>> + Send,
     {
         self.add_entity_message_handler::<M, E, _, _>(move |subscriber, message, client, cx| {
@@ -667,7 +667,7 @@ impl Client {
     where
         M: EntityMessage + RequestMessage,
         E: 'static + Send,
-        H: 'static + Send + Sync + Fn(Handle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        H: 'static + Send + Sync + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<M::Response>> + Send,
     {
         self.add_model_message_handler(move |entity, envelope, client, cx| {
@@ -1546,7 +1546,7 @@ mod tests {
         let (done_tx1, mut done_rx1) = smol::channel::unbounded();
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
         client.add_model_message_handler(
-            move |model: Handle<Model>, _: TypedEnvelope<proto::JoinProject>, _, mut cx| {
+            move |model: Model<TestModel>, _: TypedEnvelope<proto::JoinProject>, _, mut cx| {
                 match model.update(&mut cx, |model, _| model.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
@@ -1555,15 +1555,15 @@ mod tests {
                 async { Ok(()) }
             },
         );
-        let model1 = cx.entity(|_| Model {
+        let model1 = cx.build_model(|_| TestModel {
             id: 1,
             subscription: None,
         });
-        let model2 = cx.entity(|_| Model {
+        let model2 = cx.build_model(|_| TestModel {
             id: 2,
             subscription: None,
         });
-        let model3 = cx.entity(|_| Model {
+        let model3 = cx.build_model(|_| TestModel {
             id: 3,
             subscription: None,
         });
@@ -1596,7 +1596,7 @@ mod tests {
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
-        let model = cx.entity(|_| Model::default());
+        let model = cx.build_model(|_| TestModel::default());
         let (done_tx1, _done_rx1) = smol::channel::unbounded();
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
         let subscription1 = client.add_message_handler(
@@ -1624,11 +1624,11 @@ mod tests {
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
-        let model = cx.entity(|_| Model::default());
+        let model = cx.build_model(|_| TestModel::default());
         let (done_tx, mut done_rx) = smol::channel::unbounded();
         let subscription = client.add_message_handler(
             model.clone().downgrade(),
-            move |model: Handle<Model>, _: TypedEnvelope<proto::Ping>, _, mut cx| {
+            move |model: Model<TestModel>, _: TypedEnvelope<proto::Ping>, _, mut cx| {
                 model
                     .update(&mut cx, |model, _| model.subscription.take())
                     .unwrap();
@@ -1644,7 +1644,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct Model {
+    struct TestModel {
         id: usize,
         subscription: Option<Subscription>,
     }

@@ -22,7 +22,7 @@ use futures::{
 use fuzzy2::CharBag;
 use git::{DOT_GIT, GITIGNORE};
 use gpui2::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Executor, Handle, ModelContext, Task,
+    AppContext, AsyncAppContext, Context, EventEmitter, Executor, Model, ModelContext, Task,
 };
 use language2::{
     proto::{
@@ -292,7 +292,7 @@ impl Worktree {
         fs: Arc<dyn Fs>,
         next_entry_id: Arc<AtomicUsize>,
         cx: &mut AsyncAppContext,
-    ) -> Result<Handle<Self>> {
+    ) -> Result<Model<Self>> {
         // After determining whether the root entry is a file or a directory, populate the
         // snapshot's "root name", which will be used for the purpose of fuzzy matching.
         let abs_path = path.into();
@@ -301,7 +301,7 @@ impl Worktree {
             .await
             .context("failed to stat worktree path")?;
 
-        cx.entity(move |cx: &mut ModelContext<Worktree>| {
+        cx.build_model(move |cx: &mut ModelContext<Worktree>| {
             let root_name = abs_path
                 .file_name()
                 .map_or(String::new(), |f| f.to_string_lossy().to_string());
@@ -406,8 +406,8 @@ impl Worktree {
         worktree: proto::WorktreeMetadata,
         client: Arc<Client>,
         cx: &mut AppContext,
-    ) -> Handle<Self> {
-        cx.entity(|cx: &mut ModelContext<Self>| {
+    ) -> Model<Self> {
+        cx.build_model(|cx: &mut ModelContext<Self>| {
             let snapshot = Snapshot {
                 id: WorktreeId(worktree.id as usize),
                 abs_path: Arc::from(PathBuf::from(worktree.abs_path)),
@@ -593,7 +593,7 @@ impl LocalWorktree {
         id: u64,
         path: &Path,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<Handle<Buffer>>> {
+    ) -> Task<Result<Model<Buffer>>> {
         let path = Arc::from(path);
         cx.spawn(move |this, mut cx| async move {
             let (file, contents, diff_base) = this
@@ -603,7 +603,7 @@ impl LocalWorktree {
                 .executor()
                 .spawn(async move { text::Buffer::new(0, id, contents) })
                 .await;
-            cx.entity(|_| Buffer::build(text_buffer, diff_base, Some(Arc::new(file))))
+            cx.build_model(|_| Buffer::build(text_buffer, diff_base, Some(Arc::new(file))))
         })
     }
 
@@ -920,7 +920,7 @@ impl LocalWorktree {
 
     pub fn save_buffer(
         &self,
-        buffer_handle: Handle<Buffer>,
+        buffer_handle: Model<Buffer>,
         path: Arc<Path>,
         has_changed_file: bool,
         cx: &mut ModelContext<Worktree>,
@@ -1331,7 +1331,7 @@ impl RemoteWorktree {
 
     pub fn save_buffer(
         &self,
-        buffer_handle: Handle<Buffer>,
+        buffer_handle: Model<Buffer>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
@@ -2577,7 +2577,7 @@ impl fmt::Debug for Snapshot {
 
 #[derive(Clone, PartialEq)]
 pub struct File {
-    pub worktree: Handle<Worktree>,
+    pub worktree: Model<Worktree>,
     pub path: Arc<Path>,
     pub mtime: SystemTime,
     pub(crate) entry_id: ProjectEntryId,
@@ -2701,7 +2701,7 @@ impl language2::LocalFile for File {
 }
 
 impl File {
-    pub fn for_entry(entry: Entry, worktree: Handle<Worktree>) -> Arc<Self> {
+    pub fn for_entry(entry: Entry, worktree: Model<Worktree>) -> Arc<Self> {
         Arc::new(Self {
             worktree,
             path: entry.path.clone(),
@@ -2714,7 +2714,7 @@ impl File {
 
     pub fn from_proto(
         proto: rpc2::proto::File,
-        worktree: Handle<Worktree>,
+        worktree: Model<Worktree>,
         cx: &AppContext,
     ) -> Result<Self> {
         let worktree_id = worktree

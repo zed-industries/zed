@@ -3,12 +3,13 @@ use std::sync::Arc;
 use chrono::DateTime;
 use gpui2::{px, relative, rems, AppContext, Context, Size, View};
 
-use crate::{static_livestream, user_settings_mut, v_stack, AssistantPanel, Button, ChatMessage,
-    ChatPanel, CollabPanel, EditorPane, FakeSettings, Label, LanguageSelector, Pane, PaneGroup,
-    Panel, PanelAllowedSides, PanelSide, ProjectPanel, SettingValue, SplitDirection, StatusBar,
-    Terminal, TitleBar, Toast, ToastOrigin,
-};
 use crate::{prelude::*, NotificationsPanel};
+use crate::{
+    static_livestream, user_settings_mut, v_stack, AssistantPanel, Button, ChatMessage, ChatPanel,
+    CollabPanel, EditorPane, FakeSettings, Label, LanguageSelector, Pane, PaneGroup, Panel,
+    PanelAllowedSides, PanelSide, ProjectPanel, SettingValue, SplitDirection, StatusBar, Terminal,
+    TitleBar, Toast, ToastOrigin,
+};
 
 #[derive(Clone)]
 pub struct Gpui2UiDebug {
@@ -171,7 +172,7 @@ impl Workspace {
 
     pub fn view(cx: &mut AppContext) -> View<Self> {
         {
-            let state = cx.entity(|cx| Self::new(cx));
+            let state = cx.build_model(|cx| Self::new(cx));
             let render = Self::render;
             View::for_handle(state, render)
         }

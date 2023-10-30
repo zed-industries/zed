@@ -16,7 +16,7 @@ use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
 use gpui2::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Handle, ModelContext, Task, WeakHandle,
+    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakHandle,
 };
 use language2::LanguageRegistry;
 use live_kit_client::{LocalTrackPublication, RemoteAudioTrackUpdate, RemoteVideoTrackUpdate};
@@ -70,7 +70,7 @@ pub struct Room {
     pending_call_count: usize,
     leave_when_empty: bool,
     client: Arc<Client>,
-    user_store: Handle<UserStore>,
+    user_store: Model<UserStore>,
     follows_by_leader_id_project_id: HashMap<(PeerId, u64), Vec<PeerId>>,
     client_subscriptions: Vec<client2::Subscription>,
     _subscriptions: Vec<gpui2::Subscription>,
@@ -111,7 +111,7 @@ impl Room {
         channel_id: Option<u64>,
         live_kit_connection_info: Option<proto::LiveKitConnectionInfo>,
         client: Arc<Client>,
-        user_store: Handle<UserStore>,
+        user_store: Model<UserStore>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         todo!()
@@ -237,15 +237,15 @@ impl Room {
 
     pub(crate) fn create(
         called_user_id: u64,
-        initial_project: Option<Handle<Project>>,
+        initial_project: Option<Model<Project>>,
         client: Arc<Client>,
-        user_store: Handle<UserStore>,
+        user_store: Model<UserStore>,
         cx: &mut AppContext,
-    ) -> Task<Result<Handle<Self>>> {
+    ) -> Task<Result<Model<Self>>> {
         cx.spawn(move |mut cx| async move {
             let response = client.request(proto::CreateRoom {}).await?;
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
-            let room = cx.entity(|cx| {
+            let room = cx.build_model(|cx| {
                 Self::new(
                     room_proto.id,
                     None,
@@ -283,9 +283,9 @@ impl Room {
     pub(crate) fn join_channel(
         channel_id: u64,
         client: Arc<Client>,
-        user_store: Handle<UserStore>,
+        user_store: Model<UserStore>,
         cx: &mut AppContext,
-    ) -> Task<Result<Handle<Self>>> {
+    ) -> Task<Result<Model<Self>>> {
         cx.spawn(move |cx| async move {
             Self::from_join_response(
                 client.request(proto::JoinChannel { channel_id }).await?,
@@ -299,9 +299,9 @@ impl Room {
     pub(crate) fn join(
         call: &IncomingCall,
         client: Arc<Client>,
-        user_store: Handle<UserStore>,
+        user_store: Model<UserStore>,
         cx: &mut AppContext,
-    ) -> Task<Result<Handle<Self>>> {
+    ) -> Task<Result<Model<Self>>> {
         let id = call.room_id;
         cx.spawn(move |cx| async move {
             Self::from_join_response(
@@ -343,11 +343,11 @@ impl Room {
     fn from_join_response(
         response: proto::JoinRoomResponse,
         client: Arc<Client>,
-        user_store: Handle<UserStore>,
+        user_store: Model<UserStore>,
         mut cx: AsyncAppContext,
-    ) -> Result<Handle<Self>> {
+    ) -> Result<Model<Self>> {
         let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
-        let room = cx.entity(|cx| {
+        let room = cx.build_model(|cx| {
             Self::new(
                 room_proto.id,
                 response.channel_id,
@@ -661,7 +661,7 @@ impl Room {
     }
 
     async fn handle_room_updated(
-        this: Handle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::RoomUpdated>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -1101,7 +1101,7 @@ impl Room {
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Handle<Project>>> {
+    ) -> Task<Result<Model<Project>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
         cx.emit(Event::RemoteProjectJoined { project_id: id });
@@ -1125,7 +1125,7 @@ impl Room {
 
     pub(crate) fn share_project(
         &mut self,
-        project: Handle<Project>,
+        project: Model<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<u64>> {
         if let Some(project_id) = project.read(cx).remote_id() {
@@ -1161,7 +1161,7 @@ impl Room {
 
     pub(crate) fn unshare_project(
         &mut self,
-        project: Handle<Project>,
+        project: Model<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let project_id = match project.read(cx).remote_id() {
@@ -1175,7 +1175,7 @@ impl Room {
 
     pub(crate) fn set_location(
         &mut self,
-        project: Option<&Handle<Project>>,
+        project: Option<&Model<Project>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         if self.status.is_offline() {

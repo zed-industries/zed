@@ -1,5 +1,5 @@
 use crate::Project;
-use gpui2::{AnyWindowHandle, Context, Handle, ModelContext, WeakHandle};
+use gpui2::{AnyWindowHandle, Context, Model, ModelContext, WeakHandle};
 use settings2::Settings;
 use std::path::{Path, PathBuf};
 use terminal2::{
@@ -20,7 +20,7 @@ impl Project {
         working_directory: Option<PathBuf>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
-    ) -> anyhow::Result<Handle<Terminal>> {
+    ) -> anyhow::Result<Model<Terminal>> {
         if self.is_remote() {
             return Err(anyhow::anyhow!(
                 "creating terminals as a guest is not supported yet"
@@ -40,7 +40,7 @@ impl Project {
                 |_, _| todo!("color_for_index"),
             )
             .map(|builder| {
-                let terminal_handle = cx.entity(|cx| builder.subscribe(cx));
+                let terminal_handle = cx.build_model(|cx| builder.subscribe(cx));
 
                 self.terminals
                     .local_handles
@@ -108,7 +108,7 @@ impl Project {
     fn activate_python_virtual_environment(
         &mut self,
         activate_script: Option<PathBuf>,
-        terminal_handle: &Handle<Terminal>,
+        terminal_handle: &Model<Terminal>,
         cx: &mut ModelContext<Project>,
     ) {
         if let Some(activate_script) = activate_script {

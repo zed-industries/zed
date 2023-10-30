@@ -1,5 +1,5 @@
 use crate::{
-    AppContext, AsyncAppContext, Context, Effect, EntityId, EventEmitter, Handle, MainThread,
+    AppContext, AsyncAppContext, Context, Effect, EntityId, EventEmitter, MainThread, Model,
     Reference, Subscription, Task, WeakHandle,
 };
 use derive_more::{Deref, DerefMut};
@@ -30,7 +30,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         self.model_state.entity_id
     }
 
-    pub fn handle(&self) -> Handle<T> {
+    pub fn handle(&self) -> Model<T> {
         self.weak_handle()
             .upgrade()
             .expect("The entity must be alive if we have a model context")
@@ -42,8 +42,8 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn observe<T2: 'static>(
         &mut self,
-        handle: &Handle<T2>,
-        mut on_notify: impl FnMut(&mut T, Handle<T2>, &mut ModelContext<'_, T>) + Send + 'static,
+        handle: &Model<T2>,
+        mut on_notify: impl FnMut(&mut T, Model<T2>, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
         T: 'static + Send,
@@ -65,10 +65,8 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn subscribe<E: 'static + EventEmitter>(
         &mut self,
-        handle: &Handle<E>,
-        mut on_event: impl FnMut(&mut T, Handle<E>, &E::Event, &mut ModelContext<'_, T>)
-            + Send
-            + 'static,
+        handle: &Model<E>,
+        mut on_event: impl FnMut(&mut T, Model<E>, &E::Event, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
         T: 'static + Send,
@@ -107,7 +105,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn observe_release<E: 'static>(
         &mut self,
-        handle: &Handle<E>,
+        handle: &Model<E>,
         mut on_release: impl FnMut(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
@@ -224,23 +222,23 @@ where
 }
 
 impl<'a, T> Context for ModelContext<'a, T> {
-    type EntityContext<'b, U> = ModelContext<'b, U>;
+    type ModelContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
-    fn entity<U>(
+    fn build_model<U>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, U>) -> U,
-    ) -> Handle<U>
+        build_model: impl FnOnce(&mut Self::ModelContext<'_, U>) -> U,
+    ) -> Model<U>
     where
         U: 'static + Send,
     {
-        self.app.entity(build_entity)
+        self.app.build_model(build_model)
     }
 
     fn update_entity<U: 'static, R>(
         &mut self,
-        handle: &Handle<U>,
-        update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, U>) -> R,
+        handle: &Model<U>,
+        update: impl FnOnce(&mut U, &mut Self::ModelContext<'_, U>) -> R,
     ) -> R {
         self.app.update_entity(handle, update)
     }

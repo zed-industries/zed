@@ -82,7 +82,7 @@ impl TitleBar {
 
     pub fn view(cx: &mut AppContext, livestream: Option<Livestream>) -> View<Self> {
         {
-            let state = cx.entity(|cx| Self::new(cx).set_livestream(livestream));
+            let state = cx.build_model(|cx| Self::new(cx).set_livestream(livestream));
             let render = Self::render;
             View::for_handle(state, render)
         }
@@ -198,7 +198,7 @@ mod stories {
     impl TitleBarStory {
         pub fn view(cx: &mut AppContext) -> View<Self> {
             {
-                let state = cx.entity(|cx| Self {
+                let state = cx.build_model(|cx| Self {
                     title_bar: TitleBar::view(cx, None),
                 });
                 let render = Self::render;

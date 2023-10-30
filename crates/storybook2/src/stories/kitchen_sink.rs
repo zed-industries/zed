@@ -14,7 +14,7 @@ impl KitchenSinkStory {
 
     pub fn view(cx: &mut AppContext) -> View<Self> {
         {
-            let state = cx.entity(|cx| Self::new());
+            let state = cx.build_model(|cx| Self::new());
             let render = Self::render;
             View::for_handle(state, render)
         }

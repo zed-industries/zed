@@ -1,5 +1,5 @@
 use crate::{
-    AnyWindowHandle, AppContext, AsyncAppContext, Context, Executor, Handle, MainThread,
+    AnyWindowHandle, AppContext, AsyncAppContext, Context, Executor, MainThread, Model,
     ModelContext, Result, Task, TestDispatcher, TestPlatform, WindowContext,
 };
 use parking_lot::Mutex;
@@ -12,24 +12,24 @@ pub struct TestAppContext {
 }
 
 impl Context for TestAppContext {
-    type EntityContext<'a, T> = ModelContext<'a, T>;
+    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
-    fn entity<T: 'static>(
+    fn build_model<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, T>) -> T,
-    ) -> Self::Result<Handle<T>>
+        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>>
     where
         T: 'static + Send,
     {
         let mut lock = self.app.lock();
-        lock.entity(build_entity)
+        lock.build_model(build_model)
     }
 
     fn update_entity<T: 'static, R>(
         &mut self,
-        handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, T>) -> R,
+        handle: &Model<T>,
+        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         let mut lock = self.app.lock();
         lock.update_entity(handle, update)
