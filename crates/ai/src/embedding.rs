@@ -2,12 +2,11 @@ use std::time::Instant;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use gpui::AppContext;
 use ordered_float::OrderedFloat;
 use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::ToSql;
 
-use crate::auth::{CredentialProvider, ProviderCredential};
+use crate::auth::CredentialProvider;
 use crate::models::LanguageModel;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -70,17 +69,9 @@ impl Embedding {
 }
 
 #[async_trait]
-pub trait EmbeddingProvider: Sync + Send {
+pub trait EmbeddingProvider: CredentialProvider {
     fn base_model(&self) -> Box<dyn LanguageModel>;
-    fn credential_provider(&self) -> Box<dyn CredentialProvider>;
-    fn retrieve_credentials(&self, cx: &AppContext) -> ProviderCredential {
-        self.credential_provider().retrieve_credentials(cx)
-    }
-    async fn embed_batch(
-        &self,
-        spans: Vec<String>,
-        credential: ProviderCredential,
-    ) -> Result<Vec<Embedding>>;
+    async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>>;
     fn max_tokens_per_batch(&self) -> usize;
     fn rate_limit_expiration(&self) -> Option<Instant>;
 }

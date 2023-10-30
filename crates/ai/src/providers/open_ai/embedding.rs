@@ -2,27 +2,29 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use gpui::executor::Background;
-use gpui::serde_json;
+use gpui::{serde_json, AppContext};
 use isahc::http::StatusCode;
 use isahc::prelude::Configurable;
 use isahc::{AsyncBody, Response};
 use lazy_static::lazy_static;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use parse_duration::parse;
 use postage::watch;
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::ops::Add;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tiktoken_rs::{cl100k_base, CoreBPE};
 use util::http::{HttpClient, Request};
+use util::ResultExt;
 
 use crate::auth::{CredentialProvider, ProviderCredential};
 use crate::embedding::{Embedding, EmbeddingProvider};
 use crate::models::LanguageModel;
 use crate::providers::open_ai::OpenAILanguageModel;
 
-use crate::providers::open_ai::auth::OpenAICredentialProvider;
+use crate::providers::open_ai::OPENAI_API_URL;
 
 lazy_static! {
     static ref OPENAI_BPE_TOKENIZER: CoreBPE = cl100k_base().unwrap();
@@ -31,7 +33,7 @@ lazy_static! {
 #[derive(Clone)]
 pub struct OpenAIEmbeddingProvider {
     model: OpenAILanguageModel,
-    credential_provider: OpenAICredentialProvider,
+    credential: Arc<RwLock<ProviderCredential>>,
     pub client: Arc<dyn HttpClient>,
     pub executor: Arc<Background>,
     rate_limit_count_rx: watch::Receiver<Option<Instant>>,
@@ -69,14 +71,22 @@ impl OpenAIEmbeddingProvider {
         let rate_limit_count_tx = Arc::new(Mutex::new(rate_limit_count_tx));
 
         let model = OpenAILanguageModel::load("text-embedding-ada-002");
+        let credential = Arc::new(RwLock::new(ProviderCredential::NoCredentials));
 
         OpenAIEmbeddingProvider {
             model,
-            credential_provider: OpenAICredentialProvider {},
+            credential,
             client,
             executor,
             rate_limit_count_rx,
             rate_limit_count_tx,
+        }
+    }
+
+    fn get_api_key(&self) -> Result<String> {
+        match self.credential.read().clone() {
+            ProviderCredential::Credentials { api_key } => Ok(api_key),
+            _ => Err(anyhow!("api credentials not provided")),
         }
     }
 
@@ -136,17 +146,62 @@ impl OpenAIEmbeddingProvider {
     }
 }
 
+impl CredentialProvider for OpenAIEmbeddingProvider {
+    fn has_credentials(&self) -> bool {
+        match *self.credential.read() {
+            ProviderCredential::Credentials { .. } => true,
+            _ => false,
+        }
+    }
+    fn retrieve_credentials(&self, cx: &AppContext) -> ProviderCredential {
+        let mut credential = self.credential.write();
+        match *credential {
+            ProviderCredential::Credentials { .. } => {
+                return credential.clone();
+            }
+            _ => {
+                if let Ok(api_key) = env::var("OPENAI_API_KEY") {
+                    *credential = ProviderCredential::Credentials { api_key };
+                } else if let Some((_, api_key)) = cx
+                    .platform()
+                    .read_credentials(OPENAI_API_URL)
+                    .log_err()
+                    .flatten()
+                {
+                    if let Some(api_key) = String::from_utf8(api_key).log_err() {
+                        *credential = ProviderCredential::Credentials { api_key };
+                    }
+                } else {
+                };
+            }
+        }
+
+        credential.clone()
+    }
+
+    fn save_credentials(&self, cx: &AppContext, credential: ProviderCredential) {
+        match credential.clone() {
+            ProviderCredential::Credentials { api_key } => {
+                cx.platform()
+                    .write_credentials(OPENAI_API_URL, "Bearer", api_key.as_bytes())
+                    .log_err();
+            }
+            _ => {}
+        }
+
+        *self.credential.write() = credential;
+    }
+    fn delete_credentials(&self, cx: &AppContext) {
+        cx.platform().delete_credentials(OPENAI_API_URL).log_err();
+        *self.credential.write() = ProviderCredential::NoCredentials;
+    }
+}
+
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbeddingProvider {
     fn base_model(&self) -> Box<dyn LanguageModel> {
         let model: Box<dyn LanguageModel> = Box::new(self.model.clone());
         model
-    }
-
-    fn credential_provider(&self) -> Box<dyn CredentialProvider> {
-        let credential_provider: Box<dyn CredentialProvider> =
-            Box::new(self.credential_provider.clone());
-        credential_provider
     }
 
     fn max_tokens_per_batch(&self) -> usize {
@@ -157,18 +212,11 @@ impl EmbeddingProvider for OpenAIEmbeddingProvider {
         *self.rate_limit_count_rx.borrow()
     }
 
-    async fn embed_batch(
-        &self,
-        spans: Vec<String>,
-        credential: ProviderCredential,
-    ) -> Result<Vec<Embedding>> {
+    async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
         const BACKOFF_SECONDS: [usize; 4] = [3, 5, 15, 45];
         const MAX_RETRIES: usize = 4;
 
-        let api_key = match credential {
-            ProviderCredential::Credentials { api_key } => anyhow::Ok(api_key),
-            _ => Err(anyhow!("no api key provided")),
-        }?;
+        let api_key = self.get_api_key()?;
 
         let mut request_number = 0;
         let mut rate_limiting = false;

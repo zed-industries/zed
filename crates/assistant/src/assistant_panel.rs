@@ -10,7 +10,7 @@ use ai::{
     auth::ProviderCredential,
     completion::{CompletionProvider, CompletionRequest},
     providers::open_ai::{
-        stream_completion, OpenAICompletionProvider, OpenAIRequest, RequestMessage, OPENAI_API_URL,
+        stream_completion, OpenAICompletionProvider, OpenAIRequest, RequestMessage,
     },
 };
 
@@ -48,7 +48,7 @@ use semantic_index::{SemanticIndex, SemanticIndexStatus};
 use settings::SettingsStore;
 use std::{
     cell::{Cell, RefCell},
-    cmp, env,
+    cmp,
     fmt::Write,
     iter,
     ops::Range,
@@ -210,7 +210,6 @@ impl AssistantPanel {
                     // Defaulting currently to GPT4, allow for this to be set via config.
                     let completion_provider = Box::new(OpenAICompletionProvider::new(
                         "gpt-4",
-                        ProviderCredential::NoCredentials,
                         cx.background().clone(),
                     ));
 
@@ -298,7 +297,6 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
         project: &ModelHandle<Project>,
     ) {
-        let credential = self.credential.borrow().clone();
         let selection = editor.read(cx).selections.newest_anchor().clone();
         if selection.start.excerpt_id() != selection.end.excerpt_id() {
             return;
@@ -330,7 +328,6 @@ impl AssistantPanel {
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
         let provider = Arc::new(OpenAICompletionProvider::new(
             "gpt-4",
-            credential,
             cx.background().clone(),
         ));
 

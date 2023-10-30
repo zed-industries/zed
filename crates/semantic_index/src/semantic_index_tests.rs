@@ -220,11 +220,7 @@ async fn test_embedding_batching(cx: &mut TestAppContext, mut rng: StdRng) {
 
     let embedding_provider = Arc::new(FakeEmbeddingProvider::default());
 
-    let mut queue = EmbeddingQueue::new(
-        embedding_provider.clone(),
-        cx.background(),
-        ai::auth::ProviderCredential::NoCredentials,
-    );
+    let mut queue = EmbeddingQueue::new(embedding_provider.clone(), cx.background());
     for file in &files {
         queue.push(file.clone());
     }
