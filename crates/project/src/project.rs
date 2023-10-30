@@ -162,6 +162,7 @@ pub struct Project {
     copilot_log_subscription: Option<lsp::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
     node: Option<Arc<dyn NodeRuntime>>,
+    default_prettier_plugins: Option<HashSet<&'static str>>,
     prettier_instances: HashMap<
         (Option<WorktreeId>, PathBuf),
         Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>,
@@ -677,6 +678,7 @@ impl Project {
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
                 node: Some(node),
+                default_prettier_plugins: None,
                 prettier_instances: HashMap::default(),
             }
         })
@@ -776,6 +778,7 @@ impl Project {
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
                 node: None,
+                default_prettier_plugins: None,
                 prettier_instances: HashMap::default(),
             };
             for worktree in worktrees {
@@ -8497,7 +8500,7 @@ impl Project {
 
     #[cfg(any(test, feature = "test-support"))]
     fn install_default_formatters(
-        &self,
+        &mut self,
         _worktree: Option<WorktreeId>,
         _new_language: &Language,
         _language_settings: &LanguageSettings,
@@ -8508,7 +8511,7 @@ impl Project {
 
     #[cfg(not(any(test, feature = "test-support")))]
     fn install_default_formatters(
-        &self,
+        &mut self,
         worktree: Option<WorktreeId>,
         new_language: &Language,
         language_settings: &LanguageSettings,
@@ -8537,6 +8540,30 @@ impl Project {
             return Task::ready(Ok(()));
         };
 
+        let mut plugins_to_install = prettier_plugins;
+        if let Some(already_installed) = &self.default_prettier_plugins {
+            plugins_to_install.retain(|plugin| !already_installed.contains(plugin));
+        }
+        if plugins_to_install.is_empty() && self.default_prettier_plugins.is_some() {
+            return Task::ready(Ok(()));
+        }
+
+        let previous_plugins = self.default_prettier_plugins.clone();
+        self.default_prettier_plugins
+            .get_or_insert_with(HashSet::default)
+            .extend(plugins_to_install.iter());
+        let (mut install_success_tx, mut install_success_rx) =
+            futures::channel::mpsc::channel::<()>(1);
+        cx.spawn(|this, mut cx| async move {
+            if install_success_rx.next().await.is_none() {
+                this.update(&mut cx, |this, _| {
+                    log::warn!("Prettier plugin installation did not finish successfully, restoring previous installed plugins {previous_plugins:?}");
+                    this.default_prettier_plugins = previous_plugins;
+                })
+            }
+        })
+        .detach();
+
         let default_prettier_dir = util::paths::DEFAULT_PRETTIER_DIR.as_path();
         let already_running_prettier = self
             .prettier_instances
@@ -8552,7 +8579,7 @@ impl Project {
                 .with_context(|| format!("writing {} file at {prettier_wrapper_path:?}", prettier::PRETTIER_SERVER_FILE))?;
 
                 let packages_to_versions = future::try_join_all(
-                    prettier_plugins
+                    plugins_to_install
                         .iter()
                         .chain(Some(&"prettier"))
                         .map(|package_name| async {
@@ -8573,8 +8600,10 @@ impl Project {
                     (package.as_str(), version.as_str())
                 }).collect::<Vec<_>>();
                 node.npm_install_packages(default_prettier_dir, &borrowed_packages).await.context("fetching formatter packages")?;
+                let installed_packages = !plugins_to_install.is_empty();
+                install_success_tx.try_send(()).ok();
 
-                if !prettier_plugins.is_empty() {
+                if !installed_packages {
                     if let Some(prettier) = already_running_prettier {
                         prettier.await.map_err(|e| anyhow::anyhow!("Default prettier startup await failure: {e:#}"))?.clear_cache().await.context("clearing default prettier cache after plugins install")?;
                     }
