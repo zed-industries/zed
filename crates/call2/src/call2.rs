@@ -13,7 +13,7 @@ use collections::HashSet;
 use futures::{future::Shared, FutureExt};
 use gpui2::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Subscription, Task,
-    WeakHandle,
+    WeakModel,
 };
 use postage::watch;
 use project2::Project;
@@ -42,7 +42,7 @@ pub struct IncomingCall {
 pub struct ActiveCall {
     room: Option<(Model<Room>, Vec<Subscription>)>,
     pending_room_creation: Option<Shared<Task<Result<Model<Room>, Arc<anyhow::Error>>>>>,
-    location: Option<WeakHandle<Project>>,
+    location: Option<WeakModel<Project>>,
     pending_invites: HashSet<u64>,
     incoming_call: (
         watch::Sender<Option<IncomingCall>>,
@@ -347,7 +347,7 @@ impl ActiveCall {
         }
     }
 
-    pub fn location(&self) -> Option<&WeakHandle<Project>> {
+    pub fn location(&self) -> Option<&WeakModel<Project>> {
         self.location.as_ref()
     }
 

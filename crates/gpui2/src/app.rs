@@ -711,7 +711,7 @@ impl Context for AppContext {
     type Result<T> = T;
 
     /// Build an entity that is owned by the application. The given function will be invoked with
-    /// a `ModelContext` and must return an object representing the entity. A `Handle` will be returned
+    /// a `ModelContext` and must return an object representing the entity. A `Model` will be returned
     /// which can be used to access the entity in a context.
     fn build_model<T: 'static + Send>(
         &mut self,
@@ -724,18 +724,18 @@ impl Context for AppContext {
         })
     }
 
-    /// Update the entity referenced by the given handle. The function is passed a mutable reference to the
+    /// Update the entity referenced by the given model. The function is passed a mutable reference to the
     /// entity along with a `ModelContext` for the entity.
     fn update_entity<T: 'static, R>(
         &mut self,
-        handle: &Model<T>,
+        model: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> R {
         self.update(|cx| {
-            let mut entity = cx.entities.lease(handle);
+            let mut entity = cx.entities.lease(model);
             let result = update(
                 &mut entity,
-                &mut ModelContext::mutable(cx, handle.downgrade()),
+                &mut ModelContext::mutable(cx, model.downgrade()),
             );
             cx.entities.end_lease(entity);
             result

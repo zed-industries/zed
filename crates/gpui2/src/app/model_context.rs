@@ -1,6 +1,6 @@
 use crate::{
     AppContext, AsyncAppContext, Context, Effect, EntityId, EventEmitter, MainThread, Model,
-    Reference, Subscription, Task, WeakHandle,
+    Reference, Subscription, Task, WeakModel,
 };
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
@@ -15,11 +15,11 @@ pub struct ModelContext<'a, T> {
     #[deref]
     #[deref_mut]
     app: Reference<'a, AppContext>,
-    model_state: WeakHandle<T>,
+    model_state: WeakModel<T>,
 }
 
 impl<'a, T: 'static> ModelContext<'a, T> {
-    pub(crate) fn mutable(app: &'a mut AppContext, model_state: WeakHandle<T>) -> Self {
+    pub(crate) fn mutable(app: &'a mut AppContext, model_state: WeakModel<T>) -> Self {
         Self {
             app: Reference::Mutable(app),
             model_state,
@@ -36,7 +36,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
             .expect("The entity must be alive if we have a model context")
     }
 
-    pub fn weak_handle(&self) -> WeakHandle<T> {
+    pub fn weak_handle(&self) -> WeakModel<T> {
         self.model_state.clone()
     }
 
@@ -184,7 +184,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn spawn<Fut, R>(
         &self,
-        f: impl FnOnce(WeakHandle<T>, AsyncAppContext) -> Fut + Send + 'static,
+        f: impl FnOnce(WeakModel<T>, AsyncAppContext) -> Fut + Send + 'static,
     ) -> Task<R>
     where
         T: 'static,
@@ -197,7 +197,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn spawn_on_main<Fut, R>(
         &self,
-        f: impl FnOnce(WeakHandle<T>, MainThread<AsyncAppContext>) -> Fut + Send + 'static,
+        f: impl FnOnce(WeakModel<T>, MainThread<AsyncAppContext>) -> Fut + Send + 'static,
     ) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,

@@ -16,7 +16,7 @@ use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
 use gpui2::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakHandle,
+    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
 use language2::LanguageRegistry;
 use live_kit_client::{LocalTrackPublication, RemoteAudioTrackUpdate, RemoteVideoTrackUpdate};
@@ -61,8 +61,8 @@ pub struct Room {
     channel_id: Option<u64>,
     // live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
-    shared_projects: HashSet<WeakHandle<Project>>,
-    joined_projects: HashSet<WeakHandle<Project>>,
+    shared_projects: HashSet<WeakModel<Project>>,
+    joined_projects: HashSet<WeakModel<Project>>,
     local_participant: LocalParticipant,
     remote_participants: BTreeMap<u64, RemoteParticipant>,
     pending_participants: Vec<Arc<User>>,
@@ -424,7 +424,7 @@ impl Room {
     }
 
     async fn maintain_connection(
-        this: WeakHandle<Self>,
+        this: WeakModel<Self>,
         client: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {

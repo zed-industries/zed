@@ -14,8 +14,8 @@ use futures::{
     future::BoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryFutureExt as _, TryStreamExt,
 };
 use gpui2::{
-    serde_json, AnyHandle, AnyWeakHandle, AppContext, AsyncAppContext, Model, SemanticVersion,
-    Task, WeakHandle,
+    serde_json, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Model, SemanticVersion, Task,
+    WeakModel,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -227,7 +227,7 @@ struct ClientState {
     _reconnect_task: Option<Task<()>>,
     reconnect_interval: Duration,
     entities_by_type_and_remote_id: HashMap<(TypeId, u64), WeakSubscriber>,
-    models_by_message_type: HashMap<TypeId, AnyWeakHandle>,
+    models_by_message_type: HashMap<TypeId, AnyWeakModel>,
     entity_types_by_message_type: HashMap<TypeId, TypeId>,
     #[allow(clippy::type_complexity)]
     message_handlers: HashMap<
@@ -236,7 +236,7 @@ struct ClientState {
             dyn Send
                 + Sync
                 + Fn(
-                    AnyHandle,
+                    AnyModel,
                     Box<dyn AnyTypedEnvelope>,
                     &Arc<Client>,
                     AsyncAppContext,
@@ -246,7 +246,7 @@ struct ClientState {
 }
 
 enum WeakSubscriber {
-    Entity { handle: AnyWeakHandle },
+    Entity { handle: AnyWeakModel },
     Pending(Vec<Box<dyn AnyTypedEnvelope>>),
 }
 
@@ -552,7 +552,7 @@ impl Client {
     #[track_caller]
     pub fn add_message_handler<M, E, H, F>(
         self: &Arc<Self>,
-        entity: WeakHandle<E>,
+        entity: WeakModel<E>,
         handler: H,
     ) -> Subscription
     where
@@ -594,7 +594,7 @@ impl Client {
 
     pub fn add_request_handler<M, E, H, F>(
         self: &Arc<Self>,
-        model: WeakHandle<E>,
+        model: WeakModel<E>,
         handler: H,
     ) -> Subscription
     where
@@ -628,7 +628,7 @@ impl Client {
     where
         M: EntityMessage,
         E: 'static + Send,
-        H: 'static + Send + Sync + Fn(AnyHandle, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        H: 'static + Send + Sync + Fn(AnyModel, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<()>> + Send,
     {
         let model_type_id = TypeId::of::<E>();
