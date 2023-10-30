@@ -3,12 +3,12 @@ pub mod item;
 // pub mod notifications;
 pub mod pane;
 pub mod pane_group;
-// mod persistence;
+mod persistence;
 pub mod searchable;
 // pub mod shared_screen;
 // mod status_bar;
 mod toolbar;
-// mod workspace_settings;
+mod workspace_settings;
 
 use anyhow::{anyhow, Result};
 // use call2::ActiveCall;
@@ -36,13 +36,14 @@ use anyhow::{anyhow, Result};
 //     },
 //     AnyModelHandle, AnyViewHandle, AnyWeakViewHandle, AnyWindowHandle, AppContext, AsyncAppContext,
 //     Entity, ModelContext, ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext,
-//     ViewHandle, WeakViewHandle, WindowContext, WindowHandle,
+//     View, WeakViewHandle, WindowContext, WindowHandle,
 // };
 // use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 // use itertools::Itertools;
 // use language2::{LanguageRegistry, Rope};
 // use node_runtime::NodeRuntime;// //
 
+use futures::channel::oneshot;
 // use crate::{
 //     notifications::{simple_message_notification::MessageNotification, NotificationTracker},
 //     persistence::model::{
@@ -91,7 +92,7 @@ pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 //     fn has_focus(&self, cx: &WindowContext) -> bool;
 // }
 
-// impl<T: Modal> ModalHandle for ViewHandle<T> {
+// impl<T: Modal> ModalHandle for View<T> {
 //     fn as_any(&self) -> &AnyViewHandle {
 //         self
 //     }
@@ -376,61 +377,61 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
     });
 }
 
-// type FollowableItemBuilder = fn(
-//     ViewHandle<Pane>,
-//     ViewHandle<Workspace>,
-//     ViewId,
-//     &mut Option<proto::view::Variant>,
-//     &mut AppContext,
-// ) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>;
-// type FollowableItemBuilders = HashMap<
-//     TypeId,
-//     (
-//         FollowableItemBuilder,
-//         fn(&AnyViewHandle) -> Box<dyn FollowableItemHandle>,
-//     ),
-// >;
-// pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
-//     cx.update_default_global(|builders: &mut FollowableItemBuilders, _| {
-//         builders.insert(
-//             TypeId::of::<I>(),
-//             (
-//                 |pane, workspace, id, state, cx| {
-//                     I::from_state_proto(pane, workspace, id, state, cx).map(|task| {
-//                         cx.foreground()
-//                             .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
-//                     })
-//                 },
-//                 |this| Box::new(this.clone().downcast::<I>().unwrap()),
-//             ),
-//         );
-//     });
-// }
+type FollowableItemBuilder = fn(
+    View<Pane>,
+    View<Workspace>,
+    ViewId,
+    &mut Option<proto::view::Variant>,
+    &mut AppContext,
+) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>;
+type FollowableItemBuilders = HashMap<
+    TypeId,
+    (
+        FollowableItemBuilder,
+        fn(&AnyView) -> Box<dyn FollowableItemHandle>,
+    ),
+>;
+pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
+    cx.update_default_global(|builders: &mut FollowableItemBuilders, _| {
+        builders.insert(
+            TypeId::of::<I>(),
+            (
+                |pane, workspace, id, state, cx| {
+                    I::from_state_proto(pane, workspace, id, state, cx).map(|task| {
+                        cx.foreground()
+                            .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
+                    })
+                },
+                |this| Box::new(this.clone().downcast::<I>().unwrap()),
+            ),
+        );
+    });
+}
 
-// type ItemDeserializers = HashMap<
-//     Arc<str>,
-//     fn(
-//         ModelHandle<Project>,
-//         WeakViewHandle<Workspace>,
-//         WorkspaceId,
-//         ItemId,
-//         &mut ViewContext<Pane>,
-//     ) -> Task<Result<Box<dyn ItemHandle>>>,
-// >;
-// pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
-//     cx.update_default_global(|deserializers: &mut ItemDeserializers, _cx| {
-//         if let Some(serialized_item_kind) = I::serialized_item_kind() {
-//             deserializers.insert(
-//                 Arc::from(serialized_item_kind),
-//                 |project, workspace, workspace_id, item_id, cx| {
-//                     let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
-//                     cx.foreground()
-//                         .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
-//                 },
-//             );
-//         }
-//     });
-// }
+type ItemDeserializers = HashMap<
+    Arc<str>,
+    fn(
+        Handle<Project>,
+        WeakView<Workspace>,
+        WorkspaceId,
+        ItemId,
+        &mut ViewContext<Pane>,
+    ) -> Task<Result<Box<dyn ItemHandle>>>,
+>;
+pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
+    cx.update_default_global(|deserializers: &mut ItemDeserializers, _cx| {
+        if let Some(serialized_item_kind) = I::serialized_item_kind() {
+            deserializers.insert(
+                Arc::from(serialized_item_kind),
+                |project, workspace, workspace_id, item_id, cx| {
+                    let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
+                    cx.foreground()
+                        .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
+                },
+            );
+        }
+    });
+}
 
 pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
@@ -493,54 +494,54 @@ struct Follower {
 //     }
 // }
 
-// struct DelayedDebouncedEditAction {
-//     task: Option<Task<()>>,
-//     cancel_channel: Option<oneshot::Sender<()>>,
-// }
+struct DelayedDebouncedEditAction {
+    task: Option<Task<()>>,
+    cancel_channel: Option<oneshot::Sender<()>>,
+}
 
-// impl DelayedDebouncedEditAction {
-//     fn new() -> DelayedDebouncedEditAction {
-//         DelayedDebouncedEditAction {
-//             task: None,
-//             cancel_channel: None,
-//         }
-//     }
+impl DelayedDebouncedEditAction {
+    fn new() -> DelayedDebouncedEditAction {
+        DelayedDebouncedEditAction {
+            task: None,
+            cancel_channel: None,
+        }
+    }
 
-//     fn fire_new<F>(&mut self, delay: Duration, cx: &mut ViewContext<Workspace>, func: F)
-//     where
-//         F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> Task<Result<()>>,
-//     {
-//         if let Some(channel) = self.cancel_channel.take() {
-//             _ = channel.send(());
-//         }
+    fn fire_new<F>(&mut self, delay: Duration, cx: &mut ViewContext<Workspace>, func: F)
+    where
+        F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> Task<Result<()>>,
+    {
+        if let Some(channel) = self.cancel_channel.take() {
+            _ = channel.send(());
+        }
 
-//         let (sender, mut receiver) = oneshot::channel::<()>();
-//         self.cancel_channel = Some(sender);
+        let (sender, mut receiver) = oneshot::channel::<()>();
+        self.cancel_channel = Some(sender);
 
-//         let previous_task = self.task.take();
-//         self.task = Some(cx.spawn(|workspace, mut cx| async move {
-//             let mut timer = cx.background().timer(delay).fuse();
-//             if let Some(previous_task) = previous_task {
-//                 previous_task.await;
-//             }
+        let previous_task = self.task.take();
+        self.task = Some(cx.spawn(|workspace, mut cx| async move {
+            let mut timer = cx.background().timer(delay).fuse();
+            if let Some(previous_task) = previous_task {
+                previous_task.await;
+            }
 
-//             futures::select_biased! {
-//                 _ = receiver => return,
-//                     _ = timer => {}
-//             }
+            futures::select_biased! {
+                _ = receiver => return,
+                    _ = timer => {}
+            }
 
-//             if let Some(result) = workspace
-//                 .update(&mut cx, |workspace, cx| (func)(workspace, cx))
-//                 .log_err()
-//             {
-//                 result.await.log_err();
-//             }
-//         }));
-//     }
-// }
+            if let Some(result) = workspace
+                .update(&mut cx, |workspace, cx| (func)(workspace, cx))
+                .log_err()
+            {
+                result.await.log_err();
+            }
+        }));
+    }
+}
 
 // pub enum Event {
-//     PaneAdded(ViewHandle<Pane>),
+//     PaneAdded(View<Pane>),
 //     ContactRequestedJoin(u64),
 // }
 
@@ -550,19 +551,19 @@ pub struct Workspace {
     //     zoomed: Option<AnyWeakViewHandle>,
     //     zoomed_position: Option<DockPosition>,
     //     center: PaneGroup,
-    //     left_dock: ViewHandle<Dock>,
-    //     bottom_dock: ViewHandle<Dock>,
-    //     right_dock: ViewHandle<Dock>,
+    //     left_dock: View<Dock>,
+    //     bottom_dock: View<Dock>,
+    //     right_dock: View<Dock>,
     panes: Vec<View<Pane>>,
     //     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
-    //     active_pane: ViewHandle<Pane>,
+    //     active_pane: View<Pane>,
     last_active_center_pane: Option<WeakView<Pane>>,
     //     last_active_view_id: Option<proto::ViewId>,
-    //     status_bar: ViewHandle<StatusBar>,
+    //     status_bar: View<StatusBar>,
     //     titlebar_item: Option<AnyViewHandle>,
     //     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: Handle<Project>,
-    //     follower_states: HashMap<ViewHandle<Pane>, FollowerState>,
+    //     follower_states: HashMap<View<Pane>, FollowerState>,
     //     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     //     window_edited: bool,
     //     active_call: Option<(ModelHandle<ActiveCall>, Vec<Subscription>)>,
@@ -930,19 +931,19 @@ impl Workspace {
     //         self.weak_self.clone()
     //     }
 
-    //     pub fn left_dock(&self) -> &ViewHandle<Dock> {
+    //     pub fn left_dock(&self) -> &View<Dock> {
     //         &self.left_dock
     //     }
 
-    //     pub fn bottom_dock(&self) -> &ViewHandle<Dock> {
+    //     pub fn bottom_dock(&self) -> &View<Dock> {
     //         &self.bottom_dock
     //     }
 
-    //     pub fn right_dock(&self) -> &ViewHandle<Dock> {
+    //     pub fn right_dock(&self) -> &View<Dock> {
     //         &self.right_dock
     //     }
 
-    //     pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>)
+    //     pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>)
     //     where
     //         T::Event: std::fmt::Debug,
     //     {
@@ -951,12 +952,12 @@ impl Workspace {
 
     //     pub fn add_panel_with_extra_event_handler<T: Panel, F>(
     //         &mut self,
-    //         panel: ViewHandle<T>,
+    //         panel: View<T>,
     //         cx: &mut ViewContext<Self>,
     //         handler: F,
     //     ) where
     //         T::Event: std::fmt::Debug,
-    //         F: Fn(&mut Self, &ViewHandle<T>, &T::Event, &mut ViewContext<Self>) + 'static,
+    //         F: Fn(&mut Self, &View<T>, &T::Event, &mut ViewContext<Self>) + 'static,
     //     {
     //         let dock = match panel.position(cx) {
     //             DockPosition::Left => &self.left_dock,
@@ -1033,7 +1034,7 @@ impl Workspace {
     //         dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
     //     }
 
-    //     pub fn status_bar(&self) -> &ViewHandle<StatusBar> {
+    //     pub fn status_bar(&self) -> &View<StatusBar> {
     //         &self.status_bar
     //     }
 
@@ -1617,10 +1618,10 @@ impl Workspace {
     //         &mut self,
     //         cx: &mut ViewContext<Self>,
     //         add_view: F,
-    //     ) -> Option<ViewHandle<V>>
+    //     ) -> Option<View<V>>
     //     where
     //         V: 'static + Modal,
-    //         F: FnOnce(&mut Self, &mut ViewContext<Self>) -> ViewHandle<V>,
+    //         F: FnOnce(&mut Self, &mut ViewContext<Self>) -> View<V>,
     //     {
     //         cx.notify();
     //         // Whatever modal was visible is getting clobbered. If its the same type as V, then return
@@ -1649,7 +1650,7 @@ impl Workspace {
     //         }
     //     }
 
-    //     pub fn modal<V: 'static + View>(&self) -> Option<ViewHandle<V>> {
+    //     pub fn modal<V: 'static + View>(&self) -> Option<View<V>> {
     //         self.modal
     //             .as_ref()
     //             .and_then(|modal| modal.view.as_any().clone().downcast::<V>())
@@ -1676,14 +1677,14 @@ impl Workspace {
     //         self.panes.iter().flat_map(|pane| pane.read(cx).items())
     //     }
 
-    //     pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
+    //     pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<View<T>> {
     //         self.items_of_type(cx).max_by_key(|item| item.id())
     //     }
 
     //     pub fn items_of_type<'a, T: Item>(
     //         &'a self,
     //         cx: &'a AppContext,
-    //     ) -> impl 'a + Iterator<Item = ViewHandle<T>> {
+    //     ) -> impl 'a + Iterator<Item = View<T>> {
     //         self.panes
     //             .iter()
     //             .flat_map(|pane| pane.read(cx).items_of_type())
@@ -1834,7 +1835,7 @@ impl Workspace {
     //     }
 
     //     /// Transfer focus to the panel of the given type.
-    //     pub fn focus_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) -> Option<ViewHandle<T>> {
+    //     pub fn focus_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) -> Option<View<T>> {
     //         self.focus_or_unfocus_panel::<T>(cx, |_, _| true)?
     //             .as_any()
     //             .clone()
@@ -1888,7 +1889,7 @@ impl Workspace {
     //         None
     //     }
 
-    //     pub fn panel<T: Panel>(&self, cx: &WindowContext) -> Option<ViewHandle<T>> {
+    //     pub fn panel<T: Panel>(&self, cx: &WindowContext) -> Option<View<T>> {
     //         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
     //             let dock = dock.read(cx);
     //             if let Some(panel) = dock.panel::<T>() {
@@ -1956,7 +1957,7 @@ impl Workspace {
     //         cx.notify();
     //     }
 
-    //     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
+    //     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> View<Pane> {
     //         let pane = cx.add_view(|cx| {
     //             Pane::new(
     //                 self.weak_handle(),
@@ -2138,7 +2139,7 @@ impl Workspace {
     //         &mut self,
     //         project_item: ModelHandle<T::Item>,
     //         cx: &mut ViewContext<Self>,
-    //     ) -> ViewHandle<T>
+    //     ) -> View<T>
     //     where
     //         T: ProjectItem,
     //     {
@@ -2162,7 +2163,7 @@ impl Workspace {
     //         &mut self,
     //         project_item: ModelHandle<T::Item>,
     //         cx: &mut ViewContext<Self>,
-    //     ) -> ViewHandle<T>
+    //     ) -> View<T>
     //     where
     //         T: ProjectItem,
     //     {
@@ -2259,7 +2260,7 @@ impl Workspace {
     //         &mut self,
     //         direction: SplitDirection,
     //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<&ViewHandle<Pane>> {
+    //     ) -> Option<&View<Pane>> {
     //         let Some(bounding_box) = self.center.bounding_box_for_pane(&self.active_pane) else {
     //             return None;
     //         };
@@ -2280,7 +2281,7 @@ impl Workspace {
     //         self.center.pane_at_pixel_position(target)
     //     }
 
-    //     fn handle_pane_focused(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
+    //     fn handle_pane_focused(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
     //         if self.active_pane != pane {
     //             self.active_pane = pane.clone();
     //             self.status_bar.update(cx, |status_bar, cx| {
@@ -2304,7 +2305,7 @@ impl Workspace {
 
     //     fn handle_pane_event(
     //         &mut self,
-    //         pane: ViewHandle<Pane>,
+    //         pane: View<Pane>,
     //         event: &pane::Event,
     //         cx: &mut ViewContext<Self>,
     //     ) {
@@ -2363,10 +2364,10 @@ impl Workspace {
 
     //     pub fn split_pane(
     //         &mut self,
-    //         pane_to_split: ViewHandle<Pane>,
+    //         pane_to_split: View<Pane>,
     //         split_direction: SplitDirection,
     //         cx: &mut ViewContext<Self>,
-    //     ) -> ViewHandle<Pane> {
+    //     ) -> View<Pane> {
     //         let new_pane = self.add_pane(cx);
     //         self.center
     //             .split(&pane_to_split, &new_pane, split_direction)
@@ -2377,10 +2378,10 @@ impl Workspace {
 
     //     pub fn split_and_clone(
     //         &mut self,
-    //         pane: ViewHandle<Pane>,
+    //         pane: View<Pane>,
     //         direction: SplitDirection,
     //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<ViewHandle<Pane>> {
+    //     ) -> Option<View<Pane>> {
     //         let item = pane.read(cx).active_item()?;
     //         let maybe_pane_handle = if let Some(clone) = item.clone_on_split(self.database_id(), cx) {
     //             let new_pane = self.add_pane(cx);
@@ -2440,8 +2441,8 @@ impl Workspace {
 
     //     pub fn move_item(
     //         &mut self,
-    //         source: ViewHandle<Pane>,
-    //         destination: ViewHandle<Pane>,
+    //         source: View<Pane>,
+    //         destination: View<Pane>,
     //         item_id_to_move: usize,
     //         destination_index: usize,
     //         cx: &mut ViewContext<Self>,
@@ -2473,7 +2474,7 @@ impl Workspace {
     //         });
     //     }
 
-    //     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
+    //     fn remove_pane(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
     //         if self.center.remove(&pane).unwrap() {
     //             self.force_remove_pane(&pane, cx);
     //             self.unfollow(&pane, cx);
@@ -2488,11 +2489,11 @@ impl Workspace {
     //         }
     //     }
 
-    //     pub fn panes(&self) -> &[ViewHandle<Pane>] {
+    //     pub fn panes(&self) -> &[View<Pane>] {
     //         &self.panes
     //     }
 
-    //     pub fn active_pane(&self) -> &ViewHandle<Pane> {
+    //     pub fn active_pane(&self) -> &View<Pane> {
     //         &self.active_pane
     //     }
 
@@ -2651,7 +2652,7 @@ impl Workspace {
 
     //     pub fn unfollow(
     //         &mut self,
-    //         pane: &ViewHandle<Pane>,
+    //         pane: &View<Pane>,
     //         cx: &mut ViewContext<Self>,
     //     ) -> Option<PeerId> {
     //         let state = self.follower_states.remove(pane)?;
@@ -2959,7 +2960,7 @@ impl Workspace {
     //     async fn add_views_from_leader(
     //         this: WeakViewHandle<Self>,
     //         leader_id: PeerId,
-    //         panes: Vec<ViewHandle<Pane>>,
+    //         panes: Vec<View<Pane>>,
     //         views: Vec<proto::View>,
     //         cx: &mut AsyncAppContext,
     //     ) -> Result<()> {
@@ -3060,7 +3061,7 @@ impl Workspace {
     //         })
     //     }
 
-    //     pub fn leader_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<PeerId> {
+    //     pub fn leader_for_pane(&self, pane: &View<Pane>) -> Option<PeerId> {
     //         self.follower_states.get(pane).map(|state| state.leader_id)
     //     }
 
@@ -3133,9 +3134,9 @@ impl Workspace {
     //     fn shared_screen_for_peer(
     //         &self,
     //         peer_id: PeerId,
-    //         pane: &ViewHandle<Pane>,
+    //         pane: &View<Pane>,
     //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<ViewHandle<SharedScreen>> {
+    //     ) -> Option<View<SharedScreen>> {
     //         let call = self.active_call()?;
     //         let room = call.read(cx).room()?.read(cx);
     //         let participant = room.remote_participant_for_peer_id(peer_id)?;
@@ -3229,7 +3230,7 @@ impl Workspace {
     //         }
     //     }
 
-    //     fn force_remove_pane(&mut self, pane: &ViewHandle<Pane>, cx: &mut ViewContext<Workspace>) {
+    //     fn force_remove_pane(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
     //         self.panes.retain(|p| p != pane);
     //         cx.focus(self.panes.last().unwrap());
     //         if self.last_active_center_pane == Some(pane.downgrade()) {
@@ -3248,7 +3249,7 @@ impl Workspace {
 
     //     fn serialize_workspace(&self, cx: &ViewContext<Self>) {
     //         fn serialize_pane_handle(
-    //             pane_handle: &ViewHandle<Pane>,
+    //             pane_handle: &View<Pane>,
     //             cx: &AppContext,
     //         ) -> SerializedPane {
     //             let (items, active) = {
@@ -4075,7 +4076,7 @@ impl Workspace {
 //     fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath>;
 // }
 
-// impl WorkspaceHandle for ViewHandle<Workspace> {
+// impl WorkspaceHandle for View<Workspace> {
 //     fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath> {
 //         self.read(cx)
 //             .worktrees(cx)
@@ -4320,13 +4321,16 @@ pub async fn activate_workspace_for_project(
 //     None
 // }
 
-use client2::{proto::PeerId, Client, UserStore};
+use client2::{
+    proto::{self, PeerId, ViewId},
+    Client, UserStore,
+};
 use collections::{HashMap, HashSet};
 use gpui2::{
-    AnyHandle, AppContext, AsyncAppContext, DisplayId, Handle, MainThread, Task, View, ViewContext,
-    WeakHandle, WeakView, WindowBounds, WindowHandle, WindowOptions,
+    AnyHandle, AnyView, AppContext, AsyncAppContext, DisplayId, Handle, MainThread, Task, View,
+    ViewContext, WeakHandle, WeakView, WindowBounds, WindowHandle, WindowOptions,
 };
-use item::{ItemHandle, ProjectItem};
+use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language2::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use project2::{Project, ProjectEntryId, ProjectPath, Worktree};
@@ -4334,6 +4338,7 @@ use std::{
     any::TypeId,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use util::ResultExt;
 

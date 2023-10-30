@@ -1,10 +1,7 @@
 use crate::ItemHandle;
-use gpui::{
-    elements::*, AnyElement, AnyViewHandle, AppContext, Entity, View, ViewContext, ViewHandle,
-    WindowContext,
-};
+use gpui2::{AppContext, EventEmitter, View, ViewContext, WindowContext};
 
-pub trait ToolbarItemView: View {
+pub trait ToolbarItemView: EventEmitter + Sized {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
@@ -32,7 +29,7 @@ pub trait ToolbarItemView: View {
 
 trait ToolbarItemViewHandle {
     fn id(&self) -> usize;
-    fn as_any(&self) -> &AnyViewHandle;
+    // fn as_any(&self) -> &AnyViewHandle; todo!()
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
@@ -57,84 +54,81 @@ pub struct Toolbar {
     items: Vec<(Box<dyn ToolbarItemViewHandle>, ToolbarItemLocation)>,
 }
 
-impl Entity for Toolbar {
-    type Event = ();
-}
+// todo!()
+// impl View for Toolbar {
+//     fn ui_name() -> &'static str {
+//         "Toolbar"
+//     }
 
-impl View for Toolbar {
-    fn ui_name() -> &'static str {
-        "Toolbar"
-    }
+//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+//         let theme = &theme::current(cx).workspace.toolbar;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &theme::current(cx).workspace.toolbar;
+//         let mut primary_left_items = Vec::new();
+//         let mut primary_right_items = Vec::new();
+//         let mut secondary_item = None;
+//         let spacing = theme.item_spacing;
+//         let mut primary_items_row_count = 1;
 
-        let mut primary_left_items = Vec::new();
-        let mut primary_right_items = Vec::new();
-        let mut secondary_item = None;
-        let spacing = theme.item_spacing;
-        let mut primary_items_row_count = 1;
+//         for (item, position) in &self.items {
+//             match *position {
+//                 ToolbarItemLocation::Hidden => {}
 
-        for (item, position) in &self.items {
-            match *position {
-                ToolbarItemLocation::Hidden => {}
+//                 ToolbarItemLocation::PrimaryLeft { flex } => {
+//                     primary_items_row_count = primary_items_row_count.max(item.row_count(cx));
+//                     let left_item = ChildView::new(item.as_any(), cx).aligned();
+//                     if let Some((flex, expanded)) = flex {
+//                         primary_left_items.push(left_item.flex(flex, expanded).into_any());
+//                     } else {
+//                         primary_left_items.push(left_item.into_any());
+//                     }
+//                 }
 
-                ToolbarItemLocation::PrimaryLeft { flex } => {
-                    primary_items_row_count = primary_items_row_count.max(item.row_count(cx));
-                    let left_item = ChildView::new(item.as_any(), cx).aligned();
-                    if let Some((flex, expanded)) = flex {
-                        primary_left_items.push(left_item.flex(flex, expanded).into_any());
-                    } else {
-                        primary_left_items.push(left_item.into_any());
-                    }
-                }
+//                 ToolbarItemLocation::PrimaryRight { flex } => {
+//                     primary_items_row_count = primary_items_row_count.max(item.row_count(cx));
+//                     let right_item = ChildView::new(item.as_any(), cx).aligned().flex_float();
+//                     if let Some((flex, expanded)) = flex {
+//                         primary_right_items.push(right_item.flex(flex, expanded).into_any());
+//                     } else {
+//                         primary_right_items.push(right_item.into_any());
+//                     }
+//                 }
 
-                ToolbarItemLocation::PrimaryRight { flex } => {
-                    primary_items_row_count = primary_items_row_count.max(item.row_count(cx));
-                    let right_item = ChildView::new(item.as_any(), cx).aligned().flex_float();
-                    if let Some((flex, expanded)) = flex {
-                        primary_right_items.push(right_item.flex(flex, expanded).into_any());
-                    } else {
-                        primary_right_items.push(right_item.into_any());
-                    }
-                }
+//                 ToolbarItemLocation::Secondary => {
+//                     secondary_item = Some(
+//                         ChildView::new(item.as_any(), cx)
+//                             .constrained()
+//                             .with_height(theme.height * item.row_count(cx) as f32)
+//                             .into_any(),
+//                     );
+//                 }
+//             }
+//         }
 
-                ToolbarItemLocation::Secondary => {
-                    secondary_item = Some(
-                        ChildView::new(item.as_any(), cx)
-                            .constrained()
-                            .with_height(theme.height * item.row_count(cx) as f32)
-                            .into_any(),
-                    );
-                }
-            }
-        }
+//         let container_style = theme.container;
+//         let height = theme.height * primary_items_row_count as f32;
 
-        let container_style = theme.container;
-        let height = theme.height * primary_items_row_count as f32;
+//         let mut primary_items = Flex::row().with_spacing(spacing);
+//         primary_items.extend(primary_left_items);
+//         primary_items.extend(primary_right_items);
 
-        let mut primary_items = Flex::row().with_spacing(spacing);
-        primary_items.extend(primary_left_items);
-        primary_items.extend(primary_right_items);
+//         let mut toolbar = Flex::column();
+//         if !primary_items.is_empty() {
+//             toolbar.add_child(primary_items.constrained().with_height(height));
+//         }
+//         if let Some(secondary_item) = secondary_item {
+//             toolbar.add_child(secondary_item);
+//         }
 
-        let mut toolbar = Flex::column();
-        if !primary_items.is_empty() {
-            toolbar.add_child(primary_items.constrained().with_height(height));
-        }
-        if let Some(secondary_item) = secondary_item {
-            toolbar.add_child(secondary_item);
-        }
-
-        if toolbar.is_empty() {
-            toolbar.into_any_named("toolbar")
-        } else {
-            toolbar
-                .contained()
-                .with_style(container_style)
-                .into_any_named("toolbar")
-        }
-    }
-}
+//         if toolbar.is_empty() {
+//             toolbar.into_any_named("toolbar")
+//         } else {
+//             toolbar
+//                 .contained()
+//                 .with_style(container_style)
+//                 .into_any_named("toolbar")
+//         }
+//     }
+// }
 
 // <<<<<<< HEAD
 // =======
@@ -206,7 +200,7 @@ impl Toolbar {
         cx.notify();
     }
 
-    pub fn add_item<T>(&mut self, item: ViewHandle<T>, cx: &mut ViewContext<Self>)
+    pub fn add_item<T>(&mut self, item: View<T>, cx: &mut ViewContext<Self>)
     where
         T: 'static + ToolbarItemView,
     {
@@ -252,7 +246,7 @@ impl Toolbar {
         }
     }
 
-    pub fn item_of_type<T: ToolbarItemView>(&self) -> Option<ViewHandle<T>> {
+    pub fn item_of_type<T: ToolbarItemView>(&self) -> Option<View<T>> {
         self.items
             .iter()
             .find_map(|(item, _)| item.as_any().clone().downcast())
@@ -263,14 +257,15 @@ impl Toolbar {
     }
 }
 
-impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
+impl<T: ToolbarItemView> ToolbarItemViewHandle for View<T> {
     fn id(&self) -> usize {
         self.id()
     }
 
-    fn as_any(&self) -> &AnyViewHandle {
-        self
-    }
+    // todo!()
+    // fn as_any(&self) -> &AnyViewHandle {
+    //     self
+    // }
 
     fn set_active_pane_item(
         &self,
@@ -294,8 +289,9 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
     }
 }
 
-impl From<&dyn ToolbarItemViewHandle> for AnyViewHandle {
-    fn from(val: &dyn ToolbarItemViewHandle) -> Self {
-        val.as_any().clone()
-    }
-}
+// todo!()
+// impl From<&dyn ToolbarItemViewHandle> for AnyViewHandle {
+//     fn from(val: &dyn ToolbarItemViewHandle) -> Self {
+//         val.as_any().clone()
+//     }
+// }

@@ -29,7 +29,7 @@
 //     WindowContext,
 // };
 // use project2::{Project, ProjectEntryId, ProjectPath};
-// use serde::Deserialize;
+use serde::Deserialize;
 // use std::{
 //     any::Any,
 //     cell::RefCell,
@@ -44,24 +44,24 @@
 // use theme2::{Theme, ThemeSettings};
 // use util::truncate_and_remove_front;
 
-// #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
-// #[serde(rename_all = "camelCase")]
-// pub enum SaveIntent {
-//     /// write all files (even if unchanged)
-//     /// prompt before overwriting on-disk changes
-//     Save,
-//     /// write any files that have local changes
-//     /// prompt before overwriting on-disk changes
-//     SaveAll,
-//     /// always prompt for a new path
-//     SaveAs,
-//     /// prompt "you have unsaved changes" before writing
-//     Close,
-//     /// write all dirty files, don't prompt on conflict
-//     Overwrite,
-//     /// skip all save-related behavior
-//     Skip,
-// }
+#[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub enum SaveIntent {
+    /// write all files (even if unchanged)
+    /// prompt before overwriting on-disk changes
+    Save,
+    /// write any files that have local changes
+    /// prompt before overwriting on-disk changes
+    SaveAll,
+    /// always prompt for a new path
+    SaveAs,
+    /// prompt "you have unsaved changes" before writing
+    Close,
+    /// write all dirty files, don't prompt on conflict
+    Overwrite,
+    /// skip all save-related behavior
+    Skip,
+}
 
 // #[derive(Clone, Deserialize, PartialEq)]
 // pub struct ActivateItem(pub usize);
@@ -159,7 +159,10 @@ pub enum Event {
     ZoomOut,
 }
 
-use crate::item::{ItemHandle, WeakItemHandle};
+use crate::{
+    item::{ItemHandle, WeakItemHandle},
+    SplitDirection,
+};
 use collections::{HashMap, VecDeque};
 use gpui2::{Handle, ViewContext, WeakView};
 use project2::{Project, ProjectEntryId, ProjectPath};

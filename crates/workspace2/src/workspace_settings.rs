@@ -1,6 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Setting;
+use settings2::Settings;
 
 #[derive(Deserialize)]
 pub struct WorkspaceSettings {
@@ -41,7 +41,7 @@ pub enum GitGutterSetting {
     Hide,
 }
 
-impl Setting for WorkspaceSettings {
+impl Settings for WorkspaceSettings {
     const KEY: Option<&'static str> = None;
 
     type FileContent = WorkspaceSettingsContent;
@@ -49,7 +49,7 @@ impl Setting for WorkspaceSettings {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _: &gpui::AppContext,
+        _: &gpui2::AppContext,
     ) -> anyhow::Result<Self> {
         Self::load_via_json_merge(default_value, user_values)
     }
