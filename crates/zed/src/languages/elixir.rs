@@ -321,8 +321,8 @@ impl LspAdapter for NextLspAdapter {
             latest_github_release("elixir-tools/next-ls", false, delegate.http_client()).await?;
         let version = release.name.clone();
         let platform = match consts::ARCH {
-            "x86_64" => "darwin_arm64",
-            "aarch64" => "darwin_amd64",
+            "x86_64" => "darwin_amd64",
+            "aarch64" => "darwin_arm64",
             other => bail!("Running on unsupported platform: {other}"),
         };
         let asset_name = format!("next_ls_{}", platform);
