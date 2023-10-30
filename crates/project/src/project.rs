@@ -52,6 +52,7 @@ use lsp::{
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
+use parking_lot::Mutex;
 use postage::watch;
 use prettier::{LocateStart, Prettier};
 use project_settings::{LspSettings, ProjectSettings};
@@ -89,6 +90,8 @@ pub use fs::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use worktree::*;
+
+const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
 
 pub trait Item {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
@@ -2721,12 +2724,18 @@ impl Project {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
+        if adapter.reinstall_attempt_count.load(SeqCst) > MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
+            return;
+        }
+
         let key = (worktree_id, adapter.name.clone());
         if self.language_server_ids.contains_key(&key) {
             return;
         }
 
+        let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let pending_server = match self.languages.create_pending_language_server(
+            stderr_capture.clone(),
             language.clone(),
             adapter.clone(),
             worktree_path,
@@ -2763,28 +2772,40 @@ impl Project {
                 .await;
 
                 match result {
-                    Ok(server) => server,
+                    Ok(server) => {
+                        stderr_capture.lock().take();
+                        Some(server)
+                    }
 
                     Err(err) => {
-                        log::error!("failed to start language server {:?}: {}", server_name, err);
+                        log::error!("failed to start language server {server_name:?}: {err}");
+                        log::error!("server stderr: {:?}", stderr_capture.lock().take());
 
-                        if let Some(this) = this.upgrade(&cx) {
-                            if let Some(container_dir) = container_dir {
-                                let installation_test_binary = adapter
-                                    .installation_test_binary(container_dir.to_path_buf())
-                                    .await;
+                        let this = this.upgrade(&cx)?;
+                        let container_dir = container_dir?;
 
-                                this.update(&mut cx, |_, cx| {
-                                    Self::check_errored_server(
-                                        language,
-                                        adapter,
-                                        server_id,
-                                        installation_test_binary,
-                                        cx,
-                                    )
-                                });
-                            }
+                        let attempt_count = adapter.reinstall_attempt_count.fetch_add(1, SeqCst);
+                        if attempt_count >= MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
+                            let max = MAX_SERVER_REINSTALL_ATTEMPT_COUNT;
+                            log::error!(
+                                "Hit {max} max reinstallation attempts for {server_name:?}"
+                            );
+                            return None;
                         }
+
+                        let installation_test_binary = adapter
+                            .installation_test_binary(container_dir.to_path_buf())
+                            .await;
+
+                        this.update(&mut cx, |_, cx| {
+                            Self::check_errored_server(
+                                language,
+                                adapter,
+                                server_id,
+                                installation_test_binary,
+                                cx,
+                            )
+                        });
 
                         None
                     }
@@ -2862,20 +2883,17 @@ impl Project {
         server_id: LanguageServerId,
         key: (WorktreeId, LanguageServerName),
         cx: &mut AsyncAppContext,
-    ) -> Result<Option<Arc<LanguageServer>>> {
-        let setup = Self::setup_pending_language_server(
+    ) -> Result<Arc<LanguageServer>> {
+        let language_server = Self::setup_pending_language_server(
             this,
             override_initialization_options,
             pending_server,
             adapter.clone(),
             server_id,
             cx,
-        );
+        )
+        .await?;
 
-        let language_server = match setup.await? {
-            Some(language_server) => language_server,
-            None => return Ok(None),
-        };
         let this = match this.upgrade(cx) {
             Some(this) => this,
             None => return Err(anyhow!("failed to upgrade project handle")),
@@ -2892,7 +2910,7 @@ impl Project {
             )
         })?;
 
-        Ok(Some(language_server))
+        Ok(language_server)
     }
 
     async fn setup_pending_language_server(
@@ -2902,12 +2920,9 @@ impl Project {
         adapter: Arc<CachedLspAdapter>,
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
-    ) -> Result<Option<Arc<LanguageServer>>> {
+    ) -> Result<Arc<LanguageServer>> {
         let workspace_config = cx.update(|cx| adapter.workspace_configuration(cx)).await;
-        let language_server = match pending_server.task.await? {
-            Some(server) => server,
-            None => return Ok(None),
-        };
+        let language_server = pending_server.task.await?;
 
         language_server
             .on_notification::<lsp::notification::PublishDiagnostics, _>({
@@ -2978,6 +2993,7 @@ impl Project {
                 },
             )
             .detach();
+
         language_server
             .on_request::<lsp::request::RegisterCapability, _, _>({
                 move |params, mut cx| async move {
@@ -3043,6 +3059,7 @@ impl Project {
                 }
             })
             .detach();
+
         let mut initialization_options = adapter.adapter.initialization_options().await;
         match (&mut initialization_options, override_options) {
             (Some(initialization_options), Some(override_options)) => {
@@ -3062,7 +3079,7 @@ impl Project {
             )
             .ok();
 
-        Ok(Some(language_server))
+        Ok(language_server)
     }
 
     fn insert_newly_running_language_server(

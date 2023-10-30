@@ -16,6 +16,7 @@ use language::{
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
 use node_runtime::NodeRuntime;
+use parking_lot::Mutex;
 use request::StatusNotification;
 use settings::SettingsStore;
 use smol::{fs, io::BufReader, stream::StreamExt};
@@ -387,8 +388,15 @@ impl Copilot {
                     path: node_path,
                     arguments,
                 };
-                let server =
-                    LanguageServer::new(new_server_id, binary, Path::new("/"), None, cx.clone())?;
+
+                let server = LanguageServer::new(
+                    Arc::new(Mutex::new(None)),
+                    new_server_id,
+                    binary,
+                    Path::new("/"),
+                    None,
+                    cx.clone(),
+                )?;
 
                 server
                     .on_notification::<StatusNotification, _>(

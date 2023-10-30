@@ -310,6 +310,7 @@ dependencies = [
  "language",
  "log",
  "menu",
+ "multi_buffer",
  "ordered-float 2.10.0",
  "parking_lot 0.11.2",
  "project",
@@ -1468,7 +1469,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.25.0"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1713,6 +1714,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "parking_lot 0.11.2",
  "rpc",
  "serde",
  "serde_derive",
@@ -2410,6 +2412,7 @@ dependencies = [
  "lazy_static",
  "log",
  "lsp",
+ "multi_buffer",
  "ordered-float 2.10.0",
  "parking_lot 0.11.2",
  "postage",
@@ -4601,6 +4604,55 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7843ec2de400bcbc6a6328c958dc38e5359da6e93e72e37bc5246bf1ae776389"
 
 [[package]]
+name = "multi_buffer"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "anyhow",
+ "client",
+ "clock",
+ "collections",
+ "context_menu",
+ "convert_case 0.6.0",
+ "copilot",
+ "ctor",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "git",
+ "gpui",
+ "indoc",
+ "itertools 0.10.5",
+ "language",
+ "lazy_static",
+ "log",
+ "lsp",
+ "ordered-float 2.10.0",
+ "parking_lot 0.11.2",
+ "postage",
+ "project",
+ "pulldown-cmark",
+ "rand 0.8.5",
+ "rich_text",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "settings",
+ "smallvec",
+ "smol",
+ "snippet",
+ "sum_tree",
+ "text",
+ "theme",
+ "tree-sitter",
+ "tree-sitter-html",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "unindent",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "multimap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5562,6 +5614,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "parking_lot 0.11.2",
  "serde",
  "serde_derive",
  "serde_json",
@@ -10094,7 +10147,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.110.0"
+version = "0.111.0"
 dependencies = [
  "activity_indicator",
  "ai",

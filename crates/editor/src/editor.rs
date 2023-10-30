@@ -11,7 +11,6 @@ pub mod items;
 mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
-pub mod multi_buffer;
 mod persistence;
 pub mod scroll;
 pub mod selections_collection;
@@ -968,7 +967,6 @@ impl CompletionsMenu {
             self.selected_item -= 1;
         } else {
             self.selected_item = self.matches.len() - 1;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         self.attempt_resolve_selected_completion_documentation(project, cx);
@@ -1539,7 +1537,6 @@ impl CodeActionsMenu {
             self.selected_item -= 1;
         } else {
             self.selected_item = self.actions.len() - 1;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         cx.notify();
@@ -1548,11 +1545,10 @@ impl CodeActionsMenu {
     fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item + 1 < self.actions.len() {
             self.selected_item += 1;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         } else {
             self.selected_item = 0;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         cx.notify();
     }
 
@@ -7213,6 +7209,7 @@ impl Editor {
                     && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
                     && !entry.range.is_empty()
                     && Some(entry.range.end) != active_primary_range.as_ref().map(|r| *r.end())
+                    && !entry.range.contains(&search_start)
                 {
                     Some((entry.range, entry.diagnostic.group_id))
                 } else {
@@ -7319,11 +7316,11 @@ impl Editor {
         let display_point = initial_point.to_display_point(snapshot);
         let mut hunks = hunks
             .map(|hunk| diff_hunk_to_display(hunk, &snapshot))
-            .skip_while(|hunk| {
+            .filter(|hunk| {
                 if is_wrapped {
-                    false
+                    true
                 } else {
-                    hunk.contains_display_row(display_point.row())
+                    !hunk.contains_display_row(display_point.row())
                 }
             })
             .dedup();
@@ -7715,8 +7712,8 @@ impl Editor {
                     let mut buffer_highlights = this
                         .document_highlights_for_position(selection.head(), &buffer)
                         .filter(|highlight| {
-                            highlight.start.excerpt_id() == selection.head().excerpt_id()
-                                && highlight.end.excerpt_id() == selection.head().excerpt_id()
+                            highlight.start.excerpt_id == selection.head().excerpt_id
+                                && highlight.end.excerpt_id == selection.head().excerpt_id
                         });
                     buffer_highlights
                         .next()
@@ -8957,6 +8954,16 @@ impl Editor {
         telemetry.report_clickhouse_event(event, telemetry_settings);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    fn report_editor_event(
+        &self,
+        _operation: &'static str,
+        _file_extension: Option<String>,
+        _cx: &AppContext,
+    ) {
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
     fn report_editor_event(
         &self,
         operation: &'static str,
