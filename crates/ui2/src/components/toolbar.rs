@@ -75,19 +75,22 @@ mod stories {
     use std::path::PathBuf;
     use std::str::FromStr;
 
+    use gpui2::{Div, Render};
+
     use crate::{Breadcrumb, HighlightedText, Icon, IconButton, Story, Symbol};
 
     use super::*;
 
-    #[derive(Component)]
     pub struct ToolbarStory;
 
-    impl ToolbarStory {
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    impl Render for ToolbarStory {
+        type Element = Div<Self>;
+
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let theme = theme(cx);
 
             Story::container(cx)
-                .child(Story::title_for::<_, Toolbar<V>>(cx))
+                .child(Story::title_for::<_, Toolbar<Self>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
                     Toolbar::new()

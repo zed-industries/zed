@@ -25,15 +25,18 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
+    use gpui2::{Div, Render};
+
     use crate::Story;
 
     use super::*;
 
-    #[derive(Component)]
     pub struct CopilotModalStory;
 
-    impl CopilotModalStory {
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    impl Render for CopilotModalStory {
+        type Element = Div<Self>;
+
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
                 .child(Story::title_for::<_, CopilotModal>(cx))
                 .child(Story::label(cx, "Default"))

@@ -1,4 +1,4 @@
-use gpui2::{hsla, red, AnyElement, ElementId, ExternalPaths, Hsla, Length, Size};
+use gpui2::{hsla, red, AnyElement, ElementId, ExternalPaths, Hsla, Length, Size, View};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -17,13 +17,6 @@ pub struct Pane<V: 'static> {
     fill: Hsla,
     children: SmallVec<[AnyElement<V>; 2]>,
 }
-
-// impl<V: 'static> IntoAnyElement<V> for Pane<V> {
-//     fn into_any(self) -> AnyElement<V> {
-//         (move |view_state: &mut V, cx: &mut ViewContext<'_, '_, V>| self.render(view_state, cx))
-//             .into_any()
-//     }
-// }
 
 impl<V: 'static> Pane<V> {
     pub fn new(id: impl Into<ElementId>, size: Size<Length>) -> Self {
@@ -57,8 +50,8 @@ impl<V: 'static> Pane<V> {
                     .z_index(1)
                     .id("drag-target")
                     .drag_over::<ExternalPaths>(|d| d.bg(red()))
-                    .on_drop(|_, files: ExternalPaths, _| {
-                        dbg!("dropped files!", files);
+                    .on_drop(|_, files: View<ExternalPaths>, cx| {
+                        dbg!("dropped files!", files.read(cx));
                     })
                     .absolute()
                     .inset_0(),

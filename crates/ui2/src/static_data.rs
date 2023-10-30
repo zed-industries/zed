@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use gpui2::{AppContext, WindowContext};
+use gpui2::ViewContext;
 use rand::Rng;
 use theme2::Theme;
 
@@ -628,7 +628,7 @@ pub fn example_editor_actions() -> Vec<PaletteItem> {
     ]
 }
 
-pub fn empty_editor_example(cx: &mut WindowContext) -> EditorPane {
+pub fn empty_editor_example(cx: &mut ViewContext<EditorPane>) -> EditorPane {
     EditorPane::new(
         cx,
         static_tabs_example(),
@@ -642,7 +642,7 @@ pub fn empty_buffer_example() -> Buffer {
     Buffer::new("empty-buffer").set_rows(Some(BufferRows::default()))
 }
 
-pub fn hello_world_rust_editor_example(cx: &mut WindowContext) -> EditorPane {
+pub fn hello_world_rust_editor_example(cx: &mut ViewContext<EditorPane>) -> EditorPane {
     let theme = theme(cx);
 
     EditorPane::new(
@@ -781,7 +781,7 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
     ]
 }
 
-pub fn hello_world_rust_editor_with_status_example(cx: &mut AppContext) -> EditorPane {
+pub fn hello_world_rust_editor_with_status_example(cx: &mut ViewContext<EditorPane>) -> EditorPane {
     let theme = theme(cx);
 
     EditorPane::new(

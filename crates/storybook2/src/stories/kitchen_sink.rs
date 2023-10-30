@@ -1,26 +1,23 @@
-use gpui2::{AppContext, Context, View};
+use crate::{
+    story::Story,
+    story_selector::{ComponentStory, ElementStory},
+};
+use gpui2::{Div, Render, StatefulInteraction, View, VisualContext};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
-use crate::story::Story;
-use crate::story_selector::{ComponentStory, ElementStory};
-
-pub struct KitchenSinkStory {}
+pub struct KitchenSinkStory;
 
 impl KitchenSinkStory {
-    pub fn new() -> Self {
-        Self {}
+    pub fn view(cx: &mut WindowContext) -> View<Self> {
+        cx.build_view(|cx| Self)
     }
+}
 
-    pub fn view(cx: &mut AppContext) -> View<Self> {
-        {
-            let state = cx.build_model(|cx| Self::new());
-            let render = Self::render;
-            View::for_handle(state, render)
-        }
-    }
+impl Render for KitchenSinkStory {
+    type Element = Div<Self, StatefulInteraction<Self>>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let element_stories = ElementStory::iter()
             .map(|selector| selector.story(cx))
             .collect::<Vec<_>>();

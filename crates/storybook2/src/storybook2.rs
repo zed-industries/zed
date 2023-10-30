@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use clap::Parser;
 use gpui2::{
-    div, px, size, AnyView, AppContext, Bounds, ViewContext, VisualContext, WindowBounds,
-    WindowOptions,
+    div, px, size, AnyView, AppContext, Bounds, Div, Render, ViewContext, VisualContext,
+    WindowBounds, WindowOptions,
 };
 use log::LevelFilter;
 use settings2::{default_settings, Settings, SettingsStore};
@@ -82,12 +82,7 @@ fn main() {
                 }),
                 ..Default::default()
             },
-            move |cx| {
-                cx.build_view(
-                    |cx| StoryWrapper::new(selector.story(cx)),
-                    StoryWrapper::render,
-                )
-            },
+            move |cx| cx.build_view(|cx| StoryWrapper::new(selector.story(cx))),
         );
 
         cx.activate(true);
@@ -103,8 +98,12 @@ impl StoryWrapper {
     pub(crate) fn new(story: AnyView) -> Self {
         Self { story }
     }
+}
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+impl Render for StoryWrapper {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
             .flex()
             .flex_col()

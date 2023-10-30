@@ -73,21 +73,17 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
+    use super::*;
+    use crate::Story;
+    use gpui2::Render;
     use std::str::FromStr;
 
-    use crate::Story;
-
-    use super::*;
-
-    #[derive(Component)]
     pub struct BreadcrumbStory;
 
-    impl BreadcrumbStory {
-        fn render<V: 'static>(
-            self,
-            view_state: &mut V,
-            cx: &mut ViewContext<V>,
-        ) -> impl Component<V> {
+    impl Render for BreadcrumbStory {
+        type Element = Div<Self>;
+
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let theme = theme(cx);
 
             Story::container(cx)

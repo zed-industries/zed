@@ -1,9 +1,10 @@
 use crate::{
-    AnyBox, AnyElement, AvailableSpace, BorrowWindow, Bounds, Component, Element, ElementId,
-    EntityId, LayoutId, Model, Pixels, Size, ViewContext, VisualContext, WeakModel, WindowContext,
+    AnyBox, AnyElement, AnyModel, AppContext, AvailableSpace, BorrowWindow, Bounds, Component,
+    Element, ElementId, EntityId, LayoutId, Model, Pixels, Size, ViewContext, VisualContext,
+    WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
-use std::{marker::PhantomData, sync::Arc};
+use std::{any::TypeId, marker::PhantomData, sync::Arc};
 
 pub trait Render: 'static + Sized {
     type Element: Element<Self> + 'static + Send;
@@ -37,6 +38,10 @@ impl<V: 'static> View<V> {
         C: VisualContext,
     {
         cx.update_view(self, f)
+    }
+
+    pub fn read<'a>(&self, cx: &'a AppContext) -> &'a V {
+        self.model.read(cx)
     }
 }
 
@@ -178,7 +183,9 @@ impl<V: Render, ParentV: 'static> Element<ParentV> for EraseViewState<V, ParentV
 }
 
 trait ViewObject: Send + Sync {
+    fn entity_type(&self) -> TypeId;
     fn entity_id(&self) -> EntityId;
+    fn model(&self) -> AnyModel;
     fn initialize(&self, cx: &mut WindowContext) -> AnyBox;
     fn layout(&self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId;
     fn paint(&self, bounds: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext);
@@ -188,8 +195,16 @@ impl<V> ViewObject for View<V>
 where
     V: Render,
 {
+    fn entity_type(&self) -> TypeId {
+        TypeId::of::<V>()
+    }
+
     fn entity_id(&self) -> EntityId {
         self.model.entity_id
+    }
+
+    fn model(&self) -> AnyModel {
+        self.model.clone().into_any()
     }
 
     fn initialize(&self, cx: &mut WindowContext) -> AnyBox {
@@ -225,6 +240,14 @@ where
 pub struct AnyView(Arc<dyn ViewObject>);
 
 impl AnyView {
+    pub fn downcast<V: 'static + Send>(self) -> Option<View<V>> {
+        self.0.model().downcast().map(|model| View { model })
+    }
+
+    pub(crate) fn entity_type(&self) -> TypeId {
+        self.0.entity_type()
+    }
+
     pub(crate) fn draw(&self, available_space: Size<AvailableSpace>, cx: &mut WindowContext) {
         let mut rendered_element = self.0.initialize(cx);
         let layout_id = self.0.layout(&mut rendered_element, cx);
@@ -291,6 +314,18 @@ unsafe impl<ParentV> Send for EraseAnyViewState<ParentV> {}
 impl<ParentV: 'static> Component<ParentV> for EraseAnyViewState<ParentV> {
     fn render(self) -> AnyElement<ParentV> {
         AnyElement::new(self)
+    }
+}
+
+impl<T, E> Render for T
+where
+    T: 'static + FnMut(&mut WindowContext) -> E,
+    E: 'static + Send + Element<T>,
+{
+    type Element = E;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        (self)(cx)
     }
 }
 

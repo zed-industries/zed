@@ -233,20 +233,19 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui2::rems;
-
+    use super::*;
     use crate::{
         empty_buffer_example, hello_world_rust_buffer_example,
         hello_world_rust_buffer_with_status_example, Story,
     };
+    use gpui2::{rems, Div, Render};
 
-    use super::*;
-
-    #[derive(Component)]
     pub struct BufferStory;
 
-    impl BufferStory {
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    impl Render for BufferStory {
+        type Element = Div<Self>;
+
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let theme = theme(cx);
 
             Story::container(cx)

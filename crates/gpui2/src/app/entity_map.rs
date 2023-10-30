@@ -147,7 +147,7 @@ pub struct Slot<T>(Model<T>);
 
 pub struct AnyModel {
     pub(crate) entity_id: EntityId,
-    entity_type: TypeId,
+    pub(crate) entity_type: TypeId,
     entity_map: Weak<RwLock<EntityRefCounts>>,
 }
 
@@ -247,8 +247,8 @@ impl Eq for AnyModel {}
 pub struct Model<T> {
     #[deref]
     #[deref_mut]
-    any_model: AnyModel,
-    entity_type: PhantomData<T>,
+    pub(crate) any_model: AnyModel,
+    pub(crate) entity_type: PhantomData<T>,
 }
 
 unsafe impl<T> Send for Model<T> {}
@@ -270,6 +270,11 @@ impl<T: 'static> Model<T> {
             any_model: self.any_model.downgrade(),
             entity_type: self.entity_type,
         }
+    }
+
+    /// Convert this into a dynamically typed model.
+    pub fn into_any(self) -> AnyModel {
+        self.any_model
     }
 
     pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {

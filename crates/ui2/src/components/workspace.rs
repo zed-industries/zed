@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::DateTime;
-use gpui2::{px, relative, rems, AppContext, Context, Size, View};
+use gpui2::{px, relative, rems, Div, Render, Size, View, VisualContext};
 
 use crate::{prelude::*, NotificationsPanel};
 use crate::{
@@ -44,7 +44,7 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn new(cx: &mut AppContext) -> Self {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
             title_bar: TitleBar::view(cx, None),
             editor_1: EditorPane::view(cx),
@@ -170,15 +170,15 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn view(cx: &mut AppContext) -> View<Self> {
-        {
-            let state = cx.build_model(|cx| Self::new(cx));
-            let render = Self::render;
-            View::for_handle(state, render)
-        }
+    pub fn view(cx: &mut WindowContext) -> View<Self> {
+        cx.build_view(|cx| Self::new(cx))
     }
+}
 
-    pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+impl Render for Workspace {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
         let theme = theme(cx);
 
         // HACK: This should happen inside of `debug_toggle_user_settings`, but
@@ -355,9 +355,8 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui2::VisualContext;
-
     use super::*;
+    use gpui2::VisualContext;
 
     pub struct WorkspaceStory {
         workspace: View<Workspace>,
@@ -365,12 +364,17 @@ mod stories {
 
     impl WorkspaceStory {
         pub fn view(cx: &mut WindowContext) -> View<Self> {
-            cx.build_view(
-                |cx| Self {
-                    workspace: Workspace::view(cx),
-                },
-                |view, cx| view.workspace.clone(),
-            )
+            cx.build_view(|cx| Self {
+                workspace: Workspace::view(cx),
+            })
+        }
+    }
+
+    impl Render for WorkspaceStory {
+        type Element = Div<Self>;
+
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+            div().child(self.workspace.clone())
         }
     }
 }
