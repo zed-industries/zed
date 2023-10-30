@@ -4796,6 +4796,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "menu2"
+version = "0.1.0"
+dependencies = [
+ "gpui2",
+]
+
+[[package]]
 name = "metal"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
