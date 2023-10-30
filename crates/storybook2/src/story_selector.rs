@@ -14,6 +14,7 @@ use ui::prelude::*;
 pub enum ElementStory {
     Avatar,
     Button,
+    Colors,
     Details,
     Focus,
     Icon,
@@ -29,6 +30,7 @@ impl ElementStory {
         match self {
             Self::Avatar => { cx.build_view(|cx| (), |_, _| ui::AvatarStory.render()) }.into_any(),
             Self::Button => { cx.build_view(|cx| (), |_, _| ui::ButtonStory.render()) }.into_any(),
+            Self::Colors => { cx.build_view(|cx| (), |_, _| ColorsStory.render()) }.into_any(),
             Self::Details => {
                 { cx.build_view(|cx| (), |_, _| ui::DetailsStory.render()) }.into_any()
             }

@@ -1,13 +1,23 @@
+mod default;
 mod registry;
+mod scale;
 mod settings;
 mod themes;
 
+pub use default::*;
 pub use registry::*;
+pub use scale::*;
 pub use settings::*;
 
 use gpui2::{AppContext, HighlightStyle, Hsla, SharedString};
 use settings2::Settings;
 use std::sync::Arc;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Appearance {
+    Light,
+    Dark,
+}
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ThemeRegistry::default());
