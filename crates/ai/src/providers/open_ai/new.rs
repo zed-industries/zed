@@ -1,8 +1,3 @@
-pub enum TruncationDirection {
-    Start,
-    End,
-}
-
 pub trait LanguageModel {
     fn name(&self) -> String;
     fn count_tokens(&self, content: &str) -> anyhow::Result<usize>;
