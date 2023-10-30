@@ -35,7 +35,41 @@ impl From<DefaultColorScaleSet> for ColorScaleSet {
 pub fn default_color_scales() -> ColorScales {
     use ColorScaleName::*;
 
-    HashMap::from_iter([(Red, red().into())])
+    HashMap::from_iter([
+        (Gray, gray().into()),
+        (Mauve, mauve().into()),
+        (Slate, slate().into()),
+        (Sage, sage().into()),
+        (Olive, olive().into()),
+        (Sand, sand().into()),
+        (Gold, gold().into()),
+        (Bronze, bronze().into()),
+        (Brown, brown().into()),
+        (Yellow, yellow().into()),
+        (Amber, amber().into()),
+        (Orange, orange().into()),
+        (Tomato, tomato().into()),
+        (Red, red().into()),
+        (Ruby, ruby().into()),
+        (Crimson, crimson().into()),
+        (Pink, pink().into()),
+        (Plum, plum().into()),
+        (Purple, purple().into()),
+        (Violet, violet().into()),
+        (Iris, iris().into()),
+        (Indigo, indigo().into()),
+        (Blue, blue().into()),
+        (Cyan, cyan().into()),
+        (Teal, teal().into()),
+        (Jade, jade().into()),
+        (Green, green().into()),
+        (Grass, grass().into()),
+        (Lime, lime().into()),
+        (Mint, mint().into()),
+        (Sky, sky().into()),
+        (Black, black().into()),
+        (White, white().into()),
+    ])
 }
 
 fn gray() -> DefaultColorScaleSet {
