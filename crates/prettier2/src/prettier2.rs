@@ -1,6 +1,6 @@
 use anyhow::Context;
 use collections::{HashMap, HashSet};
-use fs::Fs;
+use fs2::Fs;
 use gpui2::{AsyncAppContext, Model};
 use language2::{language_settings::language_settings, Buffer, BundledFormatter, Diff};
 use lsp2::{LanguageServer, LanguageServerId};

@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context as _, Result};
 use client2::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use fs::{
+use fs2::{
     repository::{GitFileStatus, GitRepository, RepoPath},
     Fs,
 };
@@ -2815,7 +2815,7 @@ pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
 impl Entry {
     fn new(
         path: Arc<Path>,
-        metadata: &fs::Metadata,
+        metadata: &fs2::Metadata,
         next_entry_id: &AtomicUsize,
         root_char_bag: CharBag,
     ) -> Self {

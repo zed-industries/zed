@@ -89,7 +89,7 @@ use util::{
     post_inc, ResultExt, TryFutureExt as _,
 };
 
-pub use fs::*;
+pub use fs2::*;
 pub use worktree::*;
 
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
@@ -5201,7 +5201,7 @@ impl Project {
                         fs.create_file(
                             &abs_path,
                             op.options
-                                .map(|options| fs::CreateOptions {
+                                .map(|options| fs2::CreateOptions {
                                     overwrite: options.overwrite.unwrap_or(false),
                                     ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
                                 })
@@ -5224,7 +5224,7 @@ impl Project {
                         &source_abs_path,
                         &target_abs_path,
                         op.options
-                            .map(|options| fs::RenameOptions {
+                            .map(|options| fs2::RenameOptions {
                                 overwrite: options.overwrite.unwrap_or(false),
                                 ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
                             })
@@ -5240,7 +5240,7 @@ impl Project {
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
                     let options = op
                         .options
-                        .map(|options| fs::RemoveOptions {
+                        .map(|options| fs2::RemoveOptions {
                             recursive: options.recursive.unwrap_or(false),
                             ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
                         })
