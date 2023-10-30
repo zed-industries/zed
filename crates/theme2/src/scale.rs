@@ -89,6 +89,9 @@ pub type ColorScale = [Hsla; 12];
 
 pub type ColorScales = HashMap<ColorScaleName, ColorScaleSet>;
 
+/// A one-based step in a [`ColorScale`].
+pub type ColorScaleStep = usize;
+
 pub struct ColorScaleSet {
     name: ColorScaleName,
     light: ColorScale,
@@ -118,19 +121,19 @@ impl ColorScaleSet {
         self.name.to_string()
     }
 
-    pub fn light(&self, step: usize) -> Hsla {
+    pub fn light(&self, step: ColorScaleStep) -> Hsla {
         self.light[step - 1]
     }
 
-    pub fn light_alpha(&self, step: usize) -> Hsla {
+    pub fn light_alpha(&self, step: ColorScaleStep) -> Hsla {
         self.light_alpha[step - 1]
     }
 
-    pub fn dark(&self, step: usize) -> Hsla {
+    pub fn dark(&self, step: ColorScaleStep) -> Hsla {
         self.dark[step - 1]
     }
 
-    pub fn dark_alpha(&self, step: usize) -> Hsla {
+    pub fn dark_alpha(&self, step: ColorScaleStep) -> Hsla {
         self.dark[step - 1]
     }
 
@@ -143,24 +146,20 @@ impl ColorScaleSet {
         }
     }
 
-    /// Returns the one-based step in the scale.
-    ///
-    /// We usually reference steps as 1-12 instead of 0-11, so we
-    /// automatically subtract 1 from the index.
-    pub fn step(self, cx: &AppContext, index: usize) -> Hsla {
+    pub fn step(self, cx: &AppContext, step: ColorScaleStep) -> Hsla {
         let appearance = Self::current_appearance(cx);
 
         match appearance {
-            Appearance::Light => self.light(index),
-            Appearance::Dark => self.dark(index),
+            Appearance::Light => self.light(step),
+            Appearance::Dark => self.dark(step),
         }
     }
 
-    pub fn step_alpha(self, cx: &AppContext, index: usize) -> Hsla {
+    pub fn step_alpha(self, cx: &AppContext, step: ColorScaleStep) -> Hsla {
         let appearance = Self::current_appearance(cx);
         match appearance {
-            Appearance::Light => self.light_alpha(index),
-            Appearance::Dark => self.dark_alpha(index),
+            Appearance::Light => self.light_alpha(step),
+            Appearance::Dark => self.dark_alpha(step),
         }
     }
 }
