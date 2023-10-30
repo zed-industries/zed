@@ -3,9 +3,14 @@ mod theme_printer;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
+use std::fs::{self, File};
+use std::io::Write;
+use std::path::PathBuf;
+use std::str::FromStr;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use convert_case::{Case, Casing};
 use gpui2::{hsla, rgb, serde_json, AssetSource, Hsla, SharedString};
 use log::LevelFilter;
 use rust_embed::RustEmbed;
@@ -26,13 +31,31 @@ struct Args {
 fn main() -> Result<()> {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    let args = Args::parse();
+    // let args = Args::parse();
 
-    let (json_theme, legacy_theme) = load_theme(args.theme)?;
+    let themes_path = PathBuf::from_str("crates/theme2/src/themes")?;
 
-    let theme = convert_theme(json_theme, legacy_theme)?;
+    for theme_path in Assets.list("themes/")? {
+        let (_, theme_name) = theme_path.split_once("themes/").unwrap();
 
-    println!("{:#?}", ThemePrinter::new(theme));
+        if theme_name == ".gitkeep" {
+            continue;
+        }
+
+        let (json_theme, legacy_theme) = load_theme(&theme_path)?;
+
+        let theme = convert_theme(json_theme, legacy_theme)?;
+
+        let theme_slug = theme.metadata.name.as_ref().to_case(Case::Snake);
+
+        let mut output_file = File::create(themes_path.join(format!("{theme_slug}.rs")))?;
+
+        let theme_module = format!("{:#?}", ThemePrinter::new(theme));
+
+        output_file.write_all(theme_module.as_bytes())?;
+
+        // println!("{:#?}", ThemePrinter::new(theme));
+    }
 
     Ok(())
 }
@@ -188,9 +211,9 @@ struct JsonSyntaxStyle {
 }
 
 /// Loads the [`Theme`] with the given name.
-fn load_theme(name: String) -> Result<(JsonTheme, LegacyTheme)> {
-    let theme_contents = Assets::get(&format!("themes/{name}.json"))
-        .with_context(|| format!("theme file not found: '{name}'"))?;
+fn load_theme(theme_path: &str) -> Result<(JsonTheme, LegacyTheme)> {
+    let theme_contents =
+        Assets::get(theme_path).with_context(|| format!("theme file not found: '{theme_path}'"))?;
 
     let json_theme: JsonTheme = serde_json::from_str(std::str::from_utf8(&theme_contents.data)?)
         .context("failed to parse legacy theme")?;

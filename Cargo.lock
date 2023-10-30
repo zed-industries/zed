@@ -8740,6 +8740,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap 4.4.4",
+ "convert_case 0.6.0",
  "gpui2",
  "log",
  "rust-embed",
