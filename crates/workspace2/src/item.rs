@@ -3,7 +3,12 @@
 //     ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
 // };
 // use crate::{AutosaveSetting, DelayedDebouncedEditAction, WorkspaceSettings};
-// use anyhow::Result;
+use anyhow::Result;
+use client2::{
+    proto::{self, PeerId, ViewId},
+    Client,
+};
+use theme2::Theme;
 // use client2::{
 //     proto::{self, PeerId},
 //     Client,
@@ -78,218 +83,227 @@
 //     }
 // }
 
-// #[derive(Eq, PartialEq, Hash, Debug)]
-// pub enum ItemEvent {
-//     CloseItem,
-//     UpdateTab,
-//     UpdateBreadcrumbs,
-//     Edit,
-// }
-
-// // TODO: Combine this with existing HighlightedText struct?
-// pub struct BreadcrumbText {
-//     pub text: String,
-//     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
-// }
-
-// pub trait Item: View {
-//     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
-//     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
-//     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
-//         false
-//     }
-//     fn tab_tooltip_text(&self, _: &AppContext) -> Option<Cow<str>> {
-//         None
-//     }
-//     fn tab_description<'a>(&'a self, _: usize, _: &'a AppContext) -> Option<Cow<str>> {
-//         None
-//     }
-//     fn tab_content<V: 'static>(
-//         &self,
-//         detail: Option<usize>,
-//         style: &theme2::Tab,
-//         cx: &AppContext,
-//     ) -> AnyElement<V>;
-//     fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project2::Item)) {
-//     } // (model id, Item)
-//     fn is_singleton(&self, _cx: &AppContext) -> bool {
-//         false
-//     }
-//     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
-//     fn clone_on_split(&self, _workspace_id: WorkspaceId, _: &mut ViewContext<Self>) -> Option<Self>
-//     where
-//         Self: Sized,
-//     {
-//         None
-//     }
-//     fn is_dirty(&self, _: &AppContext) -> bool {
-//         false
-//     }
-//     fn has_conflict(&self, _: &AppContext) -> bool {
-//         false
-//     }
-//     fn can_save(&self, _cx: &AppContext) -> bool {
-//         false
-//     }
-//     fn save(
-//         &mut self,
-//         _project: ModelHandle<Project>,
-//         _cx: &mut ViewContext<Self>,
-//     ) -> Task<Result<()>> {
-//         unimplemented!("save() must be implemented if can_save() returns true")
-//     }
-//     fn save_as(
-//         &mut self,
-//         _project: ModelHandle<Project>,
-//         _abs_path: PathBuf,
-//         _cx: &mut ViewContext<Self>,
-//     ) -> Task<Result<()>> {
-//         unimplemented!("save_as() must be implemented if can_save() returns true")
-//     }
-//     fn reload(
-//         &mut self,
-//         _project: ModelHandle<Project>,
-//         _cx: &mut ViewContext<Self>,
-//     ) -> Task<Result<()>> {
-//         unimplemented!("reload() must be implemented if can_save() returns true")
-//     }
-//     fn to_item_events(_event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
-//         SmallVec::new()
-//     }
-//     fn should_close_item_on_event(_: &Self::Event) -> bool {
-//         false
-//     }
-//     fn should_update_tab_on_event(_: &Self::Event) -> bool {
-//         false
-//     }
-
-//     fn act_as_type<'a>(
-//         &'a self,
-//         type_id: TypeId,
-//         self_handle: &'a ViewHandle<Self>,
-//         _: &'a AppContext,
-//     ) -> Option<&AnyViewHandle> {
-//         if TypeId::of::<Self>() == type_id {
-//             Some(self_handle)
-//         } else {
-//             None
-//         }
-//     }
-
-//     fn as_searchable(&self, _: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
-//         None
-//     }
-
-//     fn breadcrumb_location(&self) -> ToolbarItemLocation {
-//         ToolbarItemLocation::Hidden
-//     }
-
-//     fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
-//         None
-//     }
-
-//     fn added_to_workspace(&mut self, _workspace: &mut Workspace, _cx: &mut ViewContext<Self>) {}
-
-//     fn serialized_item_kind() -> Option<&'static str> {
-//         None
-//     }
-
-//     fn deserialize(
-//         _project: ModelHandle<Project>,
-//         _workspace: WeakViewHandle<Workspace>,
-//         _workspace_id: WorkspaceId,
-//         _item_id: ItemId,
-//         _cx: &mut ViewContext<Pane>,
-//     ) -> Task<Result<ViewHandle<Self>>> {
-//         unimplemented!(
-//             "deserialize() must be implemented if serialized_item_kind() returns Some(_)"
-//         )
-//     }
-//     fn show_toolbar(&self) -> bool {
-//         true
-//     }
-//     fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Vector2F> {
-//         None
-//     }
-// }
-
-use core::fmt;
-
-pub trait ItemHandle: 'static + fmt::Debug + Send + Sync {
-    //     fn subscribe_to_item_events(
-    //         &self,
-    //         cx: &mut WindowContext,
-    //         handler: Box<dyn Fn(ItemEvent, &mut WindowContext)>,
-    //     ) -> gpui2::Subscription;
-    //     fn tab_tooltip_text<'a>(&self, cx: &'a AppContext) -> Option<Cow<'a, str>>;
-    //     fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
-    //     fn tab_content(
-    //         &self,
-    //         detail: Option<usize>,
-    //         style: &theme2::Tab,
-    //         cx: &AppContext,
-    //     ) -> AnyElement<Pane>;
-    //     fn dragged_tab_content(
-    //         &self,
-    //         detail: Option<usize>,
-    //         style: &theme2::Tab,
-    //         cx: &AppContext,
-    //     ) -> AnyElement<Workspace>;
-    //     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    //     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
-    //     fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[usize; 3]>;
-    //     fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project2::Item));
-    //     fn is_singleton(&self, cx: &AppContext) -> bool;
-    //     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
-    //     fn clone_on_split(
-    //         &self,
-    //         workspace_id: WorkspaceId,
-    //         cx: &mut WindowContext,
-    //     ) -> Option<Box<dyn ItemHandle>>;
-    //     fn added_to_pane(
-    //         &self,
-    //         workspace: &mut Workspace,
-    //         pane: ViewHandle<Pane>,
-    //         cx: &mut ViewContext<Workspace>,
-    //     );
-    //     fn deactivated(&self, cx: &mut WindowContext);
-    //     fn workspace_deactivated(&self, cx: &mut WindowContext);
-    //     fn navigate(&self, data: Box<dyn Any>, cx: &mut WindowContext) -> bool;
-    //     fn id(&self) -> usize;
-    //     fn window(&self) -> AnyWindowHandle;
-    //     fn as_any(&self) -> &AnyViewHandle;
-    //     fn is_dirty(&self, cx: &AppContext) -> bool;
-    //     fn has_conflict(&self, cx: &AppContext) -> bool;
-    //     fn can_save(&self, cx: &AppContext) -> bool;
-    //     fn save(&self, project: ModelHandle<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
-    //     fn save_as(
-    //         &self,
-    //         project: ModelHandle<Project>,
-    //         abs_path: PathBuf,
-    //         cx: &mut WindowContext,
-    //     ) -> Task<Result<()>>;
-    //     fn reload(&self, project: ModelHandle<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
-    //     fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a AppContext) -> Option<&'a AnyViewHandle>;
-    //     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
-    //     fn on_release(
-    //         &self,
-    //         cx: &mut AppContext,
-    //         callback: Box<dyn FnOnce(&mut AppContext)>,
-    //     ) -> gpui2::Subscription;
-    //     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
-    //     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
-    //     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
-    //     fn serialized_item_kind(&self) -> Option<&'static str>;
-    //     fn show_toolbar(&self, cx: &AppContext) -> bool;
-    //     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Vector2F>;
+#[derive(Eq, PartialEq, Hash, Debug)]
+pub enum ItemEvent {
+    CloseItem,
+    UpdateTab,
+    UpdateBreadcrumbs,
+    Edit,
 }
 
-// pub trait WeakItemHandle {
-//     fn id(&self) -> usize;
-//     fn window(&self) -> AnyWindowHandle;
-//     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>>;
-// }
+// TODO: Combine this with existing HighlightedText struct?
+pub struct BreadcrumbText {
+    pub text: String,
+    pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
+}
 
+pub trait Item: EventEmitter {
+    //     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
+    //     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
+    //     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
+    //         false
+    //     }
+    //     fn tab_tooltip_text(&self, _: &AppContext) -> Option<Cow<str>> {
+    //         None
+    //     }
+    //     fn tab_description<'a>(&'a self, _: usize, _: &'a AppContext) -> Option<Cow<str>> {
+    //         None
+    //     }
+    //     fn tab_content<V: 'static>(
+    //         &self,
+    //         detail: Option<usize>,
+    //         style: &theme2::Tab,
+    //         cx: &AppContext,
+    //     ) -> AnyElement<V>;
+    //     fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project2::Item)) {
+    //     } // (model id, Item)
+    fn is_singleton(&self, _cx: &AppContext) -> bool {
+        false
+    }
+    //     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
+    //     fn clone_on_split(&self, _workspace_id: WorkspaceId, _: &mut ViewContext<Self>) -> Option<Self>
+    //     where
+    //         Self: Sized,
+    //     {
+    //         None
+    //     }
+    //     fn is_dirty(&self, _: &AppContext) -> bool {
+    //         false
+    //     }
+    //     fn has_conflict(&self, _: &AppContext) -> bool {
+    //         false
+    //     }
+    //     fn can_save(&self, _cx: &AppContext) -> bool {
+    //         false
+    //     }
+    //     fn save(
+    //         &mut self,
+    //         _project: ModelHandle<Project>,
+    //         _cx: &mut ViewContext<Self>,
+    //     ) -> Task<Result<()>> {
+    //         unimplemented!("save() must be implemented if can_save() returns true")
+    //     }
+    //     fn save_as(
+    //         &mut self,
+    //         _project: ModelHandle<Project>,
+    //         _abs_path: PathBuf,
+    //         _cx: &mut ViewContext<Self>,
+    //     ) -> Task<Result<()>> {
+    //         unimplemented!("save_as() must be implemented if can_save() returns true")
+    //     }
+    //     fn reload(
+    //         &mut self,
+    //         _project: ModelHandle<Project>,
+    //         _cx: &mut ViewContext<Self>,
+    //     ) -> Task<Result<()>> {
+    //         unimplemented!("reload() must be implemented if can_save() returns true")
+    //     }
+    //     fn to_item_events(_event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
+    //         SmallVec::new()
+    //     }
+    //     fn should_close_item_on_event(_: &Self::Event) -> bool {
+    //         false
+    //     }
+    //     fn should_update_tab_on_event(_: &Self::Event) -> bool {
+    //         false
+    //     }
+
+    //     fn act_as_type<'a>(
+    //         &'a self,
+    //         type_id: TypeId,
+    //         self_handle: &'a ViewHandle<Self>,
+    //         _: &'a AppContext,
+    //     ) -> Option<&AnyViewHandle> {
+    //         if TypeId::of::<Self>() == type_id {
+    //             Some(self_handle)
+    //         } else {
+    //             None
+    //         }
+    //     }
+
+    //     fn as_searchable(&self, _: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    //         None
+    //     }
+
+    //     fn breadcrumb_location(&self) -> ToolbarItemLocation {
+    //         ToolbarItemLocation::Hidden
+    //     }
+
+    //     fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+    //         None
+    //     }
+
+    //     fn added_to_workspace(&mut self, _workspace: &mut Workspace, _cx: &mut ViewContext<Self>) {}
+
+    //     fn serialized_item_kind() -> Option<&'static str> {
+    //         None
+    //     }
+
+    //     fn deserialize(
+    //         _project: ModelHandle<Project>,
+    //         _workspace: WeakViewHandle<Workspace>,
+    //         _workspace_id: WorkspaceId,
+    //         _item_id: ItemId,
+    //         _cx: &mut ViewContext<Pane>,
+    //     ) -> Task<Result<ViewHandle<Self>>> {
+    //         unimplemented!(
+    //             "deserialize() must be implemented if serialized_item_kind() returns Some(_)"
+    //         )
+    //     }
+    //     fn show_toolbar(&self) -> bool {
+    //         true
+    //     }
+    //     fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Vector2F> {
+    //         None
+    //     }
+}
+
+use core::fmt;
+use std::{
+    any::{Any, TypeId},
+    borrow::Cow,
+    ops::Range,
+    path::PathBuf,
+    sync::Arc,
+};
+
+use gpui2::{
+    AnyElement, AnyView, AnyWindowHandle, AppContext, EventEmitter, Handle, HighlightStyle, Pixels,
+    Point, Task, View, ViewContext, WindowContext,
+};
+use project2::{Project, ProjectEntryId, ProjectPath};
+use smallvec::SmallVec;
+
+use crate::{
+    pane::Pane, searchable::SearchableItemHandle, ToolbarItemLocation, Workspace, WorkspaceId,
+};
+
+pub trait ItemHandle: 'static + fmt::Debug + Send {
+    fn subscribe_to_item_events(
+        &self,
+        cx: &mut WindowContext,
+        handler: Box<dyn Fn(ItemEvent, &mut WindowContext)>,
+    ) -> gpui2::Subscription;
+    fn tab_tooltip_text<'a>(&self, cx: &'a AppContext) -> Option<Cow<'a, str>>;
+    fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
+    fn tab_content(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<Pane>;
+    fn dragged_tab_content(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<Workspace>;
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
+    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
+    fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[usize; 3]>;
+    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project2::Item));
+    fn is_singleton(&self, cx: &AppContext) -> bool;
+    fn boxed_clone(&self) -> Box<dyn ItemHandle>;
+    fn clone_on_split(
+        &self,
+        workspace_id: WorkspaceId,
+        cx: &mut WindowContext,
+    ) -> Option<Box<dyn ItemHandle>>;
+    fn added_to_pane(
+        &self,
+        workspace: &mut Workspace,
+        pane: View<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    );
+    fn deactivated(&self, cx: &mut WindowContext);
+    fn workspace_deactivated(&self, cx: &mut WindowContext);
+    fn navigate(&self, data: Box<dyn Any>, cx: &mut WindowContext) -> bool;
+    fn id(&self) -> usize;
+    fn window(&self) -> AnyWindowHandle;
+    // fn as_any(&self) -> &AnyView; todo!()
+    fn is_dirty(&self, cx: &AppContext) -> bool;
+    fn has_conflict(&self, cx: &AppContext) -> bool;
+    fn can_save(&self, cx: &AppContext) -> bool;
+    fn save(&self, project: Handle<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
+    fn save_as(
+        &self,
+        project: Handle<Project>,
+        abs_path: PathBuf,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>>;
+    fn reload(&self, project: Handle<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
+    // fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a AppContext) -> Option<&'a AnyViewHandle>; todo!()
+    fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
+    fn on_release(
+        &self,
+        cx: &mut AppContext,
+        callback: Box<dyn FnOnce(&mut AppContext)>,
+    ) -> gpui2::Subscription;
+    fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
+    fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
+    fn serialized_item_kind(&self) -> Option<&'static str>;
+    fn show_toolbar(&self, cx: &AppContext) -> bool;
+    fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
+}
+
+pub trait WeakItemHandle {
+    fn id(&self) -> usize;
+    fn window(&self) -> AnyWindowHandle;
+    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>>;
+}
+
+// todo!()
 // impl dyn ItemHandle {
 //     pub fn downcast<T: View>(&self) -> Option<ViewHandle<T>> {
 //         self.as_any().clone().downcast()
@@ -653,11 +667,11 @@ pub trait ItemHandle: 'static + fmt::Debug + Send + Sync {
 //     }
 // }
 
-// impl Clone for Box<dyn ItemHandle> {
-//     fn clone(&self) -> Box<dyn ItemHandle> {
-//         self.boxed_clone()
-//     }
-// }
+impl Clone for Box<dyn ItemHandle> {
+    fn clone(&self) -> Box<dyn ItemHandle> {
+        self.boxed_clone()
+    }
+}
 
 // impl<T: Item> WeakItemHandle for WeakViewHandle<T> {
 //     fn id(&self) -> usize {
@@ -673,63 +687,65 @@ pub trait ItemHandle: 'static + fmt::Debug + Send + Sync {
 //     }
 // }
 
-// pub trait ProjectItem: Item {
-//     type Item: project2::Item + gpui2::Entity;
+pub trait ProjectItem: Item {
+    type Item: project2::Item;
 
-//     fn for_project_item(
-//         project: ModelHandle<Project>,
-//         item: ModelHandle<Self::Item>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Self;
-// }
+    fn for_project_item(
+        project: Handle<Project>,
+        item: Handle<Self::Item>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self
+    where
+        Self: Sized;
+}
 
-// pub trait FollowableItem: Item {
-//     fn remote_id(&self) -> Option<ViewId>;
-//     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
-//     fn from_state_proto(
-//         pane: ViewHandle<Pane>,
-//         project: ViewHandle<Workspace>,
-//         id: ViewId,
-//         state: &mut Option<proto::view::Variant>,
-//         cx: &mut AppContext,
-//     ) -> Option<Task<Result<ViewHandle<Self>>>>;
-//     fn add_event_to_update_proto(
-//         &self,
-//         event: &Self::Event,
-//         update: &mut Option<proto::update_view::Variant>,
-//         cx: &AppContext,
-//     ) -> bool;
-//     fn apply_update_proto(
-//         &mut self,
-//         project: &ModelHandle<Project>,
-//         message: proto::update_view::Variant,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<Result<()>>;
-//     fn is_project_item(&self, cx: &AppContext) -> bool;
+pub trait FollowableItem: Item {
+    fn remote_id(&self) -> Option<ViewId>;
+    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
+    fn from_state_proto(
+        pane: View<Pane>,
+        project: View<Workspace>,
+        id: ViewId,
+        state: &mut Option<proto::view::Variant>,
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<View<Self>>>>;
+    fn add_event_to_update_proto(
+        &self,
+        event: &Self::Event,
+        update: &mut Option<proto::update_view::Variant>,
+        cx: &AppContext,
+    ) -> bool;
+    fn apply_update_proto(
+        &mut self,
+        project: &Handle<Project>,
+        message: proto::update_view::Variant,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>>;
+    fn is_project_item(&self, cx: &AppContext) -> bool;
 
-//     fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>);
-//     fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool;
-// }
+    fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>);
+    fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool;
+}
 
-// pub trait FollowableItemHandle: ItemHandle {
-//     fn remote_id(&self, client: &Arc<Client>, cx: &AppContext) -> Option<ViewId>;
-//     fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext);
-//     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
-//     fn add_event_to_update_proto(
-//         &self,
-//         event: &dyn Any,
-//         update: &mut Option<proto::update_view::Variant>,
-//         cx: &AppContext,
-//     ) -> bool;
-//     fn apply_update_proto(
-//         &self,
-//         project: &ModelHandle<Project>,
-//         message: proto::update_view::Variant,
-//         cx: &mut WindowContext,
-//     ) -> Task<Result<()>>;
-//     fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool;
-//     fn is_project_item(&self, cx: &AppContext) -> bool;
-// }
+pub trait FollowableItemHandle: ItemHandle {
+    fn remote_id(&self, client: &Arc<Client>, cx: &AppContext) -> Option<ViewId>;
+    fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext);
+    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
+    fn add_event_to_update_proto(
+        &self,
+        event: &dyn Any,
+        update: &mut Option<proto::update_view::Variant>,
+        cx: &AppContext,
+    ) -> bool;
+    fn apply_update_proto(
+        &self,
+        project: &Handle<Project>,
+        message: proto::update_view::Variant,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>>;
+    fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool;
+    fn is_project_item(&self, cx: &AppContext) -> bool;
+}
 
 // impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
 //     fn remote_id(&self, client: &Arc<Client>, cx: &AppContext) -> Option<ViewId> {
@@ -981,9 +997,9 @@ pub trait ItemHandle: 'static + fmt::Debug + Send + Sync {
 //                 .for_each(|item| f(item.id(), item.read(cx)))
 //         }
 
-//         fn is_singleton(&self, _: &AppContext) -> bool {
-//             self.is_singleton
-//         }
+// fn is_singleton(&self, _: &AppContext) -> bool {
+//     self.is_singleton
+// }
 
 //         fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
 //             self.nav_history = Some(history);

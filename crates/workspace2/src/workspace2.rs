@@ -1,16 +1,16 @@
 // pub mod dock;
 pub mod item;
 // pub mod notifications;
-// pub mod pane;
-// pub mod pane_group;
+pub mod pane;
+pub mod pane_group;
 // mod persistence;
-// pub mod searchable;
+pub mod searchable;
 // pub mod shared_screen;
 // mod status_bar;
-// mod toolbar;
+mod toolbar;
 // mod workspace_settings;
 
-// use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 // use call2::ActiveCall;
 // use client2::{
 //     proto::{self, PeerId},
@@ -52,8 +52,8 @@ pub mod item;
 // use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 // use lazy_static::lazy_static;
 // use notifications::{NotificationHandle, NotifyResultExt};
-// pub use pane::*;
-// pub use pane_group::*;
+pub use pane::*;
+pub use pane_group::*;
 // use persistence::{model::SerializedItem, DB};
 // pub use persistence::{
 //     model::{ItemId, WorkspaceLocation},
@@ -66,7 +66,7 @@ pub mod item;
 // use status_bar::StatusBar;
 // pub use status_bar::StatusItemView;
 // use theme::{Theme, ThemeSettings};
-// pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
+pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 // use util::ResultExt;
 // pub use workspace_settings::{AutosaveSetting, GitGutterSetting, WorkspaceSettings};
 
@@ -234,7 +234,7 @@ pub mod item;
 //     ]
 // );
 
-// pub type WorkspaceId = i64;
+pub type WorkspaceId = i64;
 
 // pub fn init_settings(cx: &mut AppContext) {
 //     settings::register::<WorkspaceSettings>(cx);
@@ -365,18 +365,16 @@ pub mod item;
 //     });
 // }
 
-// type ProjectItemBuilders = HashMap<
-//     TypeId,
-//     fn(ModelHandle<Project>, AnyModelHandle, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
-// >;
-// pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
-//     cx.update_default_global(|builders: &mut ProjectItemBuilders, _| {
-//         builders.insert(TypeId::of::<I::Item>(), |project, model, cx| {
-//             let item = model.downcast::<I::Item>().unwrap();
-//             Box::new(cx.add_view(|cx| I::for_project_item(project, item, cx)))
-//         });
-//     });
-// }
+type ProjectItemBuilders =
+    HashMap<TypeId, fn(Handle<Project>, AnyHandle, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>>;
+pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
+    cx.update_default_global(|builders: &mut ProjectItemBuilders, _| {
+        builders.insert(TypeId::of::<I::Item>(), |project, model, cx| {
+            let item = model.downcast::<I::Item>().unwrap();
+            Box::new(cx.add_view(|cx| I::for_project_item(project, item, cx)))
+        });
+    });
+}
 
 // type FollowableItemBuilder = fn(
 //     ViewHandle<Pane>,
@@ -555,10 +553,10 @@ pub struct Workspace {
     //     left_dock: ViewHandle<Dock>,
     //     bottom_dock: ViewHandle<Dock>,
     //     right_dock: ViewHandle<Dock>,
-    //     panes: Vec<ViewHandle<Pane>>,
+    panes: Vec<View<Pane>>,
     //     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
     //     active_pane: ViewHandle<Pane>,
-    //     last_active_center_pane: Option<WeakViewHandle<Pane>>,
+    last_active_center_pane: Option<WeakView<Pane>>,
     //     last_active_view_id: Option<proto::ViewId>,
     //     status_bar: ViewHandle<StatusBar>,
     //     titlebar_item: Option<AnyViewHandle>,
@@ -570,7 +568,7 @@ pub struct Workspace {
     //     active_call: Option<(ModelHandle<ActiveCall>, Vec<Subscription>)>,
     //     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     //     database_id: WorkspaceId,
-    //     app_state: Arc<AppState>,
+    app_state: Arc<AppState>,
     //     subscriptions: Vec<Subscription>,
     //     _apply_leader_updates: Task<Result<()>>,
     //     _observe_current_user: Task<Result<()>>,
@@ -589,3156 +587,3158 @@ pub struct Workspace {
 //     pub id: u64,
 // }
 
-// #[derive(Default)]
-// struct FollowerState {
-//     leader_id: PeerId,
-//     active_view_id: Option<ViewId>,
-//     items_by_leader_view_id: HashMap<ViewId, Box<dyn FollowableItemHandle>>,
-// }
+#[derive(Default)]
+struct FollowerState {
+    leader_id: PeerId,
+    active_view_id: Option<ViewId>,
+    items_by_leader_view_id: HashMap<ViewId, Box<dyn FollowableItemHandle>>,
+}
 
 // enum WorkspaceBounds {}
 
-// impl Workspace {
-//     pub fn new(
-//         workspace_id: WorkspaceId,
-//         project: ModelHandle<Project>,
-//         app_state: Arc<AppState>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Self {
-//         cx.observe(&project, |_, _, cx| cx.notify()).detach();
-//         cx.subscribe(&project, move |this, _, event, cx| {
-//             match event {
-//                 project::Event::RemoteIdChanged(_) => {
-//                     this.update_window_title(cx);
-//                 }
-
-//                 project::Event::CollaboratorLeft(peer_id) => {
-//                     this.collaborator_left(*peer_id, cx);
-//                 }
-
-//                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
-//                     this.update_window_title(cx);
-//                     this.serialize_workspace(cx);
-//                 }
-
-//                 project::Event::DisconnectedFromHost => {
-//                     this.update_window_edited(cx);
-//                     cx.blur();
-//                 }
-
-//                 project::Event::Closed => {
-//                     cx.remove_window();
-//                 }
-
-//                 project::Event::DeletedEntry(entry_id) => {
-//                     for pane in this.panes.iter() {
-//                         pane.update(cx, |pane, cx| {
-//                             pane.handle_deleted_project_item(*entry_id, cx)
-//                         });
-//                     }
-//                 }
-
-//                 project::Event::Notification(message) => this.show_notification(0, cx, |cx| {
-//                     cx.add_view(|_| MessageNotification::new(message.clone()))
-//                 }),
-
-//                 _ => {}
-//             }
-//             cx.notify()
-//         })
-//         .detach();
-
-//         let weak_handle = cx.weak_handle();
-//         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
-
-//         let center_pane = cx.add_view(|cx| {
-//             Pane::new(
-//                 weak_handle.clone(),
-//                 project.clone(),
-//                 pane_history_timestamp.clone(),
-//                 cx,
-//             )
-//         });
-//         cx.subscribe(&center_pane, Self::handle_pane_event).detach();
-//         cx.focus(&center_pane);
-//         cx.emit(Event::PaneAdded(center_pane.clone()));
-
-//         app_state.workspace_store.update(cx, |store, _| {
-//             store.workspaces.insert(weak_handle.clone());
-//         });
-
-//         let mut current_user = app_state.user_store.read(cx).watch_current_user();
-//         let mut connection_status = app_state.client.status();
-//         let _observe_current_user = cx.spawn(|this, mut cx| async move {
-//             current_user.recv().await;
-//             connection_status.recv().await;
-//             let mut stream =
-//                 Stream::map(current_user, drop).merge(Stream::map(connection_status, drop));
-
-//             while stream.recv().await.is_some() {
-//                 this.update(&mut cx, |_, cx| cx.notify())?;
-//             }
-//             anyhow::Ok(())
-//         });
-
-//         // All leader updates are enqueued and then processed in a single task, so
-//         // that each asynchronous operation can be run in order.
-//         let (leader_updates_tx, mut leader_updates_rx) =
-//             mpsc::unbounded::<(PeerId, proto::UpdateFollowers)>();
-//         let _apply_leader_updates = cx.spawn(|this, mut cx| async move {
-//             while let Some((leader_id, update)) = leader_updates_rx.next().await {
-//                 Self::process_leader_update(&this, leader_id, update, &mut cx)
-//                     .await
-//                     .log_err();
-//             }
-
-//             Ok(())
-//         });
-
-//         cx.emit_global(WorkspaceCreated(weak_handle.clone()));
-
-//         let left_dock = cx.add_view(|_| Dock::new(DockPosition::Left));
-//         let bottom_dock = cx.add_view(|_| Dock::new(DockPosition::Bottom));
-//         let right_dock = cx.add_view(|_| Dock::new(DockPosition::Right));
-//         let left_dock_buttons =
-//             cx.add_view(|cx| PanelButtons::new(left_dock.clone(), weak_handle.clone(), cx));
-//         let bottom_dock_buttons =
-//             cx.add_view(|cx| PanelButtons::new(bottom_dock.clone(), weak_handle.clone(), cx));
-//         let right_dock_buttons =
-//             cx.add_view(|cx| PanelButtons::new(right_dock.clone(), weak_handle.clone(), cx));
-//         let status_bar = cx.add_view(|cx| {
-//             let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
-//             status_bar.add_left_item(left_dock_buttons, cx);
-//             status_bar.add_right_item(right_dock_buttons, cx);
-//             status_bar.add_right_item(bottom_dock_buttons, cx);
-//             status_bar
-//         });
-
-//         cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
-//             drag_and_drop.register_container(weak_handle.clone());
-//         });
-
-//         let mut active_call = None;
-//         if cx.has_global::<ModelHandle<ActiveCall>>() {
-//             let call = cx.global::<ModelHandle<ActiveCall>>().clone();
-//             let mut subscriptions = Vec::new();
-//             subscriptions.push(cx.subscribe(&call, Self::on_active_call_event));
-//             active_call = Some((call, subscriptions));
-//         }
-
-//         let subscriptions = vec![
-//             cx.observe_fullscreen(|_, _, cx| cx.notify()),
-//             cx.observe_window_activation(Self::on_window_activation_changed),
-//             cx.observe_window_bounds(move |_, mut bounds, display, cx| {
-//                 // Transform fixed bounds to be stored in terms of the containing display
-//                 if let WindowBounds::Fixed(mut window_bounds) = bounds {
-//                     if let Some(screen) = cx.platform().screen_by_id(display) {
-//                         let screen_bounds = screen.bounds();
-//                         window_bounds
-//                             .set_origin_x(window_bounds.origin_x() - screen_bounds.origin_x());
-//                         window_bounds
-//                             .set_origin_y(window_bounds.origin_y() - screen_bounds.origin_y());
-//                         bounds = WindowBounds::Fixed(window_bounds);
-//                     }
-//                 }
-
-//                 cx.background()
-//                     .spawn(DB.set_window_bounds(workspace_id, bounds, display))
-//                     .detach_and_log_err(cx);
-//             }),
-//             cx.observe(&left_dock, |this, _, cx| {
-//                 this.serialize_workspace(cx);
-//                 cx.notify();
-//             }),
-//             cx.observe(&bottom_dock, |this, _, cx| {
-//                 this.serialize_workspace(cx);
-//                 cx.notify();
-//             }),
-//             cx.observe(&right_dock, |this, _, cx| {
-//                 this.serialize_workspace(cx);
-//                 cx.notify();
-//             }),
-//         ];
-
-//         cx.defer(|this, cx| this.update_window_title(cx));
-//         Workspace {
-//             weak_self: weak_handle.clone(),
-//             modal: None,
-//             zoomed: None,
-//             zoomed_position: None,
-//             center: PaneGroup::new(center_pane.clone()),
-//             panes: vec![center_pane.clone()],
-//             panes_by_item: Default::default(),
-//             active_pane: center_pane.clone(),
-//             last_active_center_pane: Some(center_pane.downgrade()),
-//             last_active_view_id: None,
-//             status_bar,
-//             titlebar_item: None,
-//             notifications: Default::default(),
-//             left_dock,
-//             bottom_dock,
-//             right_dock,
-//             project: project.clone(),
-//             follower_states: Default::default(),
-//             last_leaders_by_pane: Default::default(),
-//             window_edited: false,
-//             active_call,
-//             database_id: workspace_id,
-//             app_state,
-//             _observe_current_user,
-//             _apply_leader_updates,
-//             _schedule_serialize: None,
-//             leader_updates_tx,
-//             subscriptions,
-//             pane_history_timestamp,
-//         }
-//     }
-
-//     fn new_local(
-//         abs_paths: Vec<PathBuf>,
-//         app_state: Arc<AppState>,
-//         requesting_window: Option<WindowHandle<Workspace>>,
-//         cx: &mut AppContext,
-//     ) -> Task<(
-//         WeakViewHandle<Workspace>,
-//         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
-//     )> {
-//         let project_handle = Project::local(
-//             app_state.client.clone(),
-//             app_state.node_runtime.clone(),
-//             app_state.user_store.clone(),
-//             app_state.languages.clone(),
-//             app_state.fs.clone(),
-//             cx,
-//         );
-
-//         cx.spawn(|mut cx| async move {
-//             let serialized_workspace = persistence::DB.workspace_for_roots(&abs_paths.as_slice());
-
-//             let paths_to_open = Arc::new(abs_paths);
-
-//             // Get project paths for all of the abs_paths
-//             let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
-//             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
-//                 Vec::with_capacity(paths_to_open.len());
-//             for path in paths_to_open.iter().cloned() {
-//                 if let Some((worktree, project_entry)) = cx
-//                     .update(|cx| {
-//                         Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
-//                     })
-//                     .await
-//                     .log_err()
-//                 {
-//                     worktree_roots.insert(worktree.read_with(&mut cx, |tree, _| tree.abs_path()));
-//                     project_paths.push((path, Some(project_entry)));
-//                 } else {
-//                     project_paths.push((path, None));
-//                 }
-//             }
-
-//             let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
-//                 serialized_workspace.id
-//             } else {
-//                 DB.next_id().await.unwrap_or(0)
-//             };
-
-//             let window = if let Some(window) = requesting_window {
-//                 window.replace_root(&mut cx, |cx| {
-//                     Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
-//                 });
-//                 window
-//             } else {
-//                 {
-//                     let window_bounds_override = window_bounds_env_override(&cx);
-//                     let (bounds, display) = if let Some(bounds) = window_bounds_override {
-//                         (Some(bounds), None)
-//                     } else {
-//                         serialized_workspace
-//                             .as_ref()
-//                             .and_then(|serialized_workspace| {
-//                                 let display = serialized_workspace.display?;
-//                                 let mut bounds = serialized_workspace.bounds?;
-
-//                                 // Stored bounds are relative to the containing display.
-//                                 // So convert back to global coordinates if that screen still exists
-//                                 if let WindowBounds::Fixed(mut window_bounds) = bounds {
-//                                     if let Some(screen) = cx.platform().screen_by_id(display) {
-//                                         let screen_bounds = screen.bounds();
-//                                         window_bounds.set_origin_x(
-//                                             window_bounds.origin_x() + screen_bounds.origin_x(),
-//                                         );
-//                                         window_bounds.set_origin_y(
-//                                             window_bounds.origin_y() + screen_bounds.origin_y(),
-//                                         );
-//                                         bounds = WindowBounds::Fixed(window_bounds);
-//                                     } else {
-//                                         // Screen no longer exists. Return none here.
-//                                         return None;
-//                                     }
-//                                 }
-
-//                                 Some((bounds, display))
-//                             })
-//                             .unzip()
-//                     };
-
-//                     // Use the serialized workspace to construct the new window
-//                     cx.add_window(
-//                         (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
-//                         |cx| {
-//                             Workspace::new(
-//                                 workspace_id,
-//                                 project_handle.clone(),
-//                                 app_state.clone(),
-//                                 cx,
-//                             )
-//                         },
-//                     )
-//                 }
-//             };
-
-//             // We haven't yielded the main thread since obtaining the window handle,
-//             // so the window exists.
-//             let workspace = window.root(&cx).unwrap();
-
-//             (app_state.initialize_workspace)(
-//                 workspace.downgrade(),
-//                 serialized_workspace.is_some(),
-//                 app_state.clone(),
-//                 cx.clone(),
-//             )
-//             .await
-//             .log_err();
-
-//             window.update(&mut cx, |cx| cx.activate_window());
-
-//             let workspace = workspace.downgrade();
-//             notify_if_database_failed(&workspace, &mut cx);
-//             let opened_items = open_items(
-//                 serialized_workspace,
-//                 &workspace,
-//                 project_paths,
-//                 app_state,
-//                 cx,
-//             )
-//             .await
-//             .unwrap_or_default();
-
-//             (workspace, opened_items)
-//         })
-//     }
-
-//     pub fn weak_handle(&self) -> WeakViewHandle<Self> {
-//         self.weak_self.clone()
-//     }
-
-//     pub fn left_dock(&self) -> &ViewHandle<Dock> {
-//         &self.left_dock
-//     }
-
-//     pub fn bottom_dock(&self) -> &ViewHandle<Dock> {
-//         &self.bottom_dock
-//     }
-
-//     pub fn right_dock(&self) -> &ViewHandle<Dock> {
-//         &self.right_dock
-//     }
-
-//     pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>)
-//     where
-//         T::Event: std::fmt::Debug,
-//     {
-//         self.add_panel_with_extra_event_handler(panel, cx, |_, _, _, _| {})
-//     }
-
-//     pub fn add_panel_with_extra_event_handler<T: Panel, F>(
-//         &mut self,
-//         panel: ViewHandle<T>,
-//         cx: &mut ViewContext<Self>,
-//         handler: F,
-//     ) where
-//         T::Event: std::fmt::Debug,
-//         F: Fn(&mut Self, &ViewHandle<T>, &T::Event, &mut ViewContext<Self>) + 'static,
-//     {
-//         let dock = match panel.position(cx) {
-//             DockPosition::Left => &self.left_dock,
-//             DockPosition::Bottom => &self.bottom_dock,
-//             DockPosition::Right => &self.right_dock,
-//         };
-
-//         self.subscriptions.push(cx.subscribe(&panel, {
-//             let mut dock = dock.clone();
-//             let mut prev_position = panel.position(cx);
-//             move |this, panel, event, cx| {
-//                 if T::should_change_position_on_event(event) {
-//                     let new_position = panel.read(cx).position(cx);
-//                     let mut was_visible = false;
-//                     dock.update(cx, |dock, cx| {
-//                         prev_position = new_position;
-
-//                         was_visible = dock.is_open()
-//                             && dock
-//                                 .visible_panel()
-//                                 .map_or(false, |active_panel| active_panel.id() == panel.id());
-//                         dock.remove_panel(&panel, cx);
-//                     });
-
-//                     if panel.is_zoomed(cx) {
-//                         this.zoomed_position = Some(new_position);
-//                     }
-
-//                     dock = match panel.read(cx).position(cx) {
-//                         DockPosition::Left => &this.left_dock,
-//                         DockPosition::Bottom => &this.bottom_dock,
-//                         DockPosition::Right => &this.right_dock,
-//                     }
-//                     .clone();
-//                     dock.update(cx, |dock, cx| {
-//                         dock.add_panel(panel.clone(), cx);
-//                         if was_visible {
-//                             dock.set_open(true, cx);
-//                             dock.activate_panel(dock.panels_len() - 1, cx);
-//                         }
-//                     });
-//                 } else if T::should_zoom_in_on_event(event) {
-//                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
-//                     if !panel.has_focus(cx) {
-//                         cx.focus(&panel);
-//                     }
-//                     this.zoomed = Some(panel.downgrade().into_any());
-//                     this.zoomed_position = Some(panel.read(cx).position(cx));
-//                 } else if T::should_zoom_out_on_event(event) {
-//                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, false, cx));
-//                     if this.zoomed_position == Some(prev_position) {
-//                         this.zoomed = None;
-//                         this.zoomed_position = None;
-//                     }
-//                     cx.notify();
-//                 } else if T::is_focus_event(event) {
-//                     let position = panel.read(cx).position(cx);
-//                     this.dismiss_zoomed_items_to_reveal(Some(position), cx);
-//                     if panel.is_zoomed(cx) {
-//                         this.zoomed = Some(panel.downgrade().into_any());
-//                         this.zoomed_position = Some(position);
-//                     } else {
-//                         this.zoomed = None;
-//                         this.zoomed_position = None;
-//                     }
-//                     this.update_active_view_for_followers(cx);
-//                     cx.notify();
-//                 } else {
-//                     handler(this, &panel, event, cx)
-//                 }
-//             }
-//         }));
-
-//         dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
-//     }
-
-//     pub fn status_bar(&self) -> &ViewHandle<StatusBar> {
-//         &self.status_bar
-//     }
-
-//     pub fn app_state(&self) -> &Arc<AppState> {
-//         &self.app_state
-//     }
-
-//     pub fn user_store(&self) -> &ModelHandle<UserStore> {
-//         &self.app_state.user_store
-//     }
-
-//     pub fn project(&self) -> &ModelHandle<Project> {
-//         &self.project
-//     }
-
-//     pub fn recent_navigation_history(
-//         &self,
-//         limit: Option<usize>,
-//         cx: &AppContext,
-//     ) -> Vec<(ProjectPath, Option<PathBuf>)> {
-//         let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
-//         let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
-//         for pane in &self.panes {
-//             let pane = pane.read(cx);
-//             pane.nav_history()
-//                 .for_each_entry(cx, |entry, (project_path, fs_path)| {
-//                     if let Some(fs_path) = &fs_path {
-//                         abs_paths_opened
-//                             .entry(fs_path.clone())
-//                             .or_default()
-//                             .insert(project_path.clone());
-//                     }
-//                     let timestamp = entry.timestamp;
-//                     match history.entry(project_path) {
-//                         hash_map::Entry::Occupied(mut entry) => {
-//                             let (_, old_timestamp) = entry.get();
-//                             if &timestamp > old_timestamp {
-//                                 entry.insert((fs_path, timestamp));
-//                             }
-//                         }
-//                         hash_map::Entry::Vacant(entry) => {
-//                             entry.insert((fs_path, timestamp));
-//                         }
-//                     }
-//                 });
-//         }
-
-//         history
-//             .into_iter()
-//             .sorted_by_key(|(_, (_, timestamp))| *timestamp)
-//             .map(|(project_path, (fs_path, _))| (project_path, fs_path))
-//             .rev()
-//             .filter(|(history_path, abs_path)| {
-//                 let latest_project_path_opened = abs_path
-//                     .as_ref()
-//                     .and_then(|abs_path| abs_paths_opened.get(abs_path))
-//                     .and_then(|project_paths| {
-//                         project_paths
-//                             .iter()
-//                             .max_by(|b1, b2| b1.worktree_id.cmp(&b2.worktree_id))
-//                     });
-
-//                 match latest_project_path_opened {
-//                     Some(latest_project_path_opened) => latest_project_path_opened == history_path,
-//                     None => true,
-//                 }
-//             })
-//             .take(limit.unwrap_or(usize::MAX))
-//             .collect()
-//     }
-
-//     fn navigate_history(
-//         &mut self,
-//         pane: WeakViewHandle<Pane>,
-//         mode: NavigationMode,
-//         cx: &mut ViewContext<Workspace>,
-//     ) -> Task<Result<()>> {
-//         let to_load = if let Some(pane) = pane.upgrade(cx) {
-//             cx.focus(&pane);
-
-//             pane.update(cx, |pane, cx| {
-//                 loop {
-//                     // Retrieve the weak item handle from the history.
-//                     let entry = pane.nav_history_mut().pop(mode, cx)?;
-
-//                     // If the item is still present in this pane, then activate it.
-//                     if let Some(index) = entry
-//                         .item
-//                         .upgrade(cx)
-//                         .and_then(|v| pane.index_for_item(v.as_ref()))
-//                     {
-//                         let prev_active_item_index = pane.active_item_index();
-//                         pane.nav_history_mut().set_mode(mode);
-//                         pane.activate_item(index, true, true, cx);
-//                         pane.nav_history_mut().set_mode(NavigationMode::Normal);
-
-//                         let mut navigated = prev_active_item_index != pane.active_item_index();
-//                         if let Some(data) = entry.data {
-//                             navigated |= pane.active_item()?.navigate(data, cx);
-//                         }
-
-//                         if navigated {
-//                             break None;
-//                         }
-//                     }
-//                     // If the item is no longer present in this pane, then retrieve its
-//                     // project path in order to reopen it.
-//                     else {
-//                         break pane
-//                             .nav_history()
-//                             .path_for_item(entry.item.id())
-//                             .map(|(project_path, _)| (project_path, entry));
-//                     }
-//                 }
-//             })
-//         } else {
-//             None
-//         };
-
-//         if let Some((project_path, entry)) = to_load {
-//             // If the item was no longer present, then load it again from its previous path.
-//             let task = self.load_path(project_path, cx);
-//             cx.spawn(|workspace, mut cx| async move {
-//                 let task = task.await;
-//                 let mut navigated = false;
-//                 if let Some((project_entry_id, build_item)) = task.log_err() {
-//                     let prev_active_item_id = pane.update(&mut cx, |pane, _| {
-//                         pane.nav_history_mut().set_mode(mode);
-//                         pane.active_item().map(|p| p.id())
-//                     })?;
-
-//                     pane.update(&mut cx, |pane, cx| {
-//                         let item = pane.open_item(project_entry_id, true, cx, build_item);
-//                         navigated |= Some(item.id()) != prev_active_item_id;
-//                         pane.nav_history_mut().set_mode(NavigationMode::Normal);
-//                         if let Some(data) = entry.data {
-//                             navigated |= item.navigate(data, cx);
-//                         }
-//                     })?;
-//                 }
-
-//                 if !navigated {
-//                     workspace
-//                         .update(&mut cx, |workspace, cx| {
-//                             Self::navigate_history(workspace, pane, mode, cx)
-//                         })?
-//                         .await?;
-//                 }
-
-//                 Ok(())
-//             })
-//         } else {
-//             Task::ready(Ok(()))
-//         }
-//     }
-
-//     pub fn go_back(
-//         &mut self,
-//         pane: WeakViewHandle<Pane>,
-//         cx: &mut ViewContext<Workspace>,
-//     ) -> Task<Result<()>> {
-//         self.navigate_history(pane, NavigationMode::GoingBack, cx)
-//     }
-
-//     pub fn go_forward(
-//         &mut self,
-//         pane: WeakViewHandle<Pane>,
-//         cx: &mut ViewContext<Workspace>,
-//     ) -> Task<Result<()>> {
-//         self.navigate_history(pane, NavigationMode::GoingForward, cx)
-//     }
-
-//     pub fn reopen_closed_item(&mut self, cx: &mut ViewContext<Workspace>) -> Task<Result<()>> {
-//         self.navigate_history(
-//             self.active_pane().downgrade(),
-//             NavigationMode::ReopeningClosedItem,
-//             cx,
-//         )
-//     }
-
-//     pub fn client(&self) -> &Client {
-//         &self.app_state.client
-//     }
-
-//     pub fn set_titlebar_item(&mut self, item: AnyViewHandle, cx: &mut ViewContext<Self>) {
-//         self.titlebar_item = Some(item);
-//         cx.notify();
-//     }
-
-//     pub fn titlebar_item(&self) -> Option<AnyViewHandle> {
-//         self.titlebar_item.clone()
-//     }
-
-//     /// Call the given callback with a workspace whose project is local.
-//     ///
-//     /// If the given workspace has a local project, then it will be passed
-//     /// to the callback. Otherwise, a new empty window will be created.
-//     pub fn with_local_workspace<T, F>(
-//         &mut self,
-//         cx: &mut ViewContext<Self>,
-//         callback: F,
-//     ) -> Task<Result<T>>
-//     where
-//         T: 'static,
-//         F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
-//     {
-//         if self.project.read(cx).is_local() {
-//             Task::Ready(Some(Ok(callback(self, cx))))
-//         } else {
-//             let task = Self::new_local(Vec::new(), self.app_state.clone(), None, cx);
-//             cx.spawn(|_vh, mut cx| async move {
-//                 let (workspace, _) = task.await;
-//                 workspace.update(&mut cx, callback)
-//             })
-//         }
-//     }
-
-//     pub fn worktrees<'a>(
-//         &self,
-//         cx: &'a AppContext,
-//     ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
-//         self.project.read(cx).worktrees(cx)
-//     }
-
-//     pub fn visible_worktrees<'a>(
-//         &self,
-//         cx: &'a AppContext,
-//     ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
-//         self.project.read(cx).visible_worktrees(cx)
-//     }
-
-//     pub fn worktree_scans_complete(&self, cx: &AppContext) -> impl Future<Output = ()> + 'static {
-//         let futures = self
-//             .worktrees(cx)
-//             .filter_map(|worktree| worktree.read(cx).as_local())
-//             .map(|worktree| worktree.scan_complete())
-//             .collect::<Vec<_>>();
-//         async move {
-//             for future in futures {
-//                 future.await;
-//             }
-//         }
-//     }
-
-//     pub fn close_global(_: &CloseWindow, cx: &mut AppContext) {
-//         cx.spawn(|mut cx| async move {
-//             let window = cx
-//                 .windows()
-//                 .into_iter()
-//                 .find(|window| window.is_active(&cx).unwrap_or(false));
-//             if let Some(window) = window {
-//                 //This can only get called when the window's project connection has been lost
-//                 //so we don't need to prompt the user for anything and instead just close the window
-//                 window.remove(&mut cx);
-//             }
-//         })
-//         .detach();
-//     }
-
-//     pub fn close(
-//         &mut self,
-//         _: &CloseWindow,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<Task<Result<()>>> {
-//         let window = cx.window();
-//         let prepare = self.prepare_to_close(false, cx);
-//         Some(cx.spawn(|_, mut cx| async move {
-//             if prepare.await? {
-//                 window.remove(&mut cx);
-//             }
-//             Ok(())
-//         }))
-//     }
-
-//     pub fn prepare_to_close(
-//         &mut self,
-//         quitting: bool,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<Result<bool>> {
-//         let active_call = self.active_call().cloned();
-//         let window = cx.window();
-
-//         cx.spawn(|this, mut cx| async move {
-//             let workspace_count = cx
-//                 .windows()
-//                 .into_iter()
-//                 .filter(|window| window.root_is::<Workspace>())
-//                 .count();
-
-//             if let Some(active_call) = active_call {
-//                 if !quitting
-//                     && workspace_count == 1
-//                     && active_call.read_with(&cx, |call, _| call.room().is_some())
-//                 {
-//                     let answer = window.prompt(
-//                         PromptLevel::Warning,
-//                         "Do you want to leave the current call?",
-//                         &["Close window and hang up", "Cancel"],
-//                         &mut cx,
-//                     );
-
-//                     if let Some(mut answer) = answer {
-//                         if answer.next().await == Some(1) {
-//                             return anyhow::Ok(false);
-//                         } else {
-//                             active_call
-//                                 .update(&mut cx, |call, cx| call.hang_up(cx))
-//                                 .await
-//                                 .log_err();
-//                         }
-//                     }
-//                 }
-//             }
-
-//             Ok(this
-//                 .update(&mut cx, |this, cx| {
-//                     this.save_all_internal(SaveIntent::Close, cx)
-//                 })?
-//                 .await?)
-//         })
-//     }
-
-//     fn save_all(
-//         &mut self,
-//         action: &SaveAll,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<Task<Result<()>>> {
-//         let save_all =
-//             self.save_all_internal(action.save_intent.unwrap_or(SaveIntent::SaveAll), cx);
-//         Some(cx.foreground().spawn(async move {
-//             save_all.await?;
-//             Ok(())
-//         }))
-//     }
-
-//     fn save_all_internal(
-//         &mut self,
-//         mut save_intent: SaveIntent,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<Result<bool>> {
-//         if self.project.read(cx).is_read_only() {
-//             return Task::ready(Ok(true));
-//         }
-//         let dirty_items = self
-//             .panes
-//             .iter()
-//             .flat_map(|pane| {
-//                 pane.read(cx).items().filter_map(|item| {
-//                     if item.is_dirty(cx) {
-//                         Some((pane.downgrade(), item.boxed_clone()))
-//                     } else {
-//                         None
-//                     }
-//                 })
-//             })
-//             .collect::<Vec<_>>();
-
-//         let project = self.project.clone();
-//         cx.spawn(|workspace, mut cx| async move {
-//             // Override save mode and display "Save all files" prompt
-//             if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
-//                 let mut answer = workspace.update(&mut cx, |_, cx| {
-//                     let prompt = Pane::file_names_for_prompt(
-//                         &mut dirty_items.iter().map(|(_, handle)| handle),
-//                         dirty_items.len(),
-//                         cx,
-//                     );
-//                     cx.prompt(
-//                         PromptLevel::Warning,
-//                         &prompt,
-//                         &["Save all", "Discard all", "Cancel"],
-//                     )
-//                 })?;
-//                 match answer.next().await {
-//                     Some(0) => save_intent = SaveIntent::SaveAll,
-//                     Some(1) => save_intent = SaveIntent::Skip,
-//                     _ => {}
-//                 }
-//             }
-//             for (pane, item) in dirty_items {
-//                 let (singleton, project_entry_ids) =
-//                     cx.read(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)));
-//                 if singleton || !project_entry_ids.is_empty() {
-//                     if let Some(ix) =
-//                         pane.read_with(&cx, |pane, _| pane.index_for_item(item.as_ref()))?
-//                     {
-//                         if !Pane::save_item(
-//                             project.clone(),
-//                             &pane,
-//                             ix,
-//                             &*item,
-//                             save_intent,
-//                             &mut cx,
-//                         )
-//                         .await?
-//                         {
-//                             return Ok(false);
-//                         }
-//                     }
-//                 }
-//             }
-//             Ok(true)
-//         })
-//     }
-
-//     pub fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-//         let mut paths = cx.prompt_for_paths(PathPromptOptions {
-//             files: true,
-//             directories: true,
-//             multiple: true,
-//         });
-
-//         Some(cx.spawn(|this, mut cx| async move {
-//             if let Some(paths) = paths.recv().await.flatten() {
-//                 if let Some(task) = this
-//                     .update(&mut cx, |this, cx| this.open_workspace_for_paths(paths, cx))
-//                     .log_err()
-//                 {
-//                     task.await?
-//                 }
-//             }
-//             Ok(())
-//         }))
-//     }
-
-//     pub fn open_workspace_for_paths(
-//         &mut self,
-//         paths: Vec<PathBuf>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<Result<()>> {
-//         let window = cx.window().downcast::<Self>();
-//         let is_remote = self.project.read(cx).is_remote();
-//         let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
-//         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
-//         let close_task = if is_remote || has_worktree || has_dirty_items {
-//             None
-//         } else {
-//             Some(self.prepare_to_close(false, cx))
-//         };
-//         let app_state = self.app_state.clone();
-
-//         cx.spawn(|_, mut cx| async move {
-//             let window_to_replace = if let Some(close_task) = close_task {
-//                 if !close_task.await? {
-//                     return Ok(());
-//                 }
-//                 window
-//             } else {
-//                 None
-//             };
-//             cx.update(|cx| open_paths(&paths, &app_state, window_to_replace, cx))
-//                 .await?;
-//             Ok(())
-//         })
-//     }
-
-//     #[allow(clippy::type_complexity)]
-//     pub fn open_paths(
-//         &mut self,
-//         mut abs_paths: Vec<PathBuf>,
-//         visible: bool,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
-//         log::info!("open paths {:?}", abs_paths);
-
-//         let fs = self.app_state.fs.clone();
-
-//         // Sort the paths to ensure we add worktrees for parents before their children.
-//         abs_paths.sort_unstable();
-//         cx.spawn(|this, mut cx| async move {
-//             let mut tasks = Vec::with_capacity(abs_paths.len());
-//             for abs_path in &abs_paths {
-//                 let project_path = match this
-//                     .update(&mut cx, |this, cx| {
-//                         Workspace::project_path_for_path(
-//                             this.project.clone(),
-//                             abs_path,
-//                             visible,
-//                             cx,
-//                         )
-//                     })
-//                     .log_err()
-//                 {
-//                     Some(project_path) => project_path.await.log_err(),
-//                     None => None,
-//                 };
-
-//                 let this = this.clone();
-//                 let task = cx.spawn(|mut cx| {
-//                     let fs = fs.clone();
-//                     let abs_path = abs_path.clone();
-//                     async move {
-//                         let (worktree, project_path) = project_path?;
-//                         if fs.is_file(&abs_path).await {
-//                             Some(
-//                                 this.update(&mut cx, |this, cx| {
-//                                     this.open_path(project_path, None, true, cx)
-//                                 })
-//                                 .log_err()?
-//                                 .await,
-//                             )
-//                         } else {
-//                             this.update(&mut cx, |workspace, cx| {
-//                                 let worktree = worktree.read(cx);
-//                                 let worktree_abs_path = worktree.abs_path();
-//                                 let entry_id = if abs_path == worktree_abs_path.as_ref() {
-//                                     worktree.root_entry()
-//                                 } else {
-//                                     abs_path
-//                                         .strip_prefix(worktree_abs_path.as_ref())
-//                                         .ok()
-//                                         .and_then(|relative_path| {
-//                                             worktree.entry_for_path(relative_path)
-//                                         })
-//                                 }
-//                                 .map(|entry| entry.id);
-//                                 if let Some(entry_id) = entry_id {
-//                                     workspace.project().update(cx, |_, cx| {
-//                                         cx.emit(project::Event::ActiveEntryChanged(Some(entry_id)));
-//                                     })
-//                                 }
-//                             })
-//                             .log_err()?;
-//                             None
-//                         }
-//                     }
-//                 });
-//                 tasks.push(task);
-//             }
-
-//             futures::future::join_all(tasks).await
-//         })
-//     }
-
-//     fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
-//         let mut paths = cx.prompt_for_paths(PathPromptOptions {
-//             files: false,
-//             directories: true,
-//             multiple: true,
-//         });
-//         cx.spawn(|this, mut cx| async move {
-//             if let Some(paths) = paths.recv().await.flatten() {
-//                 let results = this
-//                     .update(&mut cx, |this, cx| this.open_paths(paths, true, cx))?
-//                     .await;
-//                 for result in results.into_iter().flatten() {
-//                     result.log_err();
-//                 }
-//             }
-//             anyhow::Ok(())
-//         })
-//         .detach_and_log_err(cx);
-//     }
-
-//     fn project_path_for_path(
-//         project: ModelHandle<Project>,
-//         abs_path: &Path,
-//         visible: bool,
-//         cx: &mut AppContext,
-//     ) -> Task<Result<(ModelHandle<Worktree>, ProjectPath)>> {
-//         let entry = project.update(cx, |project, cx| {
-//             project.find_or_create_local_worktree(abs_path, visible, cx)
-//         });
-//         cx.spawn(|cx| async move {
-//             let (worktree, path) = entry.await?;
-//             let worktree_id = worktree.read_with(&cx, |t, _| t.id());
-//             Ok((
-//                 worktree,
-//                 ProjectPath {
-//                     worktree_id,
-//                     path: path.into(),
-//                 },
-//             ))
-//         })
-//     }
-
-//     /// Returns the modal that was toggled closed if it was open.
-//     pub fn toggle_modal<V, F>(
-//         &mut self,
-//         cx: &mut ViewContext<Self>,
-//         add_view: F,
-//     ) -> Option<ViewHandle<V>>
-//     where
-//         V: 'static + Modal,
-//         F: FnOnce(&mut Self, &mut ViewContext<Self>) -> ViewHandle<V>,
-//     {
-//         cx.notify();
-//         // Whatever modal was visible is getting clobbered. If its the same type as V, then return
-//         // it. Otherwise, create a new modal and set it as active.
-//         if let Some(already_open_modal) = self
-//             .dismiss_modal(cx)
-//             .and_then(|modal| modal.downcast::<V>())
-//         {
-//             cx.focus_self();
-//             Some(already_open_modal)
-//         } else {
-//             let modal = add_view(self, cx);
-//             cx.subscribe(&modal, |this, _, event, cx| {
-//                 if V::dismiss_on_event(event) {
-//                     this.dismiss_modal(cx);
-//                 }
-//             })
-//             .detach();
-//             let previously_focused_view_id = cx.focused_view_id();
-//             cx.focus(&modal);
-//             self.modal = Some(ActiveModal {
-//                 view: Box::new(modal),
-//                 previously_focused_view_id,
-//             });
-//             None
-//         }
-//     }
-
-//     pub fn modal<V: 'static + View>(&self) -> Option<ViewHandle<V>> {
-//         self.modal
-//             .as_ref()
-//             .and_then(|modal| modal.view.as_any().clone().downcast::<V>())
-//     }
-
-//     pub fn dismiss_modal(&mut self, cx: &mut ViewContext<Self>) -> Option<AnyViewHandle> {
-//         if let Some(modal) = self.modal.take() {
-//             if let Some(previously_focused_view_id) = modal.previously_focused_view_id {
-//                 if modal.view.has_focus(cx) {
-//                     cx.window_context().focus(Some(previously_focused_view_id));
-//                 }
-//             }
-//             cx.notify();
-//             Some(modal.view.as_any().clone())
-//         } else {
-//             None
-//         }
-//     }
-
-//     pub fn items<'a>(
-//         &'a self,
-//         cx: &'a AppContext,
-//     ) -> impl 'a + Iterator<Item = &Box<dyn ItemHandle>> {
-//         self.panes.iter().flat_map(|pane| pane.read(cx).items())
-//     }
-
-//     pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
-//         self.items_of_type(cx).max_by_key(|item| item.id())
-//     }
-
-//     pub fn items_of_type<'a, T: Item>(
-//         &'a self,
-//         cx: &'a AppContext,
-//     ) -> impl 'a + Iterator<Item = ViewHandle<T>> {
-//         self.panes
-//             .iter()
-//             .flat_map(|pane| pane.read(cx).items_of_type())
-//     }
-
-//     pub fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
-//         self.active_pane().read(cx).active_item()
-//     }
-
-//     fn active_project_path(&self, cx: &ViewContext<Self>) -> Option<ProjectPath> {
-//         self.active_item(cx).and_then(|item| item.project_path(cx))
-//     }
-
-//     pub fn save_active_item(
-//         &mut self,
-//         save_intent: SaveIntent,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<Result<()>> {
-//         let project = self.project.clone();
-//         let pane = self.active_pane();
-//         let item_ix = pane.read(cx).active_item_index();
-//         let item = pane.read(cx).active_item();
-//         let pane = pane.downgrade();
-
-//         cx.spawn(|_, mut cx| async move {
-//             if let Some(item) = item {
-//                 Pane::save_item(project, &pane, item_ix, item.as_ref(), save_intent, &mut cx)
-//                     .await
-//                     .map(|_| ())
-//             } else {
-//                 Ok(())
-//             }
-//         })
-//     }
-
-//     pub fn close_inactive_items_and_panes(
-//         &mut self,
-//         _: &CloseInactiveTabsAndPanes,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<Task<Result<()>>> {
-//         self.close_all_internal(true, SaveIntent::Close, cx)
-//     }
-
-//     pub fn close_all_items_and_panes(
-//         &mut self,
-//         action: &CloseAllItemsAndPanes,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<Task<Result<()>>> {
-//         self.close_all_internal(false, action.save_intent.unwrap_or(SaveIntent::Close), cx)
-//     }
-
-//     fn close_all_internal(
-//         &mut self,
-//         retain_active_pane: bool,
-//         save_intent: SaveIntent,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<Task<Result<()>>> {
-//         let current_pane = self.active_pane();
-
-//         let mut tasks = Vec::new();
-
-//         if retain_active_pane {
-//             if let Some(current_pane_close) = current_pane.update(cx, |pane, cx| {
-//                 pane.close_inactive_items(&CloseInactiveItems, cx)
-//             }) {
-//                 tasks.push(current_pane_close);
-//             };
-//         }
-
-//         for pane in self.panes() {
-//             if retain_active_pane && pane.id() == current_pane.id() {
-//                 continue;
-//             }
-
-//             if let Some(close_pane_items) = pane.update(cx, |pane: &mut Pane, cx| {
-//                 pane.close_all_items(
-//                     &CloseAllItems {
-//                         save_intent: Some(save_intent),
-//                     },
-//                     cx,
-//                 )
-//             }) {
-//                 tasks.push(close_pane_items)
-//             }
-//         }
-
-//         if tasks.is_empty() {
-//             None
-//         } else {
-//             Some(cx.spawn(|_, _| async move {
-//                 for task in tasks {
-//                     task.await?
-//                 }
-//                 Ok(())
-//             }))
-//         }
-//     }
-
-//     pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
-//         let dock = match dock_side {
-//             DockPosition::Left => &self.left_dock,
-//             DockPosition::Bottom => &self.bottom_dock,
-//             DockPosition::Right => &self.right_dock,
-//         };
-//         let mut focus_center = false;
-//         let mut reveal_dock = false;
-//         dock.update(cx, |dock, cx| {
-//             let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
-//             let was_visible = dock.is_open() && !other_is_zoomed;
-//             dock.set_open(!was_visible, cx);
-
-//             if let Some(active_panel) = dock.active_panel() {
-//                 if was_visible {
-//                     if active_panel.has_focus(cx) {
-//                         focus_center = true;
-//                     }
-//                 } else {
-//                     cx.focus(active_panel.as_any());
-//                     reveal_dock = true;
-//                 }
-//             }
-//         });
-
-//         if reveal_dock {
-//             self.dismiss_zoomed_items_to_reveal(Some(dock_side), cx);
-//         }
-
-//         if focus_center {
-//             cx.focus_self();
-//         }
-
-//         cx.notify();
-//         self.serialize_workspace(cx);
-//     }
-
-//     pub fn close_all_docks(&mut self, cx: &mut ViewContext<Self>) {
-//         let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
-
-//         for dock in docks {
-//             dock.update(cx, |dock, cx| {
-//                 dock.set_open(false, cx);
-//             });
-//         }
-
-//         cx.focus_self();
-//         cx.notify();
-//         self.serialize_workspace(cx);
-//     }
-
-//     /// Transfer focus to the panel of the given type.
-//     pub fn focus_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) -> Option<ViewHandle<T>> {
-//         self.focus_or_unfocus_panel::<T>(cx, |_, _| true)?
-//             .as_any()
-//             .clone()
-//             .downcast()
-//     }
-
-//     /// Focus the panel of the given type if it isn't already focused. If it is
-//     /// already focused, then transfer focus back to the workspace center.
-//     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
-//         self.focus_or_unfocus_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
-//     }
-
-//     /// Focus or unfocus the given panel type, depending on the given callback.
-//     fn focus_or_unfocus_panel<T: Panel>(
-//         &mut self,
-//         cx: &mut ViewContext<Self>,
-//         should_focus: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool,
-//     ) -> Option<Rc<dyn PanelHandle>> {
-//         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
-//             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
-//                 let mut focus_center = false;
-//                 let mut reveal_dock = false;
-//                 let panel = dock.update(cx, |dock, cx| {
-//                     dock.activate_panel(panel_index, cx);
-
-//                     let panel = dock.active_panel().cloned();
-//                     if let Some(panel) = panel.as_ref() {
-//                         if should_focus(&**panel, cx) {
-//                             dock.set_open(true, cx);
-//                             cx.focus(panel.as_any());
-//                             reveal_dock = true;
-//                         } else {
-//                             // if panel.is_zoomed(cx) {
-//                             //     dock.set_open(false, cx);
-//                             // }
-//                             focus_center = true;
-//                         }
-//                     }
-//                     panel
-//                 });
-
-//                 if focus_center {
-//                     cx.focus_self();
-//                 }
-
-//                 self.serialize_workspace(cx);
-//                 cx.notify();
-//                 return panel;
-//             }
-//         }
-//         None
-//     }
-
-//     pub fn panel<T: Panel>(&self, cx: &WindowContext) -> Option<ViewHandle<T>> {
-//         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
-//             let dock = dock.read(cx);
-//             if let Some(panel) = dock.panel::<T>() {
-//                 return Some(panel);
-//             }
-//         }
-//         None
-//     }
-
-//     fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
-//         for pane in &self.panes {
-//             pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
-//         }
-
-//         self.left_dock.update(cx, |dock, cx| dock.zoom_out(cx));
-//         self.bottom_dock.update(cx, |dock, cx| dock.zoom_out(cx));
-//         self.right_dock.update(cx, |dock, cx| dock.zoom_out(cx));
-//         self.zoomed = None;
-//         self.zoomed_position = None;
-
-//         cx.notify();
-//     }
-
-//     #[cfg(any(test, feature = "test-support"))]
-//     pub fn zoomed_view(&self, cx: &AppContext) -> Option<AnyViewHandle> {
-//         self.zoomed.and_then(|view| view.upgrade(cx))
-//     }
-
-//     fn dismiss_zoomed_items_to_reveal(
-//         &mut self,
-//         dock_to_reveal: Option<DockPosition>,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         // If a center pane is zoomed, unzoom it.
-//         for pane in &self.panes {
-//             if pane != &self.active_pane || dock_to_reveal.is_some() {
-//                 pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
-//             }
-//         }
-
-//         // If another dock is zoomed, hide it.
-//         let mut focus_center = false;
-//         for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
-//             dock.update(cx, |dock, cx| {
-//                 if Some(dock.position()) != dock_to_reveal {
-//                     if let Some(panel) = dock.active_panel() {
-//                         if panel.is_zoomed(cx) {
-//                             focus_center |= panel.has_focus(cx);
-//                             dock.set_open(false, cx);
-//                         }
-//                     }
-//                 }
-//             });
-//         }
-
-//         if focus_center {
-//             cx.focus_self();
-//         }
-
-//         if self.zoomed_position != dock_to_reveal {
-//             self.zoomed = None;
-//             self.zoomed_position = None;
-//         }
-
-//         cx.notify();
-//     }
-
-//     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-//         let pane = cx.add_view(|cx| {
-//             Pane::new(
-//                 self.weak_handle(),
-//                 self.project.clone(),
-//                 self.pane_history_timestamp.clone(),
-//                 cx,
-//             )
-//         });
-//         cx.subscribe(&pane, Self::handle_pane_event).detach();
-//         self.panes.push(pane.clone());
-//         cx.focus(&pane);
-//         cx.emit(Event::PaneAdded(pane.clone()));
-//         pane
-//     }
-
-//     pub fn add_item_to_center(
-//         &mut self,
-//         item: Box<dyn ItemHandle>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> bool {
-//         if let Some(center_pane) = self.last_active_center_pane.clone() {
-//             if let Some(center_pane) = center_pane.upgrade(cx) {
-//                 center_pane.update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
-//                 true
-//             } else {
-//                 false
-//             }
-//         } else {
-//             false
-//         }
-//     }
-
-//     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-//         self.active_pane
-//             .update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
-//     }
-
-//     pub fn split_item(
-//         &mut self,
-//         split_direction: SplitDirection,
-//         item: Box<dyn ItemHandle>,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         let new_pane = self.split_pane(self.active_pane.clone(), split_direction, cx);
-//         new_pane.update(cx, move |new_pane, cx| {
-//             new_pane.add_item(item, true, true, None, cx)
-//         })
-//     }
-
-//     pub fn open_abs_path(
-//         &mut self,
-//         abs_path: PathBuf,
-//         visible: bool,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-//         cx.spawn(|workspace, mut cx| async move {
-//             let open_paths_task_result = workspace
-//                 .update(&mut cx, |workspace, cx| {
-//                     workspace.open_paths(vec![abs_path.clone()], visible, cx)
-//                 })
-//                 .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
-//                 .await;
-//             anyhow::ensure!(
-//                 open_paths_task_result.len() == 1,
-//                 "open abs path {abs_path:?} task returned incorrect number of results"
-//             );
-//             match open_paths_task_result
-//                 .into_iter()
-//                 .next()
-//                 .expect("ensured single task result")
-//             {
-//                 Some(open_result) => {
-//                     open_result.with_context(|| format!("open abs path {abs_path:?} task join"))
-//                 }
-//                 None => anyhow::bail!("open abs path {abs_path:?} task returned None"),
-//             }
-//         })
-//     }
-
-//     pub fn split_abs_path(
-//         &mut self,
-//         abs_path: PathBuf,
-//         visible: bool,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-//         let project_path_task =
-//             Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
-//         cx.spawn(|this, mut cx| async move {
-//             let (_, path) = project_path_task.await?;
-//             this.update(&mut cx, |this, cx| this.split_path(path, cx))?
-//                 .await
-//         })
-//     }
-
-//     pub fn open_path(
-//         &mut self,
-//         path: impl Into<ProjectPath>,
-//         pane: Option<WeakViewHandle<Pane>>,
-//         focus_item: bool,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
-//         let pane = pane.unwrap_or_else(|| {
-//             self.last_active_center_pane.clone().unwrap_or_else(|| {
-//                 self.panes
-//                     .first()
-//                     .expect("There must be an active pane")
-//                     .downgrade()
-//             })
-//         });
-
-//         let task = self.load_path(path.into(), cx);
-//         cx.spawn(|_, mut cx| async move {
-//             let (project_entry_id, build_item) = task.await?;
-//             pane.update(&mut cx, |pane, cx| {
-//                 pane.open_item(project_entry_id, focus_item, cx, build_item)
-//             })
-//         })
-//     }
-
-//     pub fn split_path(
-//         &mut self,
-//         path: impl Into<ProjectPath>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
-//         let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
-//             self.panes
-//                 .first()
-//                 .expect("There must be an active pane")
-//                 .downgrade()
-//         });
-
-//         if let Member::Pane(center_pane) = &self.center.root {
-//             if center_pane.read(cx).items_len() == 0 {
-//                 return self.open_path(path, Some(pane), true, cx);
-//             }
-//         }
-
-//         let task = self.load_path(path.into(), cx);
-//         cx.spawn(|this, mut cx| async move {
-//             let (project_entry_id, build_item) = task.await?;
-//             this.update(&mut cx, move |this, cx| -> Option<_> {
-//                 let pane = pane.upgrade(cx)?;
-//                 let new_pane = this.split_pane(pane, SplitDirection::Right, cx);
-//                 new_pane.update(cx, |new_pane, cx| {
-//                     Some(new_pane.open_item(project_entry_id, true, cx, build_item))
-//                 })
-//             })
-//             .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
-//         })
-//     }
-
-//     pub(crate) fn load_path(
-//         &mut self,
-//         path: ProjectPath,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<
-//         Result<(
-//             ProjectEntryId,
-//             impl 'static + FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
-//         )>,
-//     > {
-//         let project = self.project().clone();
-//         let project_item = project.update(cx, |project, cx| project.open_path(path, cx));
-//         cx.spawn(|_, mut cx| async move {
-//             let (project_entry_id, project_item) = project_item.await?;
-//             let build_item = cx.update(|cx| {
-//                 cx.default_global::<ProjectItemBuilders>()
-//                     .get(&project_item.model_type())
-//                     .ok_or_else(|| anyhow!("no item builder for project item"))
-//                     .cloned()
-//             })?;
-//             let build_item =
-//                 move |cx: &mut ViewContext<Pane>| build_item(project, project_item, cx);
-//             Ok((project_entry_id, build_item))
-//         })
-//     }
-
-//     pub fn open_project_item<T>(
-//         &mut self,
-//         project_item: ModelHandle<T::Item>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> ViewHandle<T>
-//     where
-//         T: ProjectItem,
-//     {
-//         use project::Item as _;
-
-//         let entry_id = project_item.read(cx).entry_id(cx);
-//         if let Some(item) = entry_id
-//             .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id, cx))
-//             .and_then(|item| item.downcast())
-//         {
-//             self.activate_item(&item, cx);
-//             return item;
-//         }
-
-//         let item = cx.add_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
-//         self.add_item(Box::new(item.clone()), cx);
-//         item
-//     }
-
-//     pub fn split_project_item<T>(
-//         &mut self,
-//         project_item: ModelHandle<T::Item>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> ViewHandle<T>
-//     where
-//         T: ProjectItem,
-//     {
-//         use project::Item as _;
-
-//         let entry_id = project_item.read(cx).entry_id(cx);
-//         if let Some(item) = entry_id
-//             .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id, cx))
-//             .and_then(|item| item.downcast())
-//         {
-//             self.activate_item(&item, cx);
-//             return item;
-//         }
-
-//         let item = cx.add_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
-//         self.split_item(SplitDirection::Right, Box::new(item.clone()), cx);
-//         item
-//     }
-
-//     pub fn open_shared_screen(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
-//         if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
-//             self.active_pane.update(cx, |pane, cx| {
-//                 pane.add_item(Box::new(shared_screen), false, true, None, cx)
-//             });
-//         }
-//     }
-
-//     pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
-//         let result = self.panes.iter().find_map(|pane| {
-//             pane.read(cx)
-//                 .index_for_item(item)
-//                 .map(|ix| (pane.clone(), ix))
-//         });
-//         if let Some((pane, ix)) = result {
-//             pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, cx));
-//             true
-//         } else {
-//             false
-//         }
-//     }
-
-//     fn activate_pane_at_index(&mut self, action: &ActivatePane, cx: &mut ViewContext<Self>) {
-//         let panes = self.center.panes();
-//         if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
-//             cx.focus(&pane);
-//         } else {
-//             self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, cx);
-//         }
-//     }
-
-//     pub fn activate_next_pane(&mut self, cx: &mut ViewContext<Self>) {
-//         let panes = self.center.panes();
-//         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
-//             let next_ix = (ix + 1) % panes.len();
-//             let next_pane = panes[next_ix].clone();
-//             cx.focus(&next_pane);
-//         }
-//     }
-
-//     pub fn activate_previous_pane(&mut self, cx: &mut ViewContext<Self>) {
-//         let panes = self.center.panes();
-//         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
-//             let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
-//             let prev_pane = panes[prev_ix].clone();
-//             cx.focus(&prev_pane);
-//         }
-//     }
-
-//     pub fn activate_pane_in_direction(
-//         &mut self,
-//         direction: SplitDirection,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         if let Some(pane) = self.find_pane_in_direction(direction, cx) {
-//             cx.focus(pane);
-//         }
-//     }
-
-//     pub fn swap_pane_in_direction(
-//         &mut self,
-//         direction: SplitDirection,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         if let Some(to) = self
-//             .find_pane_in_direction(direction, cx)
-//             .map(|pane| pane.clone())
-//         {
-//             self.center.swap(&self.active_pane.clone(), &to);
-//             cx.notify();
-//         }
-//     }
-
-//     fn find_pane_in_direction(
-//         &mut self,
-//         direction: SplitDirection,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<&ViewHandle<Pane>> {
-//         let Some(bounding_box) = self.center.bounding_box_for_pane(&self.active_pane) else {
-//             return None;
-//         };
-//         let cursor = self.active_pane.read(cx).pixel_position_of_cursor(cx);
-//         let center = match cursor {
-//             Some(cursor) if bounding_box.contains_point(cursor) => cursor,
-//             _ => bounding_box.center(),
-//         };
-
-//         let distance_to_next = theme::current(cx).workspace.pane_divider.width + 1.;
-
-//         let target = match direction {
-//             SplitDirection::Left => vec2f(bounding_box.origin_x() - distance_to_next, center.y()),
-//             SplitDirection::Right => vec2f(bounding_box.max_x() + distance_to_next, center.y()),
-//             SplitDirection::Up => vec2f(center.x(), bounding_box.origin_y() - distance_to_next),
-//             SplitDirection::Down => vec2f(center.x(), bounding_box.max_y() + distance_to_next),
-//         };
-//         self.center.pane_at_pixel_position(target)
-//     }
-
-//     fn handle_pane_focused(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
-//         if self.active_pane != pane {
-//             self.active_pane = pane.clone();
-//             self.status_bar.update(cx, |status_bar, cx| {
-//                 status_bar.set_active_pane(&self.active_pane, cx);
-//             });
-//             self.active_item_path_changed(cx);
-//             self.last_active_center_pane = Some(pane.downgrade());
-//         }
-
-//         self.dismiss_zoomed_items_to_reveal(None, cx);
-//         if pane.read(cx).is_zoomed() {
-//             self.zoomed = Some(pane.downgrade().into_any());
-//         } else {
-//             self.zoomed = None;
-//         }
-//         self.zoomed_position = None;
-//         self.update_active_view_for_followers(cx);
-
-//         cx.notify();
-//     }
-
-//     fn handle_pane_event(
-//         &mut self,
-//         pane: ViewHandle<Pane>,
-//         event: &pane::Event,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         match event {
-//             pane::Event::AddItem { item } => item.added_to_pane(self, pane, cx),
-//             pane::Event::Split(direction) => {
-//                 self.split_and_clone(pane, *direction, cx);
-//             }
-//             pane::Event::Remove => self.remove_pane(pane, cx),
-//             pane::Event::ActivateItem { local } => {
-//                 if *local {
-//                     self.unfollow(&pane, cx);
-//                 }
-//                 if &pane == self.active_pane() {
-//                     self.active_item_path_changed(cx);
-//                 }
-//             }
-//             pane::Event::ChangeItemTitle => {
-//                 if pane == self.active_pane {
-//                     self.active_item_path_changed(cx);
-//                 }
-//                 self.update_window_edited(cx);
-//             }
-//             pane::Event::RemoveItem { item_id } => {
-//                 self.update_window_edited(cx);
-//                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
-//                     if entry.get().id() == pane.id() {
-//                         entry.remove();
-//                     }
-//                 }
-//             }
-//             pane::Event::Focus => {
-//                 self.handle_pane_focused(pane.clone(), cx);
-//             }
-//             pane::Event::ZoomIn => {
-//                 if pane == self.active_pane {
-//                     pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
-//                     if pane.read(cx).has_focus() {
-//                         self.zoomed = Some(pane.downgrade().into_any());
-//                         self.zoomed_position = None;
-//                     }
-//                     cx.notify();
-//                 }
-//             }
-//             pane::Event::ZoomOut => {
-//                 pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
-//                 if self.zoomed_position.is_none() {
-//                     self.zoomed = None;
-//                 }
-//                 cx.notify();
-//             }
-//         }
-
-//         self.serialize_workspace(cx);
-//     }
-
-//     pub fn split_pane(
-//         &mut self,
-//         pane_to_split: ViewHandle<Pane>,
-//         split_direction: SplitDirection,
-//         cx: &mut ViewContext<Self>,
-//     ) -> ViewHandle<Pane> {
-//         let new_pane = self.add_pane(cx);
-//         self.center
-//             .split(&pane_to_split, &new_pane, split_direction)
-//             .unwrap();
-//         cx.notify();
-//         new_pane
-//     }
-
-//     pub fn split_and_clone(
-//         &mut self,
-//         pane: ViewHandle<Pane>,
-//         direction: SplitDirection,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<ViewHandle<Pane>> {
-//         let item = pane.read(cx).active_item()?;
-//         let maybe_pane_handle = if let Some(clone) = item.clone_on_split(self.database_id(), cx) {
-//             let new_pane = self.add_pane(cx);
-//             new_pane.update(cx, |pane, cx| pane.add_item(clone, true, true, None, cx));
-//             self.center.split(&pane, &new_pane, direction).unwrap();
-//             Some(new_pane)
-//         } else {
-//             None
-//         };
-//         cx.notify();
-//         maybe_pane_handle
-//     }
-
-//     pub fn split_pane_with_item(
-//         &mut self,
-//         pane_to_split: WeakViewHandle<Pane>,
-//         split_direction: SplitDirection,
-//         from: WeakViewHandle<Pane>,
-//         item_id_to_move: usize,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         let Some(pane_to_split) = pane_to_split.upgrade(cx) else {
-//             return;
-//         };
-//         let Some(from) = from.upgrade(cx) else {
-//             return;
-//         };
-
-//         let new_pane = self.add_pane(cx);
-//         self.move_item(from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
-//         self.center
-//             .split(&pane_to_split, &new_pane, split_direction)
-//             .unwrap();
-//         cx.notify();
-//     }
-
-//     pub fn split_pane_with_project_entry(
-//         &mut self,
-//         pane_to_split: WeakViewHandle<Pane>,
-//         split_direction: SplitDirection,
-//         project_entry: ProjectEntryId,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<Task<Result<()>>> {
-//         let pane_to_split = pane_to_split.upgrade(cx)?;
-//         let new_pane = self.add_pane(cx);
-//         self.center
-//             .split(&pane_to_split, &new_pane, split_direction)
-//             .unwrap();
-
-//         let path = self.project.read(cx).path_for_entry(project_entry, cx)?;
-//         let task = self.open_path(path, Some(new_pane.downgrade()), true, cx);
-//         Some(cx.foreground().spawn(async move {
-//             task.await?;
-//             Ok(())
-//         }))
-//     }
-
-//     pub fn move_item(
-//         &mut self,
-//         source: ViewHandle<Pane>,
-//         destination: ViewHandle<Pane>,
-//         item_id_to_move: usize,
-//         destination_index: usize,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         let item_to_move = source
-//             .read(cx)
-//             .items()
-//             .enumerate()
-//             .find(|(_, item_handle)| item_handle.id() == item_id_to_move);
-
-//         if item_to_move.is_none() {
-//             log::warn!("Tried to move item handle which was not in `from` pane. Maybe tab was closed during drop");
-//             return;
-//         }
-//         let (item_ix, item_handle) = item_to_move.unwrap();
-//         let item_handle = item_handle.clone();
-
-//         if source != destination {
-//             // Close item from previous pane
-//             source.update(cx, |source, cx| {
-//                 source.remove_item(item_ix, false, cx);
-//             });
-//         }
-
-//         // This automatically removes duplicate items in the pane
-//         destination.update(cx, |destination, cx| {
-//             destination.add_item(item_handle, true, true, Some(destination_index), cx);
-//             cx.focus_self();
-//         });
-//     }
-
-//     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
-//         if self.center.remove(&pane).unwrap() {
-//             self.force_remove_pane(&pane, cx);
-//             self.unfollow(&pane, cx);
-//             self.last_leaders_by_pane.remove(&pane.downgrade());
-//             for removed_item in pane.read(cx).items() {
-//                 self.panes_by_item.remove(&removed_item.id());
-//             }
-
-//             cx.notify();
-//         } else {
-//             self.active_item_path_changed(cx);
-//         }
-//     }
-
-//     pub fn panes(&self) -> &[ViewHandle<Pane>] {
-//         &self.panes
-//     }
-
-//     pub fn active_pane(&self) -> &ViewHandle<Pane> {
-//         &self.active_pane
-//     }
-
-//     fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
-//         self.follower_states.retain(|_, state| {
-//             if state.leader_id == peer_id {
-//                 for item in state.items_by_leader_view_id.values() {
-//                     item.set_leader_peer_id(None, cx);
-//                 }
-//                 false
-//             } else {
-//                 true
-//             }
-//         });
-//         cx.notify();
-//     }
-
-//     fn start_following(
-//         &mut self,
-//         leader_id: PeerId,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<Task<Result<()>>> {
-//         let pane = self.active_pane().clone();
-
-//         self.last_leaders_by_pane
-//             .insert(pane.downgrade(), leader_id);
-//         self.unfollow(&pane, cx);
-//         self.follower_states.insert(
-//             pane.clone(),
-//             FollowerState {
-//                 leader_id,
-//                 active_view_id: None,
-//                 items_by_leader_view_id: Default::default(),
-//             },
-//         );
-//         cx.notify();
-
-//         let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
-//         let project_id = self.project.read(cx).remote_id();
-//         let request = self.app_state.client.request(proto::Follow {
-//             room_id,
-//             project_id,
-//             leader_id: Some(leader_id),
-//         });
-
-//         Some(cx.spawn(|this, mut cx| async move {
-//             let response = request.await?;
-//             this.update(&mut cx, |this, _| {
-//                 let state = this
-//                     .follower_states
-//                     .get_mut(&pane)
-//                     .ok_or_else(|| anyhow!("following interrupted"))?;
-//                 state.active_view_id = if let Some(active_view_id) = response.active_view_id {
-//                     Some(ViewId::from_proto(active_view_id)?)
-//                 } else {
-//                     None
-//                 };
-//                 Ok::<_, anyhow::Error>(())
-//             })??;
-//             Self::add_views_from_leader(
-//                 this.clone(),
-//                 leader_id,
-//                 vec![pane],
-//                 response.views,
-//                 &mut cx,
-//             )
-//             .await?;
-//             this.update(&mut cx, |this, cx| this.leader_updated(leader_id, cx))?;
-//             Ok(())
-//         }))
-//     }
-
-//     pub fn follow_next_collaborator(
-//         &mut self,
-//         _: &FollowNextCollaborator,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<Task<Result<()>>> {
-//         let collaborators = self.project.read(cx).collaborators();
-//         let next_leader_id = if let Some(leader_id) = self.leader_for_pane(&self.active_pane) {
-//             let mut collaborators = collaborators.keys().copied();
-//             for peer_id in collaborators.by_ref() {
-//                 if peer_id == leader_id {
-//                     break;
-//                 }
-//             }
-//             collaborators.next()
-//         } else if let Some(last_leader_id) =
-//             self.last_leaders_by_pane.get(&self.active_pane.downgrade())
-//         {
-//             if collaborators.contains_key(last_leader_id) {
-//                 Some(*last_leader_id)
-//             } else {
-//                 None
-//             }
-//         } else {
-//             None
-//         };
-
-//         let pane = self.active_pane.clone();
-//         let Some(leader_id) = next_leader_id.or_else(|| collaborators.keys().copied().next())
-//         else {
-//             return None;
-//         };
-//         if Some(leader_id) == self.unfollow(&pane, cx) {
-//             return None;
-//         }
-//         self.follow(leader_id, cx)
-//     }
-
-//     pub fn follow(
-//         &mut self,
-//         leader_id: PeerId,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<Task<Result<()>>> {
-//         let room = ActiveCall::global(cx).read(cx).room()?.read(cx);
-//         let project = self.project.read(cx);
-
-//         let Some(remote_participant) = room.remote_participant_for_peer_id(leader_id) else {
-//             return None;
-//         };
-
-//         let other_project_id = match remote_participant.location {
-//             call::ParticipantLocation::External => None,
-//             call::ParticipantLocation::UnsharedProject => None,
-//             call::ParticipantLocation::SharedProject { project_id } => {
-//                 if Some(project_id) == project.remote_id() {
-//                     None
-//                 } else {
-//                     Some(project_id)
-//                 }
-//             }
-//         };
-
-//         // if they are active in another project, follow there.
-//         if let Some(project_id) = other_project_id {
-//             let app_state = self.app_state.clone();
-//             return Some(crate::join_remote_project(
-//                 project_id,
-//                 remote_participant.user.id,
-//                 app_state,
-//                 cx,
-//             ));
-//         }
-
-//         // if you're already following, find the right pane and focus it.
-//         for (pane, state) in &self.follower_states {
-//             if leader_id == state.leader_id {
-//                 cx.focus(pane);
-//                 return None;
-//             }
-//         }
-
-//         // Otherwise, follow.
-//         self.start_following(leader_id, cx)
-//     }
-
-//     pub fn unfollow(
-//         &mut self,
-//         pane: &ViewHandle<Pane>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<PeerId> {
-//         let state = self.follower_states.remove(pane)?;
-//         let leader_id = state.leader_id;
-//         for (_, item) in state.items_by_leader_view_id {
-//             item.set_leader_peer_id(None, cx);
-//         }
-
-//         if self
-//             .follower_states
-//             .values()
-//             .all(|state| state.leader_id != state.leader_id)
-//         {
-//             let project_id = self.project.read(cx).remote_id();
-//             let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
-//             self.app_state
-//                 .client
-//                 .send(proto::Unfollow {
-//                     room_id,
-//                     project_id,
-//                     leader_id: Some(leader_id),
-//                 })
-//                 .log_err();
-//         }
-
-//         cx.notify();
-//         Some(leader_id)
-//     }
-
-//     pub fn is_being_followed(&self, peer_id: PeerId) -> bool {
-//         self.follower_states
-//             .values()
-//             .any(|state| state.leader_id == peer_id)
-//     }
-
-//     fn render_titlebar(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         // TODO: There should be a better system in place for this
-//         // (https://github.com/zed-industries/zed/issues/1290)
-//         let is_fullscreen = cx.window_is_fullscreen();
-//         let container_theme = if is_fullscreen {
-//             let mut container_theme = theme.titlebar.container;
-//             container_theme.padding.left = container_theme.padding.right;
-//             container_theme
-//         } else {
-//             theme.titlebar.container
-//         };
-
-//         enum TitleBar {}
-//         MouseEventHandler::new::<TitleBar, _>(0, cx, |_, cx| {
-//             Stack::new()
-//                 .with_children(
-//                     self.titlebar_item
-//                         .as_ref()
-//                         .map(|item| ChildView::new(item, cx)),
-//                 )
-//                 .contained()
-//                 .with_style(container_theme)
-//         })
-//         .on_click(MouseButton::Left, |event, _, cx| {
-//             if event.click_count == 2 {
-//                 cx.zoom_window();
-//             }
-//         })
-//         .constrained()
-//         .with_height(theme.titlebar.height)
-//         .into_any_named("titlebar")
-//     }
-
-//     fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
-//         let active_entry = self.active_project_path(cx);
-//         self.project
-//             .update(cx, |project, cx| project.set_active_path(active_entry, cx));
-//         self.update_window_title(cx);
-//     }
-
-//     fn update_window_title(&mut self, cx: &mut ViewContext<Self>) {
-//         let project = self.project().read(cx);
-//         let mut title = String::new();
-
-//         if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
-//             let filename = path
-//                 .path
-//                 .file_name()
-//                 .map(|s| s.to_string_lossy())
-//                 .or_else(|| {
-//                     Some(Cow::Borrowed(
-//                         project
-//                             .worktree_for_id(path.worktree_id, cx)?
-//                             .read(cx)
-//                             .root_name(),
-//                     ))
-//                 });
-
-//             if let Some(filename) = filename {
-//                 title.push_str(filename.as_ref());
-//                 title.push_str(" — ");
-//             }
-//         }
-
-//         for (i, name) in project.worktree_root_names(cx).enumerate() {
-//             if i > 0 {
-//                 title.push_str(", ");
-//             }
-//             title.push_str(name);
-//         }
-
-//         if title.is_empty() {
-//             title = "empty project".to_string();
-//         }
-
-//         if project.is_remote() {
-//             title.push_str(" ↙");
-//         } else if project.is_shared() {
-//             title.push_str(" ↗");
-//         }
-
-//         cx.set_window_title(&title);
-//     }
-
-//     fn update_window_edited(&mut self, cx: &mut ViewContext<Self>) {
-//         let is_edited = !self.project.read(cx).is_read_only()
-//             && self
-//                 .items(cx)
-//                 .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
-//         if is_edited != self.window_edited {
-//             self.window_edited = is_edited;
-//             cx.set_window_edited(self.window_edited)
-//         }
-//     }
-
-//     fn render_disconnected_overlay(
-//         &self,
-//         cx: &mut ViewContext<Workspace>,
-//     ) -> Option<AnyElement<Workspace>> {
-//         if self.project.read(cx).is_read_only() {
-//             enum DisconnectedOverlay {}
-//             Some(
-//                 MouseEventHandler::new::<DisconnectedOverlay, _>(0, cx, |_, cx| {
-//                     let theme = &theme::current(cx);
-//                     Label::new(
-//                         "Your connection to the remote project has been lost.",
-//                         theme.workspace.disconnected_overlay.text.clone(),
-//                     )
-//                     .aligned()
-//                     .contained()
-//                     .with_style(theme.workspace.disconnected_overlay.container)
-//                 })
-//                 .with_cursor_style(CursorStyle::Arrow)
-//                 .capture_all()
-//                 .into_any_named("disconnected overlay"),
-//             )
-//         } else {
-//             None
-//         }
-//     }
-
-//     fn render_notifications(
-//         &self,
-//         theme: &theme::Workspace,
-//         cx: &AppContext,
-//     ) -> Option<AnyElement<Workspace>> {
-//         if self.notifications.is_empty() {
-//             None
-//         } else {
-//             Some(
-//                 Flex::column()
-//                     .with_children(self.notifications.iter().map(|(_, _, notification)| {
-//                         ChildView::new(notification.as_any(), cx)
-//                             .contained()
-//                             .with_style(theme.notification)
-//                     }))
-//                     .constrained()
-//                     .with_width(theme.notifications.width)
-//                     .contained()
-//                     .with_style(theme.notifications.container)
-//                     .aligned()
-//                     .bottom()
-//                     .right()
-//                     .into_any(),
-//             )
-//         }
-//     }
-
-//     // RPC handlers
-
-//     fn handle_follow(
-//         &mut self,
-//         follower_project_id: Option<u64>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> proto::FollowResponse {
-//         let client = &self.app_state.client;
-//         let project_id = self.project.read(cx).remote_id();
-
-//         let active_view_id = self.active_item(cx).and_then(|i| {
-//             Some(
-//                 i.to_followable_item_handle(cx)?
-//                     .remote_id(client, cx)?
-//                     .to_proto(),
-//             )
-//         });
-
-//         cx.notify();
-
-//         self.last_active_view_id = active_view_id.clone();
-//         proto::FollowResponse {
-//             active_view_id,
-//             views: self
-//                 .panes()
-//                 .iter()
-//                 .flat_map(|pane| {
-//                     let leader_id = self.leader_for_pane(pane);
-//                     pane.read(cx).items().filter_map({
-//                         let cx = &cx;
-//                         move |item| {
-//                             let item = item.to_followable_item_handle(cx)?;
-//                             if (project_id.is_none() || project_id != follower_project_id)
-//                                 && item.is_project_item(cx)
-//                             {
-//                                 return None;
-//                             }
-//                             let id = item.remote_id(client, cx)?.to_proto();
-//                             let variant = item.to_state_proto(cx)?;
-//                             Some(proto::View {
-//                                 id: Some(id),
-//                                 leader_id,
-//                                 variant: Some(variant),
-//                             })
-//                         }
-//                     })
-//                 })
-//                 .collect(),
-//         }
-//     }
-
-//     fn handle_update_followers(
-//         &mut self,
-//         leader_id: PeerId,
-//         message: proto::UpdateFollowers,
-//         _cx: &mut ViewContext<Self>,
-//     ) {
-//         self.leader_updates_tx
-//             .unbounded_send((leader_id, message))
-//             .ok();
-//     }
-
-//     async fn process_leader_update(
-//         this: &WeakViewHandle<Self>,
-//         leader_id: PeerId,
-//         update: proto::UpdateFollowers,
-//         cx: &mut AsyncAppContext,
-//     ) -> Result<()> {
-//         match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
-//             proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
-//                 this.update(cx, |this, _| {
-//                     for (_, state) in &mut this.follower_states {
-//                         if state.leader_id == leader_id {
-//                             state.active_view_id =
-//                                 if let Some(active_view_id) = update_active_view.id.clone() {
-//                                     Some(ViewId::from_proto(active_view_id)?)
-//                                 } else {
-//                                     None
-//                                 };
-//                         }
-//                     }
-//                     anyhow::Ok(())
-//                 })??;
-//             }
-//             proto::update_followers::Variant::UpdateView(update_view) => {
-//                 let variant = update_view
-//                     .variant
-//                     .ok_or_else(|| anyhow!("missing update view variant"))?;
-//                 let id = update_view
-//                     .id
-//                     .ok_or_else(|| anyhow!("missing update view id"))?;
-//                 let mut tasks = Vec::new();
-//                 this.update(cx, |this, cx| {
-//                     let project = this.project.clone();
-//                     for (_, state) in &mut this.follower_states {
-//                         if state.leader_id == leader_id {
-//                             let view_id = ViewId::from_proto(id.clone())?;
-//                             if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
-//                                 tasks.push(item.apply_update_proto(&project, variant.clone(), cx));
-//                             }
-//                         }
-//                     }
-//                     anyhow::Ok(())
-//                 })??;
-//                 try_join_all(tasks).await.log_err();
-//             }
-//             proto::update_followers::Variant::CreateView(view) => {
-//                 let panes = this.read_with(cx, |this, _| {
-//                     this.follower_states
-//                         .iter()
-//                         .filter_map(|(pane, state)| (state.leader_id == leader_id).then_some(pane))
-//                         .cloned()
-//                         .collect()
-//                 })?;
-//                 Self::add_views_from_leader(this.clone(), leader_id, panes, vec![view], cx).await?;
-//             }
-//         }
-//         this.update(cx, |this, cx| this.leader_updated(leader_id, cx))?;
-//         Ok(())
-//     }
-
-//     async fn add_views_from_leader(
-//         this: WeakViewHandle<Self>,
-//         leader_id: PeerId,
-//         panes: Vec<ViewHandle<Pane>>,
-//         views: Vec<proto::View>,
-//         cx: &mut AsyncAppContext,
-//     ) -> Result<()> {
-//         let this = this
-//             .upgrade(cx)
-//             .ok_or_else(|| anyhow!("workspace dropped"))?;
-
-//         let item_builders = cx.update(|cx| {
-//             cx.default_global::<FollowableItemBuilders>()
-//                 .values()
-//                 .map(|b| b.0)
-//                 .collect::<Vec<_>>()
-//         });
-
-//         let mut item_tasks_by_pane = HashMap::default();
-//         for pane in panes {
-//             let mut item_tasks = Vec::new();
-//             let mut leader_view_ids = Vec::new();
-//             for view in &views {
-//                 let Some(id) = &view.id else { continue };
-//                 let id = ViewId::from_proto(id.clone())?;
-//                 let mut variant = view.variant.clone();
-//                 if variant.is_none() {
-//                     Err(anyhow!("missing view variant"))?;
-//                 }
-//                 for build_item in &item_builders {
-//                     let task = cx
-//                         .update(|cx| build_item(pane.clone(), this.clone(), id, &mut variant, cx));
-//                     if let Some(task) = task {
-//                         item_tasks.push(task);
-//                         leader_view_ids.push(id);
-//                         break;
-//                     } else {
-//                         assert!(variant.is_some());
-//                     }
-//                 }
-//             }
-
-//             item_tasks_by_pane.insert(pane, (item_tasks, leader_view_ids));
-//         }
-
-//         for (pane, (item_tasks, leader_view_ids)) in item_tasks_by_pane {
-//             let items = futures::future::try_join_all(item_tasks).await?;
-//             this.update(cx, |this, cx| {
-//                 let state = this.follower_states.get_mut(&pane)?;
-//                 for (id, item) in leader_view_ids.into_iter().zip(items) {
-//                     item.set_leader_peer_id(Some(leader_id), cx);
-//                     state.items_by_leader_view_id.insert(id, item);
-//                 }
-
-//                 Some(())
-//             });
-//         }
-//         Ok(())
-//     }
-
-//     fn update_active_view_for_followers(&mut self, cx: &AppContext) {
-//         let mut is_project_item = true;
-//         let mut update = proto::UpdateActiveView::default();
-//         if self.active_pane.read(cx).has_focus() {
-//             let item = self
-//                 .active_item(cx)
-//                 .and_then(|item| item.to_followable_item_handle(cx));
-//             if let Some(item) = item {
-//                 is_project_item = item.is_project_item(cx);
-//                 update = proto::UpdateActiveView {
-//                     id: item
-//                         .remote_id(&self.app_state.client, cx)
-//                         .map(|id| id.to_proto()),
-//                     leader_id: self.leader_for_pane(&self.active_pane),
-//                 };
-//             }
-//         }
-
-//         if update.id != self.last_active_view_id {
-//             self.last_active_view_id = update.id.clone();
-//             self.update_followers(
-//                 is_project_item,
-//                 proto::update_followers::Variant::UpdateActiveView(update),
-//                 cx,
-//             );
-//         }
-//     }
-
-//     fn update_followers(
-//         &self,
-//         project_only: bool,
-//         update: proto::update_followers::Variant,
-//         cx: &AppContext,
-//     ) -> Option<()> {
-//         let project_id = if project_only {
-//             self.project.read(cx).remote_id()
-//         } else {
-//             None
-//         };
-//         self.app_state().workspace_store.read_with(cx, |store, cx| {
-//             store.update_followers(project_id, update, cx)
-//         })
-//     }
-
-//     pub fn leader_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<PeerId> {
-//         self.follower_states.get(pane).map(|state| state.leader_id)
-//     }
-
-//     fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
-//         cx.notify();
-
-//         let call = self.active_call()?;
-//         let room = call.read(cx).room()?.read(cx);
-//         let participant = room.remote_participant_for_peer_id(leader_id)?;
-//         let mut items_to_activate = Vec::new();
-
-//         let leader_in_this_app;
-//         let leader_in_this_project;
-//         match participant.location {
-//             call::ParticipantLocation::SharedProject { project_id } => {
-//                 leader_in_this_app = true;
-//                 leader_in_this_project = Some(project_id) == self.project.read(cx).remote_id();
-//             }
-//             call::ParticipantLocation::UnsharedProject => {
-//                 leader_in_this_app = true;
-//                 leader_in_this_project = false;
-//             }
-//             call::ParticipantLocation::External => {
-//                 leader_in_this_app = false;
-//                 leader_in_this_project = false;
-//             }
-//         };
-
-//         for (pane, state) in &self.follower_states {
-//             if state.leader_id != leader_id {
-//                 continue;
-//             }
-//             if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
-//                 if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
-//                     if leader_in_this_project || !item.is_project_item(cx) {
-//                         items_to_activate.push((pane.clone(), item.boxed_clone()));
-//                     }
-//                 } else {
-//                     log::warn!(
-//                         "unknown view id {:?} for leader {:?}",
-//                         active_view_id,
-//                         leader_id
-//                     );
-//                 }
-//                 continue;
-//             }
-//             if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
-//                 items_to_activate.push((pane.clone(), Box::new(shared_screen)));
-//             }
-//         }
-
-//         for (pane, item) in items_to_activate {
-//             let pane_was_focused = pane.read(cx).has_focus();
-//             if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
-//                 pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
-//             } else {
-//                 pane.update(cx, |pane, cx| {
-//                     pane.add_item(item.boxed_clone(), false, false, None, cx)
-//                 });
-//             }
-
-//             if pane_was_focused {
-//                 pane.update(cx, |pane, cx| pane.focus_active_item(cx));
-//             }
-//         }
-
-//         None
-//     }
-
-//     fn shared_screen_for_peer(
-//         &self,
-//         peer_id: PeerId,
-//         pane: &ViewHandle<Pane>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<ViewHandle<SharedScreen>> {
-//         let call = self.active_call()?;
-//         let room = call.read(cx).room()?.read(cx);
-//         let participant = room.remote_participant_for_peer_id(peer_id)?;
-//         let track = participant.video_tracks.values().next()?.clone();
-//         let user = participant.user.clone();
-
-//         for item in pane.read(cx).items_of_type::<SharedScreen>() {
-//             if item.read(cx).peer_id == peer_id {
-//                 return Some(item);
-//             }
-//         }
-
-//         Some(cx.add_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
-//     }
-
-//     pub fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-//         if active {
-//             self.update_active_view_for_followers(cx);
-//             cx.background()
-//                 .spawn(persistence::DB.update_timestamp(self.database_id()))
-//                 .detach();
-//         } else {
-//             for pane in &self.panes {
-//                 pane.update(cx, |pane, cx| {
-//                     if let Some(item) = pane.active_item() {
-//                         item.workspace_deactivated(cx);
-//                     }
-//                     if matches!(
-//                         settings::get::<WorkspaceSettings>(cx).autosave,
-//                         AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
-//                     ) {
-//                         for item in pane.items() {
-//                             Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
-//                                 .detach_and_log_err(cx);
-//                         }
-//                     }
-//                 });
-//             }
-//         }
-//     }
-
-//     fn active_call(&self) -> Option<&ModelHandle<ActiveCall>> {
-//         self.active_call.as_ref().map(|(call, _)| call)
-//     }
-
-//     fn on_active_call_event(
-//         &mut self,
-//         _: ModelHandle<ActiveCall>,
-//         event: &call::room::Event,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         match event {
-//             call::room::Event::ParticipantLocationChanged { participant_id }
-//             | call::room::Event::RemoteVideoTracksChanged { participant_id } => {
-//                 self.leader_updated(*participant_id, cx);
-//             }
-//             _ => {}
-//         }
-//     }
-
-//     pub fn database_id(&self) -> WorkspaceId {
-//         self.database_id
-//     }
-
-//     fn location(&self, cx: &AppContext) -> Option<WorkspaceLocation> {
-//         let project = self.project().read(cx);
-
-//         if project.is_local() {
-//             Some(
-//                 project
-//                     .visible_worktrees(cx)
-//                     .map(|worktree| worktree.read(cx).abs_path())
-//                     .collect::<Vec<_>>()
-//                     .into(),
-//             )
-//         } else {
-//             None
-//         }
-//     }
-
-//     fn remove_panes(&mut self, member: Member, cx: &mut ViewContext<Workspace>) {
-//         match member {
-//             Member::Axis(PaneAxis { members, .. }) => {
-//                 for child in members.iter() {
-//                     self.remove_panes(child.clone(), cx)
-//                 }
-//             }
-//             Member::Pane(pane) => {
-//                 self.force_remove_pane(&pane, cx);
-//             }
-//         }
-//     }
-
-//     fn force_remove_pane(&mut self, pane: &ViewHandle<Pane>, cx: &mut ViewContext<Workspace>) {
-//         self.panes.retain(|p| p != pane);
-//         cx.focus(self.panes.last().unwrap());
-//         if self.last_active_center_pane == Some(pane.downgrade()) {
-//             self.last_active_center_pane = None;
-//         }
-//         cx.notify();
-//     }
-
-//     fn schedule_serialize(&mut self, cx: &mut ViewContext<Self>) {
-//         self._schedule_serialize = Some(cx.spawn(|this, cx| async move {
-//             cx.background().timer(Duration::from_millis(100)).await;
-//             this.read_with(&cx, |this, cx| this.serialize_workspace(cx))
-//                 .ok();
-//         }));
-//     }
-
-//     fn serialize_workspace(&self, cx: &ViewContext<Self>) {
-//         fn serialize_pane_handle(
-//             pane_handle: &ViewHandle<Pane>,
-//             cx: &AppContext,
-//         ) -> SerializedPane {
-//             let (items, active) = {
-//                 let pane = pane_handle.read(cx);
-//                 let active_item_id = pane.active_item().map(|item| item.id());
-//                 (
-//                     pane.items()
-//                         .filter_map(|item_handle| {
-//                             Some(SerializedItem {
-//                                 kind: Arc::from(item_handle.serialized_item_kind()?),
-//                                 item_id: item_handle.id(),
-//                                 active: Some(item_handle.id()) == active_item_id,
-//                             })
-//                         })
-//                         .collect::<Vec<_>>(),
-//                     pane.has_focus(),
-//                 )
-//             };
-
-//             SerializedPane::new(items, active)
-//         }
-
-//         fn build_serialized_pane_group(
-//             pane_group: &Member,
-//             cx: &AppContext,
-//         ) -> SerializedPaneGroup {
-//             match pane_group {
-//                 Member::Axis(PaneAxis {
-//                     axis,
-//                     members,
-//                     flexes,
-//                     bounding_boxes: _,
-//                 }) => SerializedPaneGroup::Group {
-//                     axis: *axis,
-//                     children: members
-//                         .iter()
-//                         .map(|member| build_serialized_pane_group(member, cx))
-//                         .collect::<Vec<_>>(),
-//                     flexes: Some(flexes.borrow().clone()),
-//                 },
-//                 Member::Pane(pane_handle) => {
-//                     SerializedPaneGroup::Pane(serialize_pane_handle(&pane_handle, cx))
-//                 }
-//             }
-//         }
-
-//         fn build_serialized_docks(this: &Workspace, cx: &ViewContext<Workspace>) -> DockStructure {
-//             let left_dock = this.left_dock.read(cx);
-//             let left_visible = left_dock.is_open();
-//             let left_active_panel = left_dock.visible_panel().and_then(|panel| {
-//                 Some(
-//                     cx.view_ui_name(panel.as_any().window(), panel.id())?
-//                         .to_string(),
-//                 )
-//             });
-//             let left_dock_zoom = left_dock
-//                 .visible_panel()
-//                 .map(|panel| panel.is_zoomed(cx))
-//                 .unwrap_or(false);
-
-//             let right_dock = this.right_dock.read(cx);
-//             let right_visible = right_dock.is_open();
-//             let right_active_panel = right_dock.visible_panel().and_then(|panel| {
-//                 Some(
-//                     cx.view_ui_name(panel.as_any().window(), panel.id())?
-//                         .to_string(),
-//                 )
-//             });
-//             let right_dock_zoom = right_dock
-//                 .visible_panel()
-//                 .map(|panel| panel.is_zoomed(cx))
-//                 .unwrap_or(false);
-
-//             let bottom_dock = this.bottom_dock.read(cx);
-//             let bottom_visible = bottom_dock.is_open();
-//             let bottom_active_panel = bottom_dock.visible_panel().and_then(|panel| {
-//                 Some(
-//                     cx.view_ui_name(panel.as_any().window(), panel.id())?
-//                         .to_string(),
-//                 )
-//             });
-//             let bottom_dock_zoom = bottom_dock
-//                 .visible_panel()
-//                 .map(|panel| panel.is_zoomed(cx))
-//                 .unwrap_or(false);
-
-//             DockStructure {
-//                 left: DockData {
-//                     visible: left_visible,
-//                     active_panel: left_active_panel,
-//                     zoom: left_dock_zoom,
-//                 },
-//                 right: DockData {
-//                     visible: right_visible,
-//                     active_panel: right_active_panel,
-//                     zoom: right_dock_zoom,
-//                 },
-//                 bottom: DockData {
-//                     visible: bottom_visible,
-//                     active_panel: bottom_active_panel,
-//                     zoom: bottom_dock_zoom,
-//                 },
-//             }
-//         }
-
-//         if let Some(location) = self.location(cx) {
-//             // Load bearing special case:
-//             //  - with_local_workspace() relies on this to not have other stuff open
-//             //    when you open your log
-//             if !location.paths().is_empty() {
-//                 let center_group = build_serialized_pane_group(&self.center.root, cx);
-//                 let docks = build_serialized_docks(self, cx);
-
-//                 let serialized_workspace = SerializedWorkspace {
-//                     id: self.database_id,
-//                     location,
-//                     center_group,
-//                     bounds: Default::default(),
-//                     display: Default::default(),
-//                     docks,
-//                 };
-
-//                 cx.background()
-//                     .spawn(persistence::DB.save_workspace(serialized_workspace))
-//                     .detach();
-//             }
-//         }
-//     }
-
-//     pub(crate) fn load_workspace(
-//         workspace: WeakViewHandle<Workspace>,
-//         serialized_workspace: SerializedWorkspace,
-//         paths_to_open: Vec<Option<ProjectPath>>,
-//         cx: &mut AppContext,
-//     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
-//         cx.spawn(|mut cx| async move {
-//             let (project, old_center_pane) = workspace.read_with(&cx, |workspace, _| {
-//                 (
-//                     workspace.project().clone(),
-//                     workspace.last_active_center_pane.clone(),
-//                 )
-//             })?;
-
-//             let mut center_group = None;
-//             let mut center_items = None;
-//             // Traverse the splits tree and add to things
-//             if let Some((group, active_pane, items)) = serialized_workspace
-//                 .center_group
-//                 .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
-//                 .await
-//             {
-//                 center_items = Some(items);
-//                 center_group = Some((group, active_pane))
-//             }
-
-//             let mut items_by_project_path = cx.read(|cx| {
-//                 center_items
-//                     .unwrap_or_default()
-//                     .into_iter()
-//                     .filter_map(|item| {
-//                         let item = item?;
-//                         let project_path = item.project_path(cx)?;
-//                         Some((project_path, item))
-//                     })
-//                     .collect::<HashMap<_, _>>()
-//             });
-
-//             let opened_items = paths_to_open
-//                 .into_iter()
-//                 .map(|path_to_open| {
-//                     path_to_open
-//                         .and_then(|path_to_open| items_by_project_path.remove(&path_to_open))
-//                 })
-//                 .collect::<Vec<_>>();
-
-//             // Remove old panes from workspace panes list
-//             workspace.update(&mut cx, |workspace, cx| {
-//                 if let Some((center_group, active_pane)) = center_group {
-//                     workspace.remove_panes(workspace.center.root.clone(), cx);
-
-//                     // Swap workspace center group
-//                     workspace.center = PaneGroup::with_root(center_group);
-
-//                     // Change the focus to the workspace first so that we retrigger focus in on the pane.
-//                     cx.focus_self();
-
-//                     if let Some(active_pane) = active_pane {
-//                         cx.focus(&active_pane);
-//                     } else {
-//                         cx.focus(workspace.panes.last().unwrap());
-//                     }
-//                 } else {
-//                     let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade(cx));
-//                     if let Some(old_center_handle) = old_center_handle {
-//                         cx.focus(&old_center_handle)
-//                     } else {
-//                         cx.focus_self()
-//                     }
-//                 }
-
-//                 let docks = serialized_workspace.docks;
-//                 workspace.left_dock.update(cx, |dock, cx| {
-//                     dock.set_open(docks.left.visible, cx);
-//                     if let Some(active_panel) = docks.left.active_panel {
-//                         if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
-//                             dock.activate_panel(ix, cx);
-//                         }
-//                     }
-//                     dock.active_panel()
-//                         .map(|panel| panel.set_zoomed(docks.left.zoom, cx));
-//                     if docks.left.visible && docks.left.zoom {
-//                         cx.focus_self()
-//                     }
-//                 });
-//                 // TODO: I think the bug is that setting zoom or active undoes the bottom zoom or something
-//                 workspace.right_dock.update(cx, |dock, cx| {
-//                     dock.set_open(docks.right.visible, cx);
-//                     if let Some(active_panel) = docks.right.active_panel {
-//                         if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
-//                             dock.activate_panel(ix, cx);
-//                         }
-//                     }
-//                     dock.active_panel()
-//                         .map(|panel| panel.set_zoomed(docks.right.zoom, cx));
-
-//                     if docks.right.visible && docks.right.zoom {
-//                         cx.focus_self()
-//                     }
-//                 });
-//                 workspace.bottom_dock.update(cx, |dock, cx| {
-//                     dock.set_open(docks.bottom.visible, cx);
-//                     if let Some(active_panel) = docks.bottom.active_panel {
-//                         if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
-//                             dock.activate_panel(ix, cx);
-//                         }
-//                     }
-
-//                     dock.active_panel()
-//                         .map(|panel| panel.set_zoomed(docks.bottom.zoom, cx));
-
-//                     if docks.bottom.visible && docks.bottom.zoom {
-//                         cx.focus_self()
-//                     }
-//                 });
-
-//                 cx.notify();
-//             })?;
-
-//             // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-//             workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))?;
-
-//             Ok(opened_items)
-//         })
-//     }
-
-//     #[cfg(any(test, feature = "test-support"))]
-//     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
-//         use node_runtime::FakeNodeRuntime;
-
-//         let client = project.read(cx).client();
-//         let user_store = project.read(cx).user_store();
-
-//         let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
-//         let app_state = Arc::new(AppState {
-//             languages: project.read(cx).languages().clone(),
-//             workspace_store,
-//             client,
-//             user_store,
-//             fs: project.read(cx).fs().clone(),
-//             build_window_options: |_, _, _| Default::default(),
-//             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
-//             node_runtime: FakeNodeRuntime::new(),
-//         });
-//         Self::new(0, project, app_state, cx)
-//     }
-
-//     fn render_dock(&self, position: DockPosition, cx: &WindowContext) -> Option<AnyElement<Self>> {
-//         let dock = match position {
-//             DockPosition::Left => &self.left_dock,
-//             DockPosition::Right => &self.right_dock,
-//             DockPosition::Bottom => &self.bottom_dock,
-//         };
-//         let active_panel = dock.read(cx).visible_panel()?;
-//         let element = if Some(active_panel.id()) == self.zoomed.as_ref().map(|zoomed| zoomed.id()) {
-//             dock.read(cx).render_placeholder(cx)
-//         } else {
-//             ChildView::new(dock, cx).into_any()
-//         };
-
-//         Some(
-//             element
-//                 .constrained()
-//                 .dynamically(move |constraint, _, cx| match position {
-//                     DockPosition::Left | DockPosition::Right => SizeConstraint::new(
-//                         Vector2F::new(20., constraint.min.y()),
-//                         Vector2F::new(cx.window_size().x() * 0.8, constraint.max.y()),
-//                     ),
-//                     DockPosition::Bottom => SizeConstraint::new(
-//                         Vector2F::new(constraint.min.x(), 20.),
-//                         Vector2F::new(constraint.max.x(), cx.window_size().y() * 0.8),
-//                     ),
-//                 })
-//                 .into_any(),
-//         )
-//     }
-// }
-
-// fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<WindowBounds> {
-//     ZED_WINDOW_POSITION
-//         .zip(*ZED_WINDOW_SIZE)
-//         .map(|(position, size)| {
-//             WindowBounds::Fixed(RectF::new(
-//                 cx.platform().screens()[0].bounds().origin() + position,
-//                 size,
-//             ))
-//         })
-// }
-
-// async fn open_items(
-//     serialized_workspace: Option<SerializedWorkspace>,
-//     workspace: &WeakViewHandle<Workspace>,
-//     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
-//     app_state: Arc<AppState>,
-//     mut cx: AsyncAppContext,
-// ) -> Result<Vec<Option<Result<Box<dyn ItemHandle>>>>> {
-//     let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
-
-//     if let Some(serialized_workspace) = serialized_workspace {
-//         let workspace = workspace.clone();
-//         let restored_items = cx
-//             .update(|cx| {
-//                 Workspace::load_workspace(
-//                     workspace,
-//                     serialized_workspace,
-//                     project_paths_to_open
-//                         .iter()
-//                         .map(|(_, project_path)| project_path)
-//                         .cloned()
-//                         .collect(),
-//                     cx,
-//                 )
-//             })
-//             .await?;
-
-//         let restored_project_paths = cx.read(|cx| {
-//             restored_items
-//                 .iter()
-//                 .filter_map(|item| item.as_ref()?.project_path(cx))
-//                 .collect::<HashSet<_>>()
-//         });
-
-//         for restored_item in restored_items {
-//             opened_items.push(restored_item.map(Ok));
-//         }
-
-//         project_paths_to_open
-//             .iter_mut()
-//             .for_each(|(_, project_path)| {
-//                 if let Some(project_path_to_open) = project_path {
-//                     if restored_project_paths.contains(project_path_to_open) {
-//                         *project_path = None;
-//                     }
-//                 }
-//             });
-//     } else {
-//         for _ in 0..project_paths_to_open.len() {
-//             opened_items.push(None);
-//         }
-//     }
-//     assert!(opened_items.len() == project_paths_to_open.len());
-
-//     let tasks =
-//         project_paths_to_open
-//             .into_iter()
-//             .enumerate()
-//             .map(|(i, (abs_path, project_path))| {
-//                 let workspace = workspace.clone();
-//                 cx.spawn(|mut cx| {
-//                     let fs = app_state.fs.clone();
-//                     async move {
-//                         let file_project_path = project_path?;
-//                         if fs.is_file(&abs_path).await {
-//                             Some((
-//                                 i,
-//                                 workspace
-//                                     .update(&mut cx, |workspace, cx| {
-//                                         workspace.open_path(file_project_path, None, true, cx)
-//                                     })
-//                                     .log_err()?
-//                                     .await,
-//                             ))
-//                         } else {
-//                             None
-//                         }
-//                     }
-//                 })
-//             });
-
-//     for maybe_opened_path in futures::future::join_all(tasks.into_iter())
-//         .await
-//         .into_iter()
-//     {
-//         if let Some((i, path_open_result)) = maybe_opened_path {
-//             opened_items[i] = Some(path_open_result);
-//         }
-//     }
-
-//     Ok(opened_items)
-// }
-
-// fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
-//     const NEW_PANEL_BLOG_POST: &str = "https://zed.dev/blog/new-panel-system";
-//     const NEW_DOCK_HINT_KEY: &str = "show_new_dock_key";
-//     const MESSAGE_ID: usize = 2;
-
-//     if workspace
-//         .read_with(cx, |workspace, cx| {
-//             workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
-//         })
-//         .unwrap_or(false)
-//     {
-//         return;
-//     }
-
-//     if db::kvp::KEY_VALUE_STORE
-//         .read_kvp(NEW_DOCK_HINT_KEY)
-//         .ok()
-//         .flatten()
-//         .is_some()
-//     {
-//         if !workspace
-//             .read_with(cx, |workspace, cx| {
-//                 workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
-//             })
-//             .unwrap_or(false)
-//         {
-//             cx.update(|cx| {
-//                 cx.update_global::<NotificationTracker, _, _>(|tracker, _| {
-//                     let entry = tracker
-//                         .entry(TypeId::of::<MessageNotification>())
-//                         .or_default();
-//                     if !entry.contains(&MESSAGE_ID) {
-//                         entry.push(MESSAGE_ID);
-//                     }
-//                 });
-//             });
-//         }
-
-//         return;
-//     }
-
-//     cx.spawn(|_| async move {
-//         db::kvp::KEY_VALUE_STORE
-//             .write_kvp(NEW_DOCK_HINT_KEY.to_string(), "seen".to_string())
-//             .await
-//             .ok();
-//     })
-//     .detach();
-
-//     workspace
-//         .update(cx, |workspace, cx| {
-//             workspace.show_notification_once(2, cx, |cx| {
-//                 cx.add_view(|_| {
-//                     MessageNotification::new_element(|text, _| {
-//                         Text::new(
-//                             "Looking for the dock? Try ctrl-`!\nshift-escape now zooms your pane.",
-//                             text,
-//                         )
-//                         .with_custom_runs(vec![26..32, 34..46], |_, bounds, cx| {
-//                             let code_span_background_color = settings::get::<ThemeSettings>(cx)
-//                                 .theme
-//                                 .editor
-//                                 .document_highlight_read_background;
-
-//                             cx.scene().push_quad(gpui::Quad {
-//                                 bounds,
-//                                 background: Some(code_span_background_color),
-//                                 border: Default::default(),
-//                                 corner_radii: (2.0).into(),
-//                             })
-//                         })
-//                         .into_any()
-//                     })
-//                     .with_click_message("Read more about the new panel system")
-//                     .on_click(|cx| cx.platform().open_url(NEW_PANEL_BLOG_POST))
-//                 })
-//             })
-//         })
-//         .ok();
-// }
+impl Workspace {
+    //     pub fn new(
+    //         workspace_id: WorkspaceId,
+    //         project: ModelHandle<Project>,
+    //         app_state: Arc<AppState>,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Self {
+    //         cx.observe(&project, |_, _, cx| cx.notify()).detach();
+    //         cx.subscribe(&project, move |this, _, event, cx| {
+    //             match event {
+    //                 project::Event::RemoteIdChanged(_) => {
+    //                     this.update_window_title(cx);
+    //                 }
+
+    //                 project::Event::CollaboratorLeft(peer_id) => {
+    //                     this.collaborator_left(*peer_id, cx);
+    //                 }
+
+    //                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
+    //                     this.update_window_title(cx);
+    //                     this.serialize_workspace(cx);
+    //                 }
+
+    //                 project::Event::DisconnectedFromHost => {
+    //                     this.update_window_edited(cx);
+    //                     cx.blur();
+    //                 }
+
+    //                 project::Event::Closed => {
+    //                     cx.remove_window();
+    //                 }
+
+    //                 project::Event::DeletedEntry(entry_id) => {
+    //                     for pane in this.panes.iter() {
+    //                         pane.update(cx, |pane, cx| {
+    //                             pane.handle_deleted_project_item(*entry_id, cx)
+    //                         });
+    //                     }
+    //                 }
+
+    //                 project::Event::Notification(message) => this.show_notification(0, cx, |cx| {
+    //                     cx.add_view(|_| MessageNotification::new(message.clone()))
+    //                 }),
+
+    //                 _ => {}
+    //             }
+    //             cx.notify()
+    //         })
+    //         .detach();
+
+    //         let weak_handle = cx.weak_handle();
+    //         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
+
+    //         let center_pane = cx.add_view(|cx| {
+    //             Pane::new(
+    //                 weak_handle.clone(),
+    //                 project.clone(),
+    //                 pane_history_timestamp.clone(),
+    //                 cx,
+    //             )
+    //         });
+    //         cx.subscribe(&center_pane, Self::handle_pane_event).detach();
+    //         cx.focus(&center_pane);
+    //         cx.emit(Event::PaneAdded(center_pane.clone()));
+
+    //         app_state.workspace_store.update(cx, |store, _| {
+    //             store.workspaces.insert(weak_handle.clone());
+    //         });
+
+    //         let mut current_user = app_state.user_store.read(cx).watch_current_user();
+    //         let mut connection_status = app_state.client.status();
+    //         let _observe_current_user = cx.spawn(|this, mut cx| async move {
+    //             current_user.recv().await;
+    //             connection_status.recv().await;
+    //             let mut stream =
+    //                 Stream::map(current_user, drop).merge(Stream::map(connection_status, drop));
+
+    //             while stream.recv().await.is_some() {
+    //                 this.update(&mut cx, |_, cx| cx.notify())?;
+    //             }
+    //             anyhow::Ok(())
+    //         });
+
+    //         // All leader updates are enqueued and then processed in a single task, so
+    //         // that each asynchronous operation can be run in order.
+    //         let (leader_updates_tx, mut leader_updates_rx) =
+    //             mpsc::unbounded::<(PeerId, proto::UpdateFollowers)>();
+    //         let _apply_leader_updates = cx.spawn(|this, mut cx| async move {
+    //             while let Some((leader_id, update)) = leader_updates_rx.next().await {
+    //                 Self::process_leader_update(&this, leader_id, update, &mut cx)
+    //                     .await
+    //                     .log_err();
+    //             }
+
+    //             Ok(())
+    //         });
+
+    //         cx.emit_global(WorkspaceCreated(weak_handle.clone()));
+
+    //         let left_dock = cx.add_view(|_| Dock::new(DockPosition::Left));
+    //         let bottom_dock = cx.add_view(|_| Dock::new(DockPosition::Bottom));
+    //         let right_dock = cx.add_view(|_| Dock::new(DockPosition::Right));
+    //         let left_dock_buttons =
+    //             cx.add_view(|cx| PanelButtons::new(left_dock.clone(), weak_handle.clone(), cx));
+    //         let bottom_dock_buttons =
+    //             cx.add_view(|cx| PanelButtons::new(bottom_dock.clone(), weak_handle.clone(), cx));
+    //         let right_dock_buttons =
+    //             cx.add_view(|cx| PanelButtons::new(right_dock.clone(), weak_handle.clone(), cx));
+    //         let status_bar = cx.add_view(|cx| {
+    //             let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
+    //             status_bar.add_left_item(left_dock_buttons, cx);
+    //             status_bar.add_right_item(right_dock_buttons, cx);
+    //             status_bar.add_right_item(bottom_dock_buttons, cx);
+    //             status_bar
+    //         });
+
+    //         cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
+    //             drag_and_drop.register_container(weak_handle.clone());
+    //         });
+
+    //         let mut active_call = None;
+    //         if cx.has_global::<ModelHandle<ActiveCall>>() {
+    //             let call = cx.global::<ModelHandle<ActiveCall>>().clone();
+    //             let mut subscriptions = Vec::new();
+    //             subscriptions.push(cx.subscribe(&call, Self::on_active_call_event));
+    //             active_call = Some((call, subscriptions));
+    //         }
+
+    //         let subscriptions = vec![
+    //             cx.observe_fullscreen(|_, _, cx| cx.notify()),
+    //             cx.observe_window_activation(Self::on_window_activation_changed),
+    //             cx.observe_window_bounds(move |_, mut bounds, display, cx| {
+    //                 // Transform fixed bounds to be stored in terms of the containing display
+    //                 if let WindowBounds::Fixed(mut window_bounds) = bounds {
+    //                     if let Some(screen) = cx.platform().screen_by_id(display) {
+    //                         let screen_bounds = screen.bounds();
+    //                         window_bounds
+    //                             .set_origin_x(window_bounds.origin_x() - screen_bounds.origin_x());
+    //                         window_bounds
+    //                             .set_origin_y(window_bounds.origin_y() - screen_bounds.origin_y());
+    //                         bounds = WindowBounds::Fixed(window_bounds);
+    //                     }
+    //                 }
+
+    //                 cx.background()
+    //                     .spawn(DB.set_window_bounds(workspace_id, bounds, display))
+    //                     .detach_and_log_err(cx);
+    //             }),
+    //             cx.observe(&left_dock, |this, _, cx| {
+    //                 this.serialize_workspace(cx);
+    //                 cx.notify();
+    //             }),
+    //             cx.observe(&bottom_dock, |this, _, cx| {
+    //                 this.serialize_workspace(cx);
+    //                 cx.notify();
+    //             }),
+    //             cx.observe(&right_dock, |this, _, cx| {
+    //                 this.serialize_workspace(cx);
+    //                 cx.notify();
+    //             }),
+    //         ];
+
+    //         cx.defer(|this, cx| this.update_window_title(cx));
+    //         Workspace {
+    //             weak_self: weak_handle.clone(),
+    //             modal: None,
+    //             zoomed: None,
+    //             zoomed_position: None,
+    //             center: PaneGroup::new(center_pane.clone()),
+    //             panes: vec![center_pane.clone()],
+    //             panes_by_item: Default::default(),
+    //             active_pane: center_pane.clone(),
+    //             last_active_center_pane: Some(center_pane.downgrade()),
+    //             last_active_view_id: None,
+    //             status_bar,
+    //             titlebar_item: None,
+    //             notifications: Default::default(),
+    //             left_dock,
+    //             bottom_dock,
+    //             right_dock,
+    //             project: project.clone(),
+    //             follower_states: Default::default(),
+    //             last_leaders_by_pane: Default::default(),
+    //             window_edited: false,
+    //             active_call,
+    //             database_id: workspace_id,
+    //             app_state,
+    //             _observe_current_user,
+    //             _apply_leader_updates,
+    //             _schedule_serialize: None,
+    //             leader_updates_tx,
+    //             subscriptions,
+    //             pane_history_timestamp,
+    //         }
+    //     }
+
+    //     fn new_local(
+    //         abs_paths: Vec<PathBuf>,
+    //         app_state: Arc<AppState>,
+    //         requesting_window: Option<WindowHandle<Workspace>>,
+    //         cx: &mut AppContext,
+    //     ) -> Task<(
+    //         WeakViewHandle<Workspace>,
+    //         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
+    //     )> {
+    //         let project_handle = Project::local(
+    //             app_state.client.clone(),
+    //             app_state.node_runtime.clone(),
+    //             app_state.user_store.clone(),
+    //             app_state.languages.clone(),
+    //             app_state.fs.clone(),
+    //             cx,
+    //         );
+
+    //         cx.spawn(|mut cx| async move {
+    //             let serialized_workspace = persistence::DB.workspace_for_roots(&abs_paths.as_slice());
+
+    //             let paths_to_open = Arc::new(abs_paths);
+
+    //             // Get project paths for all of the abs_paths
+    //             let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
+    //             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
+    //                 Vec::with_capacity(paths_to_open.len());
+    //             for path in paths_to_open.iter().cloned() {
+    //                 if let Some((worktree, project_entry)) = cx
+    //                     .update(|cx| {
+    //                         Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
+    //                     })
+    //                     .await
+    //                     .log_err()
+    //                 {
+    //                     worktree_roots.insert(worktree.read_with(&mut cx, |tree, _| tree.abs_path()));
+    //                     project_paths.push((path, Some(project_entry)));
+    //                 } else {
+    //                     project_paths.push((path, None));
+    //                 }
+    //             }
+
+    //             let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
+    //                 serialized_workspace.id
+    //             } else {
+    //                 DB.next_id().await.unwrap_or(0)
+    //             };
+
+    //             let window = if let Some(window) = requesting_window {
+    //                 window.replace_root(&mut cx, |cx| {
+    //                     Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
+    //                 });
+    //                 window
+    //             } else {
+    //                 {
+    //                     let window_bounds_override = window_bounds_env_override(&cx);
+    //                     let (bounds, display) = if let Some(bounds) = window_bounds_override {
+    //                         (Some(bounds), None)
+    //                     } else {
+    //                         serialized_workspace
+    //                             .as_ref()
+    //                             .and_then(|serialized_workspace| {
+    //                                 let display = serialized_workspace.display?;
+    //                                 let mut bounds = serialized_workspace.bounds?;
+
+    //                                 // Stored bounds are relative to the containing display.
+    //                                 // So convert back to global coordinates if that screen still exists
+    //                                 if let WindowBounds::Fixed(mut window_bounds) = bounds {
+    //                                     if let Some(screen) = cx.platform().screen_by_id(display) {
+    //                                         let screen_bounds = screen.bounds();
+    //                                         window_bounds.set_origin_x(
+    //                                             window_bounds.origin_x() + screen_bounds.origin_x(),
+    //                                         );
+    //                                         window_bounds.set_origin_y(
+    //                                             window_bounds.origin_y() + screen_bounds.origin_y(),
+    //                                         );
+    //                                         bounds = WindowBounds::Fixed(window_bounds);
+    //                                     } else {
+    //                                         // Screen no longer exists. Return none here.
+    //                                         return None;
+    //                                     }
+    //                                 }
+
+    //                                 Some((bounds, display))
+    //                             })
+    //                             .unzip()
+    //                     };
+
+    //                     // Use the serialized workspace to construct the new window
+    //                     cx.add_window(
+    //                         (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
+    //                         |cx| {
+    //                             Workspace::new(
+    //                                 workspace_id,
+    //                                 project_handle.clone(),
+    //                                 app_state.clone(),
+    //                                 cx,
+    //                             )
+    //                         },
+    //                     )
+    //                 }
+    //             };
+
+    //             // We haven't yielded the main thread since obtaining the window handle,
+    //             // so the window exists.
+    //             let workspace = window.root(&cx).unwrap();
+
+    //             (app_state.initialize_workspace)(
+    //                 workspace.downgrade(),
+    //                 serialized_workspace.is_some(),
+    //                 app_state.clone(),
+    //                 cx.clone(),
+    //             )
+    //             .await
+    //             .log_err();
+
+    //             window.update(&mut cx, |cx| cx.activate_window());
+
+    //             let workspace = workspace.downgrade();
+    //             notify_if_database_failed(&workspace, &mut cx);
+    //             let opened_items = open_items(
+    //                 serialized_workspace,
+    //                 &workspace,
+    //                 project_paths,
+    //                 app_state,
+    //                 cx,
+    //             )
+    //             .await
+    //             .unwrap_or_default();
+
+    //             (workspace, opened_items)
+    //         })
+    //     }
+
+    //     pub fn weak_handle(&self) -> WeakViewHandle<Self> {
+    //         self.weak_self.clone()
+    //     }
+
+    //     pub fn left_dock(&self) -> &ViewHandle<Dock> {
+    //         &self.left_dock
+    //     }
+
+    //     pub fn bottom_dock(&self) -> &ViewHandle<Dock> {
+    //         &self.bottom_dock
+    //     }
+
+    //     pub fn right_dock(&self) -> &ViewHandle<Dock> {
+    //         &self.right_dock
+    //     }
+
+    //     pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>)
+    //     where
+    //         T::Event: std::fmt::Debug,
+    //     {
+    //         self.add_panel_with_extra_event_handler(panel, cx, |_, _, _, _| {})
+    //     }
+
+    //     pub fn add_panel_with_extra_event_handler<T: Panel, F>(
+    //         &mut self,
+    //         panel: ViewHandle<T>,
+    //         cx: &mut ViewContext<Self>,
+    //         handler: F,
+    //     ) where
+    //         T::Event: std::fmt::Debug,
+    //         F: Fn(&mut Self, &ViewHandle<T>, &T::Event, &mut ViewContext<Self>) + 'static,
+    //     {
+    //         let dock = match panel.position(cx) {
+    //             DockPosition::Left => &self.left_dock,
+    //             DockPosition::Bottom => &self.bottom_dock,
+    //             DockPosition::Right => &self.right_dock,
+    //         };
+
+    //         self.subscriptions.push(cx.subscribe(&panel, {
+    //             let mut dock = dock.clone();
+    //             let mut prev_position = panel.position(cx);
+    //             move |this, panel, event, cx| {
+    //                 if T::should_change_position_on_event(event) {
+    //                     let new_position = panel.read(cx).position(cx);
+    //                     let mut was_visible = false;
+    //                     dock.update(cx, |dock, cx| {
+    //                         prev_position = new_position;
+
+    //                         was_visible = dock.is_open()
+    //                             && dock
+    //                                 .visible_panel()
+    //                                 .map_or(false, |active_panel| active_panel.id() == panel.id());
+    //                         dock.remove_panel(&panel, cx);
+    //                     });
+
+    //                     if panel.is_zoomed(cx) {
+    //                         this.zoomed_position = Some(new_position);
+    //                     }
+
+    //                     dock = match panel.read(cx).position(cx) {
+    //                         DockPosition::Left => &this.left_dock,
+    //                         DockPosition::Bottom => &this.bottom_dock,
+    //                         DockPosition::Right => &this.right_dock,
+    //                     }
+    //                     .clone();
+    //                     dock.update(cx, |dock, cx| {
+    //                         dock.add_panel(panel.clone(), cx);
+    //                         if was_visible {
+    //                             dock.set_open(true, cx);
+    //                             dock.activate_panel(dock.panels_len() - 1, cx);
+    //                         }
+    //                     });
+    //                 } else if T::should_zoom_in_on_event(event) {
+    //                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
+    //                     if !panel.has_focus(cx) {
+    //                         cx.focus(&panel);
+    //                     }
+    //                     this.zoomed = Some(panel.downgrade().into_any());
+    //                     this.zoomed_position = Some(panel.read(cx).position(cx));
+    //                 } else if T::should_zoom_out_on_event(event) {
+    //                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, false, cx));
+    //                     if this.zoomed_position == Some(prev_position) {
+    //                         this.zoomed = None;
+    //                         this.zoomed_position = None;
+    //                     }
+    //                     cx.notify();
+    //                 } else if T::is_focus_event(event) {
+    //                     let position = panel.read(cx).position(cx);
+    //                     this.dismiss_zoomed_items_to_reveal(Some(position), cx);
+    //                     if panel.is_zoomed(cx) {
+    //                         this.zoomed = Some(panel.downgrade().into_any());
+    //                         this.zoomed_position = Some(position);
+    //                     } else {
+    //                         this.zoomed = None;
+    //                         this.zoomed_position = None;
+    //                     }
+    //                     this.update_active_view_for_followers(cx);
+    //                     cx.notify();
+    //                 } else {
+    //                     handler(this, &panel, event, cx)
+    //                 }
+    //             }
+    //         }));
+
+    //         dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
+    //     }
+
+    //     pub fn status_bar(&self) -> &ViewHandle<StatusBar> {
+    //         &self.status_bar
+    //     }
+
+    //     pub fn app_state(&self) -> &Arc<AppState> {
+    //         &self.app_state
+    //     }
+
+    //     pub fn user_store(&self) -> &ModelHandle<UserStore> {
+    //         &self.app_state.user_store
+    //     }
+
+    pub fn project(&self) -> &Handle<Project> {
+        &self.project
+    }
+
+    //     pub fn recent_navigation_history(
+    //         &self,
+    //         limit: Option<usize>,
+    //         cx: &AppContext,
+    //     ) -> Vec<(ProjectPath, Option<PathBuf>)> {
+    //         let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
+    //         let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
+    //         for pane in &self.panes {
+    //             let pane = pane.read(cx);
+    //             pane.nav_history()
+    //                 .for_each_entry(cx, |entry, (project_path, fs_path)| {
+    //                     if let Some(fs_path) = &fs_path {
+    //                         abs_paths_opened
+    //                             .entry(fs_path.clone())
+    //                             .or_default()
+    //                             .insert(project_path.clone());
+    //                     }
+    //                     let timestamp = entry.timestamp;
+    //                     match history.entry(project_path) {
+    //                         hash_map::Entry::Occupied(mut entry) => {
+    //                             let (_, old_timestamp) = entry.get();
+    //                             if &timestamp > old_timestamp {
+    //                                 entry.insert((fs_path, timestamp));
+    //                             }
+    //                         }
+    //                         hash_map::Entry::Vacant(entry) => {
+    //                             entry.insert((fs_path, timestamp));
+    //                         }
+    //                     }
+    //                 });
+    //         }
+
+    //         history
+    //             .into_iter()
+    //             .sorted_by_key(|(_, (_, timestamp))| *timestamp)
+    //             .map(|(project_path, (fs_path, _))| (project_path, fs_path))
+    //             .rev()
+    //             .filter(|(history_path, abs_path)| {
+    //                 let latest_project_path_opened = abs_path
+    //                     .as_ref()
+    //                     .and_then(|abs_path| abs_paths_opened.get(abs_path))
+    //                     .and_then(|project_paths| {
+    //                         project_paths
+    //                             .iter()
+    //                             .max_by(|b1, b2| b1.worktree_id.cmp(&b2.worktree_id))
+    //                     });
+
+    //                 match latest_project_path_opened {
+    //                     Some(latest_project_path_opened) => latest_project_path_opened == history_path,
+    //                     None => true,
+    //                 }
+    //             })
+    //             .take(limit.unwrap_or(usize::MAX))
+    //             .collect()
+    //     }
+
+    //     fn navigate_history(
+    //         &mut self,
+    //         pane: WeakViewHandle<Pane>,
+    //         mode: NavigationMode,
+    //         cx: &mut ViewContext<Workspace>,
+    //     ) -> Task<Result<()>> {
+    //         let to_load = if let Some(pane) = pane.upgrade(cx) {
+    //             cx.focus(&pane);
+
+    //             pane.update(cx, |pane, cx| {
+    //                 loop {
+    //                     // Retrieve the weak item handle from the history.
+    //                     let entry = pane.nav_history_mut().pop(mode, cx)?;
+
+    //                     // If the item is still present in this pane, then activate it.
+    //                     if let Some(index) = entry
+    //                         .item
+    //                         .upgrade(cx)
+    //                         .and_then(|v| pane.index_for_item(v.as_ref()))
+    //                     {
+    //                         let prev_active_item_index = pane.active_item_index();
+    //                         pane.nav_history_mut().set_mode(mode);
+    //                         pane.activate_item(index, true, true, cx);
+    //                         pane.nav_history_mut().set_mode(NavigationMode::Normal);
+
+    //                         let mut navigated = prev_active_item_index != pane.active_item_index();
+    //                         if let Some(data) = entry.data {
+    //                             navigated |= pane.active_item()?.navigate(data, cx);
+    //                         }
+
+    //                         if navigated {
+    //                             break None;
+    //                         }
+    //                     }
+    //                     // If the item is no longer present in this pane, then retrieve its
+    //                     // project path in order to reopen it.
+    //                     else {
+    //                         break pane
+    //                             .nav_history()
+    //                             .path_for_item(entry.item.id())
+    //                             .map(|(project_path, _)| (project_path, entry));
+    //                     }
+    //                 }
+    //             })
+    //         } else {
+    //             None
+    //         };
+
+    //         if let Some((project_path, entry)) = to_load {
+    //             // If the item was no longer present, then load it again from its previous path.
+    //             let task = self.load_path(project_path, cx);
+    //             cx.spawn(|workspace, mut cx| async move {
+    //                 let task = task.await;
+    //                 let mut navigated = false;
+    //                 if let Some((project_entry_id, build_item)) = task.log_err() {
+    //                     let prev_active_item_id = pane.update(&mut cx, |pane, _| {
+    //                         pane.nav_history_mut().set_mode(mode);
+    //                         pane.active_item().map(|p| p.id())
+    //                     })?;
+
+    //                     pane.update(&mut cx, |pane, cx| {
+    //                         let item = pane.open_item(project_entry_id, true, cx, build_item);
+    //                         navigated |= Some(item.id()) != prev_active_item_id;
+    //                         pane.nav_history_mut().set_mode(NavigationMode::Normal);
+    //                         if let Some(data) = entry.data {
+    //                             navigated |= item.navigate(data, cx);
+    //                         }
+    //                     })?;
+    //                 }
+
+    //                 if !navigated {
+    //                     workspace
+    //                         .update(&mut cx, |workspace, cx| {
+    //                             Self::navigate_history(workspace, pane, mode, cx)
+    //                         })?
+    //                         .await?;
+    //                 }
+
+    //                 Ok(())
+    //             })
+    //         } else {
+    //             Task::ready(Ok(()))
+    //         }
+    //     }
+
+    //     pub fn go_back(
+    //         &mut self,
+    //         pane: WeakViewHandle<Pane>,
+    //         cx: &mut ViewContext<Workspace>,
+    //     ) -> Task<Result<()>> {
+    //         self.navigate_history(pane, NavigationMode::GoingBack, cx)
+    //     }
+
+    //     pub fn go_forward(
+    //         &mut self,
+    //         pane: WeakViewHandle<Pane>,
+    //         cx: &mut ViewContext<Workspace>,
+    //     ) -> Task<Result<()>> {
+    //         self.navigate_history(pane, NavigationMode::GoingForward, cx)
+    //     }
+
+    //     pub fn reopen_closed_item(&mut self, cx: &mut ViewContext<Workspace>) -> Task<Result<()>> {
+    //         self.navigate_history(
+    //             self.active_pane().downgrade(),
+    //             NavigationMode::ReopeningClosedItem,
+    //             cx,
+    //         )
+    //     }
+
+    //     pub fn client(&self) -> &Client {
+    //         &self.app_state.client
+    //     }
+
+    //     pub fn set_titlebar_item(&mut self, item: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    //         self.titlebar_item = Some(item);
+    //         cx.notify();
+    //     }
+
+    //     pub fn titlebar_item(&self) -> Option<AnyViewHandle> {
+    //         self.titlebar_item.clone()
+    //     }
+
+    //     /// Call the given callback with a workspace whose project is local.
+    //     ///
+    //     /// If the given workspace has a local project, then it will be passed
+    //     /// to the callback. Otherwise, a new empty window will be created.
+    //     pub fn with_local_workspace<T, F>(
+    //         &mut self,
+    //         cx: &mut ViewContext<Self>,
+    //         callback: F,
+    //     ) -> Task<Result<T>>
+    //     where
+    //         T: 'static,
+    //         F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+    //     {
+    //         if self.project.read(cx).is_local() {
+    //             Task::Ready(Some(Ok(callback(self, cx))))
+    //         } else {
+    //             let task = Self::new_local(Vec::new(), self.app_state.clone(), None, cx);
+    //             cx.spawn(|_vh, mut cx| async move {
+    //                 let (workspace, _) = task.await;
+    //                 workspace.update(&mut cx, callback)
+    //             })
+    //         }
+    //     }
+
+    //     pub fn worktrees<'a>(
+    //         &self,
+    //         cx: &'a AppContext,
+    //     ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
+    //         self.project.read(cx).worktrees(cx)
+    //     }
+
+    //     pub fn visible_worktrees<'a>(
+    //         &self,
+    //         cx: &'a AppContext,
+    //     ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
+    //         self.project.read(cx).visible_worktrees(cx)
+    //     }
+
+    //     pub fn worktree_scans_complete(&self, cx: &AppContext) -> impl Future<Output = ()> + 'static {
+    //         let futures = self
+    //             .worktrees(cx)
+    //             .filter_map(|worktree| worktree.read(cx).as_local())
+    //             .map(|worktree| worktree.scan_complete())
+    //             .collect::<Vec<_>>();
+    //         async move {
+    //             for future in futures {
+    //                 future.await;
+    //             }
+    //         }
+    //     }
+
+    //     pub fn close_global(_: &CloseWindow, cx: &mut AppContext) {
+    //         cx.spawn(|mut cx| async move {
+    //             let window = cx
+    //                 .windows()
+    //                 .into_iter()
+    //                 .find(|window| window.is_active(&cx).unwrap_or(false));
+    //             if let Some(window) = window {
+    //                 //This can only get called when the window's project connection has been lost
+    //                 //so we don't need to prompt the user for anything and instead just close the window
+    //                 window.remove(&mut cx);
+    //             }
+    //         })
+    //         .detach();
+    //     }
+
+    //     pub fn close(
+    //         &mut self,
+    //         _: &CloseWindow,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Option<Task<Result<()>>> {
+    //         let window = cx.window();
+    //         let prepare = self.prepare_to_close(false, cx);
+    //         Some(cx.spawn(|_, mut cx| async move {
+    //             if prepare.await? {
+    //                 window.remove(&mut cx);
+    //             }
+    //             Ok(())
+    //         }))
+    //     }
+
+    //     pub fn prepare_to_close(
+    //         &mut self,
+    //         quitting: bool,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Task<Result<bool>> {
+    //         let active_call = self.active_call().cloned();
+    //         let window = cx.window();
+
+    //         cx.spawn(|this, mut cx| async move {
+    //             let workspace_count = cx
+    //                 .windows()
+    //                 .into_iter()
+    //                 .filter(|window| window.root_is::<Workspace>())
+    //                 .count();
+
+    //             if let Some(active_call) = active_call {
+    //                 if !quitting
+    //                     && workspace_count == 1
+    //                     && active_call.read_with(&cx, |call, _| call.room().is_some())
+    //                 {
+    //                     let answer = window.prompt(
+    //                         PromptLevel::Warning,
+    //                         "Do you want to leave the current call?",
+    //                         &["Close window and hang up", "Cancel"],
+    //                         &mut cx,
+    //                     );
+
+    //                     if let Some(mut answer) = answer {
+    //                         if answer.next().await == Some(1) {
+    //                             return anyhow::Ok(false);
+    //                         } else {
+    //                             active_call
+    //                                 .update(&mut cx, |call, cx| call.hang_up(cx))
+    //                                 .await
+    //                                 .log_err();
+    //                         }
+    //                     }
+    //                 }
+    //             }
+
+    //             Ok(this
+    //                 .update(&mut cx, |this, cx| {
+    //                     this.save_all_internal(SaveIntent::Close, cx)
+    //                 })?
+    //                 .await?)
+    //         })
+    //     }
+
+    //     fn save_all(
+    //         &mut self,
+    //         action: &SaveAll,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Option<Task<Result<()>>> {
+    //         let save_all =
+    //             self.save_all_internal(action.save_intent.unwrap_or(SaveIntent::SaveAll), cx);
+    //         Some(cx.foreground().spawn(async move {
+    //             save_all.await?;
+    //             Ok(())
+    //         }))
+    //     }
+
+    //     fn save_all_internal(
+    //         &mut self,
+    //         mut save_intent: SaveIntent,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Task<Result<bool>> {
+    //         if self.project.read(cx).is_read_only() {
+    //             return Task::ready(Ok(true));
+    //         }
+    //         let dirty_items = self
+    //             .panes
+    //             .iter()
+    //             .flat_map(|pane| {
+    //                 pane.read(cx).items().filter_map(|item| {
+    //                     if item.is_dirty(cx) {
+    //                         Some((pane.downgrade(), item.boxed_clone()))
+    //                     } else {
+    //                         None
+    //                     }
+    //                 })
+    //             })
+    //             .collect::<Vec<_>>();
+
+    //         let project = self.project.clone();
+    //         cx.spawn(|workspace, mut cx| async move {
+    //             // Override save mode and display "Save all files" prompt
+    //             if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
+    //                 let mut answer = workspace.update(&mut cx, |_, cx| {
+    //                     let prompt = Pane::file_names_for_prompt(
+    //                         &mut dirty_items.iter().map(|(_, handle)| handle),
+    //                         dirty_items.len(),
+    //                         cx,
+    //                     );
+    //                     cx.prompt(
+    //                         PromptLevel::Warning,
+    //                         &prompt,
+    //                         &["Save all", "Discard all", "Cancel"],
+    //                     )
+    //                 })?;
+    //                 match answer.next().await {
+    //                     Some(0) => save_intent = SaveIntent::SaveAll,
+    //                     Some(1) => save_intent = SaveIntent::Skip,
+    //                     _ => {}
+    //                 }
+    //             }
+    //             for (pane, item) in dirty_items {
+    //                 let (singleton, project_entry_ids) =
+    //                     cx.read(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)));
+    //                 if singleton || !project_entry_ids.is_empty() {
+    //                     if let Some(ix) =
+    //                         pane.read_with(&cx, |pane, _| pane.index_for_item(item.as_ref()))?
+    //                     {
+    //                         if !Pane::save_item(
+    //                             project.clone(),
+    //                             &pane,
+    //                             ix,
+    //                             &*item,
+    //                             save_intent,
+    //                             &mut cx,
+    //                         )
+    //                         .await?
+    //                         {
+    //                             return Ok(false);
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //             Ok(true)
+    //         })
+    //     }
+
+    //     pub fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+    //         let mut paths = cx.prompt_for_paths(PathPromptOptions {
+    //             files: true,
+    //             directories: true,
+    //             multiple: true,
+    //         });
+
+    //         Some(cx.spawn(|this, mut cx| async move {
+    //             if let Some(paths) = paths.recv().await.flatten() {
+    //                 if let Some(task) = this
+    //                     .update(&mut cx, |this, cx| this.open_workspace_for_paths(paths, cx))
+    //                     .log_err()
+    //                 {
+    //                     task.await?
+    //                 }
+    //             }
+    //             Ok(())
+    //         }))
+    //     }
+
+    //     pub fn open_workspace_for_paths(
+    //         &mut self,
+    //         paths: Vec<PathBuf>,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Task<Result<()>> {
+    //         let window = cx.window().downcast::<Self>();
+    //         let is_remote = self.project.read(cx).is_remote();
+    //         let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
+    //         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
+    //         let close_task = if is_remote || has_worktree || has_dirty_items {
+    //             None
+    //         } else {
+    //             Some(self.prepare_to_close(false, cx))
+    //         };
+    //         let app_state = self.app_state.clone();
+
+    //         cx.spawn(|_, mut cx| async move {
+    //             let window_to_replace = if let Some(close_task) = close_task {
+    //                 if !close_task.await? {
+    //                     return Ok(());
+    //                 }
+    //                 window
+    //             } else {
+    //                 None
+    //             };
+    //             cx.update(|cx| open_paths(&paths, &app_state, window_to_replace, cx))
+    //                 .await?;
+    //             Ok(())
+    //         })
+    //     }
+
+    #[allow(clippy::type_complexity)]
+    pub fn open_paths(
+        &mut self,
+        mut abs_paths: Vec<PathBuf>,
+        visible: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
+        log::info!("open paths {:?}", abs_paths);
+
+        let fs = self.app_state.fs.clone();
+
+        // Sort the paths to ensure we add worktrees for parents before their children.
+        abs_paths.sort_unstable();
+        cx.spawn(|this, mut cx| async move {
+            let mut tasks = Vec::with_capacity(abs_paths.len());
+            for abs_path in &abs_paths {
+                let project_path = match this
+                    .update(&mut cx, |this, cx| {
+                        Workspace::project_path_for_path(
+                            this.project.clone(),
+                            abs_path,
+                            visible,
+                            cx,
+                        )
+                    })
+                    .log_err()
+                {
+                    Some(project_path) => project_path.await.log_err(),
+                    None => None,
+                };
+
+                let this = this.clone();
+                let task = cx.spawn(|mut cx| {
+                    let fs = fs.clone();
+                    let abs_path = abs_path.clone();
+                    async move {
+                        let (worktree, project_path) = project_path?;
+                        if fs.is_file(&abs_path).await {
+                            Some(
+                                this.update(&mut cx, |this, cx| {
+                                    this.open_path(project_path, None, true, cx)
+                                })
+                                .log_err()?
+                                .await,
+                            )
+                        } else {
+                            this.update(&mut cx, |workspace, cx| {
+                                let worktree = worktree.read(cx);
+                                let worktree_abs_path = worktree.abs_path();
+                                let entry_id = if abs_path == worktree_abs_path.as_ref() {
+                                    worktree.root_entry()
+                                } else {
+                                    abs_path
+                                        .strip_prefix(worktree_abs_path.as_ref())
+                                        .ok()
+                                        .and_then(|relative_path| {
+                                            worktree.entry_for_path(relative_path)
+                                        })
+                                }
+                                .map(|entry| entry.id);
+                                if let Some(entry_id) = entry_id {
+                                    workspace.project.update(cx, |_, cx| {
+                                        cx.emit(project2::Event::ActiveEntryChanged(Some(
+                                            entry_id,
+                                        )));
+                                    })
+                                }
+                            })
+                            .log_err()?;
+                            None
+                        }
+                    }
+                });
+                tasks.push(task);
+            }
+
+            futures::future::join_all(tasks).await
+        })
+    }
+
+    //     fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
+    //         let mut paths = cx.prompt_for_paths(PathPromptOptions {
+    //             files: false,
+    //             directories: true,
+    //             multiple: true,
+    //         });
+    //         cx.spawn(|this, mut cx| async move {
+    //             if let Some(paths) = paths.recv().await.flatten() {
+    //                 let results = this
+    //                     .update(&mut cx, |this, cx| this.open_paths(paths, true, cx))?
+    //                     .await;
+    //                 for result in results.into_iter().flatten() {
+    //                     result.log_err();
+    //                 }
+    //             }
+    //             anyhow::Ok(())
+    //         })
+    //         .detach_and_log_err(cx);
+    //     }
+
+    fn project_path_for_path(
+        project: Handle<Project>,
+        abs_path: &Path,
+        visible: bool,
+        cx: &mut AppContext,
+    ) -> Task<Result<(Handle<Worktree>, ProjectPath)>> {
+        let entry = project.update(cx, |project, cx| {
+            project.find_or_create_local_worktree(abs_path, visible, cx)
+        });
+        cx.spawn(|cx| async move {
+            let (worktree, path) = entry.await?;
+            let worktree_id = worktree.update(&mut cx, |t, _| t.id())?;
+            Ok((
+                worktree,
+                ProjectPath {
+                    worktree_id,
+                    path: path.into(),
+                },
+            ))
+        })
+    }
+
+    //     /// Returns the modal that was toggled closed if it was open.
+    //     pub fn toggle_modal<V, F>(
+    //         &mut self,
+    //         cx: &mut ViewContext<Self>,
+    //         add_view: F,
+    //     ) -> Option<ViewHandle<V>>
+    //     where
+    //         V: 'static + Modal,
+    //         F: FnOnce(&mut Self, &mut ViewContext<Self>) -> ViewHandle<V>,
+    //     {
+    //         cx.notify();
+    //         // Whatever modal was visible is getting clobbered. If its the same type as V, then return
+    //         // it. Otherwise, create a new modal and set it as active.
+    //         if let Some(already_open_modal) = self
+    //             .dismiss_modal(cx)
+    //             .and_then(|modal| modal.downcast::<V>())
+    //         {
+    //             cx.focus_self();
+    //             Some(already_open_modal)
+    //         } else {
+    //             let modal = add_view(self, cx);
+    //             cx.subscribe(&modal, |this, _, event, cx| {
+    //                 if V::dismiss_on_event(event) {
+    //                     this.dismiss_modal(cx);
+    //                 }
+    //             })
+    //             .detach();
+    //             let previously_focused_view_id = cx.focused_view_id();
+    //             cx.focus(&modal);
+    //             self.modal = Some(ActiveModal {
+    //                 view: Box::new(modal),
+    //                 previously_focused_view_id,
+    //             });
+    //             None
+    //         }
+    //     }
+
+    //     pub fn modal<V: 'static + View>(&self) -> Option<ViewHandle<V>> {
+    //         self.modal
+    //             .as_ref()
+    //             .and_then(|modal| modal.view.as_any().clone().downcast::<V>())
+    //     }
+
+    //     pub fn dismiss_modal(&mut self, cx: &mut ViewContext<Self>) -> Option<AnyViewHandle> {
+    //         if let Some(modal) = self.modal.take() {
+    //             if let Some(previously_focused_view_id) = modal.previously_focused_view_id {
+    //                 if modal.view.has_focus(cx) {
+    //                     cx.window_context().focus(Some(previously_focused_view_id));
+    //                 }
+    //             }
+    //             cx.notify();
+    //             Some(modal.view.as_any().clone())
+    //         } else {
+    //             None
+    //         }
+    //     }
+
+    //     pub fn items<'a>(
+    //         &'a self,
+    //         cx: &'a AppContext,
+    //     ) -> impl 'a + Iterator<Item = &Box<dyn ItemHandle>> {
+    //         self.panes.iter().flat_map(|pane| pane.read(cx).items())
+    //     }
+
+    //     pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
+    //         self.items_of_type(cx).max_by_key(|item| item.id())
+    //     }
+
+    //     pub fn items_of_type<'a, T: Item>(
+    //         &'a self,
+    //         cx: &'a AppContext,
+    //     ) -> impl 'a + Iterator<Item = ViewHandle<T>> {
+    //         self.panes
+    //             .iter()
+    //             .flat_map(|pane| pane.read(cx).items_of_type())
+    //     }
+
+    //     pub fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
+    //         self.active_pane().read(cx).active_item()
+    //     }
+
+    //     fn active_project_path(&self, cx: &ViewContext<Self>) -> Option<ProjectPath> {
+    //         self.active_item(cx).and_then(|item| item.project_path(cx))
+    //     }
+
+    //     pub fn save_active_item(
+    //         &mut self,
+    //         save_intent: SaveIntent,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Task<Result<()>> {
+    //         let project = self.project.clone();
+    //         let pane = self.active_pane();
+    //         let item_ix = pane.read(cx).active_item_index();
+    //         let item = pane.read(cx).active_item();
+    //         let pane = pane.downgrade();
+
+    //         cx.spawn(|_, mut cx| async move {
+    //             if let Some(item) = item {
+    //                 Pane::save_item(project, &pane, item_ix, item.as_ref(), save_intent, &mut cx)
+    //                     .await
+    //                     .map(|_| ())
+    //             } else {
+    //                 Ok(())
+    //             }
+    //         })
+    //     }
+
+    //     pub fn close_inactive_items_and_panes(
+    //         &mut self,
+    //         _: &CloseInactiveTabsAndPanes,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Option<Task<Result<()>>> {
+    //         self.close_all_internal(true, SaveIntent::Close, cx)
+    //     }
+
+    //     pub fn close_all_items_and_panes(
+    //         &mut self,
+    //         action: &CloseAllItemsAndPanes,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Option<Task<Result<()>>> {
+    //         self.close_all_internal(false, action.save_intent.unwrap_or(SaveIntent::Close), cx)
+    //     }
+
+    //     fn close_all_internal(
+    //         &mut self,
+    //         retain_active_pane: bool,
+    //         save_intent: SaveIntent,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Option<Task<Result<()>>> {
+    //         let current_pane = self.active_pane();
+
+    //         let mut tasks = Vec::new();
+
+    //         if retain_active_pane {
+    //             if let Some(current_pane_close) = current_pane.update(cx, |pane, cx| {
+    //                 pane.close_inactive_items(&CloseInactiveItems, cx)
+    //             }) {
+    //                 tasks.push(current_pane_close);
+    //             };
+    //         }
+
+    //         for pane in self.panes() {
+    //             if retain_active_pane && pane.id() == current_pane.id() {
+    //                 continue;
+    //             }
+
+    //             if let Some(close_pane_items) = pane.update(cx, |pane: &mut Pane, cx| {
+    //                 pane.close_all_items(
+    //                     &CloseAllItems {
+    //                         save_intent: Some(save_intent),
+    //                     },
+    //                     cx,
+    //                 )
+    //             }) {
+    //                 tasks.push(close_pane_items)
+    //             }
+    //         }
+
+    //         if tasks.is_empty() {
+    //             None
+    //         } else {
+    //             Some(cx.spawn(|_, _| async move {
+    //                 for task in tasks {
+    //                     task.await?
+    //                 }
+    //                 Ok(())
+    //             }))
+    //         }
+    //     }
+
+    //     pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
+    //         let dock = match dock_side {
+    //             DockPosition::Left => &self.left_dock,
+    //             DockPosition::Bottom => &self.bottom_dock,
+    //             DockPosition::Right => &self.right_dock,
+    //         };
+    //         let mut focus_center = false;
+    //         let mut reveal_dock = false;
+    //         dock.update(cx, |dock, cx| {
+    //             let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
+    //             let was_visible = dock.is_open() && !other_is_zoomed;
+    //             dock.set_open(!was_visible, cx);
+
+    //             if let Some(active_panel) = dock.active_panel() {
+    //                 if was_visible {
+    //                     if active_panel.has_focus(cx) {
+    //                         focus_center = true;
+    //                     }
+    //                 } else {
+    //                     cx.focus(active_panel.as_any());
+    //                     reveal_dock = true;
+    //                 }
+    //             }
+    //         });
+
+    //         if reveal_dock {
+    //             self.dismiss_zoomed_items_to_reveal(Some(dock_side), cx);
+    //         }
+
+    //         if focus_center {
+    //             cx.focus_self();
+    //         }
+
+    //         cx.notify();
+    //         self.serialize_workspace(cx);
+    //     }
+
+    //     pub fn close_all_docks(&mut self, cx: &mut ViewContext<Self>) {
+    //         let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
+
+    //         for dock in docks {
+    //             dock.update(cx, |dock, cx| {
+    //                 dock.set_open(false, cx);
+    //             });
+    //         }
+
+    //         cx.focus_self();
+    //         cx.notify();
+    //         self.serialize_workspace(cx);
+    //     }
+
+    //     /// Transfer focus to the panel of the given type.
+    //     pub fn focus_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) -> Option<ViewHandle<T>> {
+    //         self.focus_or_unfocus_panel::<T>(cx, |_, _| true)?
+    //             .as_any()
+    //             .clone()
+    //             .downcast()
+    //     }
+
+    //     /// Focus the panel of the given type if it isn't already focused. If it is
+    //     /// already focused, then transfer focus back to the workspace center.
+    //     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
+    //         self.focus_or_unfocus_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
+    //     }
+
+    //     /// Focus or unfocus the given panel type, depending on the given callback.
+    //     fn focus_or_unfocus_panel<T: Panel>(
+    //         &mut self,
+    //         cx: &mut ViewContext<Self>,
+    //         should_focus: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool,
+    //     ) -> Option<Rc<dyn PanelHandle>> {
+    //         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+    //             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
+    //                 let mut focus_center = false;
+    //                 let mut reveal_dock = false;
+    //                 let panel = dock.update(cx, |dock, cx| {
+    //                     dock.activate_panel(panel_index, cx);
+
+    //                     let panel = dock.active_panel().cloned();
+    //                     if let Some(panel) = panel.as_ref() {
+    //                         if should_focus(&**panel, cx) {
+    //                             dock.set_open(true, cx);
+    //                             cx.focus(panel.as_any());
+    //                             reveal_dock = true;
+    //                         } else {
+    //                             // if panel.is_zoomed(cx) {
+    //                             //     dock.set_open(false, cx);
+    //                             // }
+    //                             focus_center = true;
+    //                         }
+    //                     }
+    //                     panel
+    //                 });
+
+    //                 if focus_center {
+    //                     cx.focus_self();
+    //                 }
+
+    //                 self.serialize_workspace(cx);
+    //                 cx.notify();
+    //                 return panel;
+    //             }
+    //         }
+    //         None
+    //     }
+
+    //     pub fn panel<T: Panel>(&self, cx: &WindowContext) -> Option<ViewHandle<T>> {
+    //         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+    //             let dock = dock.read(cx);
+    //             if let Some(panel) = dock.panel::<T>() {
+    //                 return Some(panel);
+    //             }
+    //         }
+    //         None
+    //     }
+
+    //     fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
+    //         for pane in &self.panes {
+    //             pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+    //         }
+
+    //         self.left_dock.update(cx, |dock, cx| dock.zoom_out(cx));
+    //         self.bottom_dock.update(cx, |dock, cx| dock.zoom_out(cx));
+    //         self.right_dock.update(cx, |dock, cx| dock.zoom_out(cx));
+    //         self.zoomed = None;
+    //         self.zoomed_position = None;
+
+    //         cx.notify();
+    //     }
+
+    //     #[cfg(any(test, feature = "test-support"))]
+    //     pub fn zoomed_view(&self, cx: &AppContext) -> Option<AnyViewHandle> {
+    //         self.zoomed.and_then(|view| view.upgrade(cx))
+    //     }
+
+    //     fn dismiss_zoomed_items_to_reveal(
+    //         &mut self,
+    //         dock_to_reveal: Option<DockPosition>,
+    //         cx: &mut ViewContext<Self>,
+    //     ) {
+    //         // If a center pane is zoomed, unzoom it.
+    //         for pane in &self.panes {
+    //             if pane != &self.active_pane || dock_to_reveal.is_some() {
+    //                 pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+    //             }
+    //         }
+
+    //         // If another dock is zoomed, hide it.
+    //         let mut focus_center = false;
+    //         for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+    //             dock.update(cx, |dock, cx| {
+    //                 if Some(dock.position()) != dock_to_reveal {
+    //                     if let Some(panel) = dock.active_panel() {
+    //                         if panel.is_zoomed(cx) {
+    //                             focus_center |= panel.has_focus(cx);
+    //                             dock.set_open(false, cx);
+    //                         }
+    //                     }
+    //                 }
+    //             });
+    //         }
+
+    //         if focus_center {
+    //             cx.focus_self();
+    //         }
+
+    //         if self.zoomed_position != dock_to_reveal {
+    //             self.zoomed = None;
+    //             self.zoomed_position = None;
+    //         }
+
+    //         cx.notify();
+    //     }
+
+    //     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
+    //         let pane = cx.add_view(|cx| {
+    //             Pane::new(
+    //                 self.weak_handle(),
+    //                 self.project.clone(),
+    //                 self.pane_history_timestamp.clone(),
+    //                 cx,
+    //             )
+    //         });
+    //         cx.subscribe(&pane, Self::handle_pane_event).detach();
+    //         self.panes.push(pane.clone());
+    //         cx.focus(&pane);
+    //         cx.emit(Event::PaneAdded(pane.clone()));
+    //         pane
+    //     }
+
+    //     pub fn add_item_to_center(
+    //         &mut self,
+    //         item: Box<dyn ItemHandle>,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> bool {
+    //         if let Some(center_pane) = self.last_active_center_pane.clone() {
+    //             if let Some(center_pane) = center_pane.upgrade(cx) {
+    //                 center_pane.update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
+    //                 true
+    //             } else {
+    //                 false
+    //             }
+    //         } else {
+    //             false
+    //         }
+    //     }
+
+    //     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+    //         self.active_pane
+    //             .update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
+    //     }
+
+    //     pub fn split_item(
+    //         &mut self,
+    //         split_direction: SplitDirection,
+    //         item: Box<dyn ItemHandle>,
+    //         cx: &mut ViewContext<Self>,
+    //     ) {
+    //         let new_pane = self.split_pane(self.active_pane.clone(), split_direction, cx);
+    //         new_pane.update(cx, move |new_pane, cx| {
+    //             new_pane.add_item(item, true, true, None, cx)
+    //         })
+    //     }
+
+    //     pub fn open_abs_path(
+    //         &mut self,
+    //         abs_path: PathBuf,
+    //         visible: bool,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+    //         cx.spawn(|workspace, mut cx| async move {
+    //             let open_paths_task_result = workspace
+    //                 .update(&mut cx, |workspace, cx| {
+    //                     workspace.open_paths(vec![abs_path.clone()], visible, cx)
+    //                 })
+    //                 .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
+    //                 .await;
+    //             anyhow::ensure!(
+    //                 open_paths_task_result.len() == 1,
+    //                 "open abs path {abs_path:?} task returned incorrect number of results"
+    //             );
+    //             match open_paths_task_result
+    //                 .into_iter()
+    //                 .next()
+    //                 .expect("ensured single task result")
+    //             {
+    //                 Some(open_result) => {
+    //                     open_result.with_context(|| format!("open abs path {abs_path:?} task join"))
+    //                 }
+    //                 None => anyhow::bail!("open abs path {abs_path:?} task returned None"),
+    //             }
+    //         })
+    //     }
+
+    //     pub fn split_abs_path(
+    //         &mut self,
+    //         abs_path: PathBuf,
+    //         visible: bool,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+    //         let project_path_task =
+    //             Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
+    //         cx.spawn(|this, mut cx| async move {
+    //             let (_, path) = project_path_task.await?;
+    //             this.update(&mut cx, |this, cx| this.split_path(path, cx))?
+    //                 .await
+    //         })
+    //     }
+
+    pub fn open_path(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        pane: Option<WeakView<Pane>>,
+        focus_item: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+        let pane = pane.unwrap_or_else(|| {
+            self.last_active_center_pane.clone().unwrap_or_else(|| {
+                self.panes
+                    .first()
+                    .expect("There must be an active pane")
+                    .downgrade()
+            })
+        });
+
+        let task = self.load_path(path.into(), cx);
+        cx.spawn(|_, mut cx| async move {
+            let (project_entry_id, build_item) = task.await?;
+            pane.update(&mut cx, |pane, cx| {
+                pane.open_item(project_entry_id, focus_item, cx, build_item)
+            })
+        })
+    }
+
+    //     pub fn split_path(
+    //         &mut self,
+    //         path: impl Into<ProjectPath>,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+    //         let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
+    //             self.panes
+    //                 .first()
+    //                 .expect("There must be an active pane")
+    //                 .downgrade()
+    //         });
+
+    //         if let Member::Pane(center_pane) = &self.center.root {
+    //             if center_pane.read(cx).items_len() == 0 {
+    //                 return self.open_path(path, Some(pane), true, cx);
+    //             }
+    //         }
+
+    //         let task = self.load_path(path.into(), cx);
+    //         cx.spawn(|this, mut cx| async move {
+    //             let (project_entry_id, build_item) = task.await?;
+    //             this.update(&mut cx, move |this, cx| -> Option<_> {
+    //                 let pane = pane.upgrade(cx)?;
+    //                 let new_pane = this.split_pane(pane, SplitDirection::Right, cx);
+    //                 new_pane.update(cx, |new_pane, cx| {
+    //                     Some(new_pane.open_item(project_entry_id, true, cx, build_item))
+    //                 })
+    //             })
+    //             .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
+    //         })
+    //     }
+
+    pub(crate) fn load_path(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<
+        Result<(
+            ProjectEntryId,
+            impl 'static + FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
+        )>,
+    > {
+        let project = self.project().clone();
+        let project_item = project.update(cx, |project, cx| project.open_path(path, cx));
+        cx.spawn(|_, mut cx| async move {
+            let (project_entry_id, project_item) = project_item.await?;
+            let build_item = cx.update(|cx| {
+                cx.default_global::<ProjectItemBuilders>()
+                    .get(&project_item.model_type())
+                    .ok_or_else(|| anyhow!("no item builder for project item"))
+                    .cloned()
+            })?;
+            let build_item =
+                move |cx: &mut ViewContext<Pane>| build_item(project, project_item, cx);
+            Ok((project_entry_id, build_item))
+        })
+    }
+
+    //     pub fn open_project_item<T>(
+    //         &mut self,
+    //         project_item: ModelHandle<T::Item>,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> ViewHandle<T>
+    //     where
+    //         T: ProjectItem,
+    //     {
+    //         use project::Item as _;
+
+    //         let entry_id = project_item.read(cx).entry_id(cx);
+    //         if let Some(item) = entry_id
+    //             .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id, cx))
+    //             .and_then(|item| item.downcast())
+    //         {
+    //             self.activate_item(&item, cx);
+    //             return item;
+    //         }
+
+    //         let item = cx.add_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+    //         self.add_item(Box::new(item.clone()), cx);
+    //         item
+    //     }
+
+    //     pub fn split_project_item<T>(
+    //         &mut self,
+    //         project_item: ModelHandle<T::Item>,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> ViewHandle<T>
+    //     where
+    //         T: ProjectItem,
+    //     {
+    //         use project::Item as _;
+
+    //         let entry_id = project_item.read(cx).entry_id(cx);
+    //         if let Some(item) = entry_id
+    //             .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id, cx))
+    //             .and_then(|item| item.downcast())
+    //         {
+    //             self.activate_item(&item, cx);
+    //             return item;
+    //         }
+
+    //         let item = cx.add_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+    //         self.split_item(SplitDirection::Right, Box::new(item.clone()), cx);
+    //         item
+    //     }
+
+    //     pub fn open_shared_screen(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
+    //         if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
+    //             self.active_pane.update(cx, |pane, cx| {
+    //                 pane.add_item(Box::new(shared_screen), false, true, None, cx)
+    //             });
+    //         }
+    //     }
+
+    //     pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
+    //         let result = self.panes.iter().find_map(|pane| {
+    //             pane.read(cx)
+    //                 .index_for_item(item)
+    //                 .map(|ix| (pane.clone(), ix))
+    //         });
+    //         if let Some((pane, ix)) = result {
+    //             pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, cx));
+    //             true
+    //         } else {
+    //             false
+    //         }
+    //     }
+
+    //     fn activate_pane_at_index(&mut self, action: &ActivatePane, cx: &mut ViewContext<Self>) {
+    //         let panes = self.center.panes();
+    //         if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
+    //             cx.focus(&pane);
+    //         } else {
+    //             self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, cx);
+    //         }
+    //     }
+
+    //     pub fn activate_next_pane(&mut self, cx: &mut ViewContext<Self>) {
+    //         let panes = self.center.panes();
+    //         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
+    //             let next_ix = (ix + 1) % panes.len();
+    //             let next_pane = panes[next_ix].clone();
+    //             cx.focus(&next_pane);
+    //         }
+    //     }
+
+    //     pub fn activate_previous_pane(&mut self, cx: &mut ViewContext<Self>) {
+    //         let panes = self.center.panes();
+    //         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
+    //             let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
+    //             let prev_pane = panes[prev_ix].clone();
+    //             cx.focus(&prev_pane);
+    //         }
+    //     }
+
+    //     pub fn activate_pane_in_direction(
+    //         &mut self,
+    //         direction: SplitDirection,
+    //         cx: &mut ViewContext<Self>,
+    //     ) {
+    //         if let Some(pane) = self.find_pane_in_direction(direction, cx) {
+    //             cx.focus(pane);
+    //         }
+    //     }
+
+    //     pub fn swap_pane_in_direction(
+    //         &mut self,
+    //         direction: SplitDirection,
+    //         cx: &mut ViewContext<Self>,
+    //     ) {
+    //         if let Some(to) = self
+    //             .find_pane_in_direction(direction, cx)
+    //             .map(|pane| pane.clone())
+    //         {
+    //             self.center.swap(&self.active_pane.clone(), &to);
+    //             cx.notify();
+    //         }
+    //     }
+
+    //     fn find_pane_in_direction(
+    //         &mut self,
+    //         direction: SplitDirection,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Option<&ViewHandle<Pane>> {
+    //         let Some(bounding_box) = self.center.bounding_box_for_pane(&self.active_pane) else {
+    //             return None;
+    //         };
+    //         let cursor = self.active_pane.read(cx).pixel_position_of_cursor(cx);
+    //         let center = match cursor {
+    //             Some(cursor) if bounding_box.contains_point(cursor) => cursor,
+    //             _ => bounding_box.center(),
+    //         };
+
+    //         let distance_to_next = theme::current(cx).workspace.pane_divider.width + 1.;
+
+    //         let target = match direction {
+    //             SplitDirection::Left => vec2f(bounding_box.origin_x() - distance_to_next, center.y()),
+    //             SplitDirection::Right => vec2f(bounding_box.max_x() + distance_to_next, center.y()),
+    //             SplitDirection::Up => vec2f(center.x(), bounding_box.origin_y() - distance_to_next),
+    //             SplitDirection::Down => vec2f(center.x(), bounding_box.max_y() + distance_to_next),
+    //         };
+    //         self.center.pane_at_pixel_position(target)
+    //     }
+
+    //     fn handle_pane_focused(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
+    //         if self.active_pane != pane {
+    //             self.active_pane = pane.clone();
+    //             self.status_bar.update(cx, |status_bar, cx| {
+    //                 status_bar.set_active_pane(&self.active_pane, cx);
+    //             });
+    //             self.active_item_path_changed(cx);
+    //             self.last_active_center_pane = Some(pane.downgrade());
+    //         }
+
+    //         self.dismiss_zoomed_items_to_reveal(None, cx);
+    //         if pane.read(cx).is_zoomed() {
+    //             self.zoomed = Some(pane.downgrade().into_any());
+    //         } else {
+    //             self.zoomed = None;
+    //         }
+    //         self.zoomed_position = None;
+    //         self.update_active_view_for_followers(cx);
+
+    //         cx.notify();
+    //     }
+
+    //     fn handle_pane_event(
+    //         &mut self,
+    //         pane: ViewHandle<Pane>,
+    //         event: &pane::Event,
+    //         cx: &mut ViewContext<Self>,
+    //     ) {
+    //         match event {
+    //             pane::Event::AddItem { item } => item.added_to_pane(self, pane, cx),
+    //             pane::Event::Split(direction) => {
+    //                 self.split_and_clone(pane, *direction, cx);
+    //             }
+    //             pane::Event::Remove => self.remove_pane(pane, cx),
+    //             pane::Event::ActivateItem { local } => {
+    //                 if *local {
+    //                     self.unfollow(&pane, cx);
+    //                 }
+    //                 if &pane == self.active_pane() {
+    //                     self.active_item_path_changed(cx);
+    //                 }
+    //             }
+    //             pane::Event::ChangeItemTitle => {
+    //                 if pane == self.active_pane {
+    //                     self.active_item_path_changed(cx);
+    //                 }
+    //                 self.update_window_edited(cx);
+    //             }
+    //             pane::Event::RemoveItem { item_id } => {
+    //                 self.update_window_edited(cx);
+    //                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
+    //                     if entry.get().id() == pane.id() {
+    //                         entry.remove();
+    //                     }
+    //                 }
+    //             }
+    //             pane::Event::Focus => {
+    //                 self.handle_pane_focused(pane.clone(), cx);
+    //             }
+    //             pane::Event::ZoomIn => {
+    //                 if pane == self.active_pane {
+    //                     pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
+    //                     if pane.read(cx).has_focus() {
+    //                         self.zoomed = Some(pane.downgrade().into_any());
+    //                         self.zoomed_position = None;
+    //                     }
+    //                     cx.notify();
+    //                 }
+    //             }
+    //             pane::Event::ZoomOut => {
+    //                 pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+    //                 if self.zoomed_position.is_none() {
+    //                     self.zoomed = None;
+    //                 }
+    //                 cx.notify();
+    //             }
+    //         }
+
+    //         self.serialize_workspace(cx);
+    //     }
+
+    //     pub fn split_pane(
+    //         &mut self,
+    //         pane_to_split: ViewHandle<Pane>,
+    //         split_direction: SplitDirection,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> ViewHandle<Pane> {
+    //         let new_pane = self.add_pane(cx);
+    //         self.center
+    //             .split(&pane_to_split, &new_pane, split_direction)
+    //             .unwrap();
+    //         cx.notify();
+    //         new_pane
+    //     }
+
+    //     pub fn split_and_clone(
+    //         &mut self,
+    //         pane: ViewHandle<Pane>,
+    //         direction: SplitDirection,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Option<ViewHandle<Pane>> {
+    //         let item = pane.read(cx).active_item()?;
+    //         let maybe_pane_handle = if let Some(clone) = item.clone_on_split(self.database_id(), cx) {
+    //             let new_pane = self.add_pane(cx);
+    //             new_pane.update(cx, |pane, cx| pane.add_item(clone, true, true, None, cx));
+    //             self.center.split(&pane, &new_pane, direction).unwrap();
+    //             Some(new_pane)
+    //         } else {
+    //             None
+    //         };
+    //         cx.notify();
+    //         maybe_pane_handle
+    //     }
+
+    //     pub fn split_pane_with_item(
+    //         &mut self,
+    //         pane_to_split: WeakViewHandle<Pane>,
+    //         split_direction: SplitDirection,
+    //         from: WeakViewHandle<Pane>,
+    //         item_id_to_move: usize,
+    //         cx: &mut ViewContext<Self>,
+    //     ) {
+    //         let Some(pane_to_split) = pane_to_split.upgrade(cx) else {
+    //             return;
+    //         };
+    //         let Some(from) = from.upgrade(cx) else {
+    //             return;
+    //         };
+
+    //         let new_pane = self.add_pane(cx);
+    //         self.move_item(from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
+    //         self.center
+    //             .split(&pane_to_split, &new_pane, split_direction)
+    //             .unwrap();
+    //         cx.notify();
+    //     }
+
+    //     pub fn split_pane_with_project_entry(
+    //         &mut self,
+    //         pane_to_split: WeakViewHandle<Pane>,
+    //         split_direction: SplitDirection,
+    //         project_entry: ProjectEntryId,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Option<Task<Result<()>>> {
+    //         let pane_to_split = pane_to_split.upgrade(cx)?;
+    //         let new_pane = self.add_pane(cx);
+    //         self.center
+    //             .split(&pane_to_split, &new_pane, split_direction)
+    //             .unwrap();
+
+    //         let path = self.project.read(cx).path_for_entry(project_entry, cx)?;
+    //         let task = self.open_path(path, Some(new_pane.downgrade()), true, cx);
+    //         Some(cx.foreground().spawn(async move {
+    //             task.await?;
+    //             Ok(())
+    //         }))
+    //     }
+
+    //     pub fn move_item(
+    //         &mut self,
+    //         source: ViewHandle<Pane>,
+    //         destination: ViewHandle<Pane>,
+    //         item_id_to_move: usize,
+    //         destination_index: usize,
+    //         cx: &mut ViewContext<Self>,
+    //     ) {
+    //         let item_to_move = source
+    //             .read(cx)
+    //             .items()
+    //             .enumerate()
+    //             .find(|(_, item_handle)| item_handle.id() == item_id_to_move);
+
+    //         if item_to_move.is_none() {
+    //             log::warn!("Tried to move item handle which was not in `from` pane. Maybe tab was closed during drop");
+    //             return;
+    //         }
+    //         let (item_ix, item_handle) = item_to_move.unwrap();
+    //         let item_handle = item_handle.clone();
+
+    //         if source != destination {
+    //             // Close item from previous pane
+    //             source.update(cx, |source, cx| {
+    //                 source.remove_item(item_ix, false, cx);
+    //             });
+    //         }
+
+    //         // This automatically removes duplicate items in the pane
+    //         destination.update(cx, |destination, cx| {
+    //             destination.add_item(item_handle, true, true, Some(destination_index), cx);
+    //             cx.focus_self();
+    //         });
+    //     }
+
+    //     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
+    //         if self.center.remove(&pane).unwrap() {
+    //             self.force_remove_pane(&pane, cx);
+    //             self.unfollow(&pane, cx);
+    //             self.last_leaders_by_pane.remove(&pane.downgrade());
+    //             for removed_item in pane.read(cx).items() {
+    //                 self.panes_by_item.remove(&removed_item.id());
+    //             }
+
+    //             cx.notify();
+    //         } else {
+    //             self.active_item_path_changed(cx);
+    //         }
+    //     }
+
+    //     pub fn panes(&self) -> &[ViewHandle<Pane>] {
+    //         &self.panes
+    //     }
+
+    //     pub fn active_pane(&self) -> &ViewHandle<Pane> {
+    //         &self.active_pane
+    //     }
+
+    //     fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
+    //         self.follower_states.retain(|_, state| {
+    //             if state.leader_id == peer_id {
+    //                 for item in state.items_by_leader_view_id.values() {
+    //                     item.set_leader_peer_id(None, cx);
+    //                 }
+    //                 false
+    //             } else {
+    //                 true
+    //             }
+    //         });
+    //         cx.notify();
+    //     }
+
+    //     fn start_following(
+    //         &mut self,
+    //         leader_id: PeerId,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Option<Task<Result<()>>> {
+    //         let pane = self.active_pane().clone();
+
+    //         self.last_leaders_by_pane
+    //             .insert(pane.downgrade(), leader_id);
+    //         self.unfollow(&pane, cx);
+    //         self.follower_states.insert(
+    //             pane.clone(),
+    //             FollowerState {
+    //                 leader_id,
+    //                 active_view_id: None,
+    //                 items_by_leader_view_id: Default::default(),
+    //             },
+    //         );
+    //         cx.notify();
+
+    //         let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
+    //         let project_id = self.project.read(cx).remote_id();
+    //         let request = self.app_state.client.request(proto::Follow {
+    //             room_id,
+    //             project_id,
+    //             leader_id: Some(leader_id),
+    //         });
+
+    //         Some(cx.spawn(|this, mut cx| async move {
+    //             let response = request.await?;
+    //             this.update(&mut cx, |this, _| {
+    //                 let state = this
+    //                     .follower_states
+    //                     .get_mut(&pane)
+    //                     .ok_or_else(|| anyhow!("following interrupted"))?;
+    //                 state.active_view_id = if let Some(active_view_id) = response.active_view_id {
+    //                     Some(ViewId::from_proto(active_view_id)?)
+    //                 } else {
+    //                     None
+    //                 };
+    //                 Ok::<_, anyhow::Error>(())
+    //             })??;
+    //             Self::add_views_from_leader(
+    //                 this.clone(),
+    //                 leader_id,
+    //                 vec![pane],
+    //                 response.views,
+    //                 &mut cx,
+    //             )
+    //             .await?;
+    //             this.update(&mut cx, |this, cx| this.leader_updated(leader_id, cx))?;
+    //             Ok(())
+    //         }))
+    //     }
+
+    //     pub fn follow_next_collaborator(
+    //         &mut self,
+    //         _: &FollowNextCollaborator,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Option<Task<Result<()>>> {
+    //         let collaborators = self.project.read(cx).collaborators();
+    //         let next_leader_id = if let Some(leader_id) = self.leader_for_pane(&self.active_pane) {
+    //             let mut collaborators = collaborators.keys().copied();
+    //             for peer_id in collaborators.by_ref() {
+    //                 if peer_id == leader_id {
+    //                     break;
+    //                 }
+    //             }
+    //             collaborators.next()
+    //         } else if let Some(last_leader_id) =
+    //             self.last_leaders_by_pane.get(&self.active_pane.downgrade())
+    //         {
+    //             if collaborators.contains_key(last_leader_id) {
+    //                 Some(*last_leader_id)
+    //             } else {
+    //                 None
+    //             }
+    //         } else {
+    //             None
+    //         };
+
+    //         let pane = self.active_pane.clone();
+    //         let Some(leader_id) = next_leader_id.or_else(|| collaborators.keys().copied().next())
+    //         else {
+    //             return None;
+    //         };
+    //         if Some(leader_id) == self.unfollow(&pane, cx) {
+    //             return None;
+    //         }
+    //         self.follow(leader_id, cx)
+    //     }
+
+    //     pub fn follow(
+    //         &mut self,
+    //         leader_id: PeerId,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Option<Task<Result<()>>> {
+    //         let room = ActiveCall::global(cx).read(cx).room()?.read(cx);
+    //         let project = self.project.read(cx);
+
+    //         let Some(remote_participant) = room.remote_participant_for_peer_id(leader_id) else {
+    //             return None;
+    //         };
+
+    //         let other_project_id = match remote_participant.location {
+    //             call::ParticipantLocation::External => None,
+    //             call::ParticipantLocation::UnsharedProject => None,
+    //             call::ParticipantLocation::SharedProject { project_id } => {
+    //                 if Some(project_id) == project.remote_id() {
+    //                     None
+    //                 } else {
+    //                     Some(project_id)
+    //                 }
+    //             }
+    //         };
+
+    //         // if they are active in another project, follow there.
+    //         if let Some(project_id) = other_project_id {
+    //             let app_state = self.app_state.clone();
+    //             return Some(crate::join_remote_project(
+    //                 project_id,
+    //                 remote_participant.user.id,
+    //                 app_state,
+    //                 cx,
+    //             ));
+    //         }
+
+    //         // if you're already following, find the right pane and focus it.
+    //         for (pane, state) in &self.follower_states {
+    //             if leader_id == state.leader_id {
+    //                 cx.focus(pane);
+    //                 return None;
+    //             }
+    //         }
+
+    //         // Otherwise, follow.
+    //         self.start_following(leader_id, cx)
+    //     }
+
+    //     pub fn unfollow(
+    //         &mut self,
+    //         pane: &ViewHandle<Pane>,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Option<PeerId> {
+    //         let state = self.follower_states.remove(pane)?;
+    //         let leader_id = state.leader_id;
+    //         for (_, item) in state.items_by_leader_view_id {
+    //             item.set_leader_peer_id(None, cx);
+    //         }
+
+    //         if self
+    //             .follower_states
+    //             .values()
+    //             .all(|state| state.leader_id != state.leader_id)
+    //         {
+    //             let project_id = self.project.read(cx).remote_id();
+    //             let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
+    //             self.app_state
+    //                 .client
+    //                 .send(proto::Unfollow {
+    //                     room_id,
+    //                     project_id,
+    //                     leader_id: Some(leader_id),
+    //                 })
+    //                 .log_err();
+    //         }
+
+    //         cx.notify();
+    //         Some(leader_id)
+    //     }
+
+    //     pub fn is_being_followed(&self, peer_id: PeerId) -> bool {
+    //         self.follower_states
+    //             .values()
+    //             .any(|state| state.leader_id == peer_id)
+    //     }
+
+    //     fn render_titlebar(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+    //         // TODO: There should be a better system in place for this
+    //         // (https://github.com/zed-industries/zed/issues/1290)
+    //         let is_fullscreen = cx.window_is_fullscreen();
+    //         let container_theme = if is_fullscreen {
+    //             let mut container_theme = theme.titlebar.container;
+    //             container_theme.padding.left = container_theme.padding.right;
+    //             container_theme
+    //         } else {
+    //             theme.titlebar.container
+    //         };
+
+    //         enum TitleBar {}
+    //         MouseEventHandler::new::<TitleBar, _>(0, cx, |_, cx| {
+    //             Stack::new()
+    //                 .with_children(
+    //                     self.titlebar_item
+    //                         .as_ref()
+    //                         .map(|item| ChildView::new(item, cx)),
+    //                 )
+    //                 .contained()
+    //                 .with_style(container_theme)
+    //         })
+    //         .on_click(MouseButton::Left, |event, _, cx| {
+    //             if event.click_count == 2 {
+    //                 cx.zoom_window();
+    //             }
+    //         })
+    //         .constrained()
+    //         .with_height(theme.titlebar.height)
+    //         .into_any_named("titlebar")
+    //     }
+
+    //     fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
+    //         let active_entry = self.active_project_path(cx);
+    //         self.project
+    //             .update(cx, |project, cx| project.set_active_path(active_entry, cx));
+    //         self.update_window_title(cx);
+    //     }
+
+    //     fn update_window_title(&mut self, cx: &mut ViewContext<Self>) {
+    //         let project = self.project().read(cx);
+    //         let mut title = String::new();
+
+    //         if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
+    //             let filename = path
+    //                 .path
+    //                 .file_name()
+    //                 .map(|s| s.to_string_lossy())
+    //                 .or_else(|| {
+    //                     Some(Cow::Borrowed(
+    //                         project
+    //                             .worktree_for_id(path.worktree_id, cx)?
+    //                             .read(cx)
+    //                             .root_name(),
+    //                     ))
+    //                 });
+
+    //             if let Some(filename) = filename {
+    //                 title.push_str(filename.as_ref());
+    //                 title.push_str(" — ");
+    //             }
+    //         }
+
+    //         for (i, name) in project.worktree_root_names(cx).enumerate() {
+    //             if i > 0 {
+    //                 title.push_str(", ");
+    //             }
+    //             title.push_str(name);
+    //         }
+
+    //         if title.is_empty() {
+    //             title = "empty project".to_string();
+    //         }
+
+    //         if project.is_remote() {
+    //             title.push_str(" ↙");
+    //         } else if project.is_shared() {
+    //             title.push_str(" ↗");
+    //         }
+
+    //         cx.set_window_title(&title);
+    //     }
+
+    //     fn update_window_edited(&mut self, cx: &mut ViewContext<Self>) {
+    //         let is_edited = !self.project.read(cx).is_read_only()
+    //             && self
+    //                 .items(cx)
+    //                 .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
+    //         if is_edited != self.window_edited {
+    //             self.window_edited = is_edited;
+    //             cx.set_window_edited(self.window_edited)
+    //         }
+    //     }
+
+    //     fn render_disconnected_overlay(
+    //         &self,
+    //         cx: &mut ViewContext<Workspace>,
+    //     ) -> Option<AnyElement<Workspace>> {
+    //         if self.project.read(cx).is_read_only() {
+    //             enum DisconnectedOverlay {}
+    //             Some(
+    //                 MouseEventHandler::new::<DisconnectedOverlay, _>(0, cx, |_, cx| {
+    //                     let theme = &theme::current(cx);
+    //                     Label::new(
+    //                         "Your connection to the remote project has been lost.",
+    //                         theme.workspace.disconnected_overlay.text.clone(),
+    //                     )
+    //                     .aligned()
+    //                     .contained()
+    //                     .with_style(theme.workspace.disconnected_overlay.container)
+    //                 })
+    //                 .with_cursor_style(CursorStyle::Arrow)
+    //                 .capture_all()
+    //                 .into_any_named("disconnected overlay"),
+    //             )
+    //         } else {
+    //             None
+    //         }
+    //     }
+
+    //     fn render_notifications(
+    //         &self,
+    //         theme: &theme::Workspace,
+    //         cx: &AppContext,
+    //     ) -> Option<AnyElement<Workspace>> {
+    //         if self.notifications.is_empty() {
+    //             None
+    //         } else {
+    //             Some(
+    //                 Flex::column()
+    //                     .with_children(self.notifications.iter().map(|(_, _, notification)| {
+    //                         ChildView::new(notification.as_any(), cx)
+    //                             .contained()
+    //                             .with_style(theme.notification)
+    //                     }))
+    //                     .constrained()
+    //                     .with_width(theme.notifications.width)
+    //                     .contained()
+    //                     .with_style(theme.notifications.container)
+    //                     .aligned()
+    //                     .bottom()
+    //                     .right()
+    //                     .into_any(),
+    //             )
+    //         }
+    //     }
+
+    //     // RPC handlers
+
+    //     fn handle_follow(
+    //         &mut self,
+    //         follower_project_id: Option<u64>,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> proto::FollowResponse {
+    //         let client = &self.app_state.client;
+    //         let project_id = self.project.read(cx).remote_id();
+
+    //         let active_view_id = self.active_item(cx).and_then(|i| {
+    //             Some(
+    //                 i.to_followable_item_handle(cx)?
+    //                     .remote_id(client, cx)?
+    //                     .to_proto(),
+    //             )
+    //         });
+
+    //         cx.notify();
+
+    //         self.last_active_view_id = active_view_id.clone();
+    //         proto::FollowResponse {
+    //             active_view_id,
+    //             views: self
+    //                 .panes()
+    //                 .iter()
+    //                 .flat_map(|pane| {
+    //                     let leader_id = self.leader_for_pane(pane);
+    //                     pane.read(cx).items().filter_map({
+    //                         let cx = &cx;
+    //                         move |item| {
+    //                             let item = item.to_followable_item_handle(cx)?;
+    //                             if (project_id.is_none() || project_id != follower_project_id)
+    //                                 && item.is_project_item(cx)
+    //                             {
+    //                                 return None;
+    //                             }
+    //                             let id = item.remote_id(client, cx)?.to_proto();
+    //                             let variant = item.to_state_proto(cx)?;
+    //                             Some(proto::View {
+    //                                 id: Some(id),
+    //                                 leader_id,
+    //                                 variant: Some(variant),
+    //                             })
+    //                         }
+    //                     })
+    //                 })
+    //                 .collect(),
+    //         }
+    //     }
+
+    //     fn handle_update_followers(
+    //         &mut self,
+    //         leader_id: PeerId,
+    //         message: proto::UpdateFollowers,
+    //         _cx: &mut ViewContext<Self>,
+    //     ) {
+    //         self.leader_updates_tx
+    //             .unbounded_send((leader_id, message))
+    //             .ok();
+    //     }
+
+    //     async fn process_leader_update(
+    //         this: &WeakViewHandle<Self>,
+    //         leader_id: PeerId,
+    //         update: proto::UpdateFollowers,
+    //         cx: &mut AsyncAppContext,
+    //     ) -> Result<()> {
+    //         match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
+    //             proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
+    //                 this.update(cx, |this, _| {
+    //                     for (_, state) in &mut this.follower_states {
+    //                         if state.leader_id == leader_id {
+    //                             state.active_view_id =
+    //                                 if let Some(active_view_id) = update_active_view.id.clone() {
+    //                                     Some(ViewId::from_proto(active_view_id)?)
+    //                                 } else {
+    //                                     None
+    //                                 };
+    //                         }
+    //                     }
+    //                     anyhow::Ok(())
+    //                 })??;
+    //             }
+    //             proto::update_followers::Variant::UpdateView(update_view) => {
+    //                 let variant = update_view
+    //                     .variant
+    //                     .ok_or_else(|| anyhow!("missing update view variant"))?;
+    //                 let id = update_view
+    //                     .id
+    //                     .ok_or_else(|| anyhow!("missing update view id"))?;
+    //                 let mut tasks = Vec::new();
+    //                 this.update(cx, |this, cx| {
+    //                     let project = this.project.clone();
+    //                     for (_, state) in &mut this.follower_states {
+    //                         if state.leader_id == leader_id {
+    //                             let view_id = ViewId::from_proto(id.clone())?;
+    //                             if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
+    //                                 tasks.push(item.apply_update_proto(&project, variant.clone(), cx));
+    //                             }
+    //                         }
+    //                     }
+    //                     anyhow::Ok(())
+    //                 })??;
+    //                 try_join_all(tasks).await.log_err();
+    //             }
+    //             proto::update_followers::Variant::CreateView(view) => {
+    //                 let panes = this.read_with(cx, |this, _| {
+    //                     this.follower_states
+    //                         .iter()
+    //                         .filter_map(|(pane, state)| (state.leader_id == leader_id).then_some(pane))
+    //                         .cloned()
+    //                         .collect()
+    //                 })?;
+    //                 Self::add_views_from_leader(this.clone(), leader_id, panes, vec![view], cx).await?;
+    //             }
+    //         }
+    //         this.update(cx, |this, cx| this.leader_updated(leader_id, cx))?;
+    //         Ok(())
+    //     }
+
+    //     async fn add_views_from_leader(
+    //         this: WeakViewHandle<Self>,
+    //         leader_id: PeerId,
+    //         panes: Vec<ViewHandle<Pane>>,
+    //         views: Vec<proto::View>,
+    //         cx: &mut AsyncAppContext,
+    //     ) -> Result<()> {
+    //         let this = this
+    //             .upgrade(cx)
+    //             .ok_or_else(|| anyhow!("workspace dropped"))?;
+
+    //         let item_builders = cx.update(|cx| {
+    //             cx.default_global::<FollowableItemBuilders>()
+    //                 .values()
+    //                 .map(|b| b.0)
+    //                 .collect::<Vec<_>>()
+    //         });
+
+    //         let mut item_tasks_by_pane = HashMap::default();
+    //         for pane in panes {
+    //             let mut item_tasks = Vec::new();
+    //             let mut leader_view_ids = Vec::new();
+    //             for view in &views {
+    //                 let Some(id) = &view.id else { continue };
+    //                 let id = ViewId::from_proto(id.clone())?;
+    //                 let mut variant = view.variant.clone();
+    //                 if variant.is_none() {
+    //                     Err(anyhow!("missing view variant"))?;
+    //                 }
+    //                 for build_item in &item_builders {
+    //                     let task = cx
+    //                         .update(|cx| build_item(pane.clone(), this.clone(), id, &mut variant, cx));
+    //                     if let Some(task) = task {
+    //                         item_tasks.push(task);
+    //                         leader_view_ids.push(id);
+    //                         break;
+    //                     } else {
+    //                         assert!(variant.is_some());
+    //                     }
+    //                 }
+    //             }
+
+    //             item_tasks_by_pane.insert(pane, (item_tasks, leader_view_ids));
+    //         }
+
+    //         for (pane, (item_tasks, leader_view_ids)) in item_tasks_by_pane {
+    //             let items = futures::future::try_join_all(item_tasks).await?;
+    //             this.update(cx, |this, cx| {
+    //                 let state = this.follower_states.get_mut(&pane)?;
+    //                 for (id, item) in leader_view_ids.into_iter().zip(items) {
+    //                     item.set_leader_peer_id(Some(leader_id), cx);
+    //                     state.items_by_leader_view_id.insert(id, item);
+    //                 }
+
+    //                 Some(())
+    //             });
+    //         }
+    //         Ok(())
+    //     }
+
+    //     fn update_active_view_for_followers(&mut self, cx: &AppContext) {
+    //         let mut is_project_item = true;
+    //         let mut update = proto::UpdateActiveView::default();
+    //         if self.active_pane.read(cx).has_focus() {
+    //             let item = self
+    //                 .active_item(cx)
+    //                 .and_then(|item| item.to_followable_item_handle(cx));
+    //             if let Some(item) = item {
+    //                 is_project_item = item.is_project_item(cx);
+    //                 update = proto::UpdateActiveView {
+    //                     id: item
+    //                         .remote_id(&self.app_state.client, cx)
+    //                         .map(|id| id.to_proto()),
+    //                     leader_id: self.leader_for_pane(&self.active_pane),
+    //                 };
+    //             }
+    //         }
+
+    //         if update.id != self.last_active_view_id {
+    //             self.last_active_view_id = update.id.clone();
+    //             self.update_followers(
+    //                 is_project_item,
+    //                 proto::update_followers::Variant::UpdateActiveView(update),
+    //                 cx,
+    //             );
+    //         }
+    //     }
+
+    //     fn update_followers(
+    //         &self,
+    //         project_only: bool,
+    //         update: proto::update_followers::Variant,
+    //         cx: &AppContext,
+    //     ) -> Option<()> {
+    //         let project_id = if project_only {
+    //             self.project.read(cx).remote_id()
+    //         } else {
+    //             None
+    //         };
+    //         self.app_state().workspace_store.read_with(cx, |store, cx| {
+    //             store.update_followers(project_id, update, cx)
+    //         })
+    //     }
+
+    //     pub fn leader_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<PeerId> {
+    //         self.follower_states.get(pane).map(|state| state.leader_id)
+    //     }
+
+    //     fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
+    //         cx.notify();
+
+    //         let call = self.active_call()?;
+    //         let room = call.read(cx).room()?.read(cx);
+    //         let participant = room.remote_participant_for_peer_id(leader_id)?;
+    //         let mut items_to_activate = Vec::new();
+
+    //         let leader_in_this_app;
+    //         let leader_in_this_project;
+    //         match participant.location {
+    //             call::ParticipantLocation::SharedProject { project_id } => {
+    //                 leader_in_this_app = true;
+    //                 leader_in_this_project = Some(project_id) == self.project.read(cx).remote_id();
+    //             }
+    //             call::ParticipantLocation::UnsharedProject => {
+    //                 leader_in_this_app = true;
+    //                 leader_in_this_project = false;
+    //             }
+    //             call::ParticipantLocation::External => {
+    //                 leader_in_this_app = false;
+    //                 leader_in_this_project = false;
+    //             }
+    //         };
+
+    //         for (pane, state) in &self.follower_states {
+    //             if state.leader_id != leader_id {
+    //                 continue;
+    //             }
+    //             if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
+    //                 if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
+    //                     if leader_in_this_project || !item.is_project_item(cx) {
+    //                         items_to_activate.push((pane.clone(), item.boxed_clone()));
+    //                     }
+    //                 } else {
+    //                     log::warn!(
+    //                         "unknown view id {:?} for leader {:?}",
+    //                         active_view_id,
+    //                         leader_id
+    //                     );
+    //                 }
+    //                 continue;
+    //             }
+    //             if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
+    //                 items_to_activate.push((pane.clone(), Box::new(shared_screen)));
+    //             }
+    //         }
+
+    //         for (pane, item) in items_to_activate {
+    //             let pane_was_focused = pane.read(cx).has_focus();
+    //             if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
+    //                 pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
+    //             } else {
+    //                 pane.update(cx, |pane, cx| {
+    //                     pane.add_item(item.boxed_clone(), false, false, None, cx)
+    //                 });
+    //             }
+
+    //             if pane_was_focused {
+    //                 pane.update(cx, |pane, cx| pane.focus_active_item(cx));
+    //             }
+    //         }
+
+    //         None
+    //     }
+
+    //     fn shared_screen_for_peer(
+    //         &self,
+    //         peer_id: PeerId,
+    //         pane: &ViewHandle<Pane>,
+    //         cx: &mut ViewContext<Self>,
+    //     ) -> Option<ViewHandle<SharedScreen>> {
+    //         let call = self.active_call()?;
+    //         let room = call.read(cx).room()?.read(cx);
+    //         let participant = room.remote_participant_for_peer_id(peer_id)?;
+    //         let track = participant.video_tracks.values().next()?.clone();
+    //         let user = participant.user.clone();
+
+    //         for item in pane.read(cx).items_of_type::<SharedScreen>() {
+    //             if item.read(cx).peer_id == peer_id {
+    //                 return Some(item);
+    //             }
+    //         }
+
+    //         Some(cx.add_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
+    //     }
+
+    //     pub fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+    //         if active {
+    //             self.update_active_view_for_followers(cx);
+    //             cx.background()
+    //                 .spawn(persistence::DB.update_timestamp(self.database_id()))
+    //                 .detach();
+    //         } else {
+    //             for pane in &self.panes {
+    //                 pane.update(cx, |pane, cx| {
+    //                     if let Some(item) = pane.active_item() {
+    //                         item.workspace_deactivated(cx);
+    //                     }
+    //                     if matches!(
+    //                         settings::get::<WorkspaceSettings>(cx).autosave,
+    //                         AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
+    //                     ) {
+    //                         for item in pane.items() {
+    //                             Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
+    //                                 .detach_and_log_err(cx);
+    //                         }
+    //                     }
+    //                 });
+    //             }
+    //         }
+    //     }
+
+    //     fn active_call(&self) -> Option<&ModelHandle<ActiveCall>> {
+    //         self.active_call.as_ref().map(|(call, _)| call)
+    //     }
+
+    //     fn on_active_call_event(
+    //         &mut self,
+    //         _: ModelHandle<ActiveCall>,
+    //         event: &call::room::Event,
+    //         cx: &mut ViewContext<Self>,
+    //     ) {
+    //         match event {
+    //             call::room::Event::ParticipantLocationChanged { participant_id }
+    //             | call::room::Event::RemoteVideoTracksChanged { participant_id } => {
+    //                 self.leader_updated(*participant_id, cx);
+    //             }
+    //             _ => {}
+    //         }
+    //     }
+
+    //     pub fn database_id(&self) -> WorkspaceId {
+    //         self.database_id
+    //     }
+
+    //     fn location(&self, cx: &AppContext) -> Option<WorkspaceLocation> {
+    //         let project = self.project().read(cx);
+
+    //         if project.is_local() {
+    //             Some(
+    //                 project
+    //                     .visible_worktrees(cx)
+    //                     .map(|worktree| worktree.read(cx).abs_path())
+    //                     .collect::<Vec<_>>()
+    //                     .into(),
+    //             )
+    //         } else {
+    //             None
+    //         }
+    //     }
+
+    //     fn remove_panes(&mut self, member: Member, cx: &mut ViewContext<Workspace>) {
+    //         match member {
+    //             Member::Axis(PaneAxis { members, .. }) => {
+    //                 for child in members.iter() {
+    //                     self.remove_panes(child.clone(), cx)
+    //                 }
+    //             }
+    //             Member::Pane(pane) => {
+    //                 self.force_remove_pane(&pane, cx);
+    //             }
+    //         }
+    //     }
+
+    //     fn force_remove_pane(&mut self, pane: &ViewHandle<Pane>, cx: &mut ViewContext<Workspace>) {
+    //         self.panes.retain(|p| p != pane);
+    //         cx.focus(self.panes.last().unwrap());
+    //         if self.last_active_center_pane == Some(pane.downgrade()) {
+    //             self.last_active_center_pane = None;
+    //         }
+    //         cx.notify();
+    //     }
+
+    //     fn schedule_serialize(&mut self, cx: &mut ViewContext<Self>) {
+    //         self._schedule_serialize = Some(cx.spawn(|this, cx| async move {
+    //             cx.background().timer(Duration::from_millis(100)).await;
+    //             this.read_with(&cx, |this, cx| this.serialize_workspace(cx))
+    //                 .ok();
+    //         }));
+    //     }
+
+    //     fn serialize_workspace(&self, cx: &ViewContext<Self>) {
+    //         fn serialize_pane_handle(
+    //             pane_handle: &ViewHandle<Pane>,
+    //             cx: &AppContext,
+    //         ) -> SerializedPane {
+    //             let (items, active) = {
+    //                 let pane = pane_handle.read(cx);
+    //                 let active_item_id = pane.active_item().map(|item| item.id());
+    //                 (
+    //                     pane.items()
+    //                         .filter_map(|item_handle| {
+    //                             Some(SerializedItem {
+    //                                 kind: Arc::from(item_handle.serialized_item_kind()?),
+    //                                 item_id: item_handle.id(),
+    //                                 active: Some(item_handle.id()) == active_item_id,
+    //                             })
+    //                         })
+    //                         .collect::<Vec<_>>(),
+    //                     pane.has_focus(),
+    //                 )
+    //             };
+
+    //             SerializedPane::new(items, active)
+    //         }
+
+    //         fn build_serialized_pane_group(
+    //             pane_group: &Member,
+    //             cx: &AppContext,
+    //         ) -> SerializedPaneGroup {
+    //             match pane_group {
+    //                 Member::Axis(PaneAxis {
+    //                     axis,
+    //                     members,
+    //                     flexes,
+    //                     bounding_boxes: _,
+    //                 }) => SerializedPaneGroup::Group {
+    //                     axis: *axis,
+    //                     children: members
+    //                         .iter()
+    //                         .map(|member| build_serialized_pane_group(member, cx))
+    //                         .collect::<Vec<_>>(),
+    //                     flexes: Some(flexes.borrow().clone()),
+    //                 },
+    //                 Member::Pane(pane_handle) => {
+    //                     SerializedPaneGroup::Pane(serialize_pane_handle(&pane_handle, cx))
+    //                 }
+    //             }
+    //         }
+
+    //         fn build_serialized_docks(this: &Workspace, cx: &ViewContext<Workspace>) -> DockStructure {
+    //             let left_dock = this.left_dock.read(cx);
+    //             let left_visible = left_dock.is_open();
+    //             let left_active_panel = left_dock.visible_panel().and_then(|panel| {
+    //                 Some(
+    //                     cx.view_ui_name(panel.as_any().window(), panel.id())?
+    //                         .to_string(),
+    //                 )
+    //             });
+    //             let left_dock_zoom = left_dock
+    //                 .visible_panel()
+    //                 .map(|panel| panel.is_zoomed(cx))
+    //                 .unwrap_or(false);
+
+    //             let right_dock = this.right_dock.read(cx);
+    //             let right_visible = right_dock.is_open();
+    //             let right_active_panel = right_dock.visible_panel().and_then(|panel| {
+    //                 Some(
+    //                     cx.view_ui_name(panel.as_any().window(), panel.id())?
+    //                         .to_string(),
+    //                 )
+    //             });
+    //             let right_dock_zoom = right_dock
+    //                 .visible_panel()
+    //                 .map(|panel| panel.is_zoomed(cx))
+    //                 .unwrap_or(false);
+
+    //             let bottom_dock = this.bottom_dock.read(cx);
+    //             let bottom_visible = bottom_dock.is_open();
+    //             let bottom_active_panel = bottom_dock.visible_panel().and_then(|panel| {
+    //                 Some(
+    //                     cx.view_ui_name(panel.as_any().window(), panel.id())?
+    //                         .to_string(),
+    //                 )
+    //             });
+    //             let bottom_dock_zoom = bottom_dock
+    //                 .visible_panel()
+    //                 .map(|panel| panel.is_zoomed(cx))
+    //                 .unwrap_or(false);
+
+    //             DockStructure {
+    //                 left: DockData {
+    //                     visible: left_visible,
+    //                     active_panel: left_active_panel,
+    //                     zoom: left_dock_zoom,
+    //                 },
+    //                 right: DockData {
+    //                     visible: right_visible,
+    //                     active_panel: right_active_panel,
+    //                     zoom: right_dock_zoom,
+    //                 },
+    //                 bottom: DockData {
+    //                     visible: bottom_visible,
+    //                     active_panel: bottom_active_panel,
+    //                     zoom: bottom_dock_zoom,
+    //                 },
+    //             }
+    //         }
+
+    //         if let Some(location) = self.location(cx) {
+    //             // Load bearing special case:
+    //             //  - with_local_workspace() relies on this to not have other stuff open
+    //             //    when you open your log
+    //             if !location.paths().is_empty() {
+    //                 let center_group = build_serialized_pane_group(&self.center.root, cx);
+    //                 let docks = build_serialized_docks(self, cx);
+
+    //                 let serialized_workspace = SerializedWorkspace {
+    //                     id: self.database_id,
+    //                     location,
+    //                     center_group,
+    //                     bounds: Default::default(),
+    //                     display: Default::default(),
+    //                     docks,
+    //                 };
+
+    //                 cx.background()
+    //                     .spawn(persistence::DB.save_workspace(serialized_workspace))
+    //                     .detach();
+    //             }
+    //         }
+    //     }
+
+    //     pub(crate) fn load_workspace(
+    //         workspace: WeakViewHandle<Workspace>,
+    //         serialized_workspace: SerializedWorkspace,
+    //         paths_to_open: Vec<Option<ProjectPath>>,
+    //         cx: &mut AppContext,
+    //     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
+    //         cx.spawn(|mut cx| async move {
+    //             let (project, old_center_pane) = workspace.read_with(&cx, |workspace, _| {
+    //                 (
+    //                     workspace.project().clone(),
+    //                     workspace.last_active_center_pane.clone(),
+    //                 )
+    //             })?;
+
+    //             let mut center_group = None;
+    //             let mut center_items = None;
+    //             // Traverse the splits tree and add to things
+    //             if let Some((group, active_pane, items)) = serialized_workspace
+    //                 .center_group
+    //                 .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
+    //                 .await
+    //             {
+    //                 center_items = Some(items);
+    //                 center_group = Some((group, active_pane))
+    //             }
+
+    //             let mut items_by_project_path = cx.read(|cx| {
+    //                 center_items
+    //                     .unwrap_or_default()
+    //                     .into_iter()
+    //                     .filter_map(|item| {
+    //                         let item = item?;
+    //                         let project_path = item.project_path(cx)?;
+    //                         Some((project_path, item))
+    //                     })
+    //                     .collect::<HashMap<_, _>>()
+    //             });
+
+    //             let opened_items = paths_to_open
+    //                 .into_iter()
+    //                 .map(|path_to_open| {
+    //                     path_to_open
+    //                         .and_then(|path_to_open| items_by_project_path.remove(&path_to_open))
+    //                 })
+    //                 .collect::<Vec<_>>();
+
+    //             // Remove old panes from workspace panes list
+    //             workspace.update(&mut cx, |workspace, cx| {
+    //                 if let Some((center_group, active_pane)) = center_group {
+    //                     workspace.remove_panes(workspace.center.root.clone(), cx);
+
+    //                     // Swap workspace center group
+    //                     workspace.center = PaneGroup::with_root(center_group);
+
+    //                     // Change the focus to the workspace first so that we retrigger focus in on the pane.
+    //                     cx.focus_self();
+
+    //                     if let Some(active_pane) = active_pane {
+    //                         cx.focus(&active_pane);
+    //                     } else {
+    //                         cx.focus(workspace.panes.last().unwrap());
+    //                     }
+    //                 } else {
+    //                     let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade(cx));
+    //                     if let Some(old_center_handle) = old_center_handle {
+    //                         cx.focus(&old_center_handle)
+    //                     } else {
+    //                         cx.focus_self()
+    //                     }
+    //                 }
+
+    //                 let docks = serialized_workspace.docks;
+    //                 workspace.left_dock.update(cx, |dock, cx| {
+    //                     dock.set_open(docks.left.visible, cx);
+    //                     if let Some(active_panel) = docks.left.active_panel {
+    //                         if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+    //                             dock.activate_panel(ix, cx);
+    //                         }
+    //                     }
+    //                     dock.active_panel()
+    //                         .map(|panel| panel.set_zoomed(docks.left.zoom, cx));
+    //                     if docks.left.visible && docks.left.zoom {
+    //                         cx.focus_self()
+    //                     }
+    //                 });
+    //                 // TODO: I think the bug is that setting zoom or active undoes the bottom zoom or something
+    //                 workspace.right_dock.update(cx, |dock, cx| {
+    //                     dock.set_open(docks.right.visible, cx);
+    //                     if let Some(active_panel) = docks.right.active_panel {
+    //                         if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+    //                             dock.activate_panel(ix, cx);
+    //                         }
+    //                     }
+    //                     dock.active_panel()
+    //                         .map(|panel| panel.set_zoomed(docks.right.zoom, cx));
+
+    //                     if docks.right.visible && docks.right.zoom {
+    //                         cx.focus_self()
+    //                     }
+    //                 });
+    //                 workspace.bottom_dock.update(cx, |dock, cx| {
+    //                     dock.set_open(docks.bottom.visible, cx);
+    //                     if let Some(active_panel) = docks.bottom.active_panel {
+    //                         if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+    //                             dock.activate_panel(ix, cx);
+    //                         }
+    //                     }
+
+    //                     dock.active_panel()
+    //                         .map(|panel| panel.set_zoomed(docks.bottom.zoom, cx));
+
+    //                     if docks.bottom.visible && docks.bottom.zoom {
+    //                         cx.focus_self()
+    //                     }
+    //                 });
+
+    //                 cx.notify();
+    //             })?;
+
+    //             // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
+    //             workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))?;
+
+    //             Ok(opened_items)
+    //         })
+    //     }
+
+    //     #[cfg(any(test, feature = "test-support"))]
+    //     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+    //         use node_runtime::FakeNodeRuntime;
+
+    //         let client = project.read(cx).client();
+    //         let user_store = project.read(cx).user_store();
+
+    //         let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
+    //         let app_state = Arc::new(AppState {
+    //             languages: project.read(cx).languages().clone(),
+    //             workspace_store,
+    //             client,
+    //             user_store,
+    //             fs: project.read(cx).fs().clone(),
+    //             build_window_options: |_, _, _| Default::default(),
+    //             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
+    //             node_runtime: FakeNodeRuntime::new(),
+    //         });
+    //         Self::new(0, project, app_state, cx)
+    //     }
+
+    //     fn render_dock(&self, position: DockPosition, cx: &WindowContext) -> Option<AnyElement<Self>> {
+    //         let dock = match position {
+    //             DockPosition::Left => &self.left_dock,
+    //             DockPosition::Right => &self.right_dock,
+    //             DockPosition::Bottom => &self.bottom_dock,
+    //         };
+    //         let active_panel = dock.read(cx).visible_panel()?;
+    //         let element = if Some(active_panel.id()) == self.zoomed.as_ref().map(|zoomed| zoomed.id()) {
+    //             dock.read(cx).render_placeholder(cx)
+    //         } else {
+    //             ChildView::new(dock, cx).into_any()
+    //         };
+
+    //         Some(
+    //             element
+    //                 .constrained()
+    //                 .dynamically(move |constraint, _, cx| match position {
+    //                     DockPosition::Left | DockPosition::Right => SizeConstraint::new(
+    //                         Vector2F::new(20., constraint.min.y()),
+    //                         Vector2F::new(cx.window_size().x() * 0.8, constraint.max.y()),
+    //                     ),
+    //                     DockPosition::Bottom => SizeConstraint::new(
+    //                         Vector2F::new(constraint.min.x(), 20.),
+    //                         Vector2F::new(constraint.max.x(), cx.window_size().y() * 0.8),
+    //                     ),
+    //                 })
+    //                 .into_any(),
+    //         )
+    //     }
+    // }
+
+    // fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<WindowBounds> {
+    //     ZED_WINDOW_POSITION
+    //         .zip(*ZED_WINDOW_SIZE)
+    //         .map(|(position, size)| {
+    //             WindowBounds::Fixed(RectF::new(
+    //                 cx.platform().screens()[0].bounds().origin() + position,
+    //                 size,
+    //             ))
+    //         })
+    // }
+
+    // async fn open_items(
+    //     serialized_workspace: Option<SerializedWorkspace>,
+    //     workspace: &WeakViewHandle<Workspace>,
+    //     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
+    //     app_state: Arc<AppState>,
+    //     mut cx: AsyncAppContext,
+    // ) -> Result<Vec<Option<Result<Box<dyn ItemHandle>>>>> {
+    //     let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
+
+    //     if let Some(serialized_workspace) = serialized_workspace {
+    //         let workspace = workspace.clone();
+    //         let restored_items = cx
+    //             .update(|cx| {
+    //                 Workspace::load_workspace(
+    //                     workspace,
+    //                     serialized_workspace,
+    //                     project_paths_to_open
+    //                         .iter()
+    //                         .map(|(_, project_path)| project_path)
+    //                         .cloned()
+    //                         .collect(),
+    //                     cx,
+    //                 )
+    //             })
+    //             .await?;
+
+    //         let restored_project_paths = cx.read(|cx| {
+    //             restored_items
+    //                 .iter()
+    //                 .filter_map(|item| item.as_ref()?.project_path(cx))
+    //                 .collect::<HashSet<_>>()
+    //         });
+
+    //         for restored_item in restored_items {
+    //             opened_items.push(restored_item.map(Ok));
+    //         }
+
+    //         project_paths_to_open
+    //             .iter_mut()
+    //             .for_each(|(_, project_path)| {
+    //                 if let Some(project_path_to_open) = project_path {
+    //                     if restored_project_paths.contains(project_path_to_open) {
+    //                         *project_path = None;
+    //                     }
+    //                 }
+    //             });
+    //     } else {
+    //         for _ in 0..project_paths_to_open.len() {
+    //             opened_items.push(None);
+    //         }
+    //     }
+    //     assert!(opened_items.len() == project_paths_to_open.len());
+
+    //     let tasks =
+    //         project_paths_to_open
+    //             .into_iter()
+    //             .enumerate()
+    //             .map(|(i, (abs_path, project_path))| {
+    //                 let workspace = workspace.clone();
+    //                 cx.spawn(|mut cx| {
+    //                     let fs = app_state.fs.clone();
+    //                     async move {
+    //                         let file_project_path = project_path?;
+    //                         if fs.is_file(&abs_path).await {
+    //                             Some((
+    //                                 i,
+    //                                 workspace
+    //                                     .update(&mut cx, |workspace, cx| {
+    //                                         workspace.open_path(file_project_path, None, true, cx)
+    //                                     })
+    //                                     .log_err()?
+    //                                     .await,
+    //                             ))
+    //                         } else {
+    //                             None
+    //                         }
+    //                     }
+    //                 })
+    //             });
+
+    //     for maybe_opened_path in futures::future::join_all(tasks.into_iter())
+    //         .await
+    //         .into_iter()
+    //     {
+    //         if let Some((i, path_open_result)) = maybe_opened_path {
+    //             opened_items[i] = Some(path_open_result);
+    //         }
+    //     }
+
+    //     Ok(opened_items)
+    // }
+
+    // fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
+    //     const NEW_PANEL_BLOG_POST: &str = "https://zed.dev/blog/new-panel-system";
+    //     const NEW_DOCK_HINT_KEY: &str = "show_new_dock_key";
+    //     const MESSAGE_ID: usize = 2;
+
+    //     if workspace
+    //         .read_with(cx, |workspace, cx| {
+    //             workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
+    //         })
+    //         .unwrap_or(false)
+    //     {
+    //         return;
+    //     }
+
+    //     if db::kvp::KEY_VALUE_STORE
+    //         .read_kvp(NEW_DOCK_HINT_KEY)
+    //         .ok()
+    //         .flatten()
+    //         .is_some()
+    //     {
+    //         if !workspace
+    //             .read_with(cx, |workspace, cx| {
+    //                 workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
+    //             })
+    //             .unwrap_or(false)
+    //         {
+    //             cx.update(|cx| {
+    //                 cx.update_global::<NotificationTracker, _, _>(|tracker, _| {
+    //                     let entry = tracker
+    //                         .entry(TypeId::of::<MessageNotification>())
+    //                         .or_default();
+    //                     if !entry.contains(&MESSAGE_ID) {
+    //                         entry.push(MESSAGE_ID);
+    //                     }
+    //                 });
+    //             });
+    //         }
+
+    //         return;
+    //     }
+
+    //     cx.spawn(|_| async move {
+    //         db::kvp::KEY_VALUE_STORE
+    //             .write_kvp(NEW_DOCK_HINT_KEY.to_string(), "seen".to_string())
+    //             .await
+    //             .ok();
+    //     })
+    //     .detach();
+
+    //     workspace
+    //         .update(cx, |workspace, cx| {
+    //             workspace.show_notification_once(2, cx, |cx| {
+    //                 cx.add_view(|_| {
+    //                     MessageNotification::new_element(|text, _| {
+    //                         Text::new(
+    //                             "Looking for the dock? Try ctrl-`!\nshift-escape now zooms your pane.",
+    //                             text,
+    //                         )
+    //                         .with_custom_runs(vec![26..32, 34..46], |_, bounds, cx| {
+    //                             let code_span_background_color = settings::get::<ThemeSettings>(cx)
+    //                                 .theme
+    //                                 .editor
+    //                                 .document_highlight_read_background;
+
+    //                             cx.scene().push_quad(gpui::Quad {
+    //                                 bounds,
+    //                                 background: Some(code_span_background_color),
+    //                                 border: Default::default(),
+    //                                 corner_radii: (2.0).into(),
+    //                             })
+    //                         })
+    //                         .into_any()
+    //                     })
+    //                     .with_click_message("Read more about the new panel system")
+    //                     .on_click(|cx| cx.platform().open_url(NEW_PANEL_BLOG_POST))
+    //                 })
+    //             })
+    //         })
+    //         .ok();
+}
 
 // fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
 //     const REPORT_ISSUE_URL: &str ="https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml";
@@ -4321,16 +4321,20 @@ pub async fn activate_workspace_for_project(
 // }
 
 use client2::{proto::PeerId, Client, UserStore};
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use gpui2::{
-    AppContext, AsyncAppContext, DisplayId, Handle, MainThread, Task, WeakHandle, WindowBounds,
-    WindowHandle, WindowOptions,
+    AnyHandle, AppContext, AsyncAppContext, DisplayId, Handle, MainThread, Task, View, ViewContext,
+    WeakHandle, WeakView, WindowBounds, WindowHandle, WindowOptions,
 };
-use item::ItemHandle;
+use item::{ItemHandle, ProjectItem};
 use language2::LanguageRegistry;
 use node_runtime::NodeRuntime;
-use project2::Project;
-use std::{path::PathBuf, sync::Arc};
+use project2::{Project, ProjectEntryId, ProjectPath, Worktree};
+use std::{
+    any::TypeId,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::ResultExt;
 
 #[allow(clippy::type_complexity)]
@@ -4341,7 +4345,7 @@ pub fn open_paths(
     cx: &mut AppContext,
 ) -> Task<
     anyhow::Result<(
-        WeakHandle<Workspace>,
+        WindowHandle<Workspace>,
         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
     )>,
 > {
@@ -4357,18 +4361,18 @@ pub fn open_paths(
         if let Some(existing) = existing {
             Ok((
                 existing.clone(),
-                existing
-                    .update(&mut cx, |workspace, cx| {
-                        workspace.open_paths(abs_paths, true, cx)
-                    })?
-                    .await,
+                cx.update_window_root(&existing, |workspace, cx| {
+                    workspace.open_paths(abs_paths, true, cx)
+                })?
+                .await,
             ))
         } else {
-            Ok(cx
-                .update(|cx| {
-                    Workspace::new_local(abs_paths, app_state.clone(), requesting_window, cx)
-                })
-                .await)
+            todo!()
+            // Ok(cx
+            //     .update(|cx| {
+            //         Workspace::new_local(abs_paths, app_state.clone(), requesting_window, cx)
+            //     })
+            //     .await)
         }
     })
 }

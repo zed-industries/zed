@@ -1,21 +1,21 @@
 use crate::{pane_group::element::PaneAxisElement, AppState, FollowerState, Pane, Workspace};
 use anyhow::{anyhow, Result};
-use call::{ActiveCall, ParticipantLocation};
+use call2::{ActiveCall, ParticipantLocation};
 use collections::HashMap;
-use gpui::{
-    elements::*,
-    geometry::{rect::RectF, vector::Vector2F},
-    platform::{CursorStyle, MouseButton},
-    AnyViewHandle, Axis, ModelHandle, ViewContext, ViewHandle,
-};
-use project::Project;
+use gpui2::{Bounds, Handle, Pixels, Point, View, ViewContext};
+use project2::Project;
 use serde::Deserialize;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
-use theme::Theme;
+use theme2::Theme;
 
 const HANDLE_HITBOX_SIZE: f32 = 4.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
 const VERTICAL_MIN_SIZE: f32 = 100.;
+
+enum Axis {
+    Vertical,
+    Horizontal,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaneGroup {
@@ -27,7 +27,7 @@ impl PaneGroup {
         Self { root }
     }
 
-    pub fn new(pane: ViewHandle<Pane>) -> Self {
+    pub fn new(pane: View<Pane>) -> Self {
         Self {
             root: Member::Pane(pane),
         }
@@ -35,8 +35,8 @@ impl PaneGroup {
 
     pub fn split(
         &mut self,
-        old_pane: &ViewHandle<Pane>,
-        new_pane: &ViewHandle<Pane>,
+        old_pane: &View<Pane>,
+        new_pane: &View<Pane>,
         direction: SplitDirection,
     ) -> Result<()> {
         match &mut self.root {
@@ -52,14 +52,14 @@ impl PaneGroup {
         }
     }
 
-    pub fn bounding_box_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<RectF> {
+    pub fn bounding_box_for_pane(&self, pane: &View<Pane>) -> Option<Bounds<Pixels>> {
         match &self.root {
             Member::Pane(_) => None,
             Member::Axis(axis) => axis.bounding_box_for_pane(pane),
         }
     }
 
-    pub fn pane_at_pixel_position(&self, coordinate: Vector2F) -> Option<&ViewHandle<Pane>> {
+    pub fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&View<Pane>> {
         match &self.root {
             Member::Pane(pane) => Some(pane),
             Member::Axis(axis) => axis.pane_at_pixel_position(coordinate),
@@ -70,7 +70,7 @@ impl PaneGroup {
     /// - Ok(true) if it found and removed a pane
     /// - Ok(false) if it found but did not remove the pane
     /// - Err(_) if it did not find the pane
-    pub fn remove(&mut self, pane: &ViewHandle<Pane>) -> Result<bool> {
+    pub fn remove(&mut self, pane: &View<Pane>) -> Result<bool> {
         match &mut self.root {
             Member::Pane(_) => Ok(false),
             Member::Axis(axis) => {
@@ -82,7 +82,7 @@ impl PaneGroup {
         }
     }
 
-    pub fn swap(&mut self, from: &ViewHandle<Pane>, to: &ViewHandle<Pane>) {
+    pub fn swap(&mut self, from: &View<Pane>, to: &View<Pane>) {
         match &mut self.root {
             Member::Pane(_) => {}
             Member::Axis(axis) => axis.swap(from, to),
@@ -91,11 +91,11 @@ impl PaneGroup {
 
     pub(crate) fn render(
         &self,
-        project: &ModelHandle<Project>,
+        project: &Handle<Project>,
         theme: &Theme,
-        follower_states: &HashMap<ViewHandle<Pane>, FollowerState>,
-        active_call: Option<&ModelHandle<ActiveCall>>,
-        active_pane: &ViewHandle<Pane>,
+        follower_states: &HashMap<View<Pane>, FollowerState>,
+        active_call: Option<&Handle<ActiveCall>>,
+        active_pane: &View<Pane>,
         zoomed: Option<&AnyViewHandle>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
@@ -113,7 +113,7 @@ impl PaneGroup {
         )
     }
 
-    pub(crate) fn panes(&self) -> Vec<&ViewHandle<Pane>> {
+    pub(crate) fn panes(&self) -> Vec<&View<Pane>> {
         let mut panes = Vec::new();
         self.root.collect_panes(&mut panes);
         panes
@@ -123,15 +123,11 @@ impl PaneGroup {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Member {
     Axis(PaneAxis),
-    Pane(ViewHandle<Pane>),
+    Pane(View<Pane>),
 }
 
 impl Member {
-    fn new_axis(
-        old_pane: ViewHandle<Pane>,
-        new_pane: ViewHandle<Pane>,
-        direction: SplitDirection,
-    ) -> Self {
+    fn new_axis(old_pane: View<Pane>, new_pane: View<Pane>, direction: SplitDirection) -> Self {
         use Axis::*;
         use SplitDirection::*;
 
@@ -148,7 +144,7 @@ impl Member {
         Member::Axis(PaneAxis::new(axis, members))
     }
 
-    fn contains(&self, needle: &ViewHandle<Pane>) -> bool {
+    fn contains(&self, needle: &View<Pane>) -> bool {
         match self {
             Member::Axis(axis) => axis.members.iter().any(|member| member.contains(needle)),
             Member::Pane(pane) => pane == needle,
@@ -157,12 +153,12 @@ impl Member {
 
     pub fn render(
         &self,
-        project: &ModelHandle<Project>,
+        project: &Handle<Project>,
         basis: usize,
         theme: &Theme,
-        follower_states: &HashMap<ViewHandle<Pane>, FollowerState>,
-        active_call: Option<&ModelHandle<ActiveCall>>,
-        active_pane: &ViewHandle<Pane>,
+        follower_states: &HashMap<View<Pane>, FollowerState>,
+        active_call: Option<&Handle<ActiveCall>>,
+        active_pane: &View<Pane>,
         zoomed: Option<&AnyViewHandle>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
@@ -295,7 +291,7 @@ impl Member {
         }
     }
 
-    fn collect_panes<'a>(&'a self, panes: &mut Vec<&'a ViewHandle<Pane>>) {
+    fn collect_panes<'a>(&'a self, panes: &mut Vec<&'a View<Pane>>) {
         match self {
             Member::Axis(axis) => {
                 for member in &axis.members {
@@ -343,8 +339,8 @@ impl PaneAxis {
 
     fn split(
         &mut self,
-        old_pane: &ViewHandle<Pane>,
-        new_pane: &ViewHandle<Pane>,
+        old_pane: &View<Pane>,
+        new_pane: &View<Pane>,
         direction: SplitDirection,
     ) -> Result<()> {
         for (mut idx, member) in self.members.iter_mut().enumerate() {
@@ -375,7 +371,7 @@ impl PaneAxis {
         Err(anyhow!("Pane not found"))
     }
 
-    fn remove(&mut self, pane_to_remove: &ViewHandle<Pane>) -> Result<Option<Member>> {
+    fn remove(&mut self, pane_to_remove: &View<Pane>) -> Result<Option<Member>> {
         let mut found_pane = false;
         let mut remove_member = None;
         for (idx, member) in self.members.iter_mut().enumerate() {
@@ -417,7 +413,7 @@ impl PaneAxis {
         }
     }
 
-    fn swap(&mut self, from: &ViewHandle<Pane>, to: &ViewHandle<Pane>) {
+    fn swap(&mut self, from: &View<Pane>, to: &View<Pane>) {
         for member in self.members.iter_mut() {
             match member {
                 Member::Axis(axis) => axis.swap(from, to),
@@ -432,7 +428,7 @@ impl PaneAxis {
         }
     }
 
-    fn bounding_box_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<RectF> {
+    fn bounding_box_for_pane(&self, pane: &View<Pane>) -> Option<RectF> {
         debug_assert!(self.members.len() == self.bounding_boxes.borrow().len());
 
         for (idx, member) in self.members.iter().enumerate() {
@@ -452,7 +448,7 @@ impl PaneAxis {
         None
     }
 
-    fn pane_at_pixel_position(&self, coordinate: Vector2F) -> Option<&ViewHandle<Pane>> {
+    fn pane_at_pixel_position(&self, coordinate: Vector2F) -> Option<&View<Pane>> {
         debug_assert!(self.members.len() == self.bounding_boxes.borrow().len());
 
         let bounding_boxes = self.bounding_boxes.borrow();
@@ -472,12 +468,12 @@ impl PaneAxis {
 
     fn render(
         &self,
-        project: &ModelHandle<Project>,
+        project: &Handle<Project>,
         basis: usize,
         theme: &Theme,
-        follower_states: &HashMap<ViewHandle<Pane>, FollowerState>,
-        active_call: Option<&ModelHandle<ActiveCall>>,
-        active_pane: &ViewHandle<Pane>,
+        follower_states: &HashMap<View<Pane>, FollowerState>,
+        active_call: Option<&Handle<ActiveCall>>,
+        active_pane: &View<Pane>,
         zoomed: Option<&AnyViewHandle>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,

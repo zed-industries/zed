@@ -1,12 +1,12 @@
 use std::{any::Any, sync::Arc};
 
-use gpui::{
-    AnyViewHandle, AnyWeakViewHandle, AppContext, Subscription, Task, ViewContext, ViewHandle,
-    WeakViewHandle, WindowContext,
-};
-use project::search::SearchQuery;
+use gpui2::{AppContext, Subscription, Task, View, ViewContext, WindowContext};
+use project2::search::SearchQuery;
 
-use crate::{item::WeakItemHandle, Item, ItemHandle};
+use crate::{
+    item::{Item, WeakItemHandle},
+    ItemHandle,
+};
 
 #[derive(Debug)]
 pub enum SearchEvent {
@@ -128,7 +128,7 @@ pub trait SearchableItemHandle: ItemHandle {
     ) -> Option<usize>;
 }
 
-impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
+impl<T: SearchableItem> SearchableItemHandle for View<T> {
     fn downgrade(&self) -> Box<dyn WeakSearchableItemHandle> {
         Box::new(self.downgrade())
     }
@@ -231,17 +231,19 @@ fn downcast_matches<T: Any + Clone>(matches: &Vec<Box<dyn Any + Send>>) -> Vec<T
         )
 }
 
-impl From<Box<dyn SearchableItemHandle>> for AnyViewHandle {
-    fn from(this: Box<dyn SearchableItemHandle>) -> Self {
-        this.as_any().clone()
-    }
-}
+// todo!()
+// impl From<Box<dyn SearchableItemHandle>> for AnyViewHandle {
+//     fn from(this: Box<dyn SearchableItemHandle>) -> Self {
+//         this.as_any().clone()
+//     }
+// }
 
-impl From<&Box<dyn SearchableItemHandle>> for AnyViewHandle {
-    fn from(this: &Box<dyn SearchableItemHandle>) -> Self {
-        this.as_any().clone()
-    }
-}
+// todo!()
+// impl From<&Box<dyn SearchableItemHandle>> for AnyViewHandle {
+//     fn from(this: &Box<dyn SearchableItemHandle>) -> Self {
+//         this.as_any().clone()
+//     }
+// }
 
 impl PartialEq for Box<dyn SearchableItemHandle> {
     fn eq(&self, other: &Self) -> bool {
@@ -254,18 +256,20 @@ impl Eq for Box<dyn SearchableItemHandle> {}
 pub trait WeakSearchableItemHandle: WeakItemHandle {
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
 
-    fn into_any(self) -> AnyWeakViewHandle;
+    // todo!()
+    // fn into_any(self) -> AnyWeakViewHandle;
 }
 
-impl<T: SearchableItem> WeakSearchableItemHandle for WeakViewHandle<T> {
-    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
-        Some(Box::new(self.upgrade(cx)?))
-    }
+// todo!()
+// impl<T: SearchableItem> WeakSearchableItemHandle for WeakViewHandle<T> {
+//     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
+//         Some(Box::new(self.upgrade(cx)?))
+//     }
 
-    fn into_any(self) -> AnyWeakViewHandle {
-        self.into_any()
-    }
-}
+//     fn into_any(self) -> AnyWeakViewHandle {
+//         self.into_any()
+//     }
+// }
 
 impl PartialEq for Box<dyn WeakSearchableItemHandle> {
     fn eq(&self, other: &Self) -> bool {
