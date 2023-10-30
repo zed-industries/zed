@@ -1,4 +1,4 @@
-use gpui2::{AppContext, Hsla, Result, WindowContext};
+use gpui2::{AppContext, Hsla, Result};
 use serde::{de::Visitor, Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::fmt;
@@ -127,10 +127,6 @@ where
         }
     }
     deserializer.deserialize_map(SyntaxVisitor)
-}
-
-pub fn old_theme(cx: &WindowContext) -> Arc<Theme> {
-    Arc::new(cx.global::<Theme>().clone())
 }
 
 pub fn theme(cx: &AppContext) -> Arc<theme2::Theme> {

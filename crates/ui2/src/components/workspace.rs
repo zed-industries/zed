@@ -3,8 +3,7 @@ use std::sync::Arc;
 use chrono::DateTime;
 use gpui2::{px, relative, rems, AppContext, Context, Size, View};
 
-use crate::{
-    old_theme, static_livestream, user_settings_mut, v_stack, AssistantPanel, Button, ChatMessage,
+use crate::{static_livestream, user_settings_mut, v_stack, AssistantPanel, Button, ChatMessage,
     ChatPanel, CollabPanel, EditorPane, FakeSettings, Label, LanguageSelector, Pane, PaneGroup,
     Panel, PanelAllowedSides, PanelSide, ProjectPanel, SettingValue, SplitDirection, StatusBar,
     Terminal, TitleBar, Toast, ToastOrigin,
@@ -179,7 +178,7 @@ impl Workspace {
     }
 
     pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
-        let theme = old_theme(cx).clone();
+        let theme = theme(cx);
 
         // HACK: This should happen inside of `debug_toggle_user_settings`, but
         // we don't have `cx.global::<FakeSettings>()` in event handlers at the moment.
@@ -216,8 +215,8 @@ impl Workspace {
             .gap_0()
             .justify_start()
             .items_start()
-            .text_color(theme.lowest.base.default.foreground)
-            .bg(theme.lowest.base.default.background)
+            .text_color(theme.text)
+            .bg(theme.background)
             .child(self.title_bar.clone())
             .child(
                 div()
@@ -228,7 +227,7 @@ impl Workspace {
                     .overflow_hidden()
                     .border_t()
                     .border_b()
-                    .border_color(theme.lowest.base.default.border)
+                    .border_color(theme.border)
                     .children(
                         Some(
                             Panel::new("project-panel-outer", cx)
