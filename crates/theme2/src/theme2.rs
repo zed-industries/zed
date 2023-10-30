@@ -4,7 +4,9 @@ mod scale;
 mod settings;
 mod themes;
 
+pub use default::*;
 pub use registry::*;
+pub use scale::*;
 pub use settings::*;
 
 use gpui2::{AppContext, HighlightStyle, Hsla, SharedString};

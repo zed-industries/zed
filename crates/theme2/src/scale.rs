@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use gpui2::{AppContext, Hsla};
+use indexmap::IndexMap;
 
 use crate::{theme, Appearance};
 
@@ -87,7 +86,7 @@ impl std::fmt::Display for ColorScaleName {
 
 pub type ColorScale = [Hsla; 12];
 
-pub type ColorScales = HashMap<ColorScaleName, ColorScaleSet>;
+pub type ColorScales = IndexMap<ColorScaleName, ColorScaleSet>;
 
 /// A one-based step in a [`ColorScale`].
 pub type ColorScaleStep = usize;
@@ -146,7 +145,7 @@ impl ColorScaleSet {
         }
     }
 
-    pub fn step(self, cx: &AppContext, step: ColorScaleStep) -> Hsla {
+    pub fn step(&self, cx: &AppContext, step: ColorScaleStep) -> Hsla {
         let appearance = Self::current_appearance(cx);
 
         match appearance {
@@ -155,7 +154,7 @@ impl ColorScaleSet {
         }
     }
 
-    pub fn step_alpha(self, cx: &AppContext, step: ColorScaleStep) -> Hsla {
+    pub fn step_alpha(&self, cx: &AppContext, step: ColorScaleStep) -> Hsla {
         let appearance = Self::current_appearance(cx);
         match appearance {
             Appearance::Light => self.light_alpha(step),

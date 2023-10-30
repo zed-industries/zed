@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use gpui2::Rgba;
+use indexmap::IndexMap;
 
 use crate::scale::{ColorScaleName, ColorScaleSet, ColorScales};
 
@@ -35,7 +34,7 @@ impl From<DefaultColorScaleSet> for ColorScaleSet {
 pub fn default_color_scales() -> ColorScales {
     use ColorScaleName::*;
 
-    HashMap::from_iter([
+    IndexMap::from_iter([
         (Gray, gray().into()),
         (Mauve, mauve().into()),
         (Slate, slate().into()),
