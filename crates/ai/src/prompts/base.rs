@@ -147,7 +147,7 @@ pub(crate) mod tests {
                         content = args.model.truncate(
                             &content,
                             max_token_length,
-                            TruncationDirection::Start,
+                            TruncationDirection::End,
                         )?;
                         token_count = max_token_length;
                     }
@@ -172,7 +172,7 @@ pub(crate) mod tests {
                         content = args.model.truncate(
                             &content,
                             max_token_length,
-                            TruncationDirection::Start,
+                            TruncationDirection::End,
                         )?;
                         token_count = max_token_length;
                     }

@@ -13,4 +13,11 @@ pub trait CompletionProvider: CredentialProvider {
         &self,
         prompt: Box<dyn CompletionRequest>,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
+    fn box_clone(&self) -> Box<dyn CompletionProvider>;
+}
+
+impl Clone for Box<dyn CompletionProvider> {
+    fn clone(&self) -> Box<dyn CompletionProvider> {
+        self.box_clone()
+    }
 }

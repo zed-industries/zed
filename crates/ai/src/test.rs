@@ -33,7 +33,10 @@ impl LanguageModel for FakeLanguageModel {
         length: usize,
         direction: TruncationDirection,
     ) -> anyhow::Result<String> {
+        println!("TRYING TO TRUNCATE: {:?}", length.clone());
+
         if length > self.count_tokens(content)? {
+            println!("NOT TRUNCATING");
             return anyhow::Ok(content.to_string());
         }
 
@@ -133,6 +136,14 @@ pub struct FakeCompletionProvider {
     last_completion_tx: Mutex<Option<mpsc::Sender<String>>>,
 }
 
+impl Clone for FakeCompletionProvider {
+    fn clone(&self) -> Self {
+        Self {
+            last_completion_tx: Mutex::new(None),
+        }
+    }
+}
+
 impl FakeCompletionProvider {
     pub fn new() -> Self {
         Self {
@@ -173,5 +184,8 @@ impl CompletionProvider for FakeCompletionProvider {
         let (tx, rx) = mpsc::channel(1);
         *self.last_completion_tx.lock() = Some(tx);
         async move { Ok(rx.map(|rx| Ok(rx)).boxed()) }.boxed()
+    }
+    fn box_clone(&self) -> Box<dyn CompletionProvider> {
+        Box::new((*self).clone())
     }
 }
