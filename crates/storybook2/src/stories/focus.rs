@@ -1,9 +1,9 @@
-use crate::themes::rose_pine;
 use gpui2::{
     div, Focusable, KeyBinding, ParentElement, StatelessInteractive, Styled, View, VisualContext,
     WindowContext,
 };
 use serde::Deserialize;
+use theme2::theme;
 
 #[derive(Clone, Default, PartialEq, Deserialize)]
 struct ActionA;
@@ -27,14 +27,14 @@ impl FocusStory {
         ]);
         cx.register_action_type::<ActionA>();
         cx.register_action_type::<ActionB>();
-        let theme = rose_pine();
+        let theme = theme(cx);
 
-        let color_1 = theme.lowest.negative.default.foreground;
-        let color_2 = theme.lowest.positive.default.foreground;
-        let color_3 = theme.lowest.warning.default.foreground;
-        let color_4 = theme.lowest.accent.default.foreground;
-        let color_5 = theme.lowest.variant.default.foreground;
-        let color_6 = theme.highest.negative.default.foreground;
+        let color_1 = theme.git_created;
+        let color_2 = theme.git_modified;
+        let color_3 = theme.git_deleted;
+        let color_4 = theme.git_conflict;
+        let color_5 = theme.git_ignored;
+        let color_6 = theme.git_renamed;
         let child_1 = cx.focus_handle();
         let child_2 = cx.focus_handle();
 

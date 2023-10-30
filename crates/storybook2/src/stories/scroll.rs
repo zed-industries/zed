@@ -1,7 +1,7 @@
-use crate::themes::rose_pine;
 use gpui2::{
     div, px, Component, ParentElement, SharedString, Styled, View, VisualContext, WindowContext,
 };
+use theme2::theme;
 
 pub struct ScrollStory {
     text: View<()>,
@@ -9,25 +9,21 @@ pub struct ScrollStory {
 
 impl ScrollStory {
     pub fn view(cx: &mut WindowContext) -> View<()> {
-        let theme = rose_pine();
-
-        {
-            cx.build_view(|cx| (), move |_, cx| checkerboard(1))
-        }
+        cx.build_view(|cx| (), move |_, cx| checkerboard(cx, 1))
     }
 }
 
-fn checkerboard<S>(depth: usize) -> impl Component<S>
+fn checkerboard<S>(cx: &mut WindowContext, depth: usize) -> impl Component<S>
 where
     S: 'static + Send + Sync,
 {
-    let theme = rose_pine();
-    let color_1 = theme.lowest.positive.default.background;
-    let color_2 = theme.lowest.warning.default.background;
+    let theme = theme(cx);
+    let color_1 = theme.git_created;
+    let color_2 = theme.git_modified;
 
     div()
         .id("parent")
-        .bg(theme.lowest.base.default.background)
+        .bg(theme.background)
         .size_full()
         .overflow_scroll()
         .children((0..10).map(|row| {

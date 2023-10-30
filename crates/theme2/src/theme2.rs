@@ -18,6 +18,10 @@ pub fn active_theme<'a>(cx: &'a AppContext) -> &'a Arc<Theme> {
     &ThemeSettings::get_global(cx).active_theme
 }
 
+pub fn theme(cx: &AppContext) -> Arc<Theme> {
+    active_theme(cx).clone()
+}
+
 pub struct Theme {
     pub metadata: ThemeMetadata,
 

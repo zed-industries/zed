@@ -4,7 +4,6 @@ mod assets;
 mod stories;
 mod story;
 mod story_selector;
-mod themes;
 
 use std::sync::Arc;
 
@@ -50,7 +49,6 @@ fn main() {
 
     let story_selector = args.story.clone();
     let theme_name = args.theme.unwrap_or("One Dark".to_string());
-    let theme = themes::load_theme(theme_name.clone()).unwrap();
 
     let asset_source = Arc::new(Assets);
     gpui2::App::production(asset_source).run(move |cx| {
