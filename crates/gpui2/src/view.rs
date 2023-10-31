@@ -1,7 +1,7 @@
 use crate::{
-    private::Sealed, AnyBox, AnyElement, AnyModel, AppContext, AvailableSpace, BorrowWindow,
-    Bounds, Component, Element, ElementId, Entity, EntityId, LayoutId, Model, Pixels, Size,
-    ViewContext, VisualContext, WeakModel, WindowContext,
+    private::Sealed, AnyBox, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace,
+    BorrowWindow, Bounds, Component, Element, ElementId, Entity, EntityId, LayoutId, Model, Pixels,
+    Size, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
 use std::{any::TypeId, marker::PhantomData};
@@ -262,12 +262,21 @@ where
 #[derive(Clone, Debug)]
 pub struct AnyView {
     model: AnyModel,
-    initialize: fn(&Self, &mut WindowContext) -> AnyBox,
-    layout: fn(&Self, &mut AnyBox, &mut WindowContext) -> LayoutId,
-    paint: fn(&Self, &mut AnyBox, &mut WindowContext),
+    initialize: fn(&AnyView, &mut WindowContext) -> AnyBox,
+    layout: fn(&AnyView, &mut AnyBox, &mut WindowContext) -> LayoutId,
+    paint: fn(&AnyView, &mut AnyBox, &mut WindowContext),
 }
 
 impl AnyView {
+    pub fn downgrade(&self) -> AnyWeakView {
+        AnyWeakView {
+            model: self.model.downgrade(),
+            initialize: self.initialize,
+            layout: self.layout,
+            paint: self.paint,
+        }
+    }
+
     pub fn downcast<T: 'static>(self) -> Result<View<T>, Self> {
         match self.model.downcast() {
             Ok(model) => Ok(View { model }),
@@ -363,6 +372,25 @@ impl<ParentViewState: 'static> Element<ParentViewState> for AnyView {
         cx: &mut ViewContext<ParentViewState>,
     ) {
         (self.paint)(self, rendered_element, cx)
+    }
+}
+
+pub struct AnyWeakView {
+    model: AnyWeakModel,
+    initialize: fn(&AnyView, &mut WindowContext) -> AnyBox,
+    layout: fn(&AnyView, &mut AnyBox, &mut WindowContext) -> LayoutId,
+    paint: fn(&AnyView, &mut AnyBox, &mut WindowContext),
+}
+
+impl AnyWeakView {
+    pub fn upgrade(&self) -> Option<AnyView> {
+        let model = self.model.upgrade()?;
+        Some(AnyView {
+            model,
+            initialize: self.initialize,
+            layout: self.layout,
+            paint: self.paint,
+        })
     }
 }
 
