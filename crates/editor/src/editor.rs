@@ -800,8 +800,11 @@ impl CodeActionsProvider for ModelHandle<CodeActions> {
         }
 
         self.update(cx, |this, cx| {
-            this.code_actions_task = Some(cx.spawn(|this, mut cx| async move {
+            this.code_actions_task = Some(cx.spawn_weak(|this, mut cx| async move {
                 cx.background().timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT).await;
+                let Some(this) = this.upgrade(&cx) else {
+                    return;
+                };
                 let actions = this
                     .update(&mut cx, |this, cx| {
                         this.project.update(cx, |project, cx| {

@@ -2,8 +2,9 @@ use super::*;
 use crate::{
     scroll::scroll_amount::ScrollAmount,
     test::{
-        assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
-        editor_test_context::EditorTestContext, select_ranges,
+        assert_text_with_selections, build_editor, build_editor_with_project,
+        editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
+        select_ranges,
     },
     JoinLines,
 };
@@ -4895,7 +4896,9 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
 
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let editor = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
+    let editor = cx
+        .add_window(|cx| build_editor_with_project(project.clone(), buffer, cx))
+        .root(cx);
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
@@ -5007,7 +5010,9 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
 
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let editor = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
+    let editor = cx
+        .add_window(|cx| build_editor_with_project(project.clone(), buffer, cx))
+        .root(cx);
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
@@ -5128,7 +5133,9 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
 
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let editor = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
+    let editor = cx
+        .add_window(|cx| build_editor_with_project(project, buffer, cx))
+        .root(cx);
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
 
     let format = editor.update(cx, |editor, cx| {
@@ -8010,7 +8017,9 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
 
     let buffer_text = "one\ntwo\nthree\n";
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let editor = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
+    let editor = cx
+        .add_window(|cx| build_editor_with_project(project.clone(), buffer, cx))
+        .root(cx);
     editor.update(cx, |editor, cx| editor.set_text(buffer_text, cx));
 
     let format = editor.update(cx, |editor, cx| {
