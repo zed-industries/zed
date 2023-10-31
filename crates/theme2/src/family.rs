@@ -1,16 +1,16 @@
 use crate::{colors::ThemeStyle, Appearance, ColorScales};
 
 pub struct ThemeFamily {
-    name: String,
-    author: String,
-    themes: Vec<ThemeVariant>,
-    scales: ColorScales,
+    pub name: String,
+    pub author: String,
+    pub themes: Vec<ThemeVariant>,
+    pub scales: ColorScales,
 }
 
 impl ThemeFamily {}
 
 pub struct ThemeVariant {
-    name: String,
-    appearance: Appearance,
-    colors: ThemeStyle,
+    pub name: String,
+    pub appearance: Appearance,
+    pub styles: ThemeStyle,
 }

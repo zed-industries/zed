@@ -2,11 +2,15 @@ use gpui2::{hsla, Rgba};
 use indexmap::IndexMap;
 
 use crate::{
-    colors::StaticColors,
+    colors::{
+        GitStatusColorName, GitStatusColors, PlayerColor, PlayerColors, StatusColorName,
+        StatusColors, SystemColors, ThemeColors, ThemeStyleName,
+    },
+    family::ThemeVariant,
     scale::{ColorScaleName, ColorScaleSet, ColorScales},
 };
 
-impl Default for StaticColors {
+impl Default for SystemColors {
     fn default() -> Self {
         Self {
             transparent: hsla(0.0, 0.0, 0.0, 0.0),
@@ -14,6 +18,160 @@ impl Default for StaticColors {
             mac_os_traffic_light_yellow: hsla(0.114, 0.88, 0.63, 1.0),
             mac_os_traffic_light_green: hsla(0.313, 0.49, 0.55, 1.0),
         }
+    }
+}
+
+impl Default for StatusColors {
+    fn default() -> Self {
+        Self(IndexMap::from_iter([
+            (StatusColorName::Conflict, hsla(0.0, 0.0, 0.0, 0.0)),
+            (StatusColorName::Created, hsla(0.0, 0.0, 0.0, 0.0)),
+            (StatusColorName::Deleted, hsla(0.0, 0.0, 0.0, 0.0)),
+            (StatusColorName::Error, hsla(0.0, 0.0, 0.0, 0.0)),
+            (StatusColorName::Hidden, hsla(0.0, 0.0, 0.0, 0.0)),
+            (StatusColorName::Ignored, hsla(0.0, 0.0, 0.0, 0.0)),
+            (StatusColorName::Info, hsla(0.0, 0.0, 0.0, 0.0)),
+            (StatusColorName::Modified, hsla(0.0, 0.0, 0.0, 0.0)),
+            (StatusColorName::Renamed, hsla(0.0, 0.0, 0.0, 0.0)),
+            (StatusColorName::Success, hsla(0.0, 0.0, 0.0, 0.0)),
+            (StatusColorName::Warning, hsla(0.0, 0.0, 0.0, 0.0)),
+        ]))
+    }
+}
+
+impl Default for GitStatusColors {
+    fn default() -> Self {
+        Self(IndexMap::from_iter([
+            (GitStatusColorName::Conflict, hsla(0.0, 0.0, 0.0, 0.0)),
+            (GitStatusColorName::Created, hsla(0.0, 0.0, 0.0, 0.0)),
+            (GitStatusColorName::Deleted, hsla(0.0, 0.0, 0.0, 0.0)),
+            (GitStatusColorName::Ignored, hsla(0.0, 0.0, 0.0, 0.0)),
+            (GitStatusColorName::Modified, hsla(0.0, 0.0, 0.0, 0.0)),
+            (GitStatusColorName::Renamed, hsla(0.0, 0.0, 0.0, 0.0)),
+        ]))
+    }
+}
+
+impl Default for PlayerColors {
+    fn default() -> Self {
+        Self(vec![
+            PlayerColor {
+                cursor: hsla(0.0, 0.0, 0.0, 0.0),
+                background: hsla(0.0, 0.0, 0.0, 0.0),
+                selection: hsla(0.0, 0.0, 0.0, 0.0),
+            },
+            PlayerColor {
+                cursor: hsla(0.0, 0.0, 0.0, 0.0),
+                background: hsla(0.0, 0.0, 0.0, 0.0),
+                selection: hsla(0.0, 0.0, 0.0, 0.0),
+            },
+            PlayerColor {
+                cursor: hsla(0.0, 0.0, 0.0, 0.0),
+                background: hsla(0.0, 0.0, 0.0, 0.0),
+                selection: hsla(0.0, 0.0, 0.0, 0.0),
+            },
+            PlayerColor {
+                cursor: hsla(0.0, 0.0, 0.0, 0.0),
+                background: hsla(0.0, 0.0, 0.0, 0.0),
+                selection: hsla(0.0, 0.0, 0.0, 0.0),
+            },
+        ])
+    }
+}
+
+impl ThemeColors {
+    pub fn default_light() -> Self {
+        ThemeColors(IndexMap::from_iter([
+            (ThemeStyleName::Border, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::BorderVariant, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::BorderFocused, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::BorderTransparent, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::ElevatedSurface, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Surface, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Background, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Element, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::ElementHover, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::ElementActive, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::ElementSelected, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::ElementDisabled, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::ElementPlaceholder, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::GhostElement, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::GhostElementHover, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::GhostElementActive, hsla(0.0, 0.0, 0.0, 0.0)),
+            (
+                ThemeStyleName::GhostElementSelected,
+                hsla(0.0, 0.0, 0.0, 0.0),
+            ),
+            (
+                ThemeStyleName::GhostElementDisabled,
+                hsla(0.0, 0.0, 0.0, 0.0),
+            ),
+            (ThemeStyleName::Text, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::TextMuted, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::TextPlaceholder, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::TextDisabled, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::TextAccent, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Icon, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::IconMuted, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::IconDisabled, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::IconPlaceholder, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::IconAccent, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Syntax, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::StatusBar, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::TitleBar, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Toolbar, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::TabBar, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Editor, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::EditorSubheader, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::EditorActiveLine, hsla(0.0, 0.0, 0.0, 0.0)),
+        ]))
+    }
+
+    pub fn default_dark() -> Self {
+        ThemeColors(IndexMap::from_iter([
+            (ThemeStyleName::Border, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::BorderVariant, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::BorderFocused, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::BorderTransparent, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::ElevatedSurface, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Surface, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Background, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Element, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::ElementHover, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::ElementActive, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::ElementSelected, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::ElementDisabled, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::ElementPlaceholder, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::GhostElement, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::GhostElementHover, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::GhostElementActive, hsla(0.0, 0.0, 0.0, 0.0)),
+            (
+                ThemeStyleName::GhostElementSelected,
+                hsla(0.0, 0.0, 0.0, 0.0),
+            ),
+            (
+                ThemeStyleName::GhostElementDisabled,
+                hsla(0.0, 0.0, 0.0, 0.0),
+            ),
+            (ThemeStyleName::Text, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::TextMuted, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::TextPlaceholder, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::TextDisabled, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::TextAccent, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Icon, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::IconMuted, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::IconDisabled, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::IconPlaceholder, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::IconAccent, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Syntax, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::StatusBar, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::TitleBar, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Toolbar, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::TabBar, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::Editor, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::EditorSubheader, hsla(0.0, 0.0, 0.0, 0.0)),
+            (ThemeStyleName::EditorActiveLine, hsla(0.0, 0.0, 0.0, 0.0)),
+        ]))
     }
 }
 

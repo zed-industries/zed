@@ -3,7 +3,7 @@ use indexmap::IndexMap;
 
 use crate::generate_struct_with_overrides;
 
-pub struct StaticColors {
+pub struct SystemColors {
     pub transparent: Hsla,
     pub mac_os_traffic_light_red: Hsla,
     pub mac_os_traffic_light_yellow: Hsla,
@@ -17,9 +17,9 @@ pub struct PlayerColor {
     pub selection: Hsla,
 }
 
-type PlayerColors = Vec<PlayerColor>;
+pub struct PlayerColors(pub Vec<PlayerColor>);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StatusColorName {
     Conflict,
     Created,
@@ -34,9 +34,9 @@ pub enum StatusColorName {
     Warning,
 }
 
-type StatusColors = IndexMap<StatusColorName, Hsla>;
+pub struct StatusColors(pub IndexMap<StatusColorName, Hsla>);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GitStatusColorName {
     Conflict,
     Created,
@@ -46,9 +46,9 @@ pub enum GitStatusColorName {
     Renamed,
 }
 
-type GitStatusColors = IndexMap<GitStatusColorName, Hsla>;
+pub struct GitStatusColors(pub IndexMap<GitStatusColorName, Hsla>);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SyntaxColorName {
     Comment,
     CommentDoc,
@@ -108,8 +108,9 @@ pub struct SyntaxStyle {
     // pub highlight: Hsla,
 }
 
-type SyntaxStyles = IndexMap<SyntaxColorName, SyntaxStyle>;
+struct SyntaxStyles(pub IndexMap<SyntaxColorName, SyntaxStyle>);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ThemeStyleName {
     Border,
     BorderVariant,
@@ -149,12 +150,13 @@ pub enum ThemeStyleName {
     EditorActiveLine,
 }
 
-type ThemeColor = IndexMap<ThemeStyleName, Hsla>;
+pub struct ThemeColors(pub IndexMap<ThemeStyleName, Hsla>);
 
 generate_struct_with_overrides! {
     ThemeStyle,
     ThemeStyleOverrides,
-    color: ThemeColor,
+    system: SystemColors,
+    color: ThemeColors,
     status: StatusColors,
     git: GitStatusColors,
     player: PlayerColors
