@@ -1,6 +1,6 @@
 use std::{any::Any, sync::Arc};
 
-use gpui2::{AppContext, Subscription, Task, View, ViewContext, WindowContext};
+use gpui2::{AnyView, AppContext, Subscription, Task, View, ViewContext, WindowContext};
 use project2::search::SearchQuery;
 
 use crate::{
@@ -95,7 +95,7 @@ pub trait SearchableItemHandle: ItemHandle {
     fn subscribe_to_search_events(
         &self,
         cx: &mut WindowContext,
-        handler: Box<dyn Fn(SearchEvent, &mut WindowContext)>,
+        handler: Box<dyn Fn(SearchEvent, &mut WindowContext) + Send>,
     ) -> Subscription;
     fn clear_matches(&self, cx: &mut WindowContext);
     fn update_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut WindowContext);
@@ -130,7 +130,8 @@ pub trait SearchableItemHandle: ItemHandle {
 
 impl<T: SearchableItem> SearchableItemHandle for View<T> {
     fn downgrade(&self) -> Box<dyn WeakSearchableItemHandle> {
-        Box::new(self.downgrade())
+        // Box::new(self.downgrade())
+        todo!()
     }
 
     fn boxed_clone(&self) -> Box<dyn SearchableItemHandle> {
@@ -144,7 +145,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
     fn subscribe_to_search_events(
         &self,
         cx: &mut WindowContext,
-        handler: Box<dyn Fn(SearchEvent, &mut WindowContext)>,
+        handler: Box<dyn Fn(SearchEvent, &mut WindowContext) + Send>,
     ) -> Subscription {
         cx.subscribe(self, move |handle, event, cx| {
             let search_event = handle.update(cx, |handle, cx| handle.to_search_event(event, cx));
@@ -198,7 +199,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         cx: &mut WindowContext,
     ) -> Task<Vec<Box<dyn Any + Send>>> {
         let matches = self.update(cx, |this, cx| this.find_matches(query, cx));
-        cx.foreground().spawn(async {
+        cx.spawn_on_main(|cx| async {
             let matches = matches.await;
             matches
                 .into_iter()
@@ -231,23 +232,21 @@ fn downcast_matches<T: Any + Clone>(matches: &Vec<Box<dyn Any + Send>>) -> Vec<T
         )
 }
 
-// todo!()
-// impl From<Box<dyn SearchableItemHandle>> for AnyViewHandle {
-//     fn from(this: Box<dyn SearchableItemHandle>) -> Self {
-//         this.as_any().clone()
-//     }
-// }
+impl From<Box<dyn SearchableItemHandle>> for AnyView {
+    fn from(this: Box<dyn SearchableItemHandle>) -> Self {
+        this.to_any().clone()
+    }
+}
 
-// todo!()
-// impl From<&Box<dyn SearchableItemHandle>> for AnyViewHandle {
-//     fn from(this: &Box<dyn SearchableItemHandle>) -> Self {
-//         this.as_any().clone()
-//     }
-// }
+impl From<&Box<dyn SearchableItemHandle>> for AnyView {
+    fn from(this: &Box<dyn SearchableItemHandle>) -> Self {
+        this.to_any().clone()
+    }
+}
 
 impl PartialEq for Box<dyn SearchableItemHandle> {
     fn eq(&self, other: &Self) -> bool {
-        self.id() == other.id() && self.window() == other.window()
+        self.id() == other.id()
     }
 }
 
@@ -256,24 +255,23 @@ impl Eq for Box<dyn SearchableItemHandle> {}
 pub trait WeakSearchableItemHandle: WeakItemHandle {
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
 
-    // todo!()
-    // fn into_any(self) -> AnyWeakViewHandle;
+    // fn into_any(self) -> AnyWeakView;
 }
 
 // todo!()
-// impl<T: SearchableItem> WeakSearchableItemHandle for WeakViewHandle<T> {
+// impl<T: SearchableItem> WeakSearchableItemHandle for WeakView<T> {
 //     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
 //         Some(Box::new(self.upgrade(cx)?))
 //     }
 
-//     fn into_any(self) -> AnyWeakViewHandle {
-//         self.into_any()
-//     }
+//     // fn into_any(self) -> AnyView {
+//     //     self.into_any()
+//     // }
 // }
 
 impl PartialEq for Box<dyn WeakSearchableItemHandle> {
     fn eq(&self, other: &Self) -> bool {
-        self.id() == other.id() && self.window() == other.window()
+        self.id() == other.id()
     }
 }
 
@@ -281,6 +279,6 @@ impl Eq for Box<dyn WeakSearchableItemHandle> {}
 
 impl std::hash::Hash for Box<dyn WeakSearchableItemHandle> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.id(), self.window().id()).hash(state)
+        self.id().hash(state)
     }
 }

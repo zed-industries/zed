@@ -691,58 +691,58 @@ pub trait FollowableItemHandle: ItemHandle {
     fn is_project_item(&self, cx: &AppContext) -> bool;
 }
 
-// impl<T: FollowableItem> FollowableItemHandle for View<T> {
-//     fn remote_id(&self, client: &Arc<Client>, cx: &AppContext) -> Option<ViewId> {
-//         self.read(cx).remote_id().or_else(|| {
-//             client.peer_id().map(|creator| ViewId {
-//                 creator,
-//                 id: self.id() as u64,
-//             })
-//         })
-//     }
+impl<T: FollowableItem> FollowableItemHandle for View<T> {
+    fn remote_id(&self, client: &Arc<Client>, cx: &AppContext) -> Option<ViewId> {
+        self.read(cx).remote_id().or_else(|| {
+            client.peer_id().map(|creator| ViewId {
+                creator,
+                id: self.id() as u64,
+            })
+        })
+    }
 
-//     fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext) {
-//         self.update(cx, |this, cx| this.set_leader_peer_id(leader_peer_id, cx))
-//     }
+    fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| this.set_leader_peer_id(leader_peer_id, cx))
+    }
 
-//     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
-//         self.read(cx).to_state_proto(cx)
-//     }
+    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
+        self.read(cx).to_state_proto(cx)
+    }
 
-//     fn add_event_to_update_proto(
-//         &self,
-//         event: &dyn Any,
-//         update: &mut Option<proto::update_view::Variant>,
-//         cx: &AppContext,
-//     ) -> bool {
-//         if let Some(event) = event.downcast_ref() {
-//             self.read(cx).add_event_to_update_proto(event, update, cx)
-//         } else {
-//             false
-//         }
-//     }
+    fn add_event_to_update_proto(
+        &self,
+        event: &dyn Any,
+        update: &mut Option<proto::update_view::Variant>,
+        cx: &AppContext,
+    ) -> bool {
+        if let Some(event) = event.downcast_ref() {
+            self.read(cx).add_event_to_update_proto(event, update, cx)
+        } else {
+            false
+        }
+    }
 
-//     fn apply_update_proto(
-//         &self,
-//         project: &Model<Project>,
-//         message: proto::update_view::Variant,
-//         cx: &mut WindowContext,
-//     ) -> Task<Result<()>> {
-//         self.update(cx, |this, cx| this.apply_update_proto(project, message, cx))
-//     }
+    fn apply_update_proto(
+        &self,
+        project: &Model<Project>,
+        message: proto::update_view::Variant,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        self.update(cx, |this, cx| this.apply_update_proto(project, message, cx))
+    }
 
-//     fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool {
-//         if let Some(event) = event.downcast_ref() {
-//             T::should_unfollow_on_event(event, cx)
-//         } else {
-//             false
-//         }
-//     }
+    fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool {
+        if let Some(event) = event.downcast_ref() {
+            T::should_unfollow_on_event(event, cx)
+        } else {
+            false
+        }
+    }
 
-//     fn is_project_item(&self, cx: &AppContext) -> bool {
-//         self.read(cx).is_project_item(cx)
-//     }
-// }
+    fn is_project_item(&self, cx: &AppContext) -> bool {
+        self.read(cx).is_project_item(cx)
+    }
+}
 
 // #[cfg(any(test, feature = "test-support"))]
 // pub mod test {

@@ -178,7 +178,7 @@ pub struct Pane {
     //     tab_context_menu: ViewHandle<ContextMenu>,
     //     workspace: WeakView<Workspace>,
     project: Model<Project>,
-    //     has_focus: bool,
+    has_focus: bool,
     //     can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
     //     can_split: bool,
     //     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>>,
@@ -348,7 +348,7 @@ impl Pane {
             // tab_context_menu: cx.add_view(|cx| ContextMenu::new(pane_view_id, cx)),
             // workspace,
             project,
-            // has_focus: false,
+            has_focus: false,
             // can_drop: Rc::new(|_, _| true),
             // can_split: true,
             // render_tab_bar_buttons: Rc::new(move |pane, cx| {
@@ -415,9 +415,9 @@ impl Pane {
     //         &self.workspace
     //     }
 
-    //     pub fn has_focus(&self) -> bool {
-    //         self.has_focus
-    //     }
+    pub fn has_focus(&self) -> bool {
+        self.has_focus
+    }
 
     //     pub fn active_item_index(&self) -> usize {
     //         self.active_item_index
@@ -614,9 +614,9 @@ impl Pane {
         self.items.len()
     }
 
-    //     pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> + DoubleEndedIterator {
-    //         self.items.iter()
-    //     }
+    pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> + DoubleEndedIterator {
+        self.items.iter()
+    }
 
     //     pub fn items_of_type<T: View>(&self) -> impl '_ + Iterator<Item = ViewHandle<T>> {
     //         self.items

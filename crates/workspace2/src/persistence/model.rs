@@ -55,7 +55,7 @@ impl Column for WorkspaceLocation {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 pub struct SerializedWorkspace {
     pub id: WorkspaceId,
     pub location: WorkspaceLocation,
@@ -127,7 +127,7 @@ impl Bind for DockData {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 pub enum SerializedPaneGroup {
     Group {
         axis: Axis,
