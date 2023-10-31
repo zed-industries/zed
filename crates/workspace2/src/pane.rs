@@ -323,7 +323,7 @@ impl Pane {
         //     menu.set_position_mode(OverlayPositionMode::Local)
         // });
 
-        let handle = cx.view();
+        let handle = cx.view().downgrade();
         Self {
             items: Vec::new(),
             activation_history: Vec::new(),

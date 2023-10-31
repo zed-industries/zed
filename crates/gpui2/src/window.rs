@@ -7,7 +7,7 @@ use crate::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow,
     Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
     RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakModel, WeakView,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
     WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
@@ -1305,7 +1305,7 @@ impl Context for WindowContext<'_, '_> {
 }
 
 impl VisualContext for WindowContext<'_, '_> {
-    type ViewContext<'a, 'w, V> = ViewContext<'a, 'w, V>;
+    type ViewContext<'a, 'w, V: 'static> = ViewContext<'a, 'w, V>;
 
     fn build_view<V>(
         &mut self,
@@ -1318,7 +1318,7 @@ impl VisualContext for WindowContext<'_, '_> {
         let view = View {
             model: slot.clone(),
         };
-        let mut cx = ViewContext::mutable(&mut *self.app, &mut *self.window, view.downgrade());
+        let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
         let entity = build_view_state(&mut cx);
         self.entities.insert(slot, entity);
         view
@@ -1331,7 +1331,7 @@ impl VisualContext for WindowContext<'_, '_> {
         update: impl FnOnce(&mut T, &mut Self::ViewContext<'_, '_, T>) -> R,
     ) -> Self::Result<R> {
         let mut lease = self.app.entities.lease(&view.model);
-        let mut cx = ViewContext::mutable(&mut *self.app, &mut *self.window, view.downgrade());
+        let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
         let result = update(&mut *lease, &mut cx);
         cx.app.entities.end_lease(lease);
         result
@@ -1542,7 +1542,7 @@ impl<T> BorrowWindow for T where T: BorrowMut<AppContext> + BorrowMut<Window> {}
 
 pub struct ViewContext<'a, 'w, V> {
     window_cx: WindowContext<'a, 'w>,
-    view: WeakView<V>,
+    view: &'w View<V>,
 }
 
 impl<V> Borrow<AppContext> for ViewContext<'_, '_, V> {
@@ -1570,22 +1570,18 @@ impl<V> BorrowMut<Window> for ViewContext<'_, '_, V> {
 }
 
 impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
-    pub(crate) fn mutable(
-        app: &'a mut AppContext,
-        window: &'w mut Window,
-        view: WeakView<V>,
-    ) -> Self {
+    pub(crate) fn new(app: &'a mut AppContext, window: &'w mut Window, view: &'w View<V>) -> Self {
         Self {
             window_cx: WindowContext::mutable(app, window),
             view,
         }
     }
 
-    pub fn view(&self) -> WeakView<V> {
+    pub fn view(&self) -> View<V> {
         self.view.clone()
     }
 
-    pub fn model(&self) -> WeakModel<V> {
+    pub fn model(&self) -> Model<V> {
         self.view.model.clone()
     }
 
@@ -1600,14 +1596,14 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     where
         V: Any + Send,
     {
-        let view = self.view().upgrade().unwrap();
+        let view = self.view();
         self.window_cx.on_next_frame(move |cx| view.update(cx, f));
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
     /// that are currently on the stack to be returned to the app.
     pub fn defer(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static + Send) {
-        let view = self.view();
+        let view = self.view().downgrade();
         self.window_cx.defer(move |cx| {
             view.update(cx, f).ok();
         });
@@ -1623,7 +1619,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         V: 'static + Send,
         E: Entity<V2>,
     {
-        let view = self.view();
+        let view = self.view().downgrade();
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
@@ -1652,7 +1648,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         V2: EventEmitter,
         E: Entity<V2>,
     {
-        let view = self.view();
+        let view = self.view().downgrade();
         let entity_id = entity.entity_id();
         let handle = entity.downgrade();
         let window_handle = self.window.handle;
@@ -1698,7 +1694,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         V2: 'static,
         E: Entity<V2>,
     {
-        let view = self.view();
+        let view = self.view().downgrade();
         let entity_id = entity.entity_id();
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
@@ -1723,7 +1719,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         &mut self,
         listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + 'static,
     ) {
-        let handle = self.view();
+        let handle = self.view().downgrade();
         self.window.focus_listeners.push(Box::new(move |event, cx| {
             handle
                 .update(cx, |view, cx| listener(view, event, cx))
@@ -1739,7 +1735,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         let old_stack_len = self.window.key_dispatch_stack.len();
         if !self.window.freeze_key_dispatch_stack {
             for (event_type, listener) in key_listeners {
-                let handle = self.view();
+                let handle = self.view().downgrade();
                 let listener = Box::new(
                     move |event: &dyn Any,
                           context_stack: &[&DispatchContext],
@@ -1829,7 +1825,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
             let cx = unsafe { mem::transmute::<&mut Self, &mut MainThread<Self>>(self) };
             Task::ready(Ok(f(view, cx)))
         } else {
-            let view = self.view().upgrade().unwrap();
+            let view = self.view();
             self.window_cx.run_on_main(move |cx| view.update(cx, f))
         }
     }
@@ -1842,7 +1838,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         R: Send + 'static,
         Fut: Future<Output = R> + Send + 'static,
     {
-        let view = self.view();
+        let view = self.view().downgrade();
         self.window_cx.spawn(move |_, cx| {
             let result = f(view, cx);
             async move { result.await }
@@ -1864,12 +1860,12 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         f: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) + Send + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
-        let handle = self.view();
+        let view = self.view().downgrade();
         self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| {
                 cx.update_window(window_handle, |cx| {
-                    handle.update(cx, |view, cx| f(view, cx)).is_ok()
+                    view.update(cx, |view, cx| f(view, cx)).is_ok()
                 })
                 .unwrap_or(false)
             }),
@@ -1880,7 +1876,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         &mut self,
         handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + Send + 'static,
     ) {
-        let handle = self.view().upgrade().unwrap();
+        let handle = self.view();
         self.window_cx.on_mouse_event(move |event, phase, cx| {
             handle.update(cx, |view, cx| {
                 handler(view, event, phase, cx);
@@ -1937,7 +1933,7 @@ impl<'a, 'w, V> Context for ViewContext<'a, 'w, V> {
 }
 
 impl<V: 'static> VisualContext for ViewContext<'_, '_, V> {
-    type ViewContext<'a, 'w, V2> = ViewContext<'a, 'w, V2>;
+    type ViewContext<'a, 'w, V2: 'static> = ViewContext<'a, 'w, V2>;
 
     fn build_view<W: 'static + Send>(
         &mut self,

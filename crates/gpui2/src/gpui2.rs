@@ -95,7 +95,7 @@ pub trait Context {
 }
 
 pub trait VisualContext: Context {
-    type ViewContext<'a, 'w, V>;
+    type ViewContext<'a, 'w, V: 'static>;
 
     fn build_view<V>(
         &mut self,
@@ -184,7 +184,7 @@ impl<C: Context> Context for MainThread<C> {
 }
 
 impl<C: VisualContext> VisualContext for MainThread<C> {
-    type ViewContext<'a, 'w, V> = MainThread<C::ViewContext<'a, 'w, V>>;
+    type ViewContext<'a, 'w, V: 'static> = MainThread<C::ViewContext<'a, 'w, V>>;
 
     fn build_view<V>(
         &mut self,

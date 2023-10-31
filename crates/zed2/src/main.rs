@@ -46,7 +46,7 @@ use util::{
 };
 use uuid::Uuid;
 use workspace2::{AppState, WorkspaceStore};
-use zed2::{build_window_options, languages};
+use zed2::{build_window_options, initialize_workspace, languages};
 use zed2::{ensure_only_instance, Assets, IsOnlyInstance};
 
 mod open_listener;
@@ -172,7 +172,7 @@ fn main() {
             fs,
             build_window_options,
             initialize_workspace,
-            background_actions,
+            // background_actions: todo!("ask Mikayla"),
             workspace_store,
             node_runtime,
         });

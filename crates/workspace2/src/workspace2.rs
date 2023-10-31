@@ -416,8 +416,12 @@ pub struct AppState {
     pub fs: Arc<dyn fs2::Fs>,
     pub build_window_options:
         fn(Option<WindowBounds>, Option<Uuid>, MainThread<AppContext>) -> WindowOptions,
-    pub initialize_workspace:
-        fn(WeakModel<Workspace>, bool, Arc<AppState>, AsyncAppContext) -> Task<anyhow::Result<()>>,
+    pub initialize_workspace: fn(
+        WeakView<Workspace>,
+        bool,
+        Arc<AppState>,
+        AsyncWindowContext,
+    ) -> Task<anyhow::Result<()>>,
     pub node_runtime: Arc<dyn NodeRuntime>,
 }
 

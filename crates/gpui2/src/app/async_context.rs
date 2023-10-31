@@ -259,7 +259,7 @@ impl Context for AsyncWindowContext {
 }
 
 impl VisualContext for AsyncWindowContext {
-    type ViewContext<'a, 'w, V> = ViewContext<'a, 'w, V>;
+    type ViewContext<'a, 'w, V: 'static> = ViewContext<'a, 'w, V>;
 
     fn build_view<V>(
         &mut self,
