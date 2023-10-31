@@ -1,0 +1,13 @@
+name = "CSS"
+path_suffixes = ["css"]
+autoclose_before = ";:.,=}])>"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+]
+word_characters = ["-"]
+block_comment = ["/* ", " */"]
+prettier_parser_name = "css"

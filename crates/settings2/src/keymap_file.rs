@@ -1,7 +1,7 @@
 use crate::{settings_store::parse_json_with_comments, SettingsAssets};
 use anyhow::{anyhow, Context, Result};
 use collections::BTreeMap;
-use gpui2::{AppContext, KeyBinding};
+use gpui2::{AppContext, KeyBinding, SharedString};
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
     schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation},
@@ -96,7 +96,7 @@ impl KeymapFile {
         Ok(())
     }
 
-    pub fn generate_json_schema(action_names: &[&'static str]) -> serde_json::Value {
+    pub fn generate_json_schema(action_names: &[SharedString]) -> serde_json::Value {
         let mut root_schema = SchemaSettings::draft07()
             .with(|settings| settings.option_add_null_type = false)
             .into_generator()

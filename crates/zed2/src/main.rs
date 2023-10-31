@@ -45,12 +45,8 @@ use util::{
     paths, ResultExt,
 };
 use uuid::Uuid;
+use zed2::languages;
 use zed2::{ensure_only_instance, AppState, Assets, IsOnlyInstance};
-// use zed2::{
-//     assets::Assets,
-//     build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
-//     only_instance::{ensure_only_instance, IsOnlyInstance},
-// };
 
 mod open_listener;
 
@@ -117,9 +113,11 @@ fn main() {
         let copilot_language_server_id = languages.next_language_server_id();
         languages.set_executor(cx.executor().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
+        let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
 
         language2::init(cx);
+        languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         // let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
 

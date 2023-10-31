@@ -39,11 +39,11 @@ use language2::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version, split_operations,
     },
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, BundledFormatter, CachedLspAdapter,
-    CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
-    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
-    LspAdapterDelegate, OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16,
-    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeAction,
+    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
+    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
+    OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp2::{
@@ -8410,12 +8410,7 @@ impl Project {
         let Some(buffer_language) = buffer.language() else {
             return Task::ready(None);
         };
-        if !buffer_language
-            .lsp_adapters()
-            .iter()
-            .flat_map(|adapter| adapter.enabled_formatters())
-            .any(|formatter| matches!(formatter, BundledFormatter::Prettier { .. }))
-        {
+        if buffer_language.prettier_parser_name().is_none() {
             return Task::ready(None);
         }
 
@@ -8574,16 +8569,15 @@ impl Project {
         };
 
         let mut prettier_plugins = None;
-        for formatter in new_language
-            .lsp_adapters()
-            .into_iter()
-            .flat_map(|adapter| adapter.enabled_formatters())
-        {
-            match formatter {
-                BundledFormatter::Prettier { plugin_names, .. } => prettier_plugins
-                    .get_or_insert_with(|| HashSet::default())
-                    .extend(plugin_names),
-            }
+        if new_language.prettier_parser_name().is_some() {
+            prettier_plugins
+                .get_or_insert_with(|| HashSet::default())
+                .extend(
+                    new_language
+                        .lsp_adapters()
+                        .iter()
+                        .flat_map(|adapter| adapter.prettier_plugins()),
+                )
         }
         let Some(prettier_plugins) = prettier_plugins else {
             return Task::ready(Ok(()));
