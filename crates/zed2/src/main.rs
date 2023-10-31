@@ -45,8 +45,9 @@ use util::{
     paths, ResultExt,
 };
 use uuid::Uuid;
+use workspace2::AppState;
 use zed2::languages;
-use zed2::{ensure_only_instance, AppState, Assets, IsOnlyInstance};
+use zed2::{ensure_only_instance, Assets, IsOnlyInstance};
 
 mod open_listener;
 
@@ -165,7 +166,7 @@ fn main() {
         // client.telemetry().start(installation_id, session_id, cx);
 
         // todo!("app_state")
-        let app_state = Arc::new(AppState { client, user_store });
+        let app_state: Arc<AppState> = todo!();
         // let app_state = Arc::new(AppState {
         //     languages,
         //     client: client.clone(),

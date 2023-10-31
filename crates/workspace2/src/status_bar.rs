@@ -160,7 +160,7 @@ impl StatusBar {
 
 impl<T: StatusItemView> StatusItemViewHandle for View<T> {
     fn to_any(&self) -> AnyView {
-        self.clone().into_any()
+        self.clone().into()
     }
 
     fn set_active_pane_item(

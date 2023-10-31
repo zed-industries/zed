@@ -114,7 +114,7 @@ where
     }
 
     fn to_any(&self) -> AnyView {
-        self.clone().into_any()
+        self.clone().into()
     }
 }
 

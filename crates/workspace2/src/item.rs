@@ -164,7 +164,7 @@ pub trait Item: Render + EventEmitter + Send {
         _: &'a AppContext,
     ) -> Option<AnyView> {
         if TypeId::of::<Self>() == type_id {
-            Some(self_handle.clone().into_any())
+            Some(self_handle.clone().into())
         } else {
             None
         }
@@ -524,7 +524,7 @@ impl<T: Item> ItemHandle for View<T> {
     }
 
     fn to_any(&self) -> AnyView {
-        self.clone().into_any()
+        self.clone().into()
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
