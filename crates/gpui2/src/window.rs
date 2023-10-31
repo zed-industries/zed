@@ -1675,7 +1675,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn on_release(
         &mut self,
-        mut on_release: impl FnMut(&mut V, &mut WindowContext) + Send + 'static,
+        on_release: impl FnOnce(&mut V, &mut WindowContext) + Send + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(

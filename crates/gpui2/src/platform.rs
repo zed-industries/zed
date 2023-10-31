@@ -393,18 +393,18 @@ impl Bind for WindowBounds {
             }
         };
 
-        todo!()
         // statement.bind(
         //     &region.map(|region| {
         //         (
-        //             region.min_x(),
-        //             region.min_y(),
-        //             region.width(),
-        //             region.height(),
+        //             region.origin.x,
+        //             region.origin.y,
+        //             region.size.width,
+        //             region.size.height,
         //         )
         //     }),
         //     next_index,
         // )
+        todo!()
     }
 }
 

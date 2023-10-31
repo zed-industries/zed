@@ -120,7 +120,7 @@ type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + Send + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + Send + 'static>;
 type QuitHandler = Box<dyn FnMut(&mut AppContext) -> BoxFuture<'static, ()> + Send + 'static>;
-type ReleaseListener = Box<dyn FnMut(&mut dyn Any, &mut AppContext) + Send + 'static>;
+type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + Send + 'static>;
 
 pub struct AppContext {
     this: Weak<Mutex<AppContext>>,
@@ -408,7 +408,7 @@ impl AppContext {
             for (entity_id, mut entity) in dropped {
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
-                for mut release_callback in self.release_listeners.remove(&entity_id) {
+                for release_callback in self.release_listeners.remove(&entity_id) {
                     release_callback(&mut entity, self);
                 }
             }
@@ -697,7 +697,7 @@ impl AppContext {
     pub fn observe_release<E, T>(
         &mut self,
         handle: &E,
-        mut on_release: impl FnMut(&mut T, &mut AppContext) + Send + 'static,
+        on_release: impl FnOnce(&mut T, &mut AppContext) + Send + 'static,
     ) -> Subscription
     where
         E: Entity<T>,

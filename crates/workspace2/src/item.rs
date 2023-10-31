@@ -255,7 +255,7 @@ pub trait ItemHandle: 'static + Send {
     fn on_release(
         &mut self,
         cx: &mut AppContext,
-        callback: Box<dyn FnMut(&mut AppContext) + Send>,
+        callback: Box<dyn FnOnce(&mut AppContext) + Send>,
     ) -> gpui2::Subscription;
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
@@ -573,7 +573,7 @@ impl<T: Item> ItemHandle for View<T> {
     fn on_release(
         &mut self,
         cx: &mut AppContext,
-        mut callback: Box<dyn FnMut(&mut AppContext) + Send>,
+        callback: Box<dyn FnOnce(&mut AppContext) + Send>,
     ) -> gpui2::Subscription {
         cx.observe_release(self, move |_, cx| callback(cx))
     }
