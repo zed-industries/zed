@@ -666,6 +666,7 @@ impl CodeCompletionsProvider for ModelHandle<CodeCompletions> {
         });
         let id = self.update(cx, |this, _| post_inc(&mut this.next_completion_id));
         let that = self.clone();
+        let project = self.update(cx, |this, _| this.project.clone());
         let task = cx.spawn(move |this, mut cx| {
             async move {
                 let menu = if let Some(completions) = completions.await.log_err() {
@@ -688,13 +689,14 @@ impl CodeCompletionsProvider for ModelHandle<CodeCompletions> {
                         matches: Vec::new().into(),
                         selected_item: 0,
                         list: Default::default(),
+                        project,
                     };
                     menu.filter(query.as_deref(), cx.background()).await;
                     if menu.matches.is_empty() {
                         None
                     } else {
-                        _ = this.update(&mut cx, |editor, cx| {
-                            menu.pre_resolve_completion_documentation(editor.project.clone(), cx);
+                        _ = this.update(&mut cx, |_, cx| {
+                            menu.pre_resolve_completion_documentation(cx);
                         });
                         Some(menu)
                     }
@@ -1779,14 +1781,10 @@ enum ContextMenu {
 }
 
 impl ContextMenu {
-    fn select_first(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) -> bool {
+    fn select_first(&mut self, cx: &mut ViewContext<Editor>) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_first(project, cx),
+                ContextMenu::Completions(menu) => menu.select_first(cx),
                 ContextMenu::CodeActions(menu) => menu.select_first(cx),
             }
             true
@@ -1795,14 +1793,10 @@ impl ContextMenu {
         }
     }
 
-    fn select_prev(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) -> bool {
+    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_prev(project, cx),
+                ContextMenu::Completions(menu) => menu.select_prev(cx),
                 ContextMenu::CodeActions(menu) => menu.select_prev(cx),
             }
             true
@@ -1811,14 +1805,10 @@ impl ContextMenu {
         }
     }
 
-    fn select_next(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) -> bool {
+    fn select_next(&mut self, cx: &mut ViewContext<Editor>) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_next(project, cx),
+                ContextMenu::Completions(menu) => menu.select_next(cx),
                 ContextMenu::CodeActions(menu) => menu.select_next(cx),
             }
             true
@@ -1827,14 +1817,10 @@ impl ContextMenu {
         }
     }
 
-    fn select_last(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) -> bool {
+    fn select_last(&mut self, cx: &mut ViewContext<Editor>) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_last(project, cx),
+                ContextMenu::Completions(menu) => menu.select_last(cx),
                 ContextMenu::CodeActions(menu) => menu.select_last(cx),
             }
             true
@@ -1874,74 +1860,53 @@ struct CompletionsMenu {
     matches: Arc<[StringMatch]>,
     selected_item: usize,
     list: UniformListState,
+    project: ModelHandle<Project>,
 }
 
 impl CompletionsMenu {
-    fn select_first(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
         self.selected_item = 0;
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        self.attempt_resolve_selected_completion_documentation(project, cx);
+        self.attempt_resolve_selected_completion_documentation(cx);
         cx.notify();
     }
 
-    fn select_prev(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
         } else {
             self.selected_item = self.matches.len() - 1;
         }
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        self.attempt_resolve_selected_completion_documentation(project, cx);
+        self.attempt_resolve_selected_completion_documentation(cx);
         cx.notify();
     }
 
-    fn select_next(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item + 1 < self.matches.len() {
             self.selected_item += 1;
         } else {
             self.selected_item = 0;
         }
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        self.attempt_resolve_selected_completion_documentation(project, cx);
+        self.attempt_resolve_selected_completion_documentation(cx);
         cx.notify();
     }
 
-    fn select_last(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
         self.selected_item = self.matches.len() - 1;
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        self.attempt_resolve_selected_completion_documentation(project, cx);
+        self.attempt_resolve_selected_completion_documentation(cx);
         cx.notify();
     }
 
-    fn pre_resolve_completion_documentation(
-        &self,
-        project: Option<ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn pre_resolve_completion_documentation(&self, cx: &mut ViewContext<Editor>) {
         let settings = settings::get::<EditorSettings>(cx);
         if !settings.show_completion_documentation {
             return;
         }
 
-        let Some(project) = project else {
-            return;
-        };
+        let project = self.project.clone();
         let client = project.read(cx).client();
         let language_registry = project.read(cx).languages().clone();
 
@@ -2017,20 +1982,14 @@ impl CompletionsMenu {
         .detach();
     }
 
-    fn attempt_resolve_selected_completion_documentation(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn attempt_resolve_selected_completion_documentation(&mut self, cx: &mut ViewContext<Editor>) {
         let settings = settings::get::<EditorSettings>(cx);
         if !settings.show_completion_documentation {
             return;
         }
 
         let completion_index = self.matches[self.selected_item].candidate_id;
-        let Some(project) = project else {
-            return;
-        };
+        let project = &self.project;
         let language_registry = project.read(cx).languages().clone();
 
         let completions = self.completions.clone();
@@ -6597,7 +6556,7 @@ impl Editor {
             .context_menu
             .write()
             .as_mut()
-            .map(|menu| menu.select_last(self.project.as_ref(), cx))
+            .map(|menu| menu.select_last(cx))
             .unwrap_or(false)
         {
             return;
@@ -6651,25 +6610,25 @@ impl Editor {
 
     pub fn context_menu_first(&mut self, _: &ContextMenuFirst, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.write().as_mut() {
-            context_menu.select_first(self.project.as_ref(), cx);
+            context_menu.select_first(cx);
         }
     }
 
     pub fn context_menu_prev(&mut self, _: &ContextMenuPrev, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.write().as_mut() {
-            context_menu.select_prev(self.project.as_ref(), cx);
+            context_menu.select_prev(cx);
         }
     }
 
     pub fn context_menu_next(&mut self, _: &ContextMenuNext, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.write().as_mut() {
-            context_menu.select_next(self.project.as_ref(), cx);
+            context_menu.select_next(cx);
         }
     }
 
     pub fn context_menu_last(&mut self, _: &ContextMenuLast, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.write().as_mut() {
-            context_menu.select_last(self.project.as_ref(), cx);
+            context_menu.select_last(cx);
         }
     }
 
