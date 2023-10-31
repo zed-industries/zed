@@ -316,9 +316,12 @@ impl<V: Render> From<View<V>> for AnyView {
             initialize: |view, cx| {
                 cx.with_element_id(view.model.entity_id, |_, cx| {
                     let view = view.clone().downcast::<V>().unwrap();
-                    Box::new(AnyElement::new(
-                        view.update(cx, |view, cx| Render::render(view, cx)),
-                    ))
+                    let element = view.update(cx, |view, cx| {
+                        let mut element = AnyElement::new(view.render(cx));
+                        element.initialize(view, cx);
+                        element
+                    });
+                    Box::new(element)
                 })
             },
             layout: |view, element, cx| {
