@@ -26,8 +26,8 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui2::{
-    AnyModel, AppContext, AsyncAppContext, Context, EventEmitter, Executor, Model, ModelContext,
-    Task, WeakModel,
+    AnyModel, AppContext, AsyncAppContext, Context, Entity, EventEmitter, Executor, Model,
+    ModelContext, Task, WeakModel,
 };
 use itertools::Itertools;
 use language2::{
@@ -2491,7 +2491,7 @@ impl Project {
             delay
         } else {
             if first_insertion {
-                let this = cx.weak_handle();
+                let this = cx.weak_model();
                 cx.defer(move |cx| {
                     if let Some(this) = this.upgrade() {
                         this.update(cx, |this, cx| {
@@ -8644,7 +8644,7 @@ fn subscribe_for_copilot_events(
                         // Another event wants to re-add the server that was already added and subscribed to, avoid doing it again.
                         if !copilot_server.has_notification_handler::<copilot2::request::LogMessage>() {
                             let new_server_id = copilot_server.server_id();
-                            let weak_project = cx.weak_handle();
+                            let weak_project = cx.weak_model();
                             let copilot_log_subscription = copilot_server
                                 .on_notification::<copilot2::request::LogMessage, _>(
                                     move |params, mut cx| {

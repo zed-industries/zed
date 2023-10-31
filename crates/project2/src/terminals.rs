@@ -1,5 +1,5 @@
 use crate::Project;
-use gpui2::{AnyWindowHandle, Context, Model, ModelContext, WeakModel};
+use gpui2::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
 use settings2::Settings;
 use std::path::{Path, PathBuf};
 use terminal2::{
