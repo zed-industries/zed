@@ -33,6 +33,7 @@ macro_rules! generate_struct_with_overrides {
             )*
         }
 
+        #[allow(dead_code)]
         pub struct $struct_override_name {
             $(
                 pub $field: Option<$type>,

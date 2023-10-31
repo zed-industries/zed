@@ -1,11 +1,12 @@
 use crate::{
     colors::{GitStatusColors, PlayerColors, StatusColors, SystemColors, ThemeColors, ThemeStyle},
-    family::{ThemeFamily, ThemeVariant},
+    theme3::{ThemeFamily, ThemeVariant},
     Appearance, ColorScales, SyntaxStyles,
 };
 
 fn zed_pro_daylight() -> ThemeVariant {
     ThemeVariant {
+        id: "zed_pro_daylight".to_string(),
         name: "Zed Pro Daylight".to_string(),
         appearance: Appearance::Light,
         styles: ThemeStyle {
@@ -21,6 +22,7 @@ fn zed_pro_daylight() -> ThemeVariant {
 
 fn zed_pro_moonlight() -> ThemeVariant {
     ThemeVariant {
+        id: "zed_pro_moonlight".to_string(),
         name: "Zed Pro Moonlight".to_string(),
         appearance: Appearance::Light,
         styles: ThemeStyle {
@@ -36,6 +38,7 @@ fn zed_pro_moonlight() -> ThemeVariant {
 
 pub fn zed_pro_family() -> ThemeFamily {
     ThemeFamily {
+        id: "zed_pro".to_string(),
         name: "Zed Pro".to_string(),
         author: "Zed Team".to_string(),
         themes: vec![zed_pro_daylight(), zed_pro_moonlight()],

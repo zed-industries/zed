@@ -1,7 +1,6 @@
 mod colors;
 mod default_colors;
 mod default_theme;
-mod family;
 mod registry;
 mod scale;
 mod settings;

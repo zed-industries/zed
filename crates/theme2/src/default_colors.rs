@@ -1,4 +1,4 @@
-use gpui2::{hsla, FontWeight, Hsla, Rgba};
+use gpui2::{hsla, Rgba};
 use indexmap::IndexMap;
 
 use crate::{
@@ -7,7 +7,7 @@ use crate::{
         StatusColors, SystemColors, ThemeColors, ThemeStyleName,
     },
     scale::{ColorScaleName, ColorScaleSet, ColorScales},
-    syntax::{SyntaxColorName, SyntaxStyles},
+    syntax::{SyntaxStyleName, SyntaxStyles},
     SyntaxStyle,
 };
 
@@ -80,20 +80,9 @@ impl Default for PlayerColors {
     }
 }
 
-impl Default for SyntaxStyle {
-    fn default() -> Self {
-        Self {
-            color: gpui2::black(),
-            weight: FontWeight::default(),
-            italic: false,
-            underline: false,
-        }
-    }
-}
-
 impl SyntaxStyles {
     pub fn default_light() -> Self {
-        use SyntaxColorName::*;
+        use SyntaxStyleName::*;
 
         Self(IndexMap::from_iter([
             (Comment, SyntaxStyle::builder().build()),
@@ -146,7 +135,7 @@ impl SyntaxStyles {
     }
 
     pub fn default_dark() -> Self {
-        use SyntaxColorName::*;
+        use SyntaxStyleName::*;
 
         Self(IndexMap::from_iter([
             (Comment, SyntaxStyle::builder().build()),
