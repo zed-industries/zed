@@ -21,15 +21,9 @@ impl Breadcrumb {
     fn render_separator<V: 'static>(&self, cx: &WindowContext) -> Div<V> {
         let theme = theme(cx);
 
-        div().child(" › ").text_color(
-            theme
-                .styles
-                .colors
-                .0
-                .get(&ThemeStyleName::TextMuted)
-                .cloned()
-                .unwrap(),
-        )
+        div()
+            .child(" › ")
+            .text_color(theme.styles.colors.text_muted())
     }
 
     fn render<V: 'static>(self, view_state: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {

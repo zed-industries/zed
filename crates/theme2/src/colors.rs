@@ -89,6 +89,15 @@ pub enum ThemeStyleName {
 
 pub struct ThemeColors(pub IndexMap<ThemeStyleName, Hsla>);
 
+impl ThemeColors {
+    pub fn text_muted(&self) -> Hsla {
+        self.0
+            .get(&ThemeStyleName::TextMuted)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
 generate_struct_with_overrides! {
     ThemeStyle,
     ThemeStyleOverrides,
