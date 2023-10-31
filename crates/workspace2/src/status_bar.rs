@@ -1,6 +1,8 @@
+use std::any::TypeId;
+
 use crate::{ItemHandle, Pane};
 use gpui2::{AnyView, Render, Subscription, View, ViewContext, WindowContext};
-use std::ops::Range;
+use util::ResultExt;
 
 pub trait StatusItemView: Render {
     fn set_active_pane_item(
@@ -10,14 +12,14 @@ pub trait StatusItemView: Render {
     );
 }
 
-trait StatusItemViewHandle {
+trait StatusItemViewHandle: Send {
     fn to_any(&self) -> AnyView;
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut WindowContext,
     );
-    fn ui_name(&self) -> &'static str;
+    fn item_type(&self) -> TypeId;
 }
 
 pub struct StatusBar {
@@ -87,7 +89,7 @@ impl StatusBar {
         self.left_items
             .iter()
             .chain(self.right_items.iter())
-            .find_map(|item| item.as_any().clone().downcast())
+            .find_map(|item| item.to_any().clone().downcast().log_err())
     }
 
     pub fn position_of_item<T>(&self) -> Option<usize>
@@ -95,12 +97,12 @@ impl StatusBar {
         T: StatusItemView,
     {
         for (index, item) in self.left_items.iter().enumerate() {
-            if item.as_ref().ui_name() == T::ui_name() {
+            if item.item_type() == TypeId::of::<T>() {
                 return Some(index);
             }
         }
         for (index, item) in self.right_items.iter().enumerate() {
-            if item.as_ref().ui_name() == T::ui_name() {
+            if item.item_type() == TypeId::of::<T>() {
                 return Some(index + self.left_items.len());
             }
         }
@@ -110,7 +112,7 @@ impl StatusBar {
     pub fn insert_item_after<T>(
         &mut self,
         position: usize,
-        item: ViewHandle<T>,
+        item: View<T>,
         cx: &mut ViewContext<Self>,
     ) where
         T: 'static + StatusItemView,
@@ -141,7 +143,7 @@ impl StatusBar {
         cx.notify();
     }
 
-    pub fn set_active_pane(&mut self, active_pane: &ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
+    pub fn set_active_pane(&mut self, active_pane: &View<Pane>, cx: &mut ViewContext<Self>) {
         self.active_pane = active_pane.clone();
         self._observe_active_pane =
             cx.observe(active_pane, |this, _, cx| this.update_active_pane_item(cx));
@@ -156,9 +158,9 @@ impl StatusBar {
     }
 }
 
-impl<T: StatusItemView> StatusItemViewHandle for ViewHandle<T> {
-    fn as_any(&self) -> &AnyViewHandle {
-        self
+impl<T: StatusItemView> StatusItemViewHandle for View<T> {
+    fn to_any(&self) -> AnyView {
+        self.clone().into_any()
     }
 
     fn set_active_pane_item(
@@ -171,88 +173,90 @@ impl<T: StatusItemView> StatusItemViewHandle for ViewHandle<T> {
         });
     }
 
-    fn ui_name(&self) -> &'static str {
-        T::ui_name()
+    fn item_type(&self) -> TypeId {
+        TypeId::of::<T>()
     }
 }
 
-impl From<&dyn StatusItemViewHandle> for AnyViewHandle {
+impl From<&dyn StatusItemViewHandle> for AnyView {
     fn from(val: &dyn StatusItemViewHandle) -> Self {
-        val.as_any().clone()
+        val.to_any().clone()
     }
 }
 
-struct StatusBarElement {
-    left: AnyElement<StatusBar>,
-    right: AnyElement<StatusBar>,
-}
+// todo!()
+// struct StatusBarElement {
+//     left: AnyElement<StatusBar>,
+//     right: AnyElement<StatusBar>,
+// }
 
-impl Element<StatusBar> for StatusBarElement {
-    type LayoutState = ();
-    type PaintState = ();
+// todo!()
+// impl Element<StatusBar> for StatusBarElement {
+//     type LayoutState = ();
+//     type PaintState = ();
 
-    fn layout(
-        &mut self,
-        mut constraint: SizeConstraint,
-        view: &mut StatusBar,
-        cx: &mut ViewContext<StatusBar>,
-    ) -> (Vector2F, Self::LayoutState) {
-        let max_width = constraint.max.x();
-        constraint.min = vec2f(0., constraint.min.y());
+//     fn layout(
+//         &mut self,
+//         mut constraint: SizeConstraint,
+//         view: &mut StatusBar,
+//         cx: &mut ViewContext<StatusBar>,
+//     ) -> (Vector2F, Self::LayoutState) {
+//         let max_width = constraint.max.x();
+//         constraint.min = vec2f(0., constraint.min.y());
 
-        let right_size = self.right.layout(constraint, view, cx);
-        let constraint = SizeConstraint::new(
-            vec2f(0., constraint.min.y()),
-            vec2f(max_width - right_size.x(), constraint.max.y()),
-        );
+//         let right_size = self.right.layout(constraint, view, cx);
+//         let constraint = SizeConstraint::new(
+//             vec2f(0., constraint.min.y()),
+//             vec2f(max_width - right_size.x(), constraint.max.y()),
+//         );
 
-        self.left.layout(constraint, view, cx);
+//         self.left.layout(constraint, view, cx);
 
-        (vec2f(max_width, right_size.y()), ())
-    }
+//         (vec2f(max_width, right_size.y()), ())
+//     }
 
-    fn paint(
-        &mut self,
-        bounds: RectF,
-        visible_bounds: RectF,
-        _: &mut Self::LayoutState,
-        view: &mut StatusBar,
-        cx: &mut ViewContext<StatusBar>,
-    ) -> Self::PaintState {
-        let origin_y = bounds.upper_right().y();
-        let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
+//     fn paint(
+//         &mut self,
+//         bounds: RectF,
+//         visible_bounds: RectF,
+//         _: &mut Self::LayoutState,
+//         view: &mut StatusBar,
+//         cx: &mut ViewContext<StatusBar>,
+//     ) -> Self::PaintState {
+//         let origin_y = bounds.upper_right().y();
+//         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
-        let left_origin = vec2f(bounds.lower_left().x(), origin_y);
-        self.left.paint(left_origin, visible_bounds, view, cx);
+//         let left_origin = vec2f(bounds.lower_left().x(), origin_y);
+//         self.left.paint(left_origin, visible_bounds, view, cx);
 
-        let right_origin = vec2f(bounds.upper_right().x() - self.right.size().x(), origin_y);
-        self.right.paint(right_origin, visible_bounds, view, cx);
-    }
+//         let right_origin = vec2f(bounds.upper_right().x() - self.right.size().x(), origin_y);
+//         self.right.paint(right_origin, visible_bounds, view, cx);
+//     }
 
-    fn rect_for_text_range(
-        &self,
-        _: Range<usize>,
-        _: RectF,
-        _: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &StatusBar,
-        _: &ViewContext<StatusBar>,
-    ) -> Option<RectF> {
-        None
-    }
+//     fn rect_for_text_range(
+//         &self,
+//         _: Range<usize>,
+//         _: RectF,
+//         _: RectF,
+//         _: &Self::LayoutState,
+//         _: &Self::PaintState,
+//         _: &StatusBar,
+//         _: &ViewContext<StatusBar>,
+//     ) -> Option<RectF> {
+//         None
+//     }
 
-    fn debug(
-        &self,
-        bounds: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &StatusBar,
-        _: &ViewContext<StatusBar>,
-    ) -> serde_json::Value {
-        json!({
-            "type": "StatusBarElement",
-            "bounds": bounds.to_json()
-        })
-    }
-}
+//     fn debug(
+//         &self,
+//         bounds: RectF,
+//         _: &Self::LayoutState,
+//         _: &Self::PaintState,
+//         _: &StatusBar,
+//         _: &ViewContext<StatusBar>,
+//     ) -> serde_json::Value {
+//         json!({
+//             "type": "StatusBarElement",
+//             "bounds": bounds.to_json()
+//         })
+//     }
+// }
