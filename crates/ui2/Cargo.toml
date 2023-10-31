@@ -1,0 +1,20 @@
+[package]
+name = "ui2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+chrono = "0.4"
+gpui2 = { path = "../gpui2" }
+itertools = { version = "0.11.0", optional = true }
+serde.workspace = true
+smallvec.workspace = true
+strum = { version = "0.25.0", features = ["derive"] }
+theme2 = { path = "../theme2" }
+rand = "0.8"
+
+[features]
+default = ["stories"]
+stories = ["dep:itertools"]

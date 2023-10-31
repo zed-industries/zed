@@ -1894,7 +1894,6 @@ impl CompletionsMenu {
             self.selected_item -= 1;
         } else {
             self.selected_item = self.matches.len() - 1;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         self.attempt_resolve_selected_completion_documentation(project, cx);
@@ -2465,7 +2464,6 @@ impl CodeActionsMenu {
             self.selected_item -= 1;
         } else {
             self.selected_item = self.actions.len() - 1;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         cx.notify();
@@ -2474,11 +2472,10 @@ impl CodeActionsMenu {
     fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item + 1 < self.actions.len() {
             self.selected_item += 1;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         } else {
             self.selected_item = 0;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         cx.notify();
     }
 

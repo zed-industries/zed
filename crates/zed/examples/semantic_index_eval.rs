@@ -1,4 +1,4 @@
-use ai::embedding::OpenAIEmbeddings;
+use ai::providers::open_ai::OpenAIEmbeddingProvider;
 use anyhow::{anyhow, Result};
 use client::{self, UserStore};
 use gpui::{AsyncAppContext, ModelHandle, Task};
@@ -475,7 +475,7 @@ fn main() {
             let semantic_index = SemanticIndex::new(
                 fs.clone(),
                 db_file_path,
-                Arc::new(OpenAIEmbeddings::new(http_client, cx.background())),
+                Arc::new(OpenAIEmbeddingProvider::new(http_client, cx.background())),
                 languages.clone(),
                 cx.clone(),
             )

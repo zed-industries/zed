@@ -5,12 +5,14 @@ use crate::{
     MessageId, MessageMetadata, MessageStatus, Role, SavedConversation, SavedConversationMetadata,
     SavedMessage,
 };
+
 use ai::{
-    completion::{
-        stream_completion, OpenAICompletionProvider, OpenAIRequest, RequestMessage, OPENAI_API_URL,
-    },
-    templates::repository_context::PromptCodeSnippet,
+    auth::ProviderCredential,
+    completion::{CompletionProvider, CompletionRequest},
+    providers::open_ai::{OpenAICompletionProvider, OpenAIRequest, RequestMessage},
 };
+
+use ai::prompts::repository_context::PromptCodeSnippet;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use client::{telemetry::AssistantKind, ClickhouseEvent, TelemetrySettings};
@@ -43,8 +45,8 @@ use search::BufferSearchBar;
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
 use settings::SettingsStore;
 use std::{
-    cell::{Cell, RefCell},
-    cmp, env,
+    cell::Cell,
+    cmp,
     fmt::Write,
     iter,
     ops::Range,
@@ -97,8 +99,8 @@ pub fn init(cx: &mut AppContext) {
     cx.capture_action(ConversationEditor::copy);
     cx.add_action(ConversationEditor::split);
     cx.capture_action(ConversationEditor::cycle_message_role);
-    cx.add_action(AssistantPanel::save_api_key);
-    cx.add_action(AssistantPanel::reset_api_key);
+    cx.add_action(AssistantPanel::save_credentials);
+    cx.add_action(AssistantPanel::reset_credentials);
     cx.add_action(AssistantPanel::toggle_zoom);
     cx.add_action(AssistantPanel::deploy);
     cx.add_action(AssistantPanel::select_next_match);
@@ -140,9 +142,8 @@ pub struct AssistantPanel {
     zoomed: bool,
     has_focus: bool,
     toolbar: ViewHandle<Toolbar>,
-    api_key: Rc<RefCell<Option<String>>>,
+    completion_provider: Box<dyn CompletionProvider>,
     api_key_editor: Option<ViewHandle<Editor>>,
-    has_read_credentials: bool,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
@@ -202,6 +203,11 @@ impl AssistantPanel {
                     });
 
                     let semantic_index = SemanticIndex::global(cx);
+                    // Defaulting currently to GPT4, allow for this to be set via config.
+                    let completion_provider = Box::new(OpenAICompletionProvider::new(
+                        "gpt-4",
+                        cx.background().clone(),
+                    ));
 
                     let mut this = Self {
                         workspace: workspace_handle,
@@ -213,9 +219,8 @@ impl AssistantPanel {
                         zoomed: false,
                         has_focus: false,
                         toolbar,
-                        api_key: Rc::new(RefCell::new(None)),
+                        completion_provider,
                         api_key_editor: None,
-                        has_read_credentials: false,
                         languages: workspace.app_state().languages.clone(),
                         fs: workspace.app_state().fs.clone(),
                         width: None,
@@ -254,10 +259,7 @@ impl AssistantPanel {
         cx: &mut ViewContext<Workspace>,
     ) {
         let this = if let Some(this) = workspace.panel::<AssistantPanel>(cx) {
-            if this
-                .update(cx, |assistant, cx| assistant.load_api_key(cx))
-                .is_some()
-            {
+            if this.update(cx, |assistant, _| assistant.has_credentials()) {
                 this
             } else {
                 workspace.focus_panel::<AssistantPanel>(cx);
@@ -289,12 +291,6 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
         project: &ModelHandle<Project>,
     ) {
-        let api_key = if let Some(api_key) = self.api_key.borrow().clone() {
-            api_key
-        } else {
-            return;
-        };
-
         let selection = editor.read(cx).selections.newest_anchor().clone();
         if selection.start.excerpt_id != selection.end.excerpt_id {
             return;
@@ -325,9 +321,12 @@ impl AssistantPanel {
 
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
         let provider = Arc::new(OpenAICompletionProvider::new(
-            api_key,
+            "gpt-4",
             cx.background().clone(),
         ));
+
+        // Retrieve Credentials Authenticates the Provider
+        // provider.retrieve_credentials(cx);
 
         let codegen = cx.add_model(|cx| {
             Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, provider, cx)
@@ -745,13 +744,14 @@ impl AssistantPanel {
                 content: prompt,
             });
 
-            let request = OpenAIRequest {
+            let request = Box::new(OpenAIRequest {
                 model: model.full_name().into(),
                 messages,
                 stream: true,
                 stop: vec!["|END|>".to_string()],
                 temperature,
-            };
+            });
+
             codegen.update(&mut cx, |codegen, cx| codegen.start(request, cx));
             anyhow::Ok(())
         })
@@ -811,7 +811,7 @@ impl AssistantPanel {
     fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<ConversationEditor> {
         let editor = cx.add_view(|cx| {
             ConversationEditor::new(
-                self.api_key.clone(),
+                self.completion_provider.clone(),
                 self.languages.clone(),
                 self.fs.clone(),
                 self.workspace.clone(),
@@ -870,17 +870,19 @@ impl AssistantPanel {
         }
     }
 
-    fn save_api_key(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn save_credentials(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         if let Some(api_key) = self
             .api_key_editor
             .as_ref()
             .map(|editor| editor.read(cx).text(cx))
         {
             if !api_key.is_empty() {
-                cx.platform()
-                    .write_credentials(OPENAI_API_URL, "Bearer", api_key.as_bytes())
-                    .log_err();
-                *self.api_key.borrow_mut() = Some(api_key);
+                let credential = ProviderCredential::Credentials {
+                    api_key: api_key.clone(),
+                };
+
+                self.completion_provider.save_credentials(cx, credential);
+
                 self.api_key_editor.take();
                 cx.focus_self();
                 cx.notify();
@@ -890,9 +892,8 @@ impl AssistantPanel {
         }
     }
 
-    fn reset_api_key(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
-        cx.platform().delete_credentials(OPENAI_API_URL).log_err();
-        self.api_key.take();
+    fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
+        self.completion_provider.delete_credentials(cx);
         self.api_key_editor = Some(build_api_key_editor(cx));
         cx.focus_self();
         cx.notify();
@@ -1151,13 +1152,12 @@ impl AssistantPanel {
 
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
-        let api_key = self.api_key.clone();
         let languages = self.languages.clone();
         cx.spawn(|this, mut cx| async move {
             let saved_conversation = fs.load(&path).await?;
             let saved_conversation = serde_json::from_str(&saved_conversation)?;
             let conversation = cx.add_model(|cx| {
-                Conversation::deserialize(saved_conversation, path.clone(), api_key, languages, cx)
+                Conversation::deserialize(saved_conversation, path.clone(), languages, cx)
             });
             this.update(&mut cx, |this, cx| {
                 // If, by the time we've loaded the conversation, the user has already opened
@@ -1181,30 +1181,12 @@ impl AssistantPanel {
             .position(|editor| editor.read(cx).conversation.read(cx).path.as_deref() == Some(path))
     }
 
-    fn load_api_key(&mut self, cx: &mut ViewContext<Self>) -> Option<String> {
-        if self.api_key.borrow().is_none() && !self.has_read_credentials {
-            self.has_read_credentials = true;
-            let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
-                Some(api_key)
-            } else if let Some((_, api_key)) = cx
-                .platform()
-                .read_credentials(OPENAI_API_URL)
-                .log_err()
-                .flatten()
-            {
-                String::from_utf8(api_key).log_err()
-            } else {
-                None
-            };
-            if let Some(api_key) = api_key {
-                *self.api_key.borrow_mut() = Some(api_key);
-            } else if self.api_key_editor.is_none() {
-                self.api_key_editor = Some(build_api_key_editor(cx));
-                cx.notify();
-            }
-        }
+    fn has_credentials(&mut self) -> bool {
+        self.completion_provider.has_credentials()
+    }
 
-        self.api_key.borrow().clone()
+    fn load_credentials(&mut self, cx: &mut ViewContext<Self>) {
+        self.completion_provider.retrieve_credentials(cx);
     }
 }
 
@@ -1389,7 +1371,7 @@ impl Panel for AssistantPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active {
-            self.load_api_key(cx);
+            self.load_credentials(cx);
 
             if self.editors.is_empty() {
                 self.new_conversation(cx);
@@ -1454,10 +1436,10 @@ struct Conversation {
     token_count: Option<usize>,
     max_token_count: usize,
     pending_token_count: Task<Option<()>>,
-    api_key: Rc<RefCell<Option<String>>>,
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
+    completion_provider: Box<dyn CompletionProvider>,
 }
 
 impl Entity for Conversation {
@@ -1466,9 +1448,9 @@ impl Entity for Conversation {
 
 impl Conversation {
     fn new(
-        api_key: Rc<RefCell<Option<String>>>,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
+        completion_provider: Box<dyn CompletionProvider>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
         let buffer = cx.add_model(|cx| {
@@ -1507,8 +1489,8 @@ impl Conversation {
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
-            api_key,
             buffer,
+            completion_provider,
         };
         let message = MessageAnchor {
             id: MessageId(post_inc(&mut this.next_message_id.0)),
@@ -1554,7 +1536,6 @@ impl Conversation {
     fn deserialize(
         saved_conversation: SavedConversation,
         path: PathBuf,
-        api_key: Rc<RefCell<Option<String>>>,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -1563,6 +1544,10 @@ impl Conversation {
             None => Some(Uuid::new_v4().to_string()),
         };
         let model = saved_conversation.model;
+        let completion_provider: Box<dyn CompletionProvider> = Box::new(
+            OpenAICompletionProvider::new(model.full_name(), cx.background().clone()),
+        );
+        completion_provider.retrieve_credentials(cx);
         let markdown = language_registry.language_for_name("Markdown");
         let mut message_anchors = Vec::new();
         let mut next_message_id = MessageId(0);
@@ -1609,8 +1594,8 @@ impl Conversation {
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: Some(path),
-            api_key,
             buffer,
+            completion_provider,
         };
         this.count_remaining_tokens(cx);
         this
@@ -1731,11 +1716,11 @@ impl Conversation {
         }
 
         if should_assist {
-            let Some(api_key) = self.api_key.borrow().clone() else {
+            if !self.completion_provider.has_credentials() {
                 return Default::default();
-            };
+            }
 
-            let request = OpenAIRequest {
+            let request: Box<dyn CompletionRequest> = Box::new(OpenAIRequest {
                 model: self.model.full_name().to_string(),
                 messages: self
                     .messages(cx)
@@ -1745,9 +1730,9 @@ impl Conversation {
                 stream: true,
                 stop: vec![],
                 temperature: 1.0,
-            };
+            });
 
-            let stream = stream_completion(api_key, cx.background().clone(), request);
+            let stream = self.completion_provider.complete(request);
             let assistant_message = self
                 .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
                 .unwrap();
@@ -1765,33 +1750,28 @@ impl Conversation {
                         let mut messages = stream.await?;
 
                         while let Some(message) = messages.next().await {
-                            let mut message = message?;
-                            if let Some(choice) = message.choices.pop() {
-                                this.upgrade(&cx)
-                                    .ok_or_else(|| anyhow!("conversation was dropped"))?
-                                    .update(&mut cx, |this, cx| {
-                                        let text: Arc<str> = choice.delta.content?.into();
-                                        let message_ix =
-                                            this.message_anchors.iter().position(|message| {
-                                                message.id == assistant_message_id
-                                            })?;
-                                        this.buffer.update(cx, |buffer, cx| {
-                                            let offset = this.message_anchors[message_ix + 1..]
-                                                .iter()
-                                                .find(|message| message.start.is_valid(buffer))
-                                                .map_or(buffer.len(), |message| {
-                                                    message
-                                                        .start
-                                                        .to_offset(buffer)
-                                                        .saturating_sub(1)
-                                                });
-                                            buffer.edit([(offset..offset, text)], None, cx);
-                                        });
-                                        cx.emit(ConversationEvent::StreamedCompletion);
+                            let text = message?;
 
-                                        Some(())
+                            this.upgrade(&cx)
+                                .ok_or_else(|| anyhow!("conversation was dropped"))?
+                                .update(&mut cx, |this, cx| {
+                                    let message_ix = this
+                                        .message_anchors
+                                        .iter()
+                                        .position(|message| message.id == assistant_message_id)?;
+                                    this.buffer.update(cx, |buffer, cx| {
+                                        let offset = this.message_anchors[message_ix + 1..]
+                                            .iter()
+                                            .find(|message| message.start.is_valid(buffer))
+                                            .map_or(buffer.len(), |message| {
+                                                message.start.to_offset(buffer).saturating_sub(1)
+                                            });
+                                        buffer.edit([(offset..offset, text)], None, cx);
                                     });
-                            }
+                                    cx.emit(ConversationEvent::StreamedCompletion);
+
+                                    Some(())
+                                });
                             smol::future::yield_now().await;
                         }
 
@@ -2013,57 +1993,54 @@ impl Conversation {
 
     fn summarize(&mut self, cx: &mut ModelContext<Self>) {
         if self.message_anchors.len() >= 2 && self.summary.is_none() {
-            let api_key = self.api_key.borrow().clone();
-            if let Some(api_key) = api_key {
-                let messages = self
-                    .messages(cx)
-                    .take(2)
-                    .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
-                    .chain(Some(RequestMessage {
-                        role: Role::User,
-                        content:
-                            "Summarize the conversation into a short title without punctuation"
-                                .into(),
-                    }));
-                let request = OpenAIRequest {
-                    model: self.model.full_name().to_string(),
-                    messages: messages.collect(),
-                    stream: true,
-                    stop: vec![],
-                    temperature: 1.0,
-                };
-
-                let stream = stream_completion(api_key, cx.background().clone(), request);
-                self.pending_summary = cx.spawn(|this, mut cx| {
-                    async move {
-                        let mut messages = stream.await?;
-
-                        while let Some(message) = messages.next().await {
-                            let mut message = message?;
-                            if let Some(choice) = message.choices.pop() {
-                                let text = choice.delta.content.unwrap_or_default();
-                                this.update(&mut cx, |this, cx| {
-                                    this.summary
-                                        .get_or_insert(Default::default())
-                                        .text
-                                        .push_str(&text);
-                                    cx.emit(ConversationEvent::SummaryChanged);
-                                });
-                            }
-                        }
-
-                        this.update(&mut cx, |this, cx| {
-                            if let Some(summary) = this.summary.as_mut() {
-                                summary.done = true;
-                                cx.emit(ConversationEvent::SummaryChanged);
-                            }
-                        });
-
-                        anyhow::Ok(())
-                    }
-                    .log_err()
-                });
+            if !self.completion_provider.has_credentials() {
+                return;
             }
+
+            let messages = self
+                .messages(cx)
+                .take(2)
+                .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
+                .chain(Some(RequestMessage {
+                    role: Role::User,
+                    content: "Summarize the conversation into a short title without punctuation"
+                        .into(),
+                }));
+            let request: Box<dyn CompletionRequest> = Box::new(OpenAIRequest {
+                model: self.model.full_name().to_string(),
+                messages: messages.collect(),
+                stream: true,
+                stop: vec![],
+                temperature: 1.0,
+            });
+
+            let stream = self.completion_provider.complete(request);
+            self.pending_summary = cx.spawn(|this, mut cx| {
+                async move {
+                    let mut messages = stream.await?;
+
+                    while let Some(message) = messages.next().await {
+                        let text = message?;
+                        this.update(&mut cx, |this, cx| {
+                            this.summary
+                                .get_or_insert(Default::default())
+                                .text
+                                .push_str(&text);
+                            cx.emit(ConversationEvent::SummaryChanged);
+                        });
+                    }
+
+                    this.update(&mut cx, |this, cx| {
+                        if let Some(summary) = this.summary.as_mut() {
+                            summary.done = true;
+                            cx.emit(ConversationEvent::SummaryChanged);
+                        }
+                    });
+
+                    anyhow::Ok(())
+                }
+                .log_err()
+            });
         }
     }
 
@@ -2224,13 +2201,14 @@ struct ConversationEditor {
 
 impl ConversationEditor {
     fn new(
-        api_key: Rc<RefCell<Option<String>>>,
+        completion_provider: Box<dyn CompletionProvider>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let conversation = cx.add_model(|cx| Conversation::new(api_key, language_registry, cx));
+        let conversation =
+            cx.add_model(|cx| Conversation::new(language_registry, cx, completion_provider));
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
@@ -3419,6 +3397,7 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
 mod tests {
     use super::*;
     use crate::MessageId;
+    use ai::test::FakeCompletionProvider;
     use gpui::AppContext;
 
     #[gpui::test]
@@ -3426,7 +3405,9 @@ mod tests {
         cx.set_global(SettingsStore::test(cx));
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
-        let conversation = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
+
+        let completion_provider = Box::new(FakeCompletionProvider::new());
+        let conversation = cx.add_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3554,7 +3535,9 @@ mod tests {
         cx.set_global(SettingsStore::test(cx));
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
-        let conversation = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
+        let completion_provider = Box::new(FakeCompletionProvider::new());
+
+        let conversation = cx.add_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3650,7 +3633,8 @@ mod tests {
         cx.set_global(SettingsStore::test(cx));
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
-        let conversation = cx.add_model(|cx| Conversation::new(Default::default(), registry, cx));
+        let completion_provider = Box::new(FakeCompletionProvider::new());
+        let conversation = cx.add_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3732,8 +3716,9 @@ mod tests {
         cx.set_global(SettingsStore::test(cx));
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
+        let completion_provider = Box::new(FakeCompletionProvider::new());
         let conversation =
-            cx.add_model(|cx| Conversation::new(Default::default(), registry.clone(), cx));
+            cx.add_model(|cx| Conversation::new(registry.clone(), cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
         let message_0 = conversation.read(cx).message_anchors[0].id;
         let message_1 = conversation.update(cx, |conversation, cx| {
@@ -3769,7 +3754,6 @@ mod tests {
         let deserialized_conversation = cx.add_model(|cx| {
             Conversation::deserialize(
                 conversation.read(cx).serialize(cx),
-                Default::default(),
                 Default::default(),
                 registry.clone(),
                 cx,

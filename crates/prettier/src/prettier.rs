@@ -67,91 +67,39 @@ impl Prettier {
         starting_path: Option<LocateStart>,
         fs: Arc<dyn Fs>,
     ) -> anyhow::Result<PathBuf> {
+        fn is_node_modules(path_component: &std::path::Component<'_>) -> bool {
+            path_component.as_os_str().to_string_lossy() == "node_modules"
+        }
+
         let paths_to_check = match starting_path.as_ref() {
             Some(starting_path) => {
                 let worktree_root = starting_path
                     .worktree_root_path
                     .components()
                     .into_iter()
-                    .take_while(|path_component| {
-                        path_component.as_os_str().to_string_lossy() != "node_modules"
-                    })
+                    .take_while(|path_component| !is_node_modules(path_component))
                     .collect::<PathBuf>();
-
                 if worktree_root != starting_path.worktree_root_path.as_ref() {
                     vec![worktree_root]
                 } else {
-                    let (worktree_root_metadata, start_path_metadata) = if starting_path
-                        .starting_path
-                        .as_ref()
-                        == Path::new("")
-                    {
-                        let worktree_root_data =
-                            fs.metadata(&worktree_root).await.with_context(|| {
-                                format!(
-                                    "FS metadata fetch for worktree root path {worktree_root:?}",
-                                )
-                            })?;
-                        (worktree_root_data.unwrap_or_else(|| {
-                            panic!("cannot query prettier for non existing worktree root at {worktree_root_data:?}")
-                        }), None)
+                    if starting_path.starting_path.as_ref() == Path::new("") {
+                        worktree_root
+                            .parent()
+                            .map(|path| vec![path.to_path_buf()])
+                            .unwrap_or_default()
                     } else {
-                        let full_starting_path = worktree_root.join(&starting_path.starting_path);
-                        let (worktree_root_data, start_path_data) = futures::try_join!(
-                            fs.metadata(&worktree_root),
-                            fs.metadata(&full_starting_path),
-                        )
-                        .with_context(|| {
-                            format!("FS metadata fetch for starting path {full_starting_path:?}",)
-                        })?;
-                        (
-                            worktree_root_data.unwrap_or_else(|| {
-                                panic!("cannot query prettier for non existing worktree root at {worktree_root_data:?}")
-                            }),
-                            start_path_data,
-                        )
-                    };
-
-                    match start_path_metadata {
-                        Some(start_path_metadata) => {
-                            anyhow::ensure!(worktree_root_metadata.is_dir,
-                                "For non-empty start path, worktree root {starting_path:?} should be a directory");
-                            anyhow::ensure!(
-                                !start_path_metadata.is_dir,
-                                "For non-empty start path, it should not be a directory {starting_path:?}"
-                            );
-                            anyhow::ensure!(
-                                !start_path_metadata.is_symlink,
-                                "For non-empty start path, it should not be a symlink {starting_path:?}"
-                            );
-
-                            let file_to_format = starting_path.starting_path.as_ref();
-                            let mut paths_to_check = VecDeque::from(vec![worktree_root.clone()]);
-                            let mut current_path = worktree_root;
-                            for path_component in file_to_format.components().into_iter() {
-                                current_path = current_path.join(path_component);
-                                paths_to_check.push_front(current_path.clone());
-                                if path_component.as_os_str().to_string_lossy() == "node_modules" {
-                                    break;
-                                }
+                        let file_to_format = starting_path.starting_path.as_ref();
+                        let mut paths_to_check = VecDeque::new();
+                        let mut current_path = worktree_root;
+                        for path_component in file_to_format.components().into_iter() {
+                            let new_path = current_path.join(path_component);
+                            let old_path = std::mem::replace(&mut current_path, new_path);
+                            paths_to_check.push_front(old_path);
+                            if is_node_modules(&path_component) {
+                                break;
                             }
-                            paths_to_check.pop_front(); // last one is the file itself or node_modules, skip it
-                            Vec::from(paths_to_check)
                         }
-                        None => {
-                            anyhow::ensure!(
-                                !worktree_root_metadata.is_dir,
-                                "For empty start path, worktree root should not be a directory {starting_path:?}"
-                            );
-                            anyhow::ensure!(
-                                !worktree_root_metadata.is_symlink,
-                                "For empty start path, worktree root should not be a symlink {starting_path:?}"
-                            );
-                            worktree_root
-                                .parent()
-                                .map(|path| vec![path.to_path_buf()])
-                                .unwrap_or_default()
-                        }
+                        Vec::from(paths_to_check)
                     }
                 }
             }
@@ -210,6 +158,7 @@ impl Prettier {
             .spawn(async move { node.binary_path().await })
             .await?;
         let server = LanguageServer::new(
+            Arc::new(parking_lot::Mutex::new(None)),
             server_id,
             LanguageServerBinary {
                 path: node_path,

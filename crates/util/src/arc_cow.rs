@@ -1,12 +1,24 @@
-use std::sync::Arc;
+use std::{
+    borrow::Cow,
+    fmt::{self, Debug},
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
-#[derive(PartialEq, Eq)]
 pub enum ArcCow<'a, T: ?Sized> {
     Borrowed(&'a T),
     Owned(Arc<T>),
 }
 
-use std::hash::{Hash, Hasher};
+impl<'a, T: ?Sized + PartialEq> PartialEq for ArcCow<'a, T> {
+    fn eq(&self, other: &Self) -> bool {
+        let a = self.as_ref();
+        let b = other.as_ref();
+        a == b
+    }
+}
+
+impl<'a, T: ?Sized + Eq> Eq for ArcCow<'a, T> {}
 
 impl<'a, T: ?Sized + Hash> Hash for ArcCow<'a, T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -44,6 +56,27 @@ impl From<String> for ArcCow<'_, str> {
     }
 }
 
+impl<'a> From<Cow<'a, str>> for ArcCow<'a, str> {
+    fn from(value: Cow<'a, str>) -> Self {
+        match value {
+            Cow::Borrowed(borrowed) => Self::Borrowed(borrowed),
+            Cow::Owned(owned) => Self::Owned(owned.into()),
+        }
+    }
+}
+
+impl<T> From<Vec<T>> for ArcCow<'_, [T]> {
+    fn from(vec: Vec<T>) -> Self {
+        ArcCow::Owned(Arc::from(vec))
+    }
+}
+
+impl<'a> From<&'a str> for ArcCow<'a, [u8]> {
+    fn from(s: &'a str) -> Self {
+        ArcCow::Borrowed(s.as_bytes())
+    }
+}
+
 impl<'a, T: ?Sized + ToOwned> std::borrow::Borrow<T> for ArcCow<'a, T> {
     fn borrow(&self) -> &T {
         match self {
@@ -69,6 +102,15 @@ impl<T: ?Sized> AsRef<T> for ArcCow<'_, T> {
         match self {
             ArcCow::Borrowed(borrowed) => borrowed,
             ArcCow::Owned(owned) => owned.as_ref(),
+        }
+    }
+}
+
+impl<'a, T: ?Sized + Debug> Debug for ArcCow<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ArcCow::Borrowed(borrowed) => Debug::fmt(borrowed, f),
+            ArcCow::Owned(owned) => Debug::fmt(&**owned, f),
         }
     }
 }

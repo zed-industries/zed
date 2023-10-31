@@ -4,24 +4,18 @@ pub trait Refineable: Clone {
     type Refinement: Refineable<Refinement = Self::Refinement> + Default;
 
     fn refine(&mut self, refinement: &Self::Refinement);
-    fn refined(mut self, refinement: &Self::Refinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.refine(refinement);
-        self
-    }
-    fn from_refinement(refinement: &Self::Refinement) -> Self
+    fn refined(self, refinement: Self::Refinement) -> Self;
+    fn from_cascade(cascade: &Cascade<Self>) -> Self
     where
         Self: Default + Sized,
     {
-        Self::default().refined(refinement)
+        Self::default().refined(cascade.merged())
     }
 }
 
-pub struct RefinementCascade<S: Refineable>(Vec<Option<S::Refinement>>);
+pub struct Cascade<S: Refineable>(Vec<Option<S::Refinement>>);
 
-impl<S: Refineable + Default> Default for RefinementCascade<S> {
+impl<S: Refineable + Default> Default for Cascade<S> {
     fn default() -> Self {
         Self(vec![Some(Default::default())])
     }
@@ -30,7 +24,7 @@ impl<S: Refineable + Default> Default for RefinementCascade<S> {
 #[derive(Copy, Clone)]
 pub struct CascadeSlot(usize);
 
-impl<S: Refineable + Default> RefinementCascade<S> {
+impl<S: Refineable + Default> Cascade<S> {
     pub fn reserve(&mut self) -> CascadeSlot {
         self.0.push(None);
         return CascadeSlot(self.0.len() - 1);

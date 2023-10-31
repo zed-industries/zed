@@ -1,105 +1,145 @@
 use crate::{
-    element::{Element, IntoElement, Layout},
-    ViewContext,
-};
-use anyhow::Result;
-use gpui::{
-    geometry::{vector::Vector2F, Size},
-    text_layout::Line,
-    LayoutId,
+    AnyElement, BorrowWindow, Bounds, Component, Element, LayoutId, Line, Pixels, SharedString,
+    Size, ViewContext,
 };
 use parking_lot::Mutex;
-use std::sync::Arc;
-use util::arc_cow::ArcCow;
+use smallvec::SmallVec;
+use std::{marker::PhantomData, sync::Arc};
+use util::ResultExt;
 
-impl<V: 'static, S: Into<ArcCow<'static, str>>> IntoElement<V> for S {
-    type Element = Text;
-
-    fn into_element(self) -> Self::Element {
-        Text { text: self.into() }
+impl<V: 'static> Component<V> for SharedString {
+    fn render(self) -> AnyElement<V> {
+        Text {
+            text: self,
+            state_type: PhantomData,
+        }
+        .render()
     }
 }
 
-pub struct Text {
-    text: ArcCow<'static, str>,
+impl<V: 'static> Component<V> for &'static str {
+    fn render(self) -> AnyElement<V> {
+        Text {
+            text: self.into(),
+            state_type: PhantomData,
+        }
+        .render()
+    }
 }
 
-impl<V: 'static> Element<V> for Text {
-    type PaintState = Arc<Mutex<Option<TextLayout>>>;
+// TODO: Figure out how to pass `String` to `child` without this.
+// This impl doesn't exist in the `gpui2` crate.
+impl<V: 'static> Component<V> for String {
+    fn render(self) -> AnyElement<V> {
+        Text {
+            text: self.into(),
+            state_type: PhantomData,
+        }
+        .render()
+    }
+}
+
+pub struct Text<V> {
+    text: SharedString,
+    state_type: PhantomData<V>,
+}
+
+unsafe impl<V> Send for Text<V> {}
+unsafe impl<V> Sync for Text<V> {}
+
+impl<V: 'static> Component<V> for Text<V> {
+    fn render(self) -> AnyElement<V> {
+        AnyElement::new(self)
+    }
+}
+
+impl<V: 'static> Element<V> for Text<V> {
+    type ElementState = Arc<Mutex<Option<TextElementState>>>;
+
+    fn id(&self) -> Option<crate::ElementId> {
+        None
+    }
+
+    fn initialize(
+        &mut self,
+        _view_state: &mut V,
+        element_state: Option<Self::ElementState>,
+        _cx: &mut ViewContext<V>,
+    ) -> Self::ElementState {
+        element_state.unwrap_or_default()
+    }
 
     fn layout(
         &mut self,
         _view: &mut V,
+        element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
-    ) -> Result<(LayoutId, Self::PaintState)> {
-        let layout_cache = cx.text_layout_cache().clone();
+    ) -> LayoutId {
+        let text_system = cx.text_system().clone();
         let text_style = cx.text_style();
-        let line_height = cx.font_cache().line_height(text_style.font_size);
+        let font_size = text_style.font_size * cx.rem_size();
+        let line_height = text_style
+            .line_height
+            .to_pixels(font_size.into(), cx.rem_size());
         let text = self.text.clone();
-        let paint_state = Arc::new(Mutex::new(None));
 
-        let layout_id = cx.add_measured_layout_node(Default::default(), {
-            let paint_state = paint_state.clone();
-            move |_params| {
-                let line_layout = layout_cache.layout_str(
-                    text.as_ref(),
-                    text_style.font_size,
-                    &[(text.len(), text_style.to_run())],
-                );
-
-                let size = Size {
-                    width: line_layout.width(),
-                    height: line_height,
+        let rem_size = cx.rem_size();
+        let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
+            let element_state = element_state.clone();
+            move |known_dimensions, _| {
+                let Some(lines) = text_system
+                    .layout_text(
+                        &text,
+                        font_size,
+                        &[text_style.to_run(text.len())],
+                        known_dimensions.width, // Wrap if we know the width.
+                    )
+                    .log_err()
+                else {
+                    return Size::default();
                 };
 
-                paint_state.lock().replace(TextLayout {
-                    line_layout: Arc::new(line_layout),
-                    line_height,
-                });
+                let line_count = lines
+                    .iter()
+                    .map(|line| line.wrap_count() + 1)
+                    .sum::<usize>();
+                let size = Size {
+                    width: lines.iter().map(|line| line.layout.width).max().unwrap(),
+                    height: line_height * line_count,
+                };
+
+                element_state
+                    .lock()
+                    .replace(TextElementState { lines, line_height });
 
                 size
             }
         });
 
-        Ok((layout_id?, paint_state))
+        layout_id
     }
 
-    fn paint<'a>(
+    fn paint(
         &mut self,
-        _view: &mut V,
-        parent_origin: Vector2F,
-        layout: &Layout,
-        paint_state: &mut Self::PaintState,
+        bounds: Bounds<Pixels>,
+        _: &mut V,
+        element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) {
-        let bounds = layout.bounds + parent_origin;
-
-        let line_layout;
-        let line_height;
-        {
-            let paint_state = paint_state.lock();
-            let paint_state = paint_state
-                .as_ref()
-                .expect("measurement has not been performed");
-            line_layout = paint_state.line_layout.clone();
-            line_height = paint_state.line_height;
+        let element_state = element_state.lock();
+        let element_state = element_state
+            .as_ref()
+            .expect("measurement has not been performed");
+        let line_height = element_state.line_height;
+        let mut line_origin = bounds.origin;
+        for line in &element_state.lines {
+            line.paint(line_origin, line_height, cx).log_err();
+            line_origin.y += line.size(line_height).height;
         }
-
-        // TODO: We haven't added visible bounds to the new element system yet, so this is a placeholder.
-        let visible_bounds = bounds;
-        line_layout.paint(bounds.origin(), visible_bounds, line_height, cx.legacy_cx);
     }
 }
 
-impl<V: 'static> IntoElement<V> for Text {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
-pub struct TextLayout {
-    line_layout: Arc<Line>,
-    line_height: f32,
+pub struct TextElementState {
+    lines: SmallVec<[Line; 1]>,
+    line_height: Pixels,
 }

@@ -22,8 +22,8 @@ use std::{
 };
 
 pub struct TextLayoutCache {
-    prev_frame: Mutex<HashMap<CacheKeyValue, Arc<LineLayout>>>,
-    curr_frame: RwLock<HashMap<CacheKeyValue, Arc<LineLayout>>>,
+    prev_frame: Mutex<HashMap<OwnedCacheKey, Arc<LineLayout>>>,
+    curr_frame: RwLock<HashMap<OwnedCacheKey, Arc<LineLayout>>>,
     fonts: Arc<dyn platform::FontSystem>,
 }
 
@@ -56,7 +56,7 @@ impl TextLayoutCache {
         font_size: f32,
         runs: &'a [(usize, RunStyle)],
     ) -> Line {
-        let key = &CacheKeyRef {
+        let key = &BorrowedCacheKey {
             text,
             font_size: OrderedFloat(font_size),
             runs,
@@ -72,7 +72,7 @@ impl TextLayoutCache {
             Line::new(layout, runs)
         } else {
             let layout = Arc::new(self.fonts.layout_line(text, font_size, runs));
-            let key = CacheKeyValue {
+            let key = OwnedCacheKey {
                 text: text.into(),
                 font_size: OrderedFloat(font_size),
                 runs: SmallVec::from(runs),
@@ -84,7 +84,7 @@ impl TextLayoutCache {
 }
 
 trait CacheKey {
-    fn key(&self) -> CacheKeyRef;
+    fn key(&self) -> BorrowedCacheKey;
 }
 
 impl<'a> PartialEq for (dyn CacheKey + 'a) {
@@ -102,15 +102,15 @@ impl<'a> Hash for (dyn CacheKey + 'a) {
 }
 
 #[derive(Eq)]
-struct CacheKeyValue {
+struct OwnedCacheKey {
     text: String,
     font_size: OrderedFloat<f32>,
     runs: SmallVec<[(usize, RunStyle); 1]>,
 }
 
-impl CacheKey for CacheKeyValue {
-    fn key(&self) -> CacheKeyRef {
-        CacheKeyRef {
+impl CacheKey for OwnedCacheKey {
+    fn key(&self) -> BorrowedCacheKey {
+        BorrowedCacheKey {
             text: self.text.as_str(),
             font_size: self.font_size,
             runs: self.runs.as_slice(),
@@ -118,38 +118,38 @@ impl CacheKey for CacheKeyValue {
     }
 }
 
-impl PartialEq for CacheKeyValue {
+impl PartialEq for OwnedCacheKey {
     fn eq(&self, other: &Self) -> bool {
         self.key().eq(&other.key())
     }
 }
 
-impl Hash for CacheKeyValue {
+impl Hash for OwnedCacheKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.key().hash(state);
     }
 }
 
-impl<'a> Borrow<dyn CacheKey + 'a> for CacheKeyValue {
+impl<'a> Borrow<dyn CacheKey + 'a> for OwnedCacheKey {
     fn borrow(&self) -> &(dyn CacheKey + 'a) {
         self as &dyn CacheKey
     }
 }
 
 #[derive(Copy, Clone)]
-struct CacheKeyRef<'a> {
+struct BorrowedCacheKey<'a> {
     text: &'a str,
     font_size: OrderedFloat<f32>,
     runs: &'a [(usize, RunStyle)],
 }
 
-impl<'a> CacheKey for CacheKeyRef<'a> {
-    fn key(&self) -> CacheKeyRef {
+impl<'a> CacheKey for BorrowedCacheKey<'a> {
+    fn key(&self) -> BorrowedCacheKey {
         *self
     }
 }
 
-impl<'a> PartialEq for CacheKeyRef<'a> {
+impl<'a> PartialEq for BorrowedCacheKey<'a> {
     fn eq(&self, other: &Self) -> bool {
         self.text == other.text
             && self.font_size == other.font_size
@@ -162,7 +162,7 @@ impl<'a> PartialEq for CacheKeyRef<'a> {
     }
 }
 
-impl<'a> Hash for CacheKeyRef<'a> {
+impl<'a> Hash for BorrowedCacheKey<'a> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.text.hash(state);
         self.font_size.hash(state);

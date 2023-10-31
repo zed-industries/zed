@@ -154,6 +154,11 @@ impl Refineable for TextStyleRefinement {
             self.underline = refinement.underline;
         }
     }
+
+    fn refined(mut self, refinement: Self::Refinement) -> Self {
+        self.refine(&refinement);
+        self
+    }
 }
 
 #[derive(JsonSchema)]

@@ -1,26 +1,17 @@
 use crate::{
-    color::Hsla,
-    elements::hoverable::{hoverable, Hoverable},
-    elements::pressable::{pressable, Pressable},
-    ViewContext,
+    black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
+    Corners, CornersRefinement, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures,
+    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems, Result, Rgba,
+    SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext, WindowContext,
 };
-pub use fonts::Style as FontStyle;
-pub use fonts::Weight as FontWeight;
-pub use gpui::taffy::style::{
+use refineable::{Cascade, Refineable};
+use smallvec::SmallVec;
+pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
     Overflow, Position,
 };
-use gpui::{
-    fonts::{self, TextStyleRefinement},
-    geometry::{
-        rect::RectF, relative, vector::Vector2F, AbsoluteLength, DefiniteLength, Edges,
-        EdgesRefinement, Length, Point, PointRefinement, Size, SizeRefinement,
-    },
-    scene, taffy, WindowContext,
-};
-use gpui2_macros::styleable_helpers;
-use refineable::{Refineable, RefinementCascade};
-use std::sync::Arc;
+
+pub type StyleCascade = Cascade<Style>;
 
 #[derive(Clone, Refineable, Debug)]
 #[refineable(debug)]
@@ -92,111 +83,204 @@ pub struct Style {
     pub flex_shrink: f32,
 
     /// The fill color of this element
-    pub fill: Option<Fill>,
+    pub background: Option<Fill>,
 
     /// The border color of this element
     pub border_color: Option<Hsla>,
 
     /// The radius of the corners of this element
     #[refineable]
-    pub corner_radii: CornerRadii,
+    pub corner_radii: Corners<AbsoluteLength>,
 
-    /// The color of text within this element. Cascades to children unless overridden.
-    pub text_color: Option<Hsla>,
+    /// Box Shadow of the element
+    pub box_shadow: SmallVec<[BoxShadow; 2]>,
 
-    /// The font size in rems.
-    pub font_size: Option<f32>,
+    /// TEXT
+    pub text: TextStyleRefinement,
 
-    pub font_family: Option<Arc<str>>,
-
-    pub font_weight: Option<FontWeight>,
-
-    pub font_style: Option<FontStyle>,
+    pub z_index: Option<u32>,
 }
 
-impl Style {
-    pub fn text_style(&self, cx: &WindowContext) -> Option<TextStyleRefinement> {
-        if self.text_color.is_none()
-            && self.font_size.is_none()
-            && self.font_family.is_none()
-            && self.font_weight.is_none()
-            && self.font_style.is_none()
-        {
-            return None;
+impl Styled for StyleRefinement {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct BoxShadow {
+    pub color: Hsla,
+    pub offset: Point<Pixels>,
+    pub blur_radius: Pixels,
+    pub spread_radius: Pixels,
+}
+
+#[derive(Refineable, Clone, Debug)]
+#[refineable(debug)]
+pub struct TextStyle {
+    pub color: Hsla,
+    pub font_family: SharedString,
+    pub font_features: FontFeatures,
+    pub font_size: Rems,
+    pub line_height: DefiniteLength,
+    pub font_weight: FontWeight,
+    pub font_style: FontStyle,
+    pub underline: Option<UnderlineStyle>,
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        TextStyle {
+            color: black(),
+            font_family: "Helvetica".into(), // todo!("Get a font we know exists on the system")
+            font_features: FontFeatures::default(),
+            font_size: rems(1.),
+            line_height: phi(),
+            font_weight: FontWeight::default(),
+            font_style: FontStyle::default(),
+            underline: None,
+        }
+    }
+}
+
+impl TextStyle {
+    pub fn highlight(mut self, style: HighlightStyle) -> Result<Self> {
+        if let Some(weight) = style.font_weight {
+            self.font_weight = weight;
+        }
+        if let Some(style) = style.font_style {
+            self.font_style = style;
         }
 
-        Some(TextStyleRefinement {
-            color: self.text_color.map(Into::into),
-            font_family: self.font_family.clone(),
-            font_size: self.font_size.map(|size| size * cx.rem_size()),
-            font_weight: self.font_weight,
-            font_style: self.font_style,
-            underline: None,
-        })
+        if let Some(color) = style.color {
+            self.color = self.color.blend(color);
+        }
+
+        if let Some(factor) = style.fade_out {
+            self.color.fade_out(factor);
+        }
+
+        if let Some(underline) = style.underline {
+            self.underline = Some(underline);
+        }
+
+        Ok(self)
     }
 
-    pub fn to_taffy(&self, rem_size: f32) -> taffy::style::Style {
-        taffy::style::Style {
-            display: self.display,
-            overflow: self.overflow.clone().into(),
-            scrollbar_width: self.scrollbar_width,
-            position: self.position,
-            inset: self.inset.to_taffy(rem_size),
-            size: self.size.to_taffy(rem_size),
-            min_size: self.min_size.to_taffy(rem_size),
-            max_size: self.max_size.to_taffy(rem_size),
-            aspect_ratio: self.aspect_ratio,
-            margin: self.margin.to_taffy(rem_size),
-            padding: self.padding.to_taffy(rem_size),
-            border: self.border_widths.to_taffy(rem_size),
-            align_items: self.align_items,
-            align_self: self.align_self,
-            align_content: self.align_content,
-            justify_content: self.justify_content,
-            gap: self.gap.to_taffy(rem_size),
-            flex_direction: self.flex_direction,
-            flex_wrap: self.flex_wrap,
-            flex_basis: self.flex_basis.to_taffy(rem_size).into(),
-            flex_grow: self.flex_grow,
-            flex_shrink: self.flex_shrink,
-            ..Default::default() // Ignore grid properties for now
+    pub fn to_run(&self, len: usize) -> TextRun {
+        TextRun {
+            len,
+            font: Font {
+                family: self.font_family.clone(),
+                features: Default::default(),
+                weight: self.font_weight,
+                style: self.font_style,
+            },
+            color: self.color,
+            underline: self.underline.clone(),
         }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct HighlightStyle {
+    pub color: Option<Hsla>,
+    pub font_weight: Option<FontWeight>,
+    pub font_style: Option<FontStyle>,
+    pub underline: Option<UnderlineStyle>,
+    pub fade_out: Option<f32>,
+}
+
+impl Eq for HighlightStyle {}
+
+impl Style {
+    pub fn text_style(&self, _cx: &WindowContext) -> Option<&TextStyleRefinement> {
+        if self.text.is_some() {
+            Some(&self.text)
+        } else {
+            None
+        }
+    }
+
+    pub fn apply_text_style<C, F, R>(&self, cx: &mut C, f: F) -> R
+    where
+        C: BorrowAppContext,
+        F: FnOnce(&mut C) -> R,
+    {
+        if self.text.is_some() {
+            cx.with_text_style(self.text.clone(), f)
+        } else {
+            f(cx)
+        }
+    }
+
+    /// Apply overflow to content mask
+    pub fn apply_overflow<C, F, R>(&self, bounds: Bounds<Pixels>, cx: &mut C, f: F) -> R
+    where
+        C: BorrowWindow,
+        F: FnOnce(&mut C) -> R,
+    {
+        let current_mask = cx.content_mask();
+
+        let min = current_mask.bounds.origin;
+        let max = current_mask.bounds.lower_right();
+
+        let mask_bounds = match (
+            self.overflow.x == Overflow::Visible,
+            self.overflow.y == Overflow::Visible,
+        ) {
+            // x and y both visible
+            (true, true) => return f(cx),
+            // x visible, y hidden
+            (true, false) => Bounds::from_corners(
+                point(min.x, bounds.origin.y),
+                point(max.x, bounds.lower_right().y),
+            ),
+            // x hidden, y visible
+            (false, true) => Bounds::from_corners(
+                point(bounds.origin.x, min.y),
+                point(bounds.lower_right().x, max.y),
+            ),
+            // both hidden
+            (false, false) => bounds,
+        };
+        let mask = ContentMask {
+            bounds: mask_bounds,
+        };
+
+        cx.with_content_mask(mask, f)
     }
 
     /// Paints the background of an element styled with this style.
-    pub fn paint_background<V: 'static>(&self, bounds: RectF, cx: &mut ViewContext<V>) {
+    pub fn paint<V: 'static>(&self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
         let rem_size = cx.rem_size();
-        if let Some(color) = self.fill.as_ref().and_then(Fill::color) {
-            cx.scene().push_quad(gpui::Quad {
+
+        cx.stack(0, |cx| {
+            cx.paint_shadows(
                 bounds,
-                background: Some(color.into()),
-                corner_radii: self.corner_radii.to_gpui(bounds.size(), rem_size),
-                border: Default::default(),
+                self.corner_radii.to_pixels(bounds.size, rem_size),
+                &self.box_shadow,
+            );
+        });
+
+        let background_color = self.background.as_ref().and_then(Fill::color);
+        if background_color.is_some() || self.is_border_visible() {
+            cx.stack(1, |cx| {
+                cx.paint_quad(
+                    bounds,
+                    self.corner_radii.to_pixels(bounds.size, rem_size),
+                    background_color.unwrap_or_default(),
+                    self.border_widths.to_pixels(rem_size),
+                    self.border_color.unwrap_or_default(),
+                );
             });
         }
     }
 
-    /// Paints the foreground of an element styled with this style.
-    pub fn paint_foreground<V: 'static>(&self, bounds: RectF, cx: &mut ViewContext<V>) {
-        let rem_size = cx.rem_size();
-
-        if let Some(color) = self.border_color {
-            let border = self.border_widths.to_pixels(rem_size);
-            if !border.is_empty() {
-                cx.scene().push_quad(gpui::Quad {
-                    bounds,
-                    background: None,
-                    corner_radii: self.corner_radii.to_gpui(bounds.size(), rem_size),
-                    border: scene::Border {
-                        color: color.into(),
-                        top: border.top,
-                        right: border.right,
-                        bottom: border.bottom,
-                        left: border.left,
-                    },
-                });
-            }
-        }
+    fn is_border_visible(&self) -> bool {
+        self.border_color
+            .map_or(false, |color| !color.is_transparent())
+            && self.border_widths.any(|length| !length.is_zero())
     }
 }
 
@@ -230,16 +314,22 @@ impl Default for Style {
             flex_grow: 0.0,
             flex_shrink: 1.0,
             flex_basis: Length::Auto,
-            fill: None,
+            background: None,
             border_color: None,
-            corner_radii: CornerRadii::default(),
-            text_color: None,
-            font_size: Some(1.),
-            font_family: None,
-            font_weight: None,
-            font_style: None,
+            corner_radii: Corners::default(),
+            box_shadow: Default::default(),
+            text: TextStyleRefinement::default(),
+            z_index: None,
         }
     }
+}
+
+#[derive(Refineable, Copy, Clone, Default, Debug, PartialEq, Eq)]
+#[refineable(debug)]
+pub struct UnderlineStyle {
+    pub thickness: Pixels,
+    pub color: Option<Hsla>,
+    pub wavy: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -267,232 +357,72 @@ impl From<Hsla> for Fill {
     }
 }
 
-#[derive(Clone, Refineable, Default, Debug)]
-#[refineable(debug)]
-pub struct CornerRadii {
-    top_left: AbsoluteLength,
-    top_right: AbsoluteLength,
-    bottom_left: AbsoluteLength,
-    bottom_right: AbsoluteLength,
+impl From<TextStyle> for HighlightStyle {
+    fn from(other: TextStyle) -> Self {
+        Self::from(&other)
+    }
 }
 
-impl CornerRadii {
-    pub fn to_gpui(&self, box_size: Vector2F, rem_size: f32) -> gpui::scene::CornerRadii {
-        let max_radius = box_size.x().min(box_size.y()) / 2.;
-
-        gpui::scene::CornerRadii {
-            top_left: self.top_left.to_pixels(rem_size).min(max_radius),
-            top_right: self.top_right.to_pixels(rem_size).min(max_radius),
-            bottom_left: self.bottom_left.to_pixels(rem_size).min(max_radius),
-            bottom_right: self.bottom_right.to_pixels(rem_size).min(max_radius),
+impl From<&TextStyle> for HighlightStyle {
+    fn from(other: &TextStyle) -> Self {
+        Self {
+            color: Some(other.color),
+            font_weight: Some(other.font_weight),
+            font_style: Some(other.font_style),
+            underline: other.underline.clone(),
+            fade_out: None,
         }
     }
 }
 
-pub trait Styleable {
-    type Style: Refineable + Default;
+impl HighlightStyle {
+    pub fn highlight(&mut self, other: HighlightStyle) {
+        match (self.color, other.color) {
+            (Some(self_color), Some(other_color)) => {
+                self.color = Some(Hsla::blend(other_color, self_color));
+            }
+            (None, Some(other_color)) => {
+                self.color = Some(other_color);
+            }
+            _ => {}
+        }
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style>;
-    fn declared_style(&mut self) -> &mut <Self::Style as Refineable>::Refinement;
+        if other.font_weight.is_some() {
+            self.font_weight = other.font_weight;
+        }
 
-    fn computed_style(&mut self) -> Self::Style {
-        Self::Style::from_refinement(&self.style_cascade().merged())
-    }
+        if other.font_style.is_some() {
+            self.font_style = other.font_style;
+        }
 
-    fn hover(self) -> Hoverable<Self>
-    where
-        Self: Sized,
-    {
-        hoverable(self)
-    }
+        if other.underline.is_some() {
+            self.underline = other.underline;
+        }
 
-    fn active(self) -> Pressable<Self>
-    where
-        Self: Sized,
-    {
-        pressable(self)
+        match (other.fade_out, self.fade_out) {
+            (Some(source_fade), None) => self.fade_out = Some(source_fade),
+            (Some(source_fade), Some(dest_fade)) => {
+                self.fade_out = Some((dest_fade * (1. + source_fade)).clamp(0., 1.));
+            }
+            _ => {}
+        }
     }
 }
 
-use crate as gpui2;
-
-// Helpers methods that take and return mut self. This includes tailwind style methods for standard sizes etc.
-//
-// Example:
-// // Sets the padding to 0.5rem, just like class="p-2" in Tailwind.
-// fn p_2(mut self) -> Self;
-pub trait StyleHelpers: Sized + Styleable<Style = Style> {
-    styleable_helpers!();
-
-    fn full(mut self) -> Self {
-        self.declared_style().size.width = Some(relative(1.).into());
-        self.declared_style().size.height = Some(relative(1.).into());
-        self
+impl From<Hsla> for HighlightStyle {
+    fn from(color: Hsla) -> Self {
+        Self {
+            color: Some(color),
+            ..Default::default()
+        }
     }
+}
 
-    fn relative(mut self) -> Self {
-        self.declared_style().position = Some(Position::Relative);
-        self
-    }
-
-    fn absolute(mut self) -> Self {
-        self.declared_style().position = Some(Position::Absolute);
-        self
-    }
-
-    fn block(mut self) -> Self {
-        self.declared_style().display = Some(Display::Block);
-        self
-    }
-
-    fn flex(mut self) -> Self {
-        self.declared_style().display = Some(Display::Flex);
-        self
-    }
-
-    fn flex_col(mut self) -> Self {
-        self.declared_style().flex_direction = Some(FlexDirection::Column);
-        self
-    }
-
-    fn flex_row(mut self) -> Self {
-        self.declared_style().flex_direction = Some(FlexDirection::Row);
-        self
-    }
-
-    fn flex_1(mut self) -> Self {
-        self.declared_style().flex_grow = Some(1.);
-        self.declared_style().flex_shrink = Some(1.);
-        self.declared_style().flex_basis = Some(relative(0.).into());
-        self
-    }
-
-    fn flex_auto(mut self) -> Self {
-        self.declared_style().flex_grow = Some(1.);
-        self.declared_style().flex_shrink = Some(1.);
-        self.declared_style().flex_basis = Some(Length::Auto);
-        self
-    }
-
-    fn flex_initial(mut self) -> Self {
-        self.declared_style().flex_grow = Some(0.);
-        self.declared_style().flex_shrink = Some(1.);
-        self.declared_style().flex_basis = Some(Length::Auto);
-        self
-    }
-
-    fn flex_none(mut self) -> Self {
-        self.declared_style().flex_grow = Some(0.);
-        self.declared_style().flex_shrink = Some(0.);
-        self
-    }
-
-    fn grow(mut self) -> Self {
-        self.declared_style().flex_grow = Some(1.);
-        self
-    }
-
-    fn items_start(mut self) -> Self {
-        self.declared_style().align_items = Some(AlignItems::FlexStart);
-        self
-    }
-
-    fn items_end(mut self) -> Self {
-        self.declared_style().align_items = Some(AlignItems::FlexEnd);
-        self
-    }
-
-    fn items_center(mut self) -> Self {
-        self.declared_style().align_items = Some(AlignItems::Center);
-        self
-    }
-
-    fn justify_between(mut self) -> Self {
-        self.declared_style().justify_content = Some(JustifyContent::SpaceBetween);
-        self
-    }
-
-    fn justify_center(mut self) -> Self {
-        self.declared_style().justify_content = Some(JustifyContent::Center);
-        self
-    }
-
-    fn justify_start(mut self) -> Self {
-        self.declared_style().justify_content = Some(JustifyContent::Start);
-        self
-    }
-
-    fn justify_end(mut self) -> Self {
-        self.declared_style().justify_content = Some(JustifyContent::End);
-        self
-    }
-
-    fn justify_around(mut self) -> Self {
-        self.declared_style().justify_content = Some(JustifyContent::SpaceAround);
-        self
-    }
-
-    fn fill<F>(mut self, fill: F) -> Self
-    where
-        F: Into<Fill>,
-    {
-        self.declared_style().fill = Some(fill.into());
-        self
-    }
-
-    fn border_color<C>(mut self, border_color: C) -> Self
-    where
-        C: Into<Hsla>,
-    {
-        self.declared_style().border_color = Some(border_color.into());
-        self
-    }
-
-    fn text_color<C>(mut self, color: C) -> Self
-    where
-        C: Into<Hsla>,
-    {
-        self.declared_style().text_color = Some(color.into());
-        self
-    }
-
-    fn text_xs(mut self) -> Self {
-        self.declared_style().font_size = Some(0.75);
-        self
-    }
-
-    fn text_sm(mut self) -> Self {
-        self.declared_style().font_size = Some(0.875);
-        self
-    }
-
-    fn text_base(mut self) -> Self {
-        self.declared_style().font_size = Some(1.0);
-        self
-    }
-
-    fn text_lg(mut self) -> Self {
-        self.declared_style().font_size = Some(1.125);
-        self
-    }
-
-    fn text_xl(mut self) -> Self {
-        self.declared_style().font_size = Some(1.25);
-        self
-    }
-
-    fn text_2xl(mut self) -> Self {
-        self.declared_style().font_size = Some(1.5);
-        self
-    }
-
-    fn text_3xl(mut self) -> Self {
-        self.declared_style().font_size = Some(1.875);
-        self
-    }
-
-    fn font(mut self, family_name: impl Into<Arc<str>>) -> Self {
-        self.declared_style().font_family = Some(family_name.into());
-        self
+impl From<Rgba> for HighlightStyle {
+    fn from(color: Rgba) -> Self {
+        Self {
+            color: Some(color.into()),
+            ..Default::default()
+        }
     }
 }
