@@ -81,7 +81,7 @@ impl Default for PlayerColors {
 }
 
 impl SyntaxStyles {
-    pub fn default_light(scales: &ColorScales) -> Self {
+    pub fn default_light() -> Self {
         use SyntaxStyleName::*;
 
         let neutral: ColorScaleSet = slate().into();

@@ -1,7 +1,6 @@
 use crate::{
     colors::{GitStatusColors, PlayerColors, StatusColors, SystemColors, ThemeColors, ThemeStyle},
-    theme3::{ThemeFamily, ThemeVariant},
-    Appearance, ColorScales, SyntaxStyles,
+    Appearance, ColorScales, SyntaxStyles, ThemeFamily, ThemeVariant,
 };
 
 fn zed_pro_daylight() -> ThemeVariant {

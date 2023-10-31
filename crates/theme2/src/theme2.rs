@@ -5,7 +5,6 @@ mod registry;
 mod scale;
 mod settings;
 mod syntax;
-mod theme3;
 mod themes;
 mod utils;
 
@@ -16,9 +15,12 @@ pub use scale::*;
 pub use settings::*;
 pub use syntax::*;
 
+use std::sync::Arc;
+
 use gpui2::{AppContext, HighlightStyle, Hsla, SharedString};
 use settings2::Settings;
-use std::sync::Arc;
+
+use crate::colors::ThemeStyle;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Appearance {
@@ -37,6 +39,23 @@ pub fn active_theme<'a>(cx: &'a AppContext) -> &'a Arc<Theme> {
 
 pub fn theme(cx: &AppContext) -> Arc<Theme> {
     active_theme(cx).clone()
+}
+
+pub struct ThemeFamily {
+    pub(crate) id: String,
+    pub name: String,
+    pub author: String,
+    pub themes: Vec<ThemeVariant>,
+    pub scales: ColorScales,
+}
+
+impl ThemeFamily {}
+
+pub struct ThemeVariant {
+    pub(crate) id: String,
+    pub name: String,
+    pub appearance: Appearance,
+    pub styles: ThemeStyle,
 }
 
 pub struct Theme {
