@@ -1,20 +1,85 @@
-use gpui2::{rgb, Hsla};
+use gpui2::{FontWeight, Hsla};
+use indexmap::IndexMap;
 
-pub fn mac_os_traffic_light_red() -> Hsla {
-    rgb::<Hsla>(0xEC695E)
-}
-pub fn mac_os_traffic_light_yellow() -> Hsla {
-    rgb::<Hsla>(0xF4BF4F)
-}
-pub fn mac_os_traffic_light_green() -> Hsla {
-    rgb::<Hsla>(0x62C554)
-}
-
-pub struct UIColors {
-    pub transparent: Hsla,
+pub struct StaticColors {
     pub mac_os_traffic_light_red: Hsla,
     pub mac_os_traffic_light_yellow: Hsla,
     pub mac_os_traffic_light_green: Hsla,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PlayerColor {
+    pub cursor: Hsla,
+    pub background: Hsla,
+    pub selection: Hsla,
+}
+
+type Players = [PlayerColor; 8];
+
+#[derive(Debug, Clone, Copy)]
+pub enum SyntaxColorName {
+    Comment,
+    CommentDoc,
+    Primary,
+    Predictive,
+    Hint,
+    Emphasis,
+    EmphasisStrong,
+    Title,
+    LinkUri,
+    LinkText,
+    TextLiteral,
+    Punctuation,
+    PunctuationBracket,
+    PunctuationDelimiter,
+    PunctuationSpecial,
+    PunctuationListMarker,
+    String,
+    StringSpecial,
+    StringSpecialSymbol,
+    StringEscape,
+    StringRegex,
+    Constructor,
+    Variant,
+    Type,
+    TypeBuiltin,
+    Variable,
+    VariableSpecial,
+    Label,
+    Tag,
+    Attribute,
+    Property,
+    Constant,
+    Keyword,
+    Enum,
+    Operator,
+    Number,
+    Boolean,
+    ConstantBuiltin,
+    Function,
+    FunctionBuiltin,
+    FunctionDefinition,
+    FunctionSpecialDefinition,
+    FunctionMethod,
+    FunctionMethodBuiltin,
+    Preproc,
+    Embedded,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SyntaxStyle {
+    pub color: Hsla,
+    pub weight: FontWeight,
+    pub underline: bool,
+    pub italic: bool,
+    // Nate: In the future I'd like to enable using background highlights for syntax highlighting
+    // pub highlight: Hsla,
+}
+
+type SyntaxStyles = IndexMap<SyntaxColorName, SyntaxStyle>;
+
+pub struct ThemeStyle {
+    pub transparent: Hsla,
     pub border: Hsla,
     pub border_variant: Hsla,
     pub border_focused: Hsla,
@@ -43,7 +108,7 @@ pub struct UIColors {
     pub icon_disabled: Hsla,
     pub icon_placeholder: Hsla,
     pub icon_accent: Hsla,
-    pub syntax: SyntaxColor,
+    pub syntax: SyntaxStyles,
     pub status_bar: Hsla,
     pub title_bar: Hsla,
     pub toolbar: Hsla,

@@ -1,7 +1,20 @@
-use gpui2::Rgba;
+use gpui2::{hsla, Rgba};
 use indexmap::IndexMap;
 
-use crate::scale::{ColorScaleName, ColorScaleSet, ColorScales};
+use crate::{
+    colors::StaticColors,
+    scale::{ColorScaleName, ColorScaleSet, ColorScales},
+};
+
+impl Default for StaticColors {
+    fn default() -> Self {
+        Self {
+            mac_os_traffic_light_red: hsla(0.0139, 0.79, 0.65, 1.0),
+            mac_os_traffic_light_yellow: hsla(0.114, 0.88, 0.63, 1.0),
+            mac_os_traffic_light_green: hsla(0.313, 0.49, 0.55, 1.0),
+        }
+    }
+}
 
 struct DefaultColorScaleSet {
     scale: ColorScaleName,
