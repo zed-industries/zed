@@ -2,11 +2,15 @@ use crate::{AppContext, PlatformDispatcher};
 use futures::{channel::mpsc, pin_mut};
 use smol::prelude::*;
 use std::{
+    borrow::BorrowMut,
     fmt::Debug,
     marker::PhantomData,
     mem,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
     task::{Context, Poll},
     time::Duration,
 };
@@ -136,7 +140,11 @@ impl Executor {
     pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
         pin_mut!(future);
         let (parker, unparker) = parking::pair();
+        let awoken = Arc::new(AtomicBool::new(false));
+        let awoken2 = awoken.clone();
+
         let waker = waker_fn(move || {
+            awoken2.store(true, SeqCst);
             unparker.unpark();
         });
         let mut cx = std::task::Context::from_waker(&waker);
@@ -146,6 +154,10 @@ impl Executor {
                 Poll::Ready(result) => return result,
                 Poll::Pending => {
                     if !self.dispatcher.poll() {
+                        if awoken.swap(false, SeqCst) {
+                            continue;
+                        }
+
                         #[cfg(any(test, feature = "test-support"))]
                         if let Some(test) = self.dispatcher.as_test() {
                             if !test.parking_allowed() {
