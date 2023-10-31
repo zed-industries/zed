@@ -2,10 +2,7 @@ use gpui2::{hsla, FontWeight, Rgba};
 use indexmap::IndexMap;
 
 use crate::{
-    colors::{
-        GitStatusColorName, GitStatusColors, PlayerColor, PlayerColors, StatusColorName,
-        StatusColors, SystemColors, ThemeColors,
-    },
+    colors::{GitStatusColors, PlayerColor, PlayerColors, StatusColors, SystemColors, ThemeColors},
     scale::{ColorScaleName, ColorScaleSet, ColorScales},
     syntax::{SyntaxStyleName, SyntaxStyles},
     SyntaxStyle,
@@ -24,32 +21,32 @@ impl Default for SystemColors {
 
 impl Default for StatusColors {
     fn default() -> Self {
-        Self(IndexMap::from_iter([
-            (StatusColorName::Conflict, hsla(0.0, 0.0, 0.0, 0.0)),
-            (StatusColorName::Created, hsla(0.0, 0.0, 0.0, 0.0)),
-            (StatusColorName::Deleted, hsla(0.0, 0.0, 0.0, 0.0)),
-            (StatusColorName::Error, hsla(0.0, 0.0, 0.0, 0.0)),
-            (StatusColorName::Hidden, hsla(0.0, 0.0, 0.0, 0.0)),
-            (StatusColorName::Ignored, hsla(0.0, 0.0, 0.0, 0.0)),
-            (StatusColorName::Info, hsla(0.0, 0.0, 0.0, 0.0)),
-            (StatusColorName::Modified, hsla(0.0, 0.0, 0.0, 0.0)),
-            (StatusColorName::Renamed, hsla(0.0, 0.0, 0.0, 0.0)),
-            (StatusColorName::Success, hsla(0.0, 0.0, 0.0, 0.0)),
-            (StatusColorName::Warning, hsla(0.0, 0.0, 0.0, 0.0)),
-        ]))
+        Self {
+            conflict: gpui2::black(),
+            created: gpui2::black(),
+            deleted: gpui2::black(),
+            error: gpui2::black(),
+            hidden: gpui2::black(),
+            ignored: gpui2::black(),
+            info: gpui2::black(),
+            modified: gpui2::black(),
+            renamed: gpui2::black(),
+            success: gpui2::black(),
+            warning: gpui2::black(),
+        }
     }
 }
 
 impl Default for GitStatusColors {
     fn default() -> Self {
-        Self(IndexMap::from_iter([
-            (GitStatusColorName::Conflict, hsla(0.0, 0.0, 0.0, 0.0)),
-            (GitStatusColorName::Created, hsla(0.0, 0.0, 0.0, 0.0)),
-            (GitStatusColorName::Deleted, hsla(0.0, 0.0, 0.0, 0.0)),
-            (GitStatusColorName::Ignored, hsla(0.0, 0.0, 0.0, 0.0)),
-            (GitStatusColorName::Modified, hsla(0.0, 0.0, 0.0, 0.0)),
-            (GitStatusColorName::Renamed, hsla(0.0, 0.0, 0.0, 0.0)),
-        ]))
+        Self {
+            conflict: gpui2::black(),
+            created: gpui2::black(),
+            deleted: gpui2::black(),
+            ignored: gpui2::black(),
+            modified: gpui2::black(),
+            renamed: gpui2::black(),
+        }
     }
 }
 

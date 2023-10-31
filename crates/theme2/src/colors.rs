@@ -1,5 +1,4 @@
 use gpui2::Hsla;
-use indexmap::IndexMap;
 use refineable::Refineable;
 
 use crate::{generate_struct_with_overrides, SyntaxStyles};
@@ -20,34 +19,32 @@ pub struct PlayerColor {
 
 pub struct PlayerColors(pub Vec<PlayerColor>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum StatusColorName {
-    Conflict,
-    Created,
-    Deleted,
-    Error,
-    Hidden,
-    Ignored,
-    Info,
-    Modified,
-    Renamed,
-    Success,
-    Warning,
+#[derive(Refineable, Clone, Debug)]
+#[refineable(debug)]
+pub struct StatusColors {
+    pub conflict: Hsla,
+    pub created: Hsla,
+    pub deleted: Hsla,
+    pub error: Hsla,
+    pub hidden: Hsla,
+    pub ignored: Hsla,
+    pub info: Hsla,
+    pub modified: Hsla,
+    pub renamed: Hsla,
+    pub success: Hsla,
+    pub warning: Hsla,
 }
 
-pub struct StatusColors(pub IndexMap<StatusColorName, Hsla>);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GitStatusColorName {
-    Conflict,
-    Created,
-    Deleted,
-    Ignored,
-    Modified,
-    Renamed,
+#[derive(Refineable, Clone, Debug)]
+#[refineable(debug)]
+pub struct GitStatusColors {
+    pub conflict: Hsla,
+    pub created: Hsla,
+    pub deleted: Hsla,
+    pub ignored: Hsla,
+    pub modified: Hsla,
+    pub renamed: Hsla,
 }
-
-pub struct GitStatusColors(pub IndexMap<GitStatusColorName, Hsla>);
 
 #[derive(Refineable, Clone, Debug)]
 #[refineable(debug)]
