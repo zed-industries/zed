@@ -643,7 +643,7 @@ impl Entity for CodeCompletions {
 
 impl CodeCompletionsProvider for ModelHandle<CodeCompletions> {
     fn show_completions(&mut self, editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-        if editor.pending_rename.is_some() {
+        if editor.has_pending_rename(cx) {
             return;
         }
         let position = editor.selections.newest_anchor().head();
@@ -1182,6 +1182,267 @@ impl GoToDefinitionProvider for ModelHandle<GoToDefinition2> {
     }
 }
 
+trait RenameProvider {
+    fn rename(
+        &mut self,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<Task<Result<()>>>;
+    fn confirm_rename(&mut self, cx: &mut ViewContext<Editor>) -> Option<Task<Result<()>>>;
+    fn take_rename(
+        &mut self,
+        editor: &mut Editor,
+        moving_cursor: bool,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<RenameState>;
+    fn has_pending_rename(&self, cx: &AppContext) -> bool {
+        self.pending_rename(cx).is_some()
+    }
+    fn pending_rename(&self, cx: &AppContext) -> Option<RenameState>;
+}
+
+struct Rename2 {
+    project: ModelHandle<Project>,
+    workspace: WeakViewHandle<Workspace>,
+    pending_rename: Option<RenameState>,
+}
+
+impl Entity for Rename2 {
+    type Event = ();
+}
+
+impl RenameProvider for ModelHandle<Rename2> {
+    fn rename(
+        &mut self,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<Task<Result<()>>> {
+        use language::ToOffset as _;
+
+        let selection = editor.selections.newest_anchor().clone();
+        let buffer = editor.buffer.read(cx);
+        let (cursor_buffer, cursor_buffer_position) =
+            buffer.text_anchor_for_position(selection.head(), cx)?;
+        let (tail_buffer, _) = buffer.text_anchor_for_position(selection.tail(), cx)?;
+        if tail_buffer != cursor_buffer {
+            return None;
+        }
+
+        let snapshot = cursor_buffer.read(cx).snapshot();
+        let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
+        let prepare_rename = self.update(cx, |this, cx| {
+            this.project.update(cx, |project, cx| {
+                project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx)
+            })
+        });
+        let mut provider = self.clone();
+        Some(cx.spawn(|this, mut cx| async move {
+            let rename_range = if let Some(range) = prepare_rename.await? {
+                Some(range)
+            } else {
+                this.update(&mut cx, |this, cx| {
+                    let buffer = this.buffer.read(cx).snapshot(cx);
+                    let mut buffer_highlights = this
+                        .document_highlights_for_position(selection.head(), &buffer)
+                        .filter(|highlight| {
+                            highlight.start.excerpt_id == selection.head().excerpt_id
+                                && highlight.end.excerpt_id == selection.head().excerpt_id
+                        });
+                    buffer_highlights
+                        .next()
+                        .map(|highlight| highlight.start.text_anchor..highlight.end.text_anchor)
+                })?
+            };
+            if let Some(rename_range) = rename_range {
+                let rename_buffer_range = rename_range.to_offset(&snapshot);
+                let cursor_offset_in_rename_range =
+                    cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
+
+                this.update(&mut cx, |this, cx| {
+                    provider.take_rename(this, false, cx);
+                    let style = this.style(cx);
+                    let buffer = this.buffer.read(cx).read(cx);
+                    let cursor_offset = selection.head().to_offset(&buffer);
+                    let rename_start = cursor_offset.saturating_sub(cursor_offset_in_rename_range);
+                    let rename_end = rename_start + rename_buffer_range.len();
+                    let range = buffer.anchor_before(rename_start)..buffer.anchor_after(rename_end);
+                    let mut old_highlight_id = None;
+                    let old_name: Arc<str> = buffer
+                        .chunks(rename_start..rename_end, true)
+                        .map(|chunk| {
+                            if old_highlight_id.is_none() {
+                                old_highlight_id = chunk.syntax_highlight_id;
+                            }
+                            chunk.text
+                        })
+                        .collect::<String>()
+                        .into();
+
+                    drop(buffer);
+
+                    // Position the selection in the rename editor so that it matches the current selection.
+                    this.show_local_selections = false;
+                    let rename_editor = cx.add_view(|cx| {
+                        let mut editor = Editor::single_line(None, cx);
+                        if let Some(old_highlight_id) = old_highlight_id {
+                            editor.override_text_style =
+                                Some(Box::new(move |style| old_highlight_id.style(&style.syntax)));
+                        }
+                        editor.buffer.update(cx, |buffer, cx| {
+                            buffer.edit([(0..0, old_name.clone())], None, cx)
+                        });
+                        editor.select_all(&SelectAll, cx);
+                        editor
+                    });
+
+                    let ranges = this
+                        .clear_background_highlights::<DocumentHighlightWrite>(cx)
+                        .into_iter()
+                        .flat_map(|(_, ranges)| ranges.into_iter())
+                        .chain(
+                            this.clear_background_highlights::<DocumentHighlightRead>(cx)
+                                .into_iter()
+                                .flat_map(|(_, ranges)| ranges.into_iter()),
+                        )
+                        .collect();
+
+                    this.highlight_text::<Rename>(
+                        ranges,
+                        HighlightStyle {
+                            fade_out: Some(style.rename_fade),
+                            ..Default::default()
+                        },
+                        cx,
+                    );
+                    cx.focus(&rename_editor);
+                    let block_id = this.insert_blocks(
+                        [BlockProperties {
+                            style: BlockStyle::Flex,
+                            position: range.start.clone(),
+                            height: 1,
+                            render: Arc::new({
+                                let editor = rename_editor.clone();
+                                move |cx: &mut BlockContext| {
+                                    ChildView::new(&editor, cx)
+                                        .contained()
+                                        .with_padding_left(cx.anchor_x)
+                                        .into_any()
+                                }
+                            }),
+                            disposition: BlockDisposition::Below,
+                        }],
+                        Some(Autoscroll::fit()),
+                        cx,
+                    )[0];
+                    provider.update(cx, |provider, _| {
+                        provider.pending_rename = Some(RenameState {
+                            range,
+                            old_name,
+                            editor: rename_editor,
+                            block_id,
+                        })
+                    });
+                })?;
+            }
+
+            Ok(())
+        }))
+    }
+
+    fn confirm_rename(&mut self, cx: &mut ViewContext<Editor>) -> Option<Task<Result<()>>> {
+        let workspace = self.read(cx).workspace.clone();
+        workspace
+            .update(cx, |workspace, cx| {
+                let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
+
+                let (buffer, range, old_name, new_name) = editor.update(cx, |editor, cx| {
+                    let rename = editor.take_rename(false, cx)?;
+                    let buffer = editor.buffer.read(cx);
+                    let (start_buffer, start) =
+                        buffer.text_anchor_for_position(rename.range.start.clone(), cx)?;
+                    let (end_buffer, end) =
+                        buffer.text_anchor_for_position(rename.range.end.clone(), cx)?;
+                    if start_buffer == end_buffer {
+                        let new_name = rename.editor.read(cx).text(cx);
+                        Some((start_buffer, start..end, rename.old_name, new_name))
+                    } else {
+                        None
+                    }
+                })?;
+
+                let rename = workspace.project().clone().update(cx, |project, cx| {
+                    project.perform_rename(buffer.clone(), range.start, new_name.clone(), true, cx)
+                });
+
+                let editor = editor.downgrade();
+                Some(cx.spawn(|workspace, mut cx| async move {
+                    let project_transaction = rename.await?;
+                    Editor::open_project_transaction(
+                        &editor,
+                        workspace,
+                        project_transaction,
+                        format!("Rename: {} → {}", old_name, new_name),
+                        cx.clone(),
+                    )
+                    .await?;
+
+                    editor.update(&mut cx, |editor, cx| {
+                        editor.refresh_document_highlights(cx);
+                    })?;
+                    Ok(())
+                }))
+            })
+            .log_err()
+            .flatten()
+    }
+
+    fn take_rename(
+        &mut self,
+        editor: &mut Editor,
+        moving_cursor: bool,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<RenameState> {
+        let rename = self.update(cx, |this, _| this.pending_rename.take())?;
+        editor.remove_blocks(
+            [rename.block_id].into_iter().collect(),
+            Some(Autoscroll::fit()),
+            cx,
+        );
+        editor.clear_highlights::<Rename>(cx);
+        editor.show_local_selections = true;
+
+        if moving_cursor {
+            let rename_editor = rename.editor.read(cx);
+            let cursor_in_rename_editor = rename_editor.selections.newest::<usize>(cx).head();
+
+            // Update the selection to match the position of the selection inside
+            // the rename editor.
+            let snapshot = editor.buffer.read(cx).read(cx);
+            let rename_range = rename.range.to_offset(&snapshot);
+            let cursor_in_editor = snapshot
+                .clip_offset(rename_range.start + cursor_in_rename_editor, Bias::Left)
+                .min(rename_range.end);
+            drop(snapshot);
+
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges(vec![cursor_in_editor..cursor_in_editor])
+            });
+        } else {
+            editor.refresh_document_highlights(cx);
+        }
+
+        Some(rename)
+    }
+
+    fn has_pending_rename(&self, cx: &AppContext) -> bool {
+        self.read(cx).pending_rename.is_some()
+    }
+
+    fn pending_rename(&self, cx: &AppContext) -> Option<RenameState> {
+        self.read(cx).pending_rename.clone()
+    }
+}
+
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
@@ -1217,7 +1478,6 @@ pub struct Editor {
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
     document_highlights_task: Option<Task<()>>,
-    pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
     collapse_matches: bool,
@@ -1239,6 +1499,7 @@ pub struct Editor {
     completions_provider: Option<Box<dyn CodeCompletionsProvider>>,
     actions_provider: Option<Box<dyn CodeActionsProvider>>,
     go_to_definition_provider: Option<Box<dyn GoToDefinitionProvider>>,
+    rename_provider: Option<Box<dyn RenameProvider>>,
 }
 
 pub struct EditorSnapshot {
@@ -1391,6 +1652,7 @@ struct SnippetState {
     active_index: usize,
 }
 
+#[derive(Clone)]
 pub struct RenameState {
     pub range: Range<Anchor>,
     pub old_name: Arc<str>,
@@ -2500,6 +2762,7 @@ impl Editor {
             None
         };
         let go_to_definition_provider = None;
+        let rename_provider = None;
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -2536,7 +2799,6 @@ impl Editor {
                 .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
             next_inlay_id: 0,
             document_highlights_task: Default::default(),
-            pending_rename: Default::default(),
             searchable: true,
             override_text_style: None,
             cursor_shape: Default::default(),
@@ -2574,6 +2836,7 @@ impl Editor {
             completions_provider,
             actions_provider,
             go_to_definition_provider,
+            rename_provider,
         };
 
         this._subscriptions.extend(project_subscriptions);
@@ -4126,12 +4389,11 @@ impl Editor {
         }))
     }
 
-    fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
-        let Some(mut provider) = std::mem::take(&mut self.completions_provider) else {
-            return;
-        };
+    fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) -> Option<()> {
+        let mut provider = std::mem::take(&mut self.completions_provider)?;
         provider.show_completions(self, cx);
         self.completions_provider = Some(provider);
+        Some(())
     }
 
     pub fn confirm_completion(
@@ -4264,12 +4526,15 @@ impl Editor {
         }))
     }
 
-    pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
-        let mut provider = std::mem::take(&mut self.actions_provider);
-        if let Some(ref mut provider) = provider {
-            provider.toggle_code_actions(self, action, cx)
-        }
-        self.actions_provider = provider;
+    pub fn toggle_code_actions(
+        &mut self,
+        action: &ToggleCodeActions,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<()> {
+        let mut provider = std::mem::take(&mut self.actions_provider)?;
+        provider.toggle_code_actions(self, action, cx);
+        self.actions_provider = Some(provider);
+        Some(())
     }
 
     pub fn confirm_code_action(
@@ -4385,18 +4650,14 @@ impl Editor {
     }
 
     fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
-        let mut provider = std::mem::take(&mut self.actions_provider);
-        let ret = if let Some(ref mut provider) = provider {
-            provider.refresh_code_actions(self, cx)
-        } else {
-            None
-        };
-        self.actions_provider = provider;
+        let mut provider = std::mem::take(&mut self.actions_provider)?;
+        let ret = provider.refresh_code_actions(self, cx);
+        self.actions_provider = Some(provider);
         ret
     }
 
     fn refresh_document_highlights(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
-        if self.pending_rename.is_some() {
+        if self.has_pending_rename(cx) {
             return None;
         }
 
@@ -4425,7 +4686,7 @@ impl Editor {
 
             if let Some(highlights) = highlights {
                 this.update(&mut cx, |this, cx| {
-                    if this.pending_rename.is_some() {
+                    if this.has_pending_rename(cx) {
                         return;
                     }
 
@@ -4768,17 +5029,17 @@ impl Editor {
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_padding(Padding::uniform(3.))
                 .on_down(MouseButton::Left, |_, this, cx| {
-                    let mut provider = std::mem::take(&mut this.actions_provider);
-                    if let Some(ref mut provider) = provider {
-                        provider.toggle_code_actions(
-                            this,
-                            &ToggleCodeActions {
-                                deployed_from_indicator: true,
-                            },
-                            cx,
-                        );
-                    }
-                    this.actions_provider = provider;
+                    let Some(mut provider) = std::mem::take(&mut this.actions_provider) else {
+                        return;
+                    };
+                    provider.toggle_code_actions(
+                        this,
+                        &ToggleCodeActions {
+                            deployed_from_indicator: true,
+                        },
+                        cx,
+                    );
+                    this.actions_provider = Some(provider);
                 })
                 .into_any(),
             )
@@ -7801,13 +8062,11 @@ impl Editor {
         kind: GotoDefinitionKind,
         split: bool,
         cx: &mut ViewContext<Self>,
-    ) {
-        let Some(mut provider) = std::mem::take(&mut self.go_to_definition_provider) else {
-            // No need to set it back as it's already None
-            return;
-        };
+    ) -> Option<()> {
+        let mut provider = std::mem::take(&mut self.go_to_definition_provider)?;
         provider.go_to_definition_of_kind(self, kind, split, cx);
         self.go_to_definition_provider = Some(provider);
+        Some(())
     }
 
     pub fn navigate_to_definitions(
@@ -7815,13 +8074,11 @@ impl Editor {
         definitions: Vec<GoToDefinitionLink>,
         split: bool,
         cx: &mut ViewContext<Editor>,
-    ) {
-        let Some(mut provider) = std::mem::take(&mut self.go_to_definition_provider) else {
-            // No need to set it back as it's already None
-            return;
-        };
+    ) -> Option<()> {
+        let mut provider = std::mem::take(&mut self.go_to_definition_provider)?;
         provider.navigate_to_definitions(self, definitions, split, cx);
         self.go_to_definition_provider = Some(provider);
+        Some(())
     }
 
     fn find_all_references(
@@ -7872,183 +8129,30 @@ impl Editor {
         ))
     }
 
+    // Returns true if this `Editor` supports renaming and it has one underway.
+    fn has_pending_rename(&self, cx: &AppContext) -> bool {
+        self.rename_provider
+            .as_ref()
+            .map(|provider| provider.has_pending_rename(cx))
+            .unwrap_or_default()
+    }
+
     fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-        use language::ToOffset as _;
-
-        let project = self.project.clone()?;
-        let selection = self.selections.newest_anchor().clone();
-        let (cursor_buffer, cursor_buffer_position) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(selection.head(), cx)?;
-        let (tail_buffer, _) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(selection.tail(), cx)?;
-        if tail_buffer != cursor_buffer {
-            return None;
-        }
-
-        let snapshot = cursor_buffer.read(cx).snapshot();
-        let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
-        let prepare_rename = project.update(cx, |project, cx| {
-            project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx)
-        });
-
-        Some(cx.spawn(|this, mut cx| async move {
-            let rename_range = if let Some(range) = prepare_rename.await? {
-                Some(range)
-            } else {
-                this.update(&mut cx, |this, cx| {
-                    let buffer = this.buffer.read(cx).snapshot(cx);
-                    let mut buffer_highlights = this
-                        .document_highlights_for_position(selection.head(), &buffer)
-                        .filter(|highlight| {
-                            highlight.start.excerpt_id == selection.head().excerpt_id
-                                && highlight.end.excerpt_id == selection.head().excerpt_id
-                        });
-                    buffer_highlights
-                        .next()
-                        .map(|highlight| highlight.start.text_anchor..highlight.end.text_anchor)
-                })?
-            };
-            if let Some(rename_range) = rename_range {
-                let rename_buffer_range = rename_range.to_offset(&snapshot);
-                let cursor_offset_in_rename_range =
-                    cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
-
-                this.update(&mut cx, |this, cx| {
-                    this.take_rename(false, cx);
-                    let style = this.style(cx);
-                    let buffer = this.buffer.read(cx).read(cx);
-                    let cursor_offset = selection.head().to_offset(&buffer);
-                    let rename_start = cursor_offset.saturating_sub(cursor_offset_in_rename_range);
-                    let rename_end = rename_start + rename_buffer_range.len();
-                    let range = buffer.anchor_before(rename_start)..buffer.anchor_after(rename_end);
-                    let mut old_highlight_id = None;
-                    let old_name: Arc<str> = buffer
-                        .chunks(rename_start..rename_end, true)
-                        .map(|chunk| {
-                            if old_highlight_id.is_none() {
-                                old_highlight_id = chunk.syntax_highlight_id;
-                            }
-                            chunk.text
-                        })
-                        .collect::<String>()
-                        .into();
-
-                    drop(buffer);
-
-                    // Position the selection in the rename editor so that it matches the current selection.
-                    this.show_local_selections = false;
-                    let rename_editor = cx.add_view(|cx| {
-                        let mut editor = Editor::single_line(None, cx);
-                        if let Some(old_highlight_id) = old_highlight_id {
-                            editor.override_text_style =
-                                Some(Box::new(move |style| old_highlight_id.style(&style.syntax)));
-                        }
-                        editor.buffer.update(cx, |buffer, cx| {
-                            buffer.edit([(0..0, old_name.clone())], None, cx)
-                        });
-                        editor.select_all(&SelectAll, cx);
-                        editor
-                    });
-
-                    let ranges = this
-                        .clear_background_highlights::<DocumentHighlightWrite>(cx)
-                        .into_iter()
-                        .flat_map(|(_, ranges)| ranges.into_iter())
-                        .chain(
-                            this.clear_background_highlights::<DocumentHighlightRead>(cx)
-                                .into_iter()
-                                .flat_map(|(_, ranges)| ranges.into_iter()),
-                        )
-                        .collect();
-
-                    this.highlight_text::<Rename>(
-                        ranges,
-                        HighlightStyle {
-                            fade_out: Some(style.rename_fade),
-                            ..Default::default()
-                        },
-                        cx,
-                    );
-                    cx.focus(&rename_editor);
-                    let block_id = this.insert_blocks(
-                        [BlockProperties {
-                            style: BlockStyle::Flex,
-                            position: range.start.clone(),
-                            height: 1,
-                            render: Arc::new({
-                                let editor = rename_editor.clone();
-                                move |cx: &mut BlockContext| {
-                                    ChildView::new(&editor, cx)
-                                        .contained()
-                                        .with_padding_left(cx.anchor_x)
-                                        .into_any()
-                                }
-                            }),
-                            disposition: BlockDisposition::Below,
-                        }],
-                        Some(Autoscroll::fit()),
-                        cx,
-                    )[0];
-                    this.pending_rename = Some(RenameState {
-                        range,
-                        old_name,
-                        editor: rename_editor,
-                        block_id,
-                    });
-                })?;
-            }
-
-            Ok(())
-        }))
+        let mut provider = std::mem::take(&mut self.rename_provider)?;
+        let task = provider.rename(self, cx);
+        self.rename_provider = Some(provider);
+        task
     }
 
     pub fn confirm_rename(
-        workspace: &mut Workspace,
+        &mut self,
         _: &ConfirmRename,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<Task<Result<()>>> {
-        let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
-
-        let (buffer, range, old_name, new_name) = editor.update(cx, |editor, cx| {
-            let rename = editor.take_rename(false, cx)?;
-            let buffer = editor.buffer.read(cx);
-            let (start_buffer, start) =
-                buffer.text_anchor_for_position(rename.range.start.clone(), cx)?;
-            let (end_buffer, end) =
-                buffer.text_anchor_for_position(rename.range.end.clone(), cx)?;
-            if start_buffer == end_buffer {
-                let new_name = rename.editor.read(cx).text(cx);
-                Some((start_buffer, start..end, rename.old_name, new_name))
-            } else {
-                None
-            }
-        })?;
-
-        let rename = workspace.project().clone().update(cx, |project, cx| {
-            project.perform_rename(buffer.clone(), range.start, new_name.clone(), true, cx)
-        });
-
-        let editor = editor.downgrade();
-        Some(cx.spawn(|workspace, mut cx| async move {
-            let project_transaction = rename.await?;
-            Self::open_project_transaction(
-                &editor,
-                workspace,
-                project_transaction,
-                format!("Rename: {} → {}", old_name, new_name),
-                cx.clone(),
-            )
-            .await?;
-
-            editor.update(&mut cx, |editor, cx| {
-                editor.refresh_document_highlights(cx);
-            })?;
-            Ok(())
-        }))
+        let mut provider = std::mem::take(&mut self.rename_provider)?;
+        let task = provider.confirm_rename(cx);
+        self.rename_provider = Some(provider);
+        task
     }
 
     fn take_rename(
@@ -8056,41 +8160,16 @@ impl Editor {
         moving_cursor: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<RenameState> {
-        let rename = self.pending_rename.take()?;
-        self.remove_blocks(
-            [rename.block_id].into_iter().collect(),
-            Some(Autoscroll::fit()),
-            cx,
-        );
-        self.clear_highlights::<Rename>(cx);
-        self.show_local_selections = true;
-
-        if moving_cursor {
-            let rename_editor = rename.editor.read(cx);
-            let cursor_in_rename_editor = rename_editor.selections.newest::<usize>(cx).head();
-
-            // Update the selection to match the position of the selection inside
-            // the rename editor.
-            let snapshot = self.buffer.read(cx).read(cx);
-            let rename_range = rename.range.to_offset(&snapshot);
-            let cursor_in_editor = snapshot
-                .clip_offset(rename_range.start + cursor_in_rename_editor, Bias::Left)
-                .min(rename_range.end);
-            drop(snapshot);
-
-            self.change_selections(None, cx, |s| {
-                s.select_ranges(vec![cursor_in_editor..cursor_in_editor])
-            });
-        } else {
-            self.refresh_document_highlights(cx);
-        }
-
-        Some(rename)
+        let mut provider = std::mem::take(&mut self.rename_provider)?;
+        let task = provider.take_rename(self, moving_cursor, cx);
+        self.rename_provider = Some(provider);
+        task
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn pending_rename(&self) -> Option<&RenameState> {
-        self.pending_rename.as_ref()
+    pub fn pending_rename(&self, cx: &AppContext) -> Option<&RenameState> {
+        self.rename_provider
+            .map(|provider| provider.pending_rename(cx))
     }
 
     fn format(&mut self, _: &Format, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -9528,7 +9607,12 @@ impl View for Editor {
             cx.emit(Event::Focused);
             cx.emit_global(focused_event);
         }
-        if let Some(rename) = self.pending_rename.as_ref() {
+        if let Some(rename) = self
+            .rename_provider
+            .as_ref()
+            .map(|provider| provider.pending_rename(cx))
+            .flatten()
+        {
             cx.focus(&rename.editor);
         } else if cx.is_self_focused() || !focused.is::<Editor>() {
             if !self.focused {
@@ -9605,7 +9689,7 @@ impl View for Editor {
             EditorMode::Full => "full",
         };
         keymap.add_key("mode", mode);
-        if self.pending_rename.is_some() {
+        if self.has_pending_rename(cx) {
             keymap.add_identifier("renaming");
         }
         if self.context_menu_visible() {

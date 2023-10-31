@@ -80,7 +80,7 @@ pub fn find_hovered_hint_part(
 
 pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut ViewContext<Editor>) {
     if settings::get::<EditorSettings>(cx).hover_popover_enabled {
-        if editor.pending_rename.is_some() {
+        if editor.has_pending_rename(cx) {
             return;
         }
 
@@ -166,7 +166,7 @@ fn show_hover(
     ignore_timeout: bool,
     cx: &mut ViewContext<Editor>,
 ) {
-    if editor.pending_rename.is_some() {
+    if editor.has_pending_rename(cx) {
         return;
     }
 

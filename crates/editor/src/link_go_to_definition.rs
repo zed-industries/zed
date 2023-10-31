@@ -353,7 +353,7 @@ pub fn show_link_definition(
         hide_link_definition(editor, cx);
     }
 
-    if editor.pending_rename.is_some() {
+    if editor.has_pending_rename(cx) {
         return;
     }
 

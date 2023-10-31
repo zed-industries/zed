@@ -5796,7 +5796,7 @@ async fn test_collaborating_with_renames(
     prepare_rename.await.unwrap();
     editor_b.update(cx_b, |editor, cx| {
         use editor::ToOffset;
-        let rename = editor.pending_rename().unwrap();
+        let rename = editor.pending_rename(cx).unwrap();
         let buffer = editor.buffer().read(cx).snapshot(cx);
         assert_eq!(
             rename.range.start.to_offset(&buffer)..rename.range.end.to_offset(&buffer),
