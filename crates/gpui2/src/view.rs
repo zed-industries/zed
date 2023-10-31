@@ -211,6 +211,7 @@ trait ViewObject: Send + Sync {
     fn initialize(&self, cx: &mut WindowContext) -> AnyBox;
     fn layout(&self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId;
     fn paint(&self, bounds: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext);
+    fn debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
 }
 
 impl<V> ViewObject for View<V>
@@ -256,14 +257,24 @@ where
             });
         });
     }
+
+    fn debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct(&format!("AnyView<{}>", std::any::type_name::<V>()))
+            .field("entity_id", &ViewObject::entity_id(self).as_u64())
+            .finish()
+    }
 }
 
 #[derive(Clone)]
 pub struct AnyView(Arc<dyn ViewObject>);
 
 impl AnyView {
-    pub fn downcast<V: 'static + Send>(self) -> Option<View<V>> {
-        self.0.model().downcast().map(|model| View { model })
+    pub fn downcast<V: 'static + Send>(self) -> Result<View<V>, AnyView> {
+        self.0
+            .model()
+            .downcast()
+            .map(|model| View { model })
+            .map_err(|_| self)
     }
 
     pub(crate) fn entity_type(&self) -> TypeId {
@@ -323,6 +334,12 @@ impl Element<()> for AnyView {
         cx: &mut ViewContext<()>,
     ) {
         self.0.paint(bounds, element, cx)
+    }
+}
+
+impl std::fmt::Debug for AnyView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.debug(f)
     }
 }
 

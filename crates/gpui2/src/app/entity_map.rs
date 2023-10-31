@@ -172,14 +172,14 @@ impl AnyModel {
         }
     }
 
-    pub fn downcast<T: 'static>(self) -> Option<Model<T>> {
+    pub fn downcast<T: 'static>(self) -> Result<Model<T>, AnyModel> {
         if TypeId::of::<T>() == self.entity_type {
-            Some(Model {
-                any_model: self.clone(),
+            Ok(Model {
+                any_model: self,
                 entity_type: PhantomData,
             })
         } else {
-            None
+            Err(self)
         }
     }
 }
@@ -242,6 +242,14 @@ impl PartialEq for AnyModel {
 }
 
 impl Eq for AnyModel {}
+
+impl std::fmt::Debug for AnyModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AnyModel")
+            .field("entity_id", &self.entity_id.as_u64())
+            .finish()
+    }
+}
 
 #[derive(Deref, DerefMut)]
 pub struct Model<T> {
