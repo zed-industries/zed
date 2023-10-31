@@ -24,6 +24,12 @@ mod util;
 mod view;
 mod window;
 
+mod private {
+    /// A mechanism for restricting implementations of a trait to only those in GPUI.
+    /// See: https://predr.ag/blog/definitive-guide-to-sealed-traits-in-rust/
+    pub trait Sealed {}
+}
+
 pub use action::*;
 pub use anyhow::Result;
 pub use app::*;
@@ -39,6 +45,7 @@ pub use image_cache::*;
 pub use interactive::*;
 pub use keymap::*;
 pub use platform::*;
+use private::Sealed;
 pub use refineable::*;
 pub use scene::*;
 pub use serde;
@@ -80,7 +87,7 @@ pub trait Context {
     where
         T: 'static + Send;
 
-    fn update_entity<T: 'static, R>(
+    fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
@@ -102,6 +109,16 @@ pub trait VisualContext: Context {
         view: &View<V>,
         update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, '_, V>) -> R,
     ) -> Self::Result<R>;
+}
+
+pub trait Entity<T>: Sealed {
+    type Weak: 'static + Send;
+
+    fn entity_id(&self) -> EntityId;
+    fn downgrade(&self) -> Self::Weak;
+    fn upgrade_from(weak: &Self::Weak) -> Option<Self>
+    where
+        Self: Sized;
 }
 
 pub enum GlobalKey {
@@ -149,12 +166,12 @@ impl<C: Context> Context for MainThread<C> {
         })
     }
 
-    fn update_entity<T: 'static, R>(
+    fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
-        self.0.update_entity(handle, |entity, cx| {
+        self.0.update_model(handle, |entity, cx| {
             let cx = unsafe {
                 mem::transmute::<
                     &mut C::ModelContext<'_, T>,

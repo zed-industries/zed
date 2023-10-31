@@ -726,7 +726,7 @@ impl Context for AppContext {
 
     /// Update the entity referenced by the given model. The function is passed a mutable reference to the
     /// entity along with a `ModelContext` for the entity.
-    fn update_entity<T: 'static, R>(
+    fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,

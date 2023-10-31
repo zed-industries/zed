@@ -1,4 +1,4 @@
-use crate::{AnyBox, AppContext, Context};
+use crate::{private::Sealed, AnyBox, AppContext, Context, Entity};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -253,6 +253,32 @@ pub struct Model<T> {
 
 unsafe impl<T> Send for Model<T> {}
 unsafe impl<T> Sync for Model<T> {}
+impl<T> Sealed for Model<T> {}
+
+impl<T: 'static> Entity<T> for Model<T> {
+    type Weak = WeakModel<T>;
+
+    fn entity_id(&self) -> EntityId {
+        self.any_model.entity_id
+    }
+
+    fn downgrade(&self) -> Self::Weak {
+        WeakModel {
+            any_model: self.any_model.downgrade(),
+            entity_type: self.entity_type,
+        }
+    }
+
+    fn upgrade_from(weak: &Self::Weak) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        Some(Model {
+            any_model: weak.any_model.upgrade()?,
+            entity_type: weak.entity_type,
+        })
+    }
+}
 
 impl<T: 'static> Model<T> {
     fn new(id: EntityId, entity_map: Weak<RwLock<EntityRefCounts>>) -> Self
@@ -265,11 +291,12 @@ impl<T: 'static> Model<T> {
         }
     }
 
+    /// Downgrade the this to a weak model reference
     pub fn downgrade(&self) -> WeakModel<T> {
-        WeakModel {
-            any_model: self.any_model.downgrade(),
-            entity_type: self.entity_type,
-        }
+        // Delegate to the trait implementation to keep behavior in one place.
+        // This method was included to improve method resolution in the presence of
+        // the Model's deref
+        Entity::downgrade(self)
     }
 
     /// Convert this into a dynamically typed model.
@@ -294,7 +321,7 @@ impl<T: 'static> Model<T> {
     where
         C: Context,
     {
-        cx.update_entity(self, update)
+        cx.update_model(self, update)
     }
 }
 
@@ -334,7 +361,7 @@ impl<T> Eq for Model<T> {}
 
 impl<T> PartialEq<WeakModel<T>> for Model<T> {
     fn eq(&self, other: &WeakModel<T>) -> bool {
-        self.entity_id() == other.entity_id()
+        self.any_model.entity_id() == other.entity_id()
     }
 }
 
@@ -415,11 +442,10 @@ impl<T> Clone for WeakModel<T> {
 }
 
 impl<T: 'static> WeakModel<T> {
+    /// Upgrade this weak model reference into a strong model reference
     pub fn upgrade(&self) -> Option<Model<T>> {
-        Some(Model {
-            any_model: self.any_model.upgrade()?,
-            entity_type: self.entity_type,
-        })
+        // Delegate to the trait implementation to keep behavior in one place.
+        Model::upgrade_from(self)
     }
 
     /// Update the entity referenced by this model with the given function if
@@ -441,7 +467,7 @@ impl<T: 'static> WeakModel<T> {
         crate::Flatten::flatten(
             self.upgrade()
                 .ok_or_else(|| anyhow!("entity release"))
-                .map(|this| cx.update_entity(&this, update)),
+                .map(|this| cx.update_model(&this, update)),
         )
     }
 }
@@ -462,6 +488,6 @@ impl<T> Eq for WeakModel<T> {}
 
 impl<T> PartialEq<Model<T>> for WeakModel<T> {
     fn eq(&self, other: &Model<T>) -> bool {
-        self.entity_id() == other.entity_id()
+        self.entity_id() == other.any_model.entity_id()
     }
 }

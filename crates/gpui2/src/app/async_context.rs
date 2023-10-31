@@ -32,7 +32,7 @@ impl Context for AsyncAppContext {
         Ok(lock.build_model(build_model))
     }
 
-    fn update_entity<T: 'static, R>(
+    fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
@@ -42,7 +42,7 @@ impl Context for AsyncAppContext {
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut lock = app.lock(); // Need this to compile
-        Ok(lock.update_entity(handle, update))
+        Ok(lock.update_model(handle, update))
     }
 }
 
@@ -230,13 +230,13 @@ impl Context for AsyncWindowContext {
             .update_window(self.window, |cx| cx.build_model(build_model))
     }
 
-    fn update_entity<T: 'static, R>(
+    fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Result<R> {
         self.app
-            .update_window(self.window, |cx| cx.update_entity(handle, update))
+            .update_window(self.window, |cx| cx.update_model(handle, update))
     }
 }
 

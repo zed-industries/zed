@@ -7,8 +7,8 @@ use async_tar::Archive;
 use collections::{HashMap, HashSet};
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui2::{
-    AppContext, AsyncAppContext, Context, EntityId, EventEmitter, Model, ModelContext, Task,
-    WeakModel,
+    AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Model, ModelContext,
+    Task, WeakModel,
 };
 use language2::{
     language_settings::{all_language_settings, language_settings},

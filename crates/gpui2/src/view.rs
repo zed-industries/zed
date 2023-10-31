@@ -1,7 +1,7 @@
 use crate::{
-    AnyBox, AnyElement, AnyModel, AppContext, AvailableSpace, BorrowWindow, Bounds, Component,
-    Element, ElementId, EntityId, LayoutId, Model, Pixels, Size, ViewContext, VisualContext,
-    WeakModel, WindowContext,
+    private::Sealed, AnyBox, AnyElement, AnyModel, AppContext, AvailableSpace, BorrowWindow,
+    Bounds, Component, Element, ElementId, Entity, EntityId, LayoutId, Model, Pixels, Size,
+    ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
 use std::{any::TypeId, marker::PhantomData, sync::Arc};
@@ -16,17 +16,40 @@ pub struct View<V> {
     pub(crate) model: Model<V>,
 }
 
+impl<V> Sealed for View<V> {}
+
 impl<V: Render> View<V> {
     pub fn into_any(self) -> AnyView {
         AnyView(Arc::new(self))
     }
 }
 
-impl<V: 'static> View<V> {
-    pub fn downgrade(&self) -> WeakView<V> {
+impl<V: 'static> Entity<V> for View<V> {
+    type Weak = WeakView<V>;
+
+    fn entity_id(&self) -> EntityId {
+        self.model.entity_id
+    }
+
+    fn downgrade(&self) -> Self::Weak {
         WeakView {
             model: self.model.downgrade(),
         }
+    }
+
+    fn upgrade_from(weak: &Self::Weak) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        let model = weak.model.upgrade()?;
+        Some(View { model })
+    }
+}
+
+impl<V: 'static> View<V> {
+    /// Convert this strong view reference into a weak view reference.
+    pub fn downgrade(&self) -> WeakView<V> {
+        Entity::downgrade(self)
     }
 
     pub fn update<C, R>(
@@ -111,8 +134,7 @@ pub struct WeakView<V> {
 
 impl<V: 'static> WeakView<V> {
     pub fn upgrade(&self) -> Option<View<V>> {
-        let model = self.model.upgrade()?;
-        Some(View { model })
+        Entity::upgrade_from(self)
     }
 
     pub fn update<R>(
@@ -200,7 +222,7 @@ where
     }
 
     fn entity_id(&self) -> EntityId {
-        self.model.entity_id
+        Entity::entity_id(self)
     }
 
     fn model(&self) -> AnyModel {
@@ -208,7 +230,7 @@ where
     }
 
     fn initialize(&self, cx: &mut WindowContext) -> AnyBox {
-        cx.with_element_id(self.entity_id(), |_global_id, cx| {
+        cx.with_element_id(ViewObject::entity_id(self), |_global_id, cx| {
             self.update(cx, |state, cx| {
                 let mut any_element = Box::new(AnyElement::new(state.render(cx)));
                 any_element.initialize(state, cx);
@@ -218,7 +240,7 @@ where
     }
 
     fn layout(&self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId {
-        cx.with_element_id(self.entity_id(), |_global_id, cx| {
+        cx.with_element_id(ViewObject::entity_id(self), |_global_id, cx| {
             self.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<V>>().unwrap();
                 element.layout(state, cx)
@@ -227,7 +249,7 @@ where
     }
 
     fn paint(&self, _: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext) {
-        cx.with_element_id(self.entity_id(), |_global_id, cx| {
+        cx.with_element_id(ViewObject::entity_id(self), |_global_id, cx| {
             self.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<V>>().unwrap();
                 element.paint(state, cx);
