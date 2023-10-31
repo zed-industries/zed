@@ -848,16 +848,17 @@ impl CodeActionsProvider for ModelHandle<CodeActions> {
                 task = provider.update(&mut cx, |provider, _| provider.code_actions_task.take());
             }
 
-            this.update(&mut cx, |this, cx| {
-                if this.focused {
+            this.update(&mut cx, |editor, cx| {
+                if editor.focused {
                     if let Some((buffer, actions)) =
                         provider.read(cx).available_code_actions.clone()
                     {
-                        this.completions_provider
+                        editor
+                            .completions_provider
                             .as_mut()
                             .map(|provider| provider.clear(cx));
-                        this.discard_copilot_suggestion(cx);
-                        *this.context_menu.write() =
+                        editor.discard_copilot_suggestion(cx);
+                        *editor.context_menu.write() =
                             Some(ContextMenu::CodeActions(CodeActionsMenu {
                                 buffer,
                                 actions,
