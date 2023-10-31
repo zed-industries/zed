@@ -2659,12 +2659,12 @@ impl language2::File for File {
 
 impl language2::LocalFile for File {
     fn abs_path(&self, cx: &AppContext) -> PathBuf {
-        self.worktree
-            .read(cx)
-            .as_local()
-            .unwrap()
-            .abs_path
-            .join(&self.path)
+        let worktree_path = &self.worktree.read(cx).as_local().unwrap().abs_path;
+        if self.path.as_ref() == Path::new("") {
+            worktree_path.to_path_buf()
+        } else {
+            worktree_path.join(&self.path)
+        }
     }
 
     fn load(&self, cx: &AppContext) -> Task<Result<String>> {
