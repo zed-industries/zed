@@ -1,4 +1,4 @@
-// pub mod dock;
+pub mod dock;
 pub mod item;
 // pub mod notifications;
 pub mod pane;
@@ -6,7 +6,7 @@ pub mod pane_group;
 mod persistence;
 pub mod searchable;
 // pub mod shared_screen;
-// mod status_bar;
+mod status_bar;
 mod toolbar;
 mod workspace_settings;
 
@@ -37,7 +37,7 @@ pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
 
 use crate::persistence::model::{
-    DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup,
+    DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
 };
 
 // lazy_static! {

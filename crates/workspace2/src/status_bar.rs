@@ -1,18 +1,8 @@
+use crate::{ItemHandle, Pane};
+use gpui2::{AnyView, Render, Subscription, View, ViewContext, WindowContext};
 use std::ops::Range;
 
-use crate::{ItemHandle, Pane};
-use gpui::{
-    elements::*,
-    geometry::{
-        rect::RectF,
-        vector::{vec2f, Vector2F},
-    },
-    json::{json, ToJson},
-    AnyElement, AnyViewHandle, Entity, SizeConstraint, Subscription, View, ViewContext, ViewHandle,
-    WindowContext,
-};
-
-pub trait StatusItemView: View {
+pub trait StatusItemView: Render {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
@@ -21,7 +11,7 @@ pub trait StatusItemView: View {
 }
 
 trait StatusItemViewHandle {
-    fn as_any(&self) -> &AnyViewHandle;
+    fn to_any(&self) -> AnyView;
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
@@ -33,50 +23,47 @@ trait StatusItemViewHandle {
 pub struct StatusBar {
     left_items: Vec<Box<dyn StatusItemViewHandle>>,
     right_items: Vec<Box<dyn StatusItemViewHandle>>,
-    active_pane: ViewHandle<Pane>,
+    active_pane: View<Pane>,
     _observe_active_pane: Subscription,
 }
 
-impl Entity for StatusBar {
-    type Event = ();
-}
+// todo!()
+// impl View for StatusBar {
+//     fn ui_name() -> &'static str {
+//         "StatusBar"
+//     }
 
-impl View for StatusBar {
-    fn ui_name() -> &'static str {
-        "StatusBar"
-    }
+//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+//         let theme = &theme::current(cx).workspace.status_bar;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &theme::current(cx).workspace.status_bar;
-
-        StatusBarElement {
-            left: Flex::row()
-                .with_children(self.left_items.iter().map(|i| {
-                    ChildView::new(i.as_any(), cx)
-                        .aligned()
-                        .contained()
-                        .with_margin_right(theme.item_spacing)
-                }))
-                .into_any(),
-            right: Flex::row()
-                .with_children(self.right_items.iter().rev().map(|i| {
-                    ChildView::new(i.as_any(), cx)
-                        .aligned()
-                        .contained()
-                        .with_margin_left(theme.item_spacing)
-                }))
-                .into_any(),
-        }
-        .contained()
-        .with_style(theme.container)
-        .constrained()
-        .with_height(theme.height)
-        .into_any()
-    }
-}
+//         StatusBarElement {
+//             left: Flex::row()
+//                 .with_children(self.left_items.iter().map(|i| {
+//                     ChildView::new(i.as_any(), cx)
+//                         .aligned()
+//                         .contained()
+//                         .with_margin_right(theme.item_spacing)
+//                 }))
+//                 .into_any(),
+//             right: Flex::row()
+//                 .with_children(self.right_items.iter().rev().map(|i| {
+//                     ChildView::new(i.as_any(), cx)
+//                         .aligned()
+//                         .contained()
+//                         .with_margin_left(theme.item_spacing)
+//                 }))
+//                 .into_any(),
+//         }
+//         .contained()
+//         .with_style(theme.container)
+//         .constrained()
+//         .with_height(theme.height)
+//         .into_any()
+//     }
+// }
 
 impl StatusBar {
-    pub fn new(active_pane: &ViewHandle<Pane>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(active_pane: &View<Pane>, cx: &mut ViewContext<Self>) -> Self {
         let mut this = Self {
             left_items: Default::default(),
             right_items: Default::default(),
@@ -88,7 +75,7 @@ impl StatusBar {
         this
     }
 
-    pub fn add_left_item<T>(&mut self, item: ViewHandle<T>, cx: &mut ViewContext<Self>)
+    pub fn add_left_item<T>(&mut self, item: View<T>, cx: &mut ViewContext<Self>)
     where
         T: 'static + StatusItemView,
     {
@@ -96,7 +83,7 @@ impl StatusBar {
         cx.notify();
     }
 
-    pub fn item_of_type<T: StatusItemView>(&self) -> Option<ViewHandle<T>> {
+    pub fn item_of_type<T: StatusItemView>(&self) -> Option<View<T>> {
         self.left_items
             .iter()
             .chain(self.right_items.iter())
@@ -146,7 +133,7 @@ impl StatusBar {
         cx.notify();
     }
 
-    pub fn add_right_item<T>(&mut self, item: ViewHandle<T>, cx: &mut ViewContext<Self>)
+    pub fn add_right_item<T>(&mut self, item: View<T>, cx: &mut ViewContext<Self>)
     where
         T: 'static + StatusItemView,
     {
