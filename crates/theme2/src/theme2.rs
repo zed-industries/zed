@@ -5,6 +5,7 @@ mod registry;
 mod scale;
 mod settings;
 mod themes;
+mod utils;
 
 pub use default::*;
 pub use registry::*;

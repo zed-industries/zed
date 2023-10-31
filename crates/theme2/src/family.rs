@@ -1,4 +1,4 @@
-use crate::{Appearance, ColorScales};
+use crate::{colors::ThemeStyle, Appearance, ColorScales};
 
 pub struct ThemeFamily {
     name: String,
@@ -12,5 +12,5 @@ impl ThemeFamily {}
 pub struct ThemeVariant {
     name: String,
     appearance: Appearance,
-    colors: ThemeColors,
+    colors: ThemeStyle,
 }
