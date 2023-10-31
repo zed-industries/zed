@@ -24,7 +24,7 @@ impl Breadcrumb {
         div().child(" › ").text_color(
             theme
                 .styles
-                .color
+                .colors
                 .0
                 .get(&ThemeStyleName::TextMuted)
                 .cloned()

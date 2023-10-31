@@ -10,7 +10,7 @@ fn zed_pro_daylight() -> ThemeVariant {
         appearance: Appearance::Light,
         styles: ThemeStyle {
             system: SystemColors::default(),
-            color: ThemeColors::default_light(),
+            colors: ThemeColors::default_light(),
             status: StatusColors::default(),
             git: GitStatusColors::default(),
             player: PlayerColors::default(),
@@ -26,7 +26,7 @@ fn zed_pro_moonlight() -> ThemeVariant {
         appearance: Appearance::Light,
         styles: ThemeStyle {
             system: SystemColors::default(),
-            color: ThemeColors::default_dark(),
+            colors: ThemeColors::default_dark(),
             status: StatusColors::default(),
             git: GitStatusColors::default(),
             player: PlayerColors::default(),

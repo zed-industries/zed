@@ -93,7 +93,7 @@ generate_struct_with_overrides! {
     ThemeStyle,
     ThemeStyleOverrides,
     system: SystemColors,
-    color: ThemeColors,
+    colors: ThemeColors,
     status: StatusColors,
     git: GitStatusColors,
     player: PlayerColors,
