@@ -1,4 +1,4 @@
-use gpui2::{hsla, Rgba};
+use gpui2::{hsla, FontWeight, Rgba};
 use indexmap::IndexMap;
 
 use crate::{
@@ -81,56 +81,271 @@ impl Default for PlayerColors {
 }
 
 impl SyntaxStyles {
-    pub fn default_light() -> Self {
+    pub fn default_light(scales: &ColorScales) -> Self {
         use SyntaxStyleName::*;
 
+        let neutral: ColorScaleSet = slate().into();
+
         Self(IndexMap::from_iter([
-            (Comment, SyntaxStyle::builder().build()),
-            (CommentDoc, SyntaxStyle::builder().build()),
-            (Primary, SyntaxStyle::builder().build()),
-            (Predictive, SyntaxStyle::builder().build()),
-            (Hint, SyntaxStyle::builder().build()),
-            (Emphasis, SyntaxStyle::builder().build()),
-            (EmphasisStrong, SyntaxStyle::builder().build()),
-            (Title, SyntaxStyle::builder().build()),
-            (LinkUri, SyntaxStyle::builder().build()),
-            (LinkText, SyntaxStyle::builder().build()),
-            (TextLiteral, SyntaxStyle::builder().build()),
-            (Punctuation, SyntaxStyle::builder().build()),
-            (PunctuationBracket, SyntaxStyle::builder().build()),
-            (PunctuationDelimiter, SyntaxStyle::builder().build()),
-            (PunctuationSpecial, SyntaxStyle::builder().build()),
-            (PunctuationListMarker, SyntaxStyle::builder().build()),
-            (String, SyntaxStyle::builder().build()),
-            (StringSpecial, SyntaxStyle::builder().build()),
-            (StringSpecialSymbol, SyntaxStyle::builder().build()),
-            (StringEscape, SyntaxStyle::builder().build()),
-            (StringRegex, SyntaxStyle::builder().build()),
-            (Constructor, SyntaxStyle::builder().build()),
-            (Variant, SyntaxStyle::builder().build()),
-            (Type, SyntaxStyle::builder().build()),
-            (TypeBuiltin, SyntaxStyle::builder().build()),
-            (Variable, SyntaxStyle::builder().build()),
-            (VariableSpecial, SyntaxStyle::builder().build()),
-            (Label, SyntaxStyle::builder().build()),
-            (Tag, SyntaxStyle::builder().build()),
-            (Attribute, SyntaxStyle::builder().build()),
-            (Property, SyntaxStyle::builder().build()),
-            (Constant, SyntaxStyle::builder().build()),
-            (Keyword, SyntaxStyle::builder().build()),
-            (Enum, SyntaxStyle::builder().build()),
-            (Operator, SyntaxStyle::builder().build()),
-            (Number, SyntaxStyle::builder().build()),
-            (Boolean, SyntaxStyle::builder().build()),
-            (ConstantBuiltin, SyntaxStyle::builder().build()),
-            (Function, SyntaxStyle::builder().build()),
-            (FunctionBuiltin, SyntaxStyle::builder().build()),
-            (FunctionDefinition, SyntaxStyle::builder().build()),
-            (FunctionSpecialDefinition, SyntaxStyle::builder().build()),
-            (FunctionMethod, SyntaxStyle::builder().build()),
-            (FunctionMethodBuiltin, SyntaxStyle::builder().build()),
-            (Preproc, SyntaxStyle::builder().build()),
-            (Embedded, SyntaxStyle::builder().build()),
+            (
+                Comment,
+                SyntaxStyle::builder().color(neutral.light(11)).build(),
+            ),
+            (
+                CommentDoc,
+                SyntaxStyle::builder().color(neutral.light(11)).build(),
+            ),
+            (
+                Primary,
+                SyntaxStyle::builder().color(neutral.light(12)).build(),
+            ),
+            (
+                Predictive,
+                SyntaxStyle::builder().color(neutral.light(10)).build(),
+            ),
+            (
+                Hint,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(cyan()).light(10))
+                    .build(),
+            ),
+            (
+                Emphasis,
+                SyntaxStyle::builder().weight(FontWeight(600.0)).build(),
+            ),
+            (
+                EmphasisStrong,
+                SyntaxStyle::builder().weight(FontWeight(800.0)).build(),
+            ),
+            (
+                Title,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                LinkUri,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(blue()).light(12))
+                    .build(),
+            ),
+            (
+                LinkText,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(orange()).light(12))
+                    .build(),
+            ),
+            (
+                TextLiteral,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(purple()).light(12))
+                    .build(),
+            ),
+            (
+                Punctuation,
+                SyntaxStyle::builder().color(neutral.light(10)).build(),
+            ),
+            (
+                PunctuationBracket,
+                SyntaxStyle::builder().color(neutral.light(10)).build(),
+            ),
+            (
+                PunctuationDelimiter,
+                SyntaxStyle::builder().color(neutral.light(10)).build(),
+            ),
+            (
+                PunctuationSpecial,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                PunctuationListMarker,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(blue()).light(12))
+                    .build(),
+            ),
+            (
+                String,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(green()).light(12))
+                    .build(),
+            ),
+            (
+                StringSpecial,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                StringSpecialSymbol,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                StringEscape,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(blue()).light(12))
+                    .build(),
+            ),
+            (
+                StringRegex,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(orange()).light(12))
+                    .build(),
+            ),
+            (
+                Constructor,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(purple()).light(12))
+                    .build(),
+            ),
+            // TODO: Continue assigning suntayntax colors from here
+            (
+                Variant,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Type,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                TypeBuiltin,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Variable,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                VariableSpecial,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Label,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Tag,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Attribute,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Property,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Constant,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Keyword,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Enum,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Operator,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Number,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Boolean,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                ConstantBuiltin,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Function,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                FunctionBuiltin,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                FunctionDefinition,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                FunctionSpecialDefinition,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                FunctionMethod,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                FunctionMethodBuiltin,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Preproc,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Embedded,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
         ]))
     }
 
