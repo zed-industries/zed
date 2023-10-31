@@ -55,8 +55,11 @@ async function handleBuffer(prettier) {
         }
         // allow concurrent request handling by not `await`ing the message handling promise (async function)
         handleMessage(message, prettier).catch(e => {
-            sendResponse({ id: message.id, ...makeError(`error during message handling: ${e}`) });
-        });
+            const errorMessage = message;
+            if ((errorMessage.params || {}).text !== undefined) {
+                errorMessage.params.text = "..snip..";
+            }
+            sendResponse({ id: message.id, ...makeError(`error during message '${JSON.stringify(errorMessage)}' handling: ${e}`) }); });
     }
 }
 
@@ -172,7 +175,7 @@ async function handleMessage(message, prettier) {
         sendResponse({ id, result: null });
     } else if (method === 'initialize') {
         sendResponse({
-            id,
+            id: id || 0,
             result: {
                 "capabilities": {}
             }

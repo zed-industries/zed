@@ -162,10 +162,18 @@ pub struct Project {
     copilot_log_subscription: Option<lsp::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
     node: Option<Arc<dyn NodeRuntime>>,
+    #[cfg(not(any(test, feature = "test-support")))]
+    default_prettier: Option<DefaultPrettier>,
     prettier_instances: HashMap<
         (Option<WorktreeId>, PathBuf),
         Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>,
     >,
+}
+
+#[cfg(not(any(test, feature = "test-support")))]
+struct DefaultPrettier {
+    installation_process: Option<Shared<Task<()>>>,
+    installed_plugins: HashSet<&'static str>,
 }
 
 struct DelayedDebounced {
@@ -677,6 +685,8 @@ impl Project {
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
                 node: Some(node),
+                #[cfg(not(any(test, feature = "test-support")))]
+                default_prettier: None,
                 prettier_instances: HashMap::default(),
             }
         })
@@ -776,6 +786,8 @@ impl Project {
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
                 node: None,
+                #[cfg(not(any(test, feature = "test-support")))]
+                default_prettier: None,
                 prettier_instances: HashMap::default(),
             };
             for worktree in worktrees {
@@ -8497,7 +8509,7 @@ impl Project {
 
     #[cfg(any(test, feature = "test-support"))]
     fn install_default_formatters(
-        &self,
+        &mut self,
         _worktree: Option<WorktreeId>,
         _new_language: &Language,
         _language_settings: &LanguageSettings,
@@ -8508,7 +8520,7 @@ impl Project {
 
     #[cfg(not(any(test, feature = "test-support")))]
     fn install_default_formatters(
-        &self,
+        &mut self,
         worktree: Option<WorktreeId>,
         new_language: &Language,
         language_settings: &LanguageSettings,
@@ -8537,51 +8549,108 @@ impl Project {
             return Task::ready(Ok(()));
         };
 
+        let mut plugins_to_install = prettier_plugins;
+        let (mut install_success_tx, mut install_success_rx) =
+            futures::channel::mpsc::channel::<HashSet<&'static str>>(1);
+        let new_installation_process = cx
+            .spawn(|this, mut cx| async move {
+                if let Some(installed_plugins) = install_success_rx.next().await {
+                    this.update(&mut cx, |this, _| {
+                        let default_prettier =
+                            this.default_prettier
+                                .get_or_insert_with(|| DefaultPrettier {
+                                    installation_process: None,
+                                    installed_plugins: HashSet::default(),
+                                });
+                        if !installed_plugins.is_empty() {
+                            log::info!("Installed new prettier plugins: {installed_plugins:?}");
+                            default_prettier.installed_plugins.extend(installed_plugins);
+                        }
+                    })
+                }
+            })
+            .shared();
+        let previous_installation_process =
+            if let Some(default_prettier) = &mut self.default_prettier {
+                plugins_to_install
+                    .retain(|plugin| !default_prettier.installed_plugins.contains(plugin));
+                if plugins_to_install.is_empty() {
+                    return Task::ready(Ok(()));
+                }
+                std::mem::replace(
+                    &mut default_prettier.installation_process,
+                    Some(new_installation_process.clone()),
+                )
+            } else {
+                None
+            };
+
         let default_prettier_dir = util::paths::DEFAULT_PRETTIER_DIR.as_path();
         let already_running_prettier = self
             .prettier_instances
             .get(&(worktree, default_prettier_dir.to_path_buf()))
             .cloned();
-
         let fs = Arc::clone(&self.fs);
-        cx.background()
-            .spawn(async move {
-                let prettier_wrapper_path = default_prettier_dir.join(prettier::PRETTIER_SERVER_FILE);
-                // method creates parent directory if it doesn't exist
-                fs.save(&prettier_wrapper_path, &text::Rope::from(prettier::PRETTIER_SERVER_JS), text::LineEnding::Unix).await
-                .with_context(|| format!("writing {} file at {prettier_wrapper_path:?}", prettier::PRETTIER_SERVER_FILE))?;
-
-                let packages_to_versions = future::try_join_all(
-                    prettier_plugins
-                        .iter()
-                        .chain(Some(&"prettier"))
-                        .map(|package_name| async {
-                            let returned_package_name = package_name.to_string();
-                            let latest_version = node.npm_package_latest_version(package_name)
-                                .await
-                                .with_context(|| {
-                                    format!("fetching latest npm version for package {returned_package_name}")
-                                })?;
-                            anyhow::Ok((returned_package_name, latest_version))
-                        }),
-                )
-                .await
-                .context("fetching latest npm versions")?;
-
-                log::info!("Fetching default prettier and plugins: {packages_to_versions:?}");
-                let borrowed_packages = packages_to_versions.iter().map(|(package, version)| {
-                    (package.as_str(), version.as_str())
-                }).collect::<Vec<_>>();
-                node.npm_install_packages(default_prettier_dir, &borrowed_packages).await.context("fetching formatter packages")?;
-
-                if !prettier_plugins.is_empty() {
-                    if let Some(prettier) = already_running_prettier {
-                        prettier.await.map_err(|e| anyhow::anyhow!("Default prettier startup await failure: {e:#}"))?.clear_cache().await.context("clearing default prettier cache after plugins install")?;
-                    }
+        cx.spawn(|this, mut cx| async move {
+            if let Some(previous_installation_process) = previous_installation_process {
+                previous_installation_process.await;
+            }
+            let mut everything_was_installed = false;
+            this.update(&mut cx, |this, _| {
+                match &mut this.default_prettier {
+                    Some(default_prettier) => {
+                        plugins_to_install
+                            .retain(|plugin| !default_prettier.installed_plugins.contains(plugin));
+                        everything_was_installed = plugins_to_install.is_empty();
+                    },
+                    None => this.default_prettier = Some(DefaultPrettier { installation_process: Some(new_installation_process), installed_plugins: HashSet::default() }),
                 }
+            });
+            if everything_was_installed {
+                return Ok(());
+            }
 
-                anyhow::Ok(())
-            })
+            cx.background()
+                .spawn(async move {
+                    let prettier_wrapper_path = default_prettier_dir.join(prettier::PRETTIER_SERVER_FILE);
+                    // method creates parent directory if it doesn't exist
+                    fs.save(&prettier_wrapper_path, &text::Rope::from(prettier::PRETTIER_SERVER_JS), text::LineEnding::Unix).await
+                    .with_context(|| format!("writing {} file at {prettier_wrapper_path:?}", prettier::PRETTIER_SERVER_FILE))?;
+
+                    let packages_to_versions = future::try_join_all(
+                        plugins_to_install
+                            .iter()
+                            .chain(Some(&"prettier"))
+                            .map(|package_name| async {
+                                let returned_package_name = package_name.to_string();
+                                let latest_version = node.npm_package_latest_version(package_name)
+                                    .await
+                                    .with_context(|| {
+                                        format!("fetching latest npm version for package {returned_package_name}")
+                                    })?;
+                                anyhow::Ok((returned_package_name, latest_version))
+                            }),
+                    )
+                    .await
+                    .context("fetching latest npm versions")?;
+
+                    log::info!("Fetching default prettier and plugins: {packages_to_versions:?}");
+                    let borrowed_packages = packages_to_versions.iter().map(|(package, version)| {
+                        (package.as_str(), version.as_str())
+                    }).collect::<Vec<_>>();
+                    node.npm_install_packages(default_prettier_dir, &borrowed_packages).await.context("fetching formatter packages")?;
+                    let installed_packages = !plugins_to_install.is_empty();
+                    install_success_tx.try_send(plugins_to_install).ok();
+
+                    if !installed_packages {
+                        if let Some(prettier) = already_running_prettier {
+                            prettier.await.map_err(|e| anyhow::anyhow!("Default prettier startup await failure: {e:#}"))?.clear_cache().await.context("clearing default prettier cache after plugins install")?;
+                        }
+                    }
+
+                    anyhow::Ok(())
+                }).await
+        })
     }
 }
 
