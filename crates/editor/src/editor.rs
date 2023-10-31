@@ -8167,9 +8167,11 @@ impl Editor {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn pending_rename(&self, cx: &AppContext) -> Option<&RenameState> {
+    pub fn pending_rename(&self, cx: &AppContext) -> Option<RenameState> {
         self.rename_provider
+            .as_ref()
             .map(|provider| provider.pending_rename(cx))
+            .flatten()
     }
 
     fn format(&mut self, _: &Format, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
