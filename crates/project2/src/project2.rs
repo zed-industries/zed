@@ -2986,8 +2986,8 @@ impl Project {
                 let this = this.clone();
                 move |mut params, mut cx| {
                     let adapter = adapter.clone();
-                    adapter.process_diagnostics(&mut params);
                     if let Some(this) = this.upgrade() {
+                        adapter.process_diagnostics(&mut params);
                         this.update(&mut cx, |this, cx| {
                             this.update_diagnostics(
                                 server_id,
