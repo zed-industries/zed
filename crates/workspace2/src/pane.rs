@@ -2,10 +2,15 @@
 
 use crate::{
     item::{Item, ItemHandle, WeakItemHandle},
+    toolbar::Toolbar,
     SplitDirection, Workspace,
 };
+use anyhow::Result;
 use collections::{HashMap, VecDeque};
-use gpui2::{EventEmitter, Model, View, ViewContext, WeakView};
+use gpui2::{
+    AppContext, EventEmitter, Model, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
+};
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -68,6 +73,7 @@ pub enum SaveIntent {
 //     pub save_intent: Option<SaveIntent>,
 // }
 
+// todo!()
 // actions!(
 //     pane,
 //     [
@@ -90,8 +96,9 @@ pub enum SaveIntent {
 
 // impl_actions!(pane, [ActivateItem, CloseActiveItem, CloseAllItems]);
 
-// const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
+const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
+// todo!()
 // pub fn init(cx: &mut AppContext) {
 //     cx.add_action(Pane::toggle_zoom);
 //     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
@@ -330,7 +337,7 @@ impl Pane {
                 pane: handle.clone(),
                 next_timestamp,
             }))),
-            // toolbar: cx.add_view(|_| Toolbar::new()),
+            toolbar: cx.build_view(|_| Toolbar::new()),
             // tab_bar_context_menu: TabBarContextMenu {
             //     kind: TabBarContextMenuKind::New,
             //     handle: context_menu,
@@ -447,33 +454,33 @@ impl Pane {
         }
     }
 
-    //     pub fn nav_history(&self) -> &NavHistory {
-    //         &self.nav_history
-    //     }
+    pub fn nav_history(&self) -> &NavHistory {
+        &self.nav_history
+    }
 
-    //     pub fn nav_history_mut(&mut self) -> &mut NavHistory {
-    //         &mut self.nav_history
-    //     }
+    pub fn nav_history_mut(&mut self) -> &mut NavHistory {
+        &mut self.nav_history
+    }
 
-    //     pub fn disable_history(&mut self) {
-    //         self.nav_history.disable();
-    //     }
+    pub fn disable_history(&mut self) {
+        self.nav_history.disable();
+    }
 
-    //     pub fn enable_history(&mut self) {
-    //         self.nav_history.enable();
-    //     }
+    pub fn enable_history(&mut self) {
+        self.nav_history.enable();
+    }
 
-    //     pub fn can_navigate_backward(&self) -> bool {
-    //         !self.nav_history.0.borrow().backward_stack.is_empty()
-    //     }
+    pub fn can_navigate_backward(&self) -> bool {
+        !self.nav_history.0.lock().backward_stack.is_empty()
+    }
 
-    //     pub fn can_navigate_forward(&self) -> bool {
-    //         !self.nav_history.0.borrow().forward_stack.is_empty()
-    //     }
+    pub fn can_navigate_forward(&self) -> bool {
+        !self.nav_history.0.lock().forward_stack.is_empty()
+    }
 
-    //     fn history_updated(&mut self, cx: &mut ViewContext<Self>) {
-    //         self.toolbar.update(cx, |_, cx| cx.notify());
-    //     }
+    fn history_updated(&mut self, cx: &mut ViewContext<Self>) {
+        self.toolbar.update(cx, |_, cx| cx.notify());
+    }
 
     pub(crate) fn open_item(
         &mut self,
@@ -736,115 +743,115 @@ impl Pane {
     //         ))
     //     }
 
-    //     pub fn close_item_by_id(
-    //         &mut self,
-    //         item_id_to_close: usize,
-    //         save_intent: SaveIntent,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<Result<()>> {
-    //         self.close_items(cx, save_intent, move |view_id| view_id == item_id_to_close)
+    pub fn close_item_by_id(
+        &mut self,
+        item_id_to_close: usize,
+        save_intent: SaveIntent,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        self.close_items(cx, save_intent, move |view_id| view_id == item_id_to_close)
+    }
+
+    // pub fn close_inactive_items(
+    //     &mut self,
+    //     _: &CloseInactiveItems,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Option<Task<Result<()>>> {
+    //     if self.items.is_empty() {
+    //         return None;
     //     }
 
-    //     pub fn close_inactive_items(
-    //         &mut self,
-    //         _: &CloseInactiveItems,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         if self.items.is_empty() {
-    //             return None;
-    //         }
+    //     let active_item_id = self.items[self.active_item_index].id();
+    //     Some(self.close_items(cx, SaveIntent::Close, move |item_id| {
+    //         item_id != active_item_id
+    //     }))
+    // }
 
-    //         let active_item_id = self.items[self.active_item_index].id();
-    //         Some(self.close_items(cx, SaveIntent::Close, move |item_id| {
-    //             item_id != active_item_id
-    //         }))
+    // pub fn close_clean_items(
+    //     &mut self,
+    //     _: &CloseCleanItems,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Option<Task<Result<()>>> {
+    //     let item_ids: Vec<_> = self
+    //         .items()
+    //         .filter(|item| !item.is_dirty(cx))
+    //         .map(|item| item.id())
+    //         .collect();
+    //     Some(self.close_items(cx, SaveIntent::Close, move |item_id| {
+    //         item_ids.contains(&item_id)
+    //     }))
+    // }
+
+    // pub fn close_items_to_the_left(
+    //     &mut self,
+    //     _: &CloseItemsToTheLeft,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Option<Task<Result<()>>> {
+    //     if self.items.is_empty() {
+    //         return None;
+    //     }
+    //     let active_item_id = self.items[self.active_item_index].id();
+    //     Some(self.close_items_to_the_left_by_id(active_item_id, cx))
+    // }
+
+    // pub fn close_items_to_the_left_by_id(
+    //     &mut self,
+    //     item_id: usize,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Task<Result<()>> {
+    //     let item_ids: Vec<_> = self
+    //         .items()
+    //         .take_while(|item| item.id() != item_id)
+    //         .map(|item| item.id())
+    //         .collect();
+    //     self.close_items(cx, SaveIntent::Close, move |item_id| {
+    //         item_ids.contains(&item_id)
+    //     })
+    // }
+
+    // pub fn close_items_to_the_right(
+    //     &mut self,
+    //     _: &CloseItemsToTheRight,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Option<Task<Result<()>>> {
+    //     if self.items.is_empty() {
+    //         return None;
+    //     }
+    //     let active_item_id = self.items[self.active_item_index].id();
+    //     Some(self.close_items_to_the_right_by_id(active_item_id, cx))
+    // }
+
+    // pub fn close_items_to_the_right_by_id(
+    //     &mut self,
+    //     item_id: usize,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Task<Result<()>> {
+    //     let item_ids: Vec<_> = self
+    //         .items()
+    //         .rev()
+    //         .take_while(|item| item.id() != item_id)
+    //         .map(|item| item.id())
+    //         .collect();
+    //     self.close_items(cx, SaveIntent::Close, move |item_id| {
+    //         item_ids.contains(&item_id)
+    //     })
+    // }
+
+    // pub fn close_all_items(
+    //     &mut self,
+    //     action: &CloseAllItems,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Option<Task<Result<()>>> {
+    //     if self.items.is_empty() {
+    //         return None;
     //     }
 
-    //     pub fn close_clean_items(
-    //         &mut self,
-    //         _: &CloseCleanItems,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         let item_ids: Vec<_> = self
-    //             .items()
-    //             .filter(|item| !item.is_dirty(cx))
-    //             .map(|item| item.id())
-    //             .collect();
-    //         Some(self.close_items(cx, SaveIntent::Close, move |item_id| {
-    //             item_ids.contains(&item_id)
-    //         }))
-    //     }
-
-    //     pub fn close_items_to_the_left(
-    //         &mut self,
-    //         _: &CloseItemsToTheLeft,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         if self.items.is_empty() {
-    //             return None;
-    //         }
-    //         let active_item_id = self.items[self.active_item_index].id();
-    //         Some(self.close_items_to_the_left_by_id(active_item_id, cx))
-    //     }
-
-    //     pub fn close_items_to_the_left_by_id(
-    //         &mut self,
-    //         item_id: usize,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<Result<()>> {
-    //         let item_ids: Vec<_> = self
-    //             .items()
-    //             .take_while(|item| item.id() != item_id)
-    //             .map(|item| item.id())
-    //             .collect();
-    //         self.close_items(cx, SaveIntent::Close, move |item_id| {
-    //             item_ids.contains(&item_id)
-    //         })
-    //     }
-
-    //     pub fn close_items_to_the_right(
-    //         &mut self,
-    //         _: &CloseItemsToTheRight,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         if self.items.is_empty() {
-    //             return None;
-    //         }
-    //         let active_item_id = self.items[self.active_item_index].id();
-    //         Some(self.close_items_to_the_right_by_id(active_item_id, cx))
-    //     }
-
-    //     pub fn close_items_to_the_right_by_id(
-    //         &mut self,
-    //         item_id: usize,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<Result<()>> {
-    //         let item_ids: Vec<_> = self
-    //             .items()
-    //             .rev()
-    //             .take_while(|item| item.id() != item_id)
-    //             .map(|item| item.id())
-    //             .collect();
-    //         self.close_items(cx, SaveIntent::Close, move |item_id| {
-    //             item_ids.contains(&item_id)
-    //         })
-    //     }
-
-    //     pub fn close_all_items(
-    //         &mut self,
-    //         action: &CloseAllItems,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         if self.items.is_empty() {
-    //             return None;
-    //         }
-
-    //         Some(
-    //             self.close_items(cx, action.save_intent.unwrap_or(SaveIntent::Close), |_| {
-    //                 true
-    //             }),
-    //         )
-    //     }
+    //     Some(
+    //         self.close_items(cx, action.save_intent.unwrap_or(SaveIntent::Close), |_| {
+    //             true
+    //         }),
+    //     )
+    // }
 
     //     pub(super) fn file_names_for_prompt(
     //         items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
@@ -1156,28 +1163,29 @@ impl Pane {
     //         Ok(true)
     //     }
 
-    //     fn can_autosave_item(item: &dyn ItemHandle, cx: &AppContext) -> bool {
-    //         let is_deleted = item.project_entry_ids(cx).is_empty();
-    //         item.is_dirty(cx) && !item.has_conflict(cx) && item.can_save(cx) && !is_deleted
-    //     }
+    fn can_autosave_item(item: &dyn ItemHandle, cx: &AppContext) -> bool {
+        let is_deleted = item.project_entry_ids(cx).is_empty();
+        item.is_dirty(cx) && !item.has_conflict(cx) && item.can_save(cx) && !is_deleted
+    }
 
-    //     pub fn autosave_item(
-    //         item: &dyn ItemHandle,
-    //         project: Model<Project>,
-    //         cx: &mut WindowContext,
-    //     ) -> Task<Result<()>> {
-    //         if Self::can_autosave_item(item, cx) {
-    //             item.save(project, cx)
-    //         } else {
-    //             Task::ready(Ok(()))
-    //         }
-    //     }
+    pub fn autosave_item(
+        item: &dyn ItemHandle,
+        project: Model<Project>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        if Self::can_autosave_item(item, cx) {
+            item.save(project, cx)
+        } else {
+            Task::ready(Ok(()))
+        }
+    }
 
-    //     pub fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
-    //         if let Some(active_item) = self.active_item() {
-    //             cx.focus(active_item.as_any());
-    //         }
-    //     }
+    pub fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
+        todo!();
+        // if let Some(active_item) = self.active_item() {
+        //     cx.focus(active_item.as_any());
+        // }
+    }
 
     //     pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
     //         cx.emit(Event::Split(direction));
@@ -1979,7 +1987,7 @@ impl NavHistory {
         cx: &AppContext,
         mut f: impl FnMut(&NavigationEntry, (ProjectPath, Option<PathBuf>)),
     ) {
-        let borrowed_history = self.0.borrow();
+        let borrowed_history = self.0.lock();
         borrowed_history
             .forward_stack
             .iter()
@@ -1990,7 +1998,7 @@ impl NavHistory {
                     borrowed_history.paths_by_item.get(&entry.item.id())
                 {
                     f(entry, project_and_abs_path.clone());
-                } else if let Some(item) = entry.item.upgrade(cx) {
+                } else if let Some(item) = entry.item.upgrade() {
                     if let Some(path) = item.project_path(cx) {
                         f(entry, (path, None));
                     }
@@ -1999,23 +2007,23 @@ impl NavHistory {
     }
 
     pub fn set_mode(&mut self, mode: NavigationMode) {
-        self.0.borrow_mut().mode = mode;
+        self.0.lock().mode = mode;
     }
 
     pub fn mode(&self) -> NavigationMode {
-        self.0.borrow().mode
+        self.0.lock().mode
     }
 
     pub fn disable(&mut self) {
-        self.0.borrow_mut().mode = NavigationMode::Disabled;
+        self.0.lock().mode = NavigationMode::Disabled;
     }
 
     pub fn enable(&mut self) {
-        self.0.borrow_mut().mode = NavigationMode::Normal;
+        self.0.lock().mode = NavigationMode::Normal;
     }
 
     pub fn pop(&mut self, mode: NavigationMode, cx: &mut WindowContext) -> Option<NavigationEntry> {
-        let mut state = self.0.borrow_mut();
+        let mut state = self.0.lock();
         let entry = match mode {
             NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
                 return None
@@ -2034,10 +2042,10 @@ impl NavHistory {
     pub fn push<D: 'static + Any>(
         &mut self,
         data: Option<D>,
-        item: Rc<dyn WeakItemHandle>,
+        item: Arc<dyn WeakItemHandle>,
         cx: &mut WindowContext,
     ) {
-        let state = &mut *self.0.borrow_mut();
+        let state = &mut *self.0.lock();
         match state.mode {
             NavigationMode::Disabled => {}
             NavigationMode::Normal | NavigationMode::ReopeningClosedItem => {
@@ -2086,7 +2094,7 @@ impl NavHistory {
     }
 
     pub fn remove_item(&mut self, item_id: usize) {
-        let mut state = self.0.borrow_mut();
+        let mut state = self.0.lock();
         state.paths_by_item.remove(&item_id);
         state
             .backward_stack
@@ -2100,19 +2108,19 @@ impl NavHistory {
     }
 
     pub fn path_for_item(&self, item_id: usize) -> Option<(ProjectPath, Option<PathBuf>)> {
-        self.0.borrow().paths_by_item.get(&item_id).cloned()
+        self.0.lock().paths_by_item.get(&item_id).cloned()
     }
 }
 
-// impl NavHistoryState {
-//     pub fn did_update(&self, cx: &mut WindowContext) {
-//         if let Some(pane) = self.pane.upgrade(cx) {
-//             cx.defer(move |cx| {
-//                 pane.update(cx, |pane, cx| pane.history_updated(cx));
-//             });
-//         }
-//     }
-// }
+impl NavHistoryState {
+    pub fn did_update(&self, cx: &mut WindowContext) {
+        if let Some(pane) = self.pane.upgrade() {
+            cx.defer(move |cx| {
+                pane.update(cx, |pane, cx| pane.history_updated(cx));
+            });
+        }
+    }
+}
 
 // pub struct PaneBackdrop<V> {
 //     child_view: usize,

@@ -1,7 +1,7 @@
 use crate::ItemHandle;
-use gpui2::{AppContext, EventEmitter, View, ViewContext, WindowContext};
+use gpui2::{AnyView, AppContext, EventEmitter, Render, View, ViewContext, WindowContext};
 
-pub trait ToolbarItemView: EventEmitter + Sized {
+pub trait ToolbarItemView: Render + EventEmitter {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
@@ -22,14 +22,14 @@ pub trait ToolbarItemView: EventEmitter + Sized {
     /// Number of times toolbar's height will be repeated to get the effective height.
     /// Useful when multiple rows one under each other are needed.
     /// The rows have the same width and act as a whole when reacting to resizes and similar events.
-    fn row_count(&self, _cx: &ViewContext<Self>) -> usize {
+    fn row_count(&self, _cx: &WindowContext) -> usize {
         1
     }
 }
 
-trait ToolbarItemViewHandle {
+trait ToolbarItemViewHandle: Send {
     fn id(&self) -> usize;
-    // fn as_any(&self) -> &AnyViewHandle; todo!()
+    fn to_any(&self) -> AnyView;
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
@@ -249,7 +249,7 @@ impl Toolbar {
     pub fn item_of_type<T: ToolbarItemView>(&self) -> Option<View<T>> {
         self.items
             .iter()
-            .find_map(|(item, _)| item.as_any().clone().downcast())
+            .find_map(|(item, _)| item.to_any().downcast().ok())
     }
 
     pub fn hidden(&self) -> bool {
@@ -262,10 +262,9 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for View<T> {
         self.id()
     }
 
-    // todo!()
-    // fn as_any(&self) -> &AnyViewHandle {
-    //     self
-    // }
+    fn to_any(&self) -> AnyView {
+        self.clone().into_any()
+    }
 
     fn set_active_pane_item(
         &self,
@@ -285,7 +284,7 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for View<T> {
     }
 
     fn row_count(&self, cx: &WindowContext) -> usize {
-        self.read_with(cx, |this, cx| this.row_count(cx))
+        self.read(cx).row_count(cx)
     }
 }
 

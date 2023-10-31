@@ -14,7 +14,7 @@ pub use test_context::*;
 
 use crate::{
     current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AnyWindowHandle,
-    AppMetadata, AssetSource, ClipboardItem, Context, DispatchPhase, DisplayId, Executor,
+    AppMetadata, AssetSource, ClipboardItem, Context, DispatchPhase, DisplayId, Entity, Executor,
     FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly,
     Pixels, Platform, Point, Render, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
     TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window, WindowContext,
@@ -694,13 +694,17 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
-    pub fn observe_release<E: 'static>(
+    pub fn observe_release<E, T>(
         &mut self,
-        handle: &Model<E>,
-        mut on_release: impl FnMut(&mut E, &mut AppContext) + Send + 'static,
-    ) -> Subscription {
+        handle: &E,
+        mut on_release: impl FnMut(&mut T, &mut AppContext) + Send + 'static,
+    ) -> Subscription
+    where
+        E: Entity<T>,
+        T: 'static,
+    {
         self.release_listeners.insert(
-            handle.entity_id,
+            handle.entity_id(),
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
                 on_release(entity, cx)

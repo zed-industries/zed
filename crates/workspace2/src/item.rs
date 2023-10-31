@@ -1,88 +1,80 @@
-// use crate::{
-//     pane, persistence::model::ItemId, searchable::SearchableItemHandle, FollowableItemBuilders,
-//     ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
-// };
-// use crate::{AutosaveSetting, DelayedDebouncedEditAction, WorkspaceSettings};
+use crate::{
+    pane::{self, Pane},
+    persistence::model::ItemId,
+    searchable::SearchableItemHandle,
+    workspace_settings::{AutosaveSetting, WorkspaceSettings},
+    DelayedDebouncedEditAction, FollowableItemBuilders, ItemNavHistory, ToolbarItemLocation,
+    ViewId, Workspace, WorkspaceId,
+};
 use anyhow::Result;
 use client2::{
     proto::{self, PeerId},
     Client,
 };
+use gpui2::{
+    AnyElement, AnyView, AppContext, EventEmitter, HighlightStyle, Model, Pixels, Point, Render,
+    SharedString, Task, View, ViewContext, WeakView, WindowContext,
+};
+use parking_lot::Mutex;
+use project2::{Project, ProjectEntryId, ProjectPath};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use settings2::Settings;
+use smallvec::SmallVec;
+use std::{
+    any::{Any, TypeId},
+    ops::Range,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use theme2::Theme;
-// use client2::{
-//     proto::{self, PeerId},
-//     Client,
-// };
-// use gpui2::geometry::vector::Vector2F;
-// use gpui2::AnyWindowHandle;
-// use gpui2::{
-//     fonts::HighlightStyle, AnyElement, AnyViewHandle, AppContext, Model, Task, View,
-//     ViewContext, View, WeakViewHandle, WindowContext,
-// };
-// use project2::{Project, ProjectEntryId, ProjectPath};
-// use schemars::JsonSchema;
-// use serde_derive::{Deserialize, Serialize};
-// use settings2::Setting;
-// use smallvec::SmallVec;
-// use std::{
-//     any::{Any, TypeId},
-//     borrow::Cow,
-//     cell::RefCell,
-//     fmt,
-//     ops::Range,
-//     path::PathBuf,
-//     rc::Rc,
-//     sync::{
-//         atomic::{AtomicBool, Ordering},
-//         Arc,
-//     },
-//     time::Duration,
-// };
-// use theme2::Theme;
 
-// #[derive(Deserialize)]
-// pub struct ItemSettings {
-//     pub git_status: bool,
-//     pub close_position: ClosePosition,
-// }
+#[derive(Deserialize)]
+pub struct ItemSettings {
+    pub git_status: bool,
+    pub close_position: ClosePosition,
+}
 
-// #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-// #[serde(rename_all = "lowercase")]
-// pub enum ClosePosition {
-//     Left,
-//     #[default]
-//     Right,
-// }
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ClosePosition {
+    Left,
+    #[default]
+    Right,
+}
 
-// impl ClosePosition {
-//     pub fn right(&self) -> bool {
-//         match self {
-//             ClosePosition::Left => false,
-//             ClosePosition::Right => true,
-//         }
-//     }
-// }
+impl ClosePosition {
+    pub fn right(&self) -> bool {
+        match self {
+            ClosePosition::Left => false,
+            ClosePosition::Right => true,
+        }
+    }
+}
 
-// #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-// pub struct ItemSettingsContent {
-//     git_status: Option<bool>,
-//     close_position: Option<ClosePosition>,
-// }
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ItemSettingsContent {
+    git_status: Option<bool>,
+    close_position: Option<ClosePosition>,
+}
 
-// impl Setting for ItemSettings {
-//     const KEY: Option<&'static str> = Some("tabs");
+impl Settings for ItemSettings {
+    const KEY: Option<&'static str> = Some("tabs");
 
-//     type FileContent = ItemSettingsContent;
+    type FileContent = ItemSettingsContent;
 
-//     fn load(
-//         default_value: &Self::FileContent,
-//         user_values: &[&Self::FileContent],
-//         _: &gpui2::AppContext,
-//     ) -> anyhow::Result<Self> {
-//         Self::load_via_json_merge(default_value, user_values)
-//     }
-// }
+    fn load(
+        default_value: &Self::FileContent,
+        user_values: &[&Self::FileContent],
+        _: &mut AppContext,
+    ) -> Result<Self> {
+        Self::load_via_json_merge(default_value, user_values)
+    }
+}
 
 #[derive(Eq, PartialEq, Hash, Debug)]
 pub enum ItemEvent {
@@ -165,18 +157,18 @@ pub trait Item: Render + EventEmitter + Send {
         false
     }
 
-    //     fn act_as_type<'a>(
-    //         &'a self,
-    //         type_id: TypeId,
-    //         self_handle: &'a View<Self>,
-    //         _: &'a AppContext,
-    //     ) -> Option<&AnyViewHandle> {
-    //         if TypeId::of::<Self>() == type_id {
-    //             Some(self_handle)
-    //         } else {
-    //             None
-    //         }
-    //     }
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a View<Self>,
+        _: &'a AppContext,
+    ) -> Option<AnyView> {
+        if TypeId::of::<Self>() == type_id {
+            Some(self_handle.clone().into_any())
+        } else {
+            None
+        }
+    }
 
     fn as_searchable(&self, _: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         None
@@ -215,35 +207,6 @@ pub trait Item: Render + EventEmitter + Send {
     }
 }
 
-use std::{
-    any::Any,
-    cell::RefCell,
-    ops::Range,
-    path::PathBuf,
-    rc::Rc,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
-
-use gpui2::{
-    AnyElement, AnyView, AnyWindowHandle, AppContext, EventEmitter, HighlightStyle, Model, Pixels,
-    Point, Render, SharedString, Task, View, ViewContext, WeakView, WindowContext,
-};
-use project2::{Project, ProjectEntryId, ProjectPath};
-use smallvec::SmallVec;
-
-use crate::{
-    pane::{self, Pane},
-    persistence::model::ItemId,
-    searchable::SearchableItemHandle,
-    workspace_settings::{AutosaveSetting, WorkspaceSettings},
-    DelayedDebouncedEditAction, FollowableItemBuilders, ItemNavHistory, ToolbarItemLocation,
-    ViewId, Workspace, WorkspaceId,
-};
-
 pub trait ItemHandle: 'static + Send {
     fn subscribe_to_item_events(
         &self,
@@ -275,7 +238,6 @@ pub trait ItemHandle: 'static + Send {
     fn workspace_deactivated(&self, cx: &mut WindowContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut WindowContext) -> bool;
     fn id(&self) -> usize;
-    fn window(&self) -> AnyWindowHandle;
     fn to_any(&self) -> AnyView;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
@@ -288,12 +250,12 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn reload(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
-    // fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a AppContext) -> Option<&'a AnyViewHandle>; todo!()
+    fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyView>;
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
     fn on_release(
         &self,
         cx: &mut AppContext,
-        callback: Box<dyn FnOnce(&mut AppContext)>,
+        callback: Box<dyn FnOnce(&mut AppContext) + Send>,
     ) -> gpui2::Subscription;
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
@@ -303,23 +265,21 @@ pub trait ItemHandle: 'static + Send {
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
 }
 
-pub trait WeakItemHandle: Send {
+pub trait WeakItemHandle: Send + Sync {
     fn id(&self) -> usize;
-    fn window(&self) -> AnyWindowHandle;
     fn upgrade(&self) -> Option<Box<dyn ItemHandle>>;
 }
 
-// todo!()
-// impl dyn ItemHandle {
-//     pub fn downcast<T: View>(&self) -> Option<View<T>> {
-//         self.as_any().clone().downcast()
-//     }
+impl dyn ItemHandle {
+    pub fn downcast<V: 'static>(&self) -> Option<View<V>> {
+        self.to_any().downcast().ok()
+    }
 
-//     pub fn act_as<T: View>(&self, cx: &AppContext) -> Option<View<T>> {
-//         self.act_as_type(TypeId::of::<T>(), cx)
-//             .and_then(|t| t.clone().downcast())
-//     }
-// }
+    pub fn act_as<V: 'static>(&self, cx: &AppContext) -> Option<View<V>> {
+        self.act_as_type(TypeId::of::<V>(), cx)
+            .and_then(|t| t.downcast().ok())
+    }
+}
 
 impl<T: Item> ItemHandle for View<T> {
     fn subscribe_to_item_events(
@@ -438,8 +398,8 @@ impl<T: Item> ItemHandle for View<T> {
             .is_none()
         {
             let mut pending_autosave = DelayedDebouncedEditAction::new();
-            let pending_update = Rc::new(RefCell::new(None));
-            let pending_update_scheduled = Rc::new(AtomicBool::new(false));
+            let pending_update = Arc::new(Mutex::new(None));
+            let pending_update_scheduled = Arc::new(AtomicBool::new(false));
 
             let mut event_subscription =
                 Some(cx.subscribe(self, move |workspace, item, event, cx| {
@@ -462,33 +422,31 @@ impl<T: Item> ItemHandle for View<T> {
                             workspace.unfollow(&pane, cx);
                         }
 
-                        if item.add_event_to_update_proto(
-                            event,
-                            &mut *pending_update.borrow_mut(),
-                            cx,
-                        ) && !pending_update_scheduled.load(Ordering::SeqCst)
+                        if item.add_event_to_update_proto(event, &mut *pending_update.lock(), cx)
+                            && !pending_update_scheduled.load(Ordering::SeqCst)
                         {
                             pending_update_scheduled.store(true, Ordering::SeqCst);
-                            cx.after_window_update({
-                                let pending_update = pending_update.clone();
-                                let pending_update_scheduled = pending_update_scheduled.clone();
-                                move |this, cx| {
-                                    pending_update_scheduled.store(false, Ordering::SeqCst);
-                                    this.update_followers(
-                                        is_project_item,
-                                        proto::update_followers::Variant::UpdateView(
-                                            proto::UpdateView {
-                                                id: item
-                                                    .remote_id(&this.app_state.client, cx)
-                                                    .map(|id| id.to_proto()),
-                                                variant: pending_update.borrow_mut().take(),
-                                                leader_id,
-                                            },
-                                        ),
-                                        cx,
-                                    );
-                                }
-                            });
+                            todo!("replace with on_next_frame?");
+                            // cx.after_window_update({
+                            //     let pending_update = pending_update.clone();
+                            //     let pending_update_scheduled = pending_update_scheduled.clone();
+                            //     move |this, cx| {
+                            //         pending_update_scheduled.store(false, Ordering::SeqCst);
+                            //         this.update_followers(
+                            //             is_project_item,
+                            //             proto::update_followers::Variant::UpdateView(
+                            //                 proto::UpdateView {
+                            //                     id: item
+                            //                         .remote_id(&this.app_state.client, cx)
+                            //                         .map(|id| id.to_proto()),
+                            //                     variant: pending_update.borrow_mut().take(),
+                            //                     leader_id,
+                            //                 },
+                            //             ),
+                            //             cx,
+                            //         );
+                            //     }
+                            // });
                         }
                     }
 
@@ -525,15 +483,16 @@ impl<T: Item> ItemHandle for View<T> {
                     }
                 }));
 
-            cx.observe_focus(self, move |workspace, item, focused, cx| {
-                if !focused
-                    && WorkspaceSettings::get_global(cx).autosave == AutosaveSetting::OnFocusChange
-                {
-                    Pane::autosave_item(&item, workspace.project.clone(), cx)
-                        .detach_and_log_err(cx);
-                }
-            })
-            .detach();
+            todo!("observe focus");
+            // cx.observe_focus(self, move |workspace, item, focused, cx| {
+            //     if !focused
+            //         && WorkspaceSettings::get_global(cx).autosave == AutosaveSetting::OnFocusChange
+            //     {
+            //         Pane::autosave_item(&item, workspace.project.clone(), cx)
+            //             .detach_and_log_err(cx);
+            //     }
+            // })
+            // .detach();
 
             let item_id = self.id();
             cx.observe_release(self, move |workspace, _, _| {
@@ -562,11 +521,6 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn id(&self) -> usize {
         self.id()
-    }
-
-    fn window(&self) -> AnyWindowHandle {
-        todo!()
-        // AnyViewHandle::window(self)
     }
 
     fn to_any(&self) -> AnyView {
@@ -602,16 +556,15 @@ impl<T: Item> ItemHandle for View<T> {
         self.update(cx, |item, cx| item.reload(project, cx))
     }
 
-    // todo!()
-    // fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a AppContext) -> Option<&'a AnyViewHandle> {
-    //     self.read(cx).act_as_type(type_id, self, cx)
-    // }
+    fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a AppContext) -> Option<AnyView> {
+        self.read(cx).act_as_type(type_id, self, cx)
+    }
 
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>> {
         if cx.has_global::<FollowableItemBuilders>() {
             let builders = cx.global::<FollowableItemBuilders>();
-            let item = self.as_any();
-            Some(builders.get(&item.view_type())?.1(item))
+            let item = self.to_any();
+            Some(builders.get(&item.entity_type())?.1(&item))
         } else {
             None
         }
@@ -620,7 +573,7 @@ impl<T: Item> ItemHandle for View<T> {
     fn on_release(
         &self,
         cx: &mut AppContext,
-        callback: Box<dyn FnOnce(&mut AppContext)>,
+        callback: Box<dyn FnOnce(&mut AppContext) + Send>,
     ) -> gpui2::Subscription {
         cx.observe_release(self, move |_, cx| callback(cx))
     }
@@ -671,10 +624,6 @@ impl Clone for Box<dyn ItemHandle> {
 impl<T: Item> WeakItemHandle for WeakView<T> {
     fn id(&self) -> usize {
         self.id()
-    }
-
-    fn window(&self) -> AnyWindowHandle {
-        self.window()
     }
 
     fn upgrade(&self) -> Option<Box<dyn ItemHandle>> {

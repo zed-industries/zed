@@ -36,6 +36,10 @@ use std::{
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
 
+use crate::persistence::model::{
+    DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup,
+};
+
 // lazy_static! {
 //     static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
 //         .ok()
@@ -514,9 +518,9 @@ pub struct Workspace {
     //     zoomed: Option<AnyWeakViewHandle>,
     //     zoomed_position: Option<DockPosition>,
     //     center: PaneGroup,
-    //     left_dock: View<Dock>,
-    //     bottom_dock: View<Dock>,
-    //     right_dock: View<Dock>,
+    left_dock: View<Dock>,
+    bottom_dock: View<Dock>,
+    right_dock: View<Dock>,
     panes: Vec<View<Pane>>,
     panes_by_item: HashMap<usize, WeakView<Pane>>,
     //     active_pane: View<Pane>,
@@ -526,8 +530,8 @@ pub struct Workspace {
     //     titlebar_item: Option<AnyViewHandle>,
     //     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
-    //     follower_states: HashMap<View<Pane>, FollowerState>,
-    //     last_leaders_by_pane: HashMap<WeakView<Pane>, PeerId>,
+    follower_states: HashMap<View<Pane>, FollowerState>,
+    last_leaders_by_pane: HashMap<WeakView<Pane>, PeerId>,
     //     window_edited: bool,
     //     active_call: Option<(ModelHandle<ActiveCall>, Vec<Subscription>)>,
     //     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
@@ -2613,37 +2617,33 @@ impl Workspace {
     //         self.start_following(leader_id, cx)
     //     }
 
-    //     pub fn unfollow(
-    //         &mut self,
-    //         pane: &View<Pane>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<PeerId> {
-    //         let state = self.follower_states.remove(pane)?;
-    //         let leader_id = state.leader_id;
-    //         for (_, item) in state.items_by_leader_view_id {
-    //             item.set_leader_peer_id(None, cx);
-    //         }
+    pub fn unfollow(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) -> Option<PeerId> {
+        let state = self.follower_states.remove(pane)?;
+        let leader_id = state.leader_id;
+        for (_, item) in state.items_by_leader_view_id {
+            item.set_leader_peer_id(None, cx);
+        }
 
-    //         if self
-    //             .follower_states
-    //             .values()
-    //             .all(|state| state.leader_id != state.leader_id)
-    //         {
-    //             let project_id = self.project.read(cx).remote_id();
-    //             let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
-    //             self.app_state
-    //                 .client
-    //                 .send(proto::Unfollow {
-    //                     room_id,
-    //                     project_id,
-    //                     leader_id: Some(leader_id),
-    //                 })
-    //                 .log_err();
-    //         }
+        if self
+            .follower_states
+            .values()
+            .all(|state| state.leader_id != state.leader_id)
+        {
+            let project_id = self.project.read(cx).remote_id();
+            let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
+            self.app_state
+                .client
+                .send(proto::Unfollow {
+                    room_id,
+                    project_id,
+                    leader_id: Some(leader_id),
+                })
+                .log_err();
+        }
 
-    //         cx.notify();
-    //         Some(leader_id)
-    //     }
+        cx.notify();
+        Some(leader_id)
+    }
 
     //     pub fn is_being_followed(&self, peer_id: PeerId) -> bool {
     //         self.follower_states
@@ -3210,137 +3210,134 @@ impl Workspace {
     //         }));
     //     }
 
-    //     fn serialize_workspace(&self, cx: &ViewContext<Self>) {
-    //         fn serialize_pane_handle(
-    //             pane_handle: &View<Pane>,
-    //             cx: &AppContext,
-    //         ) -> SerializedPane {
-    //             let (items, active) = {
-    //                 let pane = pane_handle.read(cx);
-    //                 let active_item_id = pane.active_item().map(|item| item.id());
-    //                 (
-    //                     pane.items()
-    //                         .filter_map(|item_handle| {
-    //                             Some(SerializedItem {
-    //                                 kind: Arc::from(item_handle.serialized_item_kind()?),
-    //                                 item_id: item_handle.id(),
-    //                                 active: Some(item_handle.id()) == active_item_id,
-    //                             })
-    //                         })
-    //                         .collect::<Vec<_>>(),
-    //                     pane.has_focus(),
-    //                 )
-    //             };
+    fn serialize_workspace(&self, cx: &ViewContext<Self>) {
+        fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &AppContext) -> SerializedPane {
+            let (items, active) = {
+                let pane = pane_handle.read(cx);
+                let active_item_id = pane.active_item().map(|item| item.id());
+                (
+                    pane.items()
+                        .filter_map(|item_handle| {
+                            Some(SerializedItem {
+                                kind: Arc::from(item_handle.serialized_item_kind()?),
+                                item_id: item_handle.id(),
+                                active: Some(item_handle.id()) == active_item_id,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                    pane.has_focus(),
+                )
+            };
 
-    //             SerializedPane::new(items, active)
-    //         }
+            SerializedPane::new(items, active)
+        }
 
-    //         fn build_serialized_pane_group(
-    //             pane_group: &Member,
-    //             cx: &AppContext,
-    //         ) -> SerializedPaneGroup {
-    //             match pane_group {
-    //                 Member::Axis(PaneAxis {
-    //                     axis,
-    //                     members,
-    //                     flexes,
-    //                     bounding_boxes: _,
-    //                 }) => SerializedPaneGroup::Group {
-    //                     axis: *axis,
-    //                     children: members
-    //                         .iter()
-    //                         .map(|member| build_serialized_pane_group(member, cx))
-    //                         .collect::<Vec<_>>(),
-    //                     flexes: Some(flexes.borrow().clone()),
-    //                 },
-    //                 Member::Pane(pane_handle) => {
-    //                     SerializedPaneGroup::Pane(serialize_pane_handle(&pane_handle, cx))
-    //                 }
-    //             }
-    //         }
+        fn build_serialized_pane_group(
+            pane_group: &Member,
+            cx: &AppContext,
+        ) -> SerializedPaneGroup {
+            match pane_group {
+                Member::Axis(PaneAxis {
+                    axis,
+                    members,
+                    flexes,
+                    bounding_boxes: _,
+                }) => SerializedPaneGroup::Group {
+                    axis: *axis,
+                    children: members
+                        .iter()
+                        .map(|member| build_serialized_pane_group(member, cx))
+                        .collect::<Vec<_>>(),
+                    flexes: Some(flexes.borrow().clone()),
+                },
+                Member::Pane(pane_handle) => {
+                    SerializedPaneGroup::Pane(serialize_pane_handle(&pane_handle, cx))
+                }
+            }
+        }
 
-    //         fn build_serialized_docks(this: &Workspace, cx: &ViewContext<Workspace>) -> DockStructure {
-    //             let left_dock = this.left_dock.read(cx);
-    //             let left_visible = left_dock.is_open();
-    //             let left_active_panel = left_dock.visible_panel().and_then(|panel| {
-    //                 Some(
-    //                     cx.view_ui_name(panel.as_any().window(), panel.id())?
-    //                         .to_string(),
-    //                 )
-    //             });
-    //             let left_dock_zoom = left_dock
-    //                 .visible_panel()
-    //                 .map(|panel| panel.is_zoomed(cx))
-    //                 .unwrap_or(false);
+        fn build_serialized_docks(this: &Workspace, cx: &ViewContext<Workspace>) -> DockStructure {
+            let left_dock = this.left_dock.read(cx);
+            let left_visible = left_dock.is_open();
+            let left_active_panel = left_dock.visible_panel().and_then(|panel| {
+                Some(
+                    cx.view_ui_name(panel.as_any().window(), panel.id())?
+                        .to_string(),
+                )
+            });
+            let left_dock_zoom = left_dock
+                .visible_panel()
+                .map(|panel| panel.is_zoomed(cx))
+                .unwrap_or(false);
 
-    //             let right_dock = this.right_dock.read(cx);
-    //             let right_visible = right_dock.is_open();
-    //             let right_active_panel = right_dock.visible_panel().and_then(|panel| {
-    //                 Some(
-    //                     cx.view_ui_name(panel.as_any().window(), panel.id())?
-    //                         .to_string(),
-    //                 )
-    //             });
-    //             let right_dock_zoom = right_dock
-    //                 .visible_panel()
-    //                 .map(|panel| panel.is_zoomed(cx))
-    //                 .unwrap_or(false);
+            let right_dock = this.right_dock.read(cx);
+            let right_visible = right_dock.is_open();
+            let right_active_panel = right_dock.visible_panel().and_then(|panel| {
+                Some(
+                    cx.view_ui_name(panel.as_any().window(), panel.id())?
+                        .to_string(),
+                )
+            });
+            let right_dock_zoom = right_dock
+                .visible_panel()
+                .map(|panel| panel.is_zoomed(cx))
+                .unwrap_or(false);
 
-    //             let bottom_dock = this.bottom_dock.read(cx);
-    //             let bottom_visible = bottom_dock.is_open();
-    //             let bottom_active_panel = bottom_dock.visible_panel().and_then(|panel| {
-    //                 Some(
-    //                     cx.view_ui_name(panel.as_any().window(), panel.id())?
-    //                         .to_string(),
-    //                 )
-    //             });
-    //             let bottom_dock_zoom = bottom_dock
-    //                 .visible_panel()
-    //                 .map(|panel| panel.is_zoomed(cx))
-    //                 .unwrap_or(false);
+            let bottom_dock = this.bottom_dock.read(cx);
+            let bottom_visible = bottom_dock.is_open();
+            let bottom_active_panel = bottom_dock.visible_panel().and_then(|panel| {
+                Some(
+                    cx.view_ui_name(panel.as_any().window(), panel.id())?
+                        .to_string(),
+                )
+            });
+            let bottom_dock_zoom = bottom_dock
+                .visible_panel()
+                .map(|panel| panel.is_zoomed(cx))
+                .unwrap_or(false);
 
-    //             DockStructure {
-    //                 left: DockData {
-    //                     visible: left_visible,
-    //                     active_panel: left_active_panel,
-    //                     zoom: left_dock_zoom,
-    //                 },
-    //                 right: DockData {
-    //                     visible: right_visible,
-    //                     active_panel: right_active_panel,
-    //                     zoom: right_dock_zoom,
-    //                 },
-    //                 bottom: DockData {
-    //                     visible: bottom_visible,
-    //                     active_panel: bottom_active_panel,
-    //                     zoom: bottom_dock_zoom,
-    //                 },
-    //             }
-    //         }
+            DockStructure {
+                left: DockData {
+                    visible: left_visible,
+                    active_panel: left_active_panel,
+                    zoom: left_dock_zoom,
+                },
+                right: DockData {
+                    visible: right_visible,
+                    active_panel: right_active_panel,
+                    zoom: right_dock_zoom,
+                },
+                bottom: DockData {
+                    visible: bottom_visible,
+                    active_panel: bottom_active_panel,
+                    zoom: bottom_dock_zoom,
+                },
+            }
+        }
 
-    //         if let Some(location) = self.location(cx) {
-    //             // Load bearing special case:
-    //             //  - with_local_workspace() relies on this to not have other stuff open
-    //             //    when you open your log
-    //             if !location.paths().is_empty() {
-    //                 let center_group = build_serialized_pane_group(&self.center.root, cx);
-    //                 let docks = build_serialized_docks(self, cx);
+        if let Some(location) = self.location(cx) {
+            // Load bearing special case:
+            //  - with_local_workspace() relies on this to not have other stuff open
+            //    when you open your log
+            if !location.paths().is_empty() {
+                let center_group = build_serialized_pane_group(&self.center.root, cx);
+                let docks = build_serialized_docks(self, cx);
 
-    //                 let serialized_workspace = SerializedWorkspace {
-    //                     id: self.database_id,
-    //                     location,
-    //                     center_group,
-    //                     bounds: Default::default(),
-    //                     display: Default::default(),
-    //                     docks,
-    //                 };
+                let serialized_workspace = SerializedWorkspace {
+                    id: self.database_id,
+                    location,
+                    center_group,
+                    bounds: Default::default(),
+                    display: Default::default(),
+                    docks,
+                };
 
-    //                 cx.background()
-    //                     .spawn(persistence::DB.save_workspace(serialized_workspace))
-    //                     .detach();
-    //             }
-    //         }
-    //     }
+                cx.background()
+                    .spawn(persistence::DB.save_workspace(serialized_workspace))
+                    .detach();
+            }
+        }
+    }
 
     //     pub(crate) fn load_workspace(
     //         workspace: WeakView<Workspace>,

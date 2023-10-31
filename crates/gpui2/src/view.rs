@@ -314,7 +314,7 @@ impl AnyView {
             .map_err(|_| self)
     }
 
-    pub(crate) fn entity_type(&self) -> TypeId {
+    pub fn entity_type(&self) -> TypeId {
         self.0.entity_type()
     }
 
