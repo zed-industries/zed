@@ -172,7 +172,7 @@ impl AnyModel {
         }
     }
 
-    pub fn downcast<T: 'static>(&self) -> Option<Model<T>> {
+    pub fn downcast<T: 'static>(self) -> Option<Model<T>> {
         if TypeId::of::<T>() == self.entity_type {
             Some(Model {
                 any_model: self.clone(),
