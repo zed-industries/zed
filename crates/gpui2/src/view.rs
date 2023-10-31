@@ -4,7 +4,12 @@ use crate::{
     Size, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
-use std::{any::TypeId, marker::PhantomData, sync::Arc};
+use std::{
+    any::TypeId,
+    hash::{Hash, Hasher},
+    marker::PhantomData,
+    sync::Arc,
+};
 
 pub trait Render: 'static + Sized {
     type Element: Element<Self> + 'static + Send;
@@ -75,6 +80,20 @@ impl<V> Clone for View<V> {
         }
     }
 }
+
+impl<V> Hash for View<V> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.model.hash(state);
+    }
+}
+
+impl<V> PartialEq for View<V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.model == other.model
+    }
+}
+
+impl<V> Eq for View<V> {}
 
 impl<V: Render, ParentViewState: 'static> Component<ParentViewState> for View<V> {
     fn render(self) -> AnyElement<ParentViewState> {
