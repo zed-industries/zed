@@ -178,6 +178,20 @@ impl<V> Clone for WeakView<V> {
     }
 }
 
+impl<V> Hash for WeakView<V> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.model.hash(state);
+    }
+}
+
+impl<V> PartialEq for WeakView<V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.model == other.model
+    }
+}
+
+impl<V> Eq for WeakView<V> {}
+
 struct EraseViewState<V, ParentV> {
     view: View<V>,
     parent_view_state_type: PhantomData<ParentV>,
