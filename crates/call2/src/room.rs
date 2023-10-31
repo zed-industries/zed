@@ -19,7 +19,7 @@ use gpui2::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
 use language2::LanguageRegistry;
-use live_kit_client::{LocalTrackPublication, RemoteAudioTrackUpdate, RemoteVideoTrackUpdate};
+use live_kit_client2::{LocalTrackPublication, RemoteAudioTrackUpdate, RemoteVideoTrackUpdate};
 use postage::{sink::Sink, stream::Stream, watch};
 use project2::Project;
 use settings2::Settings;
@@ -59,7 +59,7 @@ pub enum Event {
 pub struct Room {
     id: u64,
     channel_id: Option<u64>,
-    // live_kit: Option<LiveKitRoom>,
+    live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
     shared_projects: HashSet<WeakModel<Project>>,
     joined_projects: HashSet<WeakModel<Project>>,
@@ -114,125 +114,130 @@ impl Room {
         user_store: Model<UserStore>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        todo!()
-        // let _live_kit_room = if let Some(connection_info) = live_kit_connection_info {
-        //     let room = live_kit_client::Room::new();
-        //     let mut status = room.status();
-        //     // Consume the initial status of the room.
-        //     let _ = status.try_recv();
-        //     let _maintain_room = cx.spawn(|this, mut cx| async move {
-        //         while let Some(status) = status.next().await {
-        //             let this = if let Some(this) = this.upgrade() {
-        //                 this
-        //             } else {
-        //                 break;
-        //             };
+        let live_kit_room = if let Some(connection_info) = live_kit_connection_info {
+            let room = live_kit_client2::Room::new();
+            let mut status = room.status();
+            // Consume the initial status of the room.
+            let _ = status.try_recv();
+            let _maintain_room = cx.spawn(|this, mut cx| async move {
+                while let Some(status) = status.next().await {
+                    let this = if let Some(this) = this.upgrade() {
+                        this
+                    } else {
+                        break;
+                    };
 
-        //             if status == live_kit_client::ConnectionState::Disconnected {
-        //                 this.update(&mut cx, |this, cx| this.leave(cx).log_err())
-        //                     .ok();
-        //                 break;
-        //             }
-        //         }
-        //     });
+                    if status == live_kit_client2::ConnectionState::Disconnected {
+                        this.update(&mut cx, |this, cx| this.leave(cx).log_err())
+                            .ok();
+                        break;
+                    }
+                }
+            });
 
-        //     let mut track_video_changes = room.remote_video_track_updates();
-        //     let _maintain_video_tracks = cx.spawn(|this, mut cx| async move {
-        //         while let Some(track_change) = track_video_changes.next().await {
-        //             let this = if let Some(this) = this.upgrade() {
-        //                 this
-        //             } else {
-        //                 break;
-        //             };
+            let _maintain_video_tracks = cx.spawn_on_main({
+                let room = room.clone();
+                move |this, mut cx| async move {
+                    let mut track_video_changes = room.remote_video_track_updates();
+                    while let Some(track_change) = track_video_changes.next().await {
+                        let this = if let Some(this) = this.upgrade() {
+                            this
+                        } else {
+                            break;
+                        };
 
-        //             this.update(&mut cx, |this, cx| {
-        //                 this.remote_video_track_updated(track_change, cx).log_err()
-        //             })
-        //             .ok();
-        //         }
-        //     });
+                        this.update(&mut cx, |this, cx| {
+                            this.remote_video_track_updated(track_change, cx).log_err()
+                        })
+                        .ok();
+                    }
+                }
+            });
 
-        //     let mut track_audio_changes = room.remote_audio_track_updates();
-        //     let _maintain_audio_tracks = cx.spawn(|this, mut cx| async move {
-        //         while let Some(track_change) = track_audio_changes.next().await {
-        //             let this = if let Some(this) = this.upgrade() {
-        //                 this
-        //             } else {
-        //                 break;
-        //             };
+            let _maintain_audio_tracks = cx.spawn_on_main({
+                let room = room.clone();
+                |this, mut cx| async move {
+                    let mut track_audio_changes = room.remote_audio_track_updates();
+                    while let Some(track_change) = track_audio_changes.next().await {
+                        let this = if let Some(this) = this.upgrade() {
+                            this
+                        } else {
+                            break;
+                        };
 
-        //             this.update(&mut cx, |this, cx| {
-        //                 this.remote_audio_track_updated(track_change, cx).log_err()
-        //             })
-        //             .ok();
-        //         }
-        //     });
+                        this.update(&mut cx, |this, cx| {
+                            this.remote_audio_track_updated(track_change, cx).log_err()
+                        })
+                        .ok();
+                    }
+                }
+            });
 
-        //     let connect = room.connect(&connection_info.server_url, &connection_info.token);
-        //     cx.spawn(|this, mut cx| async move {
-        //         connect.await?;
+            let connect = room.connect(&connection_info.server_url, &connection_info.token);
+            cx.spawn(|this, mut cx| async move {
+                connect.await?;
 
-        //         if !cx.update(|cx| Self::mute_on_join(cx))? {
-        //             this.update(&mut cx, |this, cx| this.share_microphone(cx))?
-        //                 .await?;
-        //         }
+                if !cx.update(|cx| Self::mute_on_join(cx))? {
+                    this.update(&mut cx, |this, cx| this.share_microphone(cx))?
+                        .await?;
+                }
 
-        //         anyhow::Ok(())
-        //     })
-        //     .detach_and_log_err(cx);
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
 
-        //     Some(LiveKitRoom {
-        //         room,
-        //         screen_track: LocalTrack::None,
-        //         microphone_track: LocalTrack::None,
-        //         next_publish_id: 0,
-        //         muted_by_user: false,
-        //         deafened: false,
-        //         speaking: false,
-        //         _maintain_room,
-        //         _maintain_tracks: [_maintain_video_tracks, _maintain_audio_tracks],
-        //     })
-        // } else {
-        //     None
-        // };
+            Some(LiveKitRoom {
+                room,
+                screen_track: LocalTrack::None,
+                microphone_track: LocalTrack::None,
+                next_publish_id: 0,
+                muted_by_user: false,
+                deafened: false,
+                speaking: false,
+                _maintain_room,
+                _maintain_tracks: [_maintain_video_tracks, _maintain_audio_tracks],
+            })
+        } else {
+            None
+        };
 
-        // let maintain_connection = cx.spawn({
-        //     let client = client.clone();
-        //     move |this, cx| Self::maintain_connection(this, client.clone(), cx).log_err()
-        // });
+        let maintain_connection = cx.spawn({
+            let client = client.clone();
+            move |this, cx| Self::maintain_connection(this, client.clone(), cx).log_err()
+        });
 
-        // Audio::play_sound(Sound::Joined, cx);
+        Audio::play_sound(Sound::Joined, cx);
 
-        // let (room_update_completed_tx, room_update_completed_rx) = watch::channel();
+        let (room_update_completed_tx, room_update_completed_rx) = watch::channel();
 
-        // Self {
-        //     id,
-        //     channel_id,
-        //     // live_kit: live_kit_room,
-        //     status: RoomStatus::Online,
-        //     shared_projects: Default::default(),
-        //     joined_projects: Default::default(),
-        //     participant_user_ids: Default::default(),
-        //     local_participant: Default::default(),
-        //     remote_participants: Default::default(),
-        //     pending_participants: Default::default(),
-        //     pending_call_count: 0,
-        //     client_subscriptions: vec![
-        //         client.add_message_handler(cx.weak_handle(), Self::handle_room_updated)
-        //     ],
-        //     _subscriptions: vec![
-        //         cx.on_release(Self::released),
-        //         cx.on_app_quit(Self::app_will_quit),
-        //     ],
-        //     leave_when_empty: false,
-        //     pending_room_update: None,
-        //     client,
-        //     user_store,
-        //     follows_by_leader_id_project_id: Default::default(),
-        //     maintain_connection: Some(maintain_connection),
-        //     room_update_completed_tx,
-        //     room_update_completed_rx,
-        // }
+        Self {
+            id,
+            channel_id,
+            live_kit: live_kit_room,
+            status: RoomStatus::Online,
+            shared_projects: Default::default(),
+            joined_projects: Default::default(),
+            participant_user_ids: Default::default(),
+            local_participant: Default::default(),
+            remote_participants: Default::default(),
+            pending_participants: Default::default(),
+            pending_call_count: 0,
+            client_subscriptions: vec![
+                client.add_message_handler(cx.weak_model(), Self::handle_room_updated)
+            ],
+            _subscriptions: vec![
+                cx.on_release(Self::released),
+                cx.on_app_quit(Self::app_will_quit),
+            ],
+            leave_when_empty: false,
+            pending_room_update: None,
+            client,
+            user_store,
+            follows_by_leader_id_project_id: Default::default(),
+            maintain_connection: Some(maintain_connection),
+            room_update_completed_tx,
+            room_update_completed_rx,
+        }
     }
 
     pub(crate) fn create(
@@ -1518,7 +1523,7 @@ impl Room {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn set_display_sources(&self, sources: Vec<live_kit_client::MacOSDisplay>) {
+    pub fn set_display_sources(&self, sources: Vec<live_kit_client2::MacOSDisplay>) {
         todo!()
         // self.live_kit
         //     .as_ref()
@@ -1529,7 +1534,7 @@ impl Room {
 }
 
 struct LiveKitRoom {
-    room: Arc<live_kit_client::Room>,
+    room: Arc<live_kit_client2::Room>,
     screen_track: LocalTrack,
     microphone_track: LocalTrack,
     /// Tracks whether we're currently in a muted state due to auto-mute from deafening or manual mute performed by user.

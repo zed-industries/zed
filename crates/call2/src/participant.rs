@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use client2::ParticipantIndex;
 use client2::{proto, User};
 use gpui2::WeakModel;
-pub use live_kit_client::Frame;
+pub use live_kit_client2::Frame;
 use project2::Project;
 use std::{fmt, sync::Arc};
 
@@ -51,7 +51,7 @@ pub struct RemoteParticipant {
 
 #[derive(Clone)]
 pub struct RemoteVideoTrack {
-    pub(crate) live_kit_track: Arc<live_kit_client::RemoteVideoTrack>,
+    pub(crate) live_kit_track: Arc<live_kit_client2::RemoteVideoTrack>,
 }
 
 unsafe impl Send for RemoteVideoTrack {}
