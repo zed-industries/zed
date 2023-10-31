@@ -1,2 +1,0 @@
-mod color;
-mod theme;

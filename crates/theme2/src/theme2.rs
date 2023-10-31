@@ -1,5 +1,6 @@
 mod colors;
-mod default;
+mod default_colors;
+mod default_theme;
 mod family;
 mod registry;
 mod scale;
@@ -7,7 +8,8 @@ mod settings;
 mod themes;
 mod utils;
 
-pub use default::*;
+pub use default_colors::*;
+pub use default_theme::*;
 pub use registry::*;
 pub use scale::*;
 pub use settings::*;

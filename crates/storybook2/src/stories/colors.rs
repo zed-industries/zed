@@ -1,5 +1,6 @@
 use crate::story::Story;
 use gpui2::{px, Div, Render};
+use theme2::default_color_scales;
 use ui::prelude::*;
 
 pub struct ColorsStory;
@@ -8,7 +9,7 @@ impl Render for ColorsStory {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let color_scales = theme2::default_color_scales();
+        let color_scales = default_color_scales();
 
         Story::container(cx)
             .child(Story::title(cx, "Colors"))

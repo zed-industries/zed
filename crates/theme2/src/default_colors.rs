@@ -6,7 +6,6 @@ use crate::{
         GitStatusColorName, GitStatusColors, PlayerColor, PlayerColors, StatusColorName,
         StatusColors, SystemColors, ThemeColors, ThemeStyleName,
     },
-    family::ThemeVariant,
     scale::{ColorScaleName, ColorScaleSet, ColorScales},
 };
 
