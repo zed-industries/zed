@@ -376,6 +376,15 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.notify();
     }
 
+    /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
+    /// that are currently on the stack to be returned to the app.
+    pub fn defer(&mut self, f: impl FnOnce(&mut WindowContext) + 'static + Send) {
+        let window = self.window.handle;
+        self.app.defer(move |cx| {
+            cx.update_window(window, f).ok();
+        });
+    }
+
     pub fn subscribe<Emitter, E>(
         &mut self,
         entity: &E,
@@ -1593,6 +1602,15 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     {
         let view = self.view().upgrade().unwrap();
         self.window_cx.on_next_frame(move |cx| view.update(cx, f));
+    }
+
+    /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
+    /// that are currently on the stack to be returned to the app.
+    pub fn defer(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static + Send) {
+        let view = self.view();
+        self.window_cx.defer(move |cx| {
+            view.update(cx, f).ok();
+        });
     }
 
     pub fn observe<V2, E>(
