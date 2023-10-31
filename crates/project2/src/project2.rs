@@ -162,8 +162,7 @@ pub struct Project {
     copilot_log_subscription: Option<lsp2::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
     node: Option<Arc<dyn NodeRuntime>>,
-    // TODO kb uncomment
-    // #[cfg(not(any(test, feature = "test-support")))]
+    #[cfg(not(any(test, feature = "test-support")))]
     default_prettier: Option<DefaultPrettier>,
     prettier_instances: HashMap<
         (Option<WorktreeId>, PathBuf),
@@ -171,8 +170,7 @@ pub struct Project {
     >,
 }
 
-// TODO kb uncomment
-// #[cfg(not(any(test, feature = "test-support")))]
+#[cfg(not(any(test, feature = "test-support")))]
 struct DefaultPrettier {
     installation_process: Option<Shared<Task<()>>>,
     installed_plugins: HashSet<&'static str>,
@@ -688,8 +686,7 @@ impl Project {
                 copilot_log_subscription: None,
                 current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 node: Some(node),
-                // TODO kb uncomment
-                // #[cfg(not(any(test, feature = "test-support")))]
+                #[cfg(not(any(test, feature = "test-support")))]
                 default_prettier: None,
                 prettier_instances: HashMap::default(),
             }
@@ -792,8 +789,7 @@ impl Project {
                 copilot_log_subscription: None,
                 current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 node: None,
-                // TODO kb uncomment
-                // #[cfg(not(any(test, feature = "test-support")))]
+                #[cfg(not(any(test, feature = "test-support")))]
                 default_prettier: None,
                 prettier_instances: HashMap::default(),
             };
@@ -8568,19 +8564,18 @@ impl Project {
         }
     }
 
-    // TODO kb uncomment
-    // #[cfg(any(test, feature = "test-support"))]
-    // fn install_default_formatters(
-    //     &mut self,
-    //     _: Option<WorktreeId>,
-    //     _: &Language,
-    //     _: &LanguageSettings,
-    //     _: &mut ModelContext<Self>,
-    // ) -> Task<anyhow::Result<()>> {
-    //     Task::ready(Ok(()))
-    // }
+    #[cfg(any(test, feature = "test-support"))]
+    fn install_default_formatters(
+        &mut self,
+        _: Option<WorktreeId>,
+        _: &Language,
+        _: &LanguageSettings,
+        _: &mut ModelContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        Task::ready(Ok(()))
+    }
 
-    // #[cfg(not(any(test, feature = "test-support")))]
+    #[cfg(not(any(test, feature = "test-support")))]
     fn install_default_formatters(
         &mut self,
         worktree: Option<WorktreeId>,
