@@ -64,8 +64,8 @@ impl TestAppContext {
     }
 
     pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> R {
-        let mut lock = self.app.lock();
-        f(&mut *lock)
+        let mut cx = self.app.lock();
+        cx.update(f)
     }
 
     pub fn read_window<R>(

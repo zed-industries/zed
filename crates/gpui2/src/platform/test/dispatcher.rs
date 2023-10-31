@@ -77,7 +77,6 @@ impl TestDispatcher {
             type Output = ();
 
             fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-                eprintln!("self.count: {}", self.count);
                 if self.count > 0 {
                     self.count -= 1;
                     cx.waker().wake_by_ref();
