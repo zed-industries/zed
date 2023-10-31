@@ -8,6 +8,7 @@ mod syntax;
 mod themes;
 mod utils;
 
+pub use colors::*;
 pub use default_colors::*;
 pub use default_theme::*;
 pub use registry::*;
@@ -31,6 +32,15 @@ pub enum Appearance {
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ThemeRegistry::default());
     ThemeSettings::register(cx);
+}
+
+pub fn active_theme<'a>(cx: &'a AppContext) -> &'a Arc<ThemeVariant> {
+    // &ThemeSettings::get_global(cx).active_theme
+    todo!()
+}
+
+pub fn theme(cx: &AppContext) -> Arc<ThemeVariant> {
+    active_theme(cx).clone()
 }
 
 pub fn old_active_theme<'a>(cx: &'a AppContext) -> &'a Arc<Theme> {

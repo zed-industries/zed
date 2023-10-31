@@ -19,9 +19,17 @@ impl Breadcrumb {
     }
 
     fn render_separator<V: 'static>(&self, cx: &WindowContext) -> Div<V> {
-        let theme = old_theme(cx);
+        let theme = theme(cx);
 
-        div().child(" › ").text_color(theme.text_muted)
+        div().child(" › ").text_color(
+            theme
+                .styles
+                .color
+                .0
+                .get(&ThemeStyleName::TextMuted)
+                .cloned()
+                .unwrap(),
+        )
     }
 
     fn render<V: 'static>(self, view_state: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
@@ -70,6 +78,7 @@ impl Breadcrumb {
 
 #[cfg(feature = "stories")]
 pub use stories::*;
+use theme2::ThemeStyleName;
 
 #[cfg(feature = "stories")]
 mod stories {
