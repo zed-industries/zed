@@ -5132,7 +5132,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
 
     let format = editor.update(cx, |editor, cx| {
-        editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+        editor.perform_format(FormatTrigger::Manual, cx)
     });
     fake_server
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
@@ -5149,7 +5149,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         .next()
         .await;
     cx.foreground().start_waiting();
-    format.await.unwrap();
+    format.unwrap().await.unwrap();
     assert_eq!(
         editor.read_with(cx, |editor, cx| editor.text(cx)),
         "one, two\nthree\n"
@@ -5166,11 +5166,11 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         unreachable!()
     });
     let format = editor.update(cx, |editor, cx| {
-        editor.perform_format(project, FormatTrigger::Manual, cx)
+        editor.perform_format(FormatTrigger::Manual, cx)
     });
     cx.foreground().advance_clock(super::FORMAT_TIMEOUT);
     cx.foreground().start_waiting();
-    format.await.unwrap();
+    format.unwrap().await.unwrap();
     assert_eq!(
         editor.read_with(cx, |editor, cx| editor.text(cx)),
         "one\ntwo\nthree\n"
@@ -8014,9 +8014,9 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     editor.update(cx, |editor, cx| editor.set_text(buffer_text, cx));
 
     let format = editor.update(cx, |editor, cx| {
-        editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+        editor.perform_format(FormatTrigger::Manual, cx)
     });
-    format.await.unwrap();
+    format.unwrap().await.unwrap();
     assert_eq!(
         editor.read_with(cx, |editor, cx| editor.text(cx)),
         buffer_text.to_string() + prettier_format_suffix,
@@ -8027,9 +8027,9 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         settings.defaults.formatter = Some(language_settings::Formatter::Auto)
     });
     let format = editor.update(cx, |editor, cx| {
-        editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+        editor.perform_format(FormatTrigger::Manual, cx)
     });
-    format.await.unwrap();
+    format.unwrap().await.unwrap();
     assert_eq!(
         editor.read_with(cx, |editor, cx| editor.text(cx)),
         buffer_text.to_string() + prettier_format_suffix + "\n" + prettier_format_suffix,

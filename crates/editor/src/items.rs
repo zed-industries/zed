@@ -3,7 +3,7 @@ use crate::{
     movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
     Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
@@ -652,7 +652,9 @@ impl Item for Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         self.report_editor_event("save", None, cx);
-        let format = self.perform_format(project.clone(), FormatTrigger::Save, cx);
+        let Some(format) = self.perform_format(FormatTrigger::Save, cx) else {
+            return Task::ready(Err(anyhow!("Editor does not have a formatter attached")));
+        };
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.spawn(|_, mut cx| async move {
             format.await?;

@@ -1444,6 +1444,112 @@ impl RenameProvider for ModelHandle<Rename2> {
     }
 }
 
+trait FormatProvider {
+    fn perform_format(
+        &mut self,
+        editor: &mut Editor,
+        trigger: FormatTrigger,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<()>>;
+    fn trigger_on_type_formatting(
+        &self,
+        editor: &Editor,
+        input: String,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<Task<Result<()>>>;
+}
+
+struct Formatter {
+    project: ModelHandle<Project>,
+}
+
+impl Entity for Formatter {
+    type Event = ();
+}
+impl FormatProvider for ModelHandle<Formatter> {
+    fn perform_format(
+        &mut self,
+        editor: &mut Editor,
+        trigger: FormatTrigger,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<()>> {
+        let buffer = editor.buffer().clone();
+        let buffers = buffer.read(cx).all_buffers();
+
+        let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
+        let project = self.read(cx).project.clone();
+        let format = project.update(cx, |project, cx| project.format(buffers, true, trigger, cx));
+
+        cx.spawn(|_, mut cx| async move {
+            let transaction = futures::select_biased! {
+                _ = timeout => {
+                    log::warn!("timed out waiting for formatting");
+                    None
+                }
+                transaction = format.log_err().fuse() => transaction,
+            };
+
+            buffer.update(&mut cx, |buffer, cx| {
+                if let Some(transaction) = transaction {
+                    if !buffer.is_singleton() {
+                        buffer.push_transaction(&transaction.0, cx);
+                    }
+                }
+
+                cx.notify();
+            });
+
+            Ok(())
+        })
+    }
+    fn trigger_on_type_formatting(
+        &self,
+        editor: &Editor,
+        input: String,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<Task<Result<()>>> {
+        if input.len() != 1 {
+            return None;
+        }
+
+        let project = self.read(cx).project.clone();
+        let position = editor.selections.newest_anchor().head();
+        let (buffer, buffer_position) = editor
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(position.clone(), cx)?;
+
+        // OnTypeFormatting returns a list of edits, no need to pass them between Zed instances,
+        // hence we do LSP request & edit on host side only — add formats to host's history.
+        let push_to_lsp_host_history = true;
+        // If this is not the host, append its history with new edits.
+        let push_to_client_history = project.read(cx).is_remote();
+
+        let on_type_formatting = project.update(cx, |project, cx| {
+            project.on_type_format(
+                buffer.clone(),
+                buffer_position,
+                input,
+                push_to_lsp_host_history,
+                cx,
+            )
+        });
+        Some(cx.spawn(|editor, mut cx| async move {
+            if let Some(transaction) = on_type_formatting.await? {
+                if push_to_client_history {
+                    buffer.update(&mut cx, |buffer, _| {
+                        buffer.push_transaction(transaction, Instant::now());
+                    });
+                }
+                editor.update(&mut cx, |editor, cx| {
+                    editor.refresh_document_highlights(cx);
+                })?;
+            }
+            Ok(())
+        }))
+    }
+}
+
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
@@ -1501,6 +1607,7 @@ pub struct Editor {
     actions_provider: Option<Box<dyn CodeActionsProvider>>,
     go_to_definition_provider: Option<Box<dyn GoToDefinitionProvider>>,
     rename_provider: Option<Box<dyn RenameProvider>>,
+    format_provider: Option<Box<dyn FormatProvider>>,
 }
 
 pub struct EditorSnapshot {
@@ -2764,6 +2871,7 @@ impl Editor {
         };
         let go_to_definition_provider = None;
         let rename_provider = None;
+        let format_provider = None;
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -2838,6 +2946,7 @@ impl Editor {
             actions_provider,
             go_to_definition_provider,
             rename_provider,
+            format_provider,
         };
 
         this._subscriptions.extend(project_subscriptions);
@@ -4349,45 +4458,8 @@ impl Editor {
         input: String,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        if input.len() != 1 {
-            return None;
-        }
-
-        let project = self.project.as_ref()?;
-        let position = self.selections.newest_anchor().head();
-        let (buffer, buffer_position) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(position.clone(), cx)?;
-
-        // OnTypeFormatting returns a list of edits, no need to pass them between Zed instances,
-        // hence we do LSP request & edit on host side only — add formats to host's history.
-        let push_to_lsp_host_history = true;
-        // If this is not the host, append its history with new edits.
-        let push_to_client_history = project.read(cx).is_remote();
-
-        let on_type_formatting = project.update(cx, |project, cx| {
-            project.on_type_format(
-                buffer.clone(),
-                buffer_position,
-                input,
-                push_to_lsp_host_history,
-                cx,
-            )
-        });
-        Some(cx.spawn(|editor, mut cx| async move {
-            if let Some(transaction) = on_type_formatting.await? {
-                if push_to_client_history {
-                    buffer.update(&mut cx, |buffer, _| {
-                        buffer.push_transaction(transaction, Instant::now());
-                    });
-                }
-                editor.update(&mut cx, |editor, cx| {
-                    editor.refresh_document_highlights(cx);
-                })?;
-            }
-            Ok(())
-        }))
+        let provider = self.format_provider.as_ref()?;
+        provider.trigger_on_type_formatting(self, input, cx)
     }
 
     fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) -> Option<()> {
@@ -8176,47 +8248,18 @@ impl Editor {
     }
 
     fn format(&mut self, _: &Format, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-        let project = match &self.project {
-            Some(project) => project.clone(),
-            None => return None,
-        };
-
-        Some(self.perform_format(project, FormatTrigger::Manual, cx))
+        self.perform_format(FormatTrigger::Manual, cx)
     }
 
     fn perform_format(
         &mut self,
-        project: ModelHandle<Project>,
         trigger: FormatTrigger,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
-        let buffer = self.buffer().clone();
-        let buffers = buffer.read(cx).all_buffers();
-
-        let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
-        let format = project.update(cx, |project, cx| project.format(buffers, true, trigger, cx));
-
-        cx.spawn(|_, mut cx| async move {
-            let transaction = futures::select_biased! {
-                _ = timeout => {
-                    log::warn!("timed out waiting for formatting");
-                    None
-                }
-                transaction = format.log_err().fuse() => transaction,
-            };
-
-            buffer.update(&mut cx, |buffer, cx| {
-                if let Some(transaction) = transaction {
-                    if !buffer.is_singleton() {
-                        buffer.push_transaction(&transaction.0, cx);
-                    }
-                }
-
-                cx.notify();
-            });
-
-            Ok(())
-        })
+    ) -> Option<Task<Result<()>>> {
+        let mut provider = std::mem::take(&mut self.format_provider)?;
+        let ret = provider.perform_format(self, trigger, cx);
+        self.format_provider = Some(provider);
+        Some(ret)
     }
 
     fn restart_language_server(&mut self, _: &RestartLanguageServer, cx: &mut ViewContext<Self>) {
