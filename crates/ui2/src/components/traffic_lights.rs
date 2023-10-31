@@ -22,7 +22,7 @@ impl TrafficLight {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         let fill = match (self.window_has_focus, self.color) {
             (true, TrafficLightColor::Red) => theme.mac_os_traffic_light_red,

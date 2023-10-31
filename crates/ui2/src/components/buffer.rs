@@ -155,7 +155,7 @@ impl Buffer {
     }
 
     fn render_row<V: 'static>(row: BufferRow, cx: &WindowContext) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         let line_background = if row.current {
             theme.editor_active_line
@@ -216,7 +216,7 @@ impl Buffer {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
         let rows = self.render_rows(cx);
 
         v_stack()
@@ -246,7 +246,7 @@ mod stories {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            let theme = theme(cx);
+            let theme = old_theme(cx);
 
             Story::container(cx)
                 .child(Story::title_for::<_, Buffer>(cx))

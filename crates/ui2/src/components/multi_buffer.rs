@@ -12,7 +12,7 @@ impl MultiBuffer {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         v_stack()
             .w_full()
@@ -50,7 +50,7 @@ mod stories {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            let theme = theme(cx);
+            let theme = old_theme(cx);
 
             Story::container(cx)
                 .child(Story::title_for::<_, MultiBuffer>(cx))

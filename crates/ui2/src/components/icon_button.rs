@@ -66,7 +66,7 @@ impl<V: 'static> IconButton<V> {
     }
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         let icon_color = match (self.state, self.color) {
             (InteractionState::Disabled, _) => IconColor::Disabled,

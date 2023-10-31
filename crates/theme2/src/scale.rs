@@ -1,7 +1,7 @@
 use gpui2::{AppContext, Hsla};
 use indexmap::IndexMap;
 
-use crate::{theme, Appearance};
+use crate::{old_theme, Appearance};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ColorScaleName {
@@ -137,7 +137,7 @@ impl ColorScaleSet {
     }
 
     fn current_appearance(cx: &AppContext) -> Appearance {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
         if theme.metadata.is_light {
             Appearance::Light
         } else {

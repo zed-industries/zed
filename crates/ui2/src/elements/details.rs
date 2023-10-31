@@ -27,7 +27,7 @@ impl<V: 'static> Details<V> {
     }
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         v_stack()
             .p_1()

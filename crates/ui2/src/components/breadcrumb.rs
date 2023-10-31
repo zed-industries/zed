@@ -19,13 +19,13 @@ impl Breadcrumb {
     }
 
     fn render_separator<V: 'static>(&self, cx: &WindowContext) -> Div<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         div().child(" › ").text_color(theme.text_muted)
     }
 
     fn render<V: 'static>(self, view_state: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         let symbols_len = self.symbols.len();
 
@@ -84,7 +84,7 @@ mod stories {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            let theme = theme(cx);
+            let theme = old_theme(cx);
 
             Story::container(cx)
                 .child(Story::title_for::<_, Breadcrumb>(cx))

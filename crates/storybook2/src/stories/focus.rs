@@ -3,7 +3,7 @@ use gpui2::{
     StatelessInteractive, Styled, View, VisualContext, WindowContext,
 };
 use serde::Deserialize;
-use theme2::theme;
+use theme2::old_theme;
 
 #[derive(Clone, Default, PartialEq, Deserialize)]
 struct ActionA;
@@ -34,7 +34,7 @@ impl Render for FocusStory {
     type Element = Div<Self, StatefulInteraction<Self>, FocusEnabled<Self>>;
 
     fn render(&mut self, cx: &mut gpui2::ViewContext<Self>) -> Self::Element {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
         let color_1 = theme.git_created;
         let color_2 = theme.git_modified;
         let color_3 = theme.git_deleted;

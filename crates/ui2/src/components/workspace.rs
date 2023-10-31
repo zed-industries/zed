@@ -179,7 +179,7 @@ impl Render for Workspace {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         // HACK: This should happen inside of `debug_toggle_user_settings`, but
         // we don't have `cx.global::<FakeSettings>()` in event handlers at the moment.

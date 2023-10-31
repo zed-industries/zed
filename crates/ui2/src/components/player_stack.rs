@@ -14,7 +14,7 @@ impl PlayerStack {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
         let player = self.player_with_call_status.get_player();
         self.player_with_call_status.get_call_status();
 

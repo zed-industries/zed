@@ -89,7 +89,7 @@ impl Render for TitleBar {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
         let settings = user_settings(cx);
 
         // let has_focus = cx.window_is_active();

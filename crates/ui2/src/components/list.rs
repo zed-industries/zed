@@ -89,7 +89,7 @@ impl ListHeader {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = self.toggleable.is_toggled();
@@ -363,7 +363,7 @@ impl ListEntry {
 
     fn render<V: 'static>(mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let settings = user_settings(cx);
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         let left_content = match self.left_content.clone() {
             Some(LeftContent::Icon(i)) => Some(
@@ -472,7 +472,7 @@ impl<V: 'static> ListDetailsEntry<V> {
     }
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
         let settings = user_settings(cx);
 
         let (item_bg, item_bg_hover, item_bg_active) = match self.seen {
@@ -524,7 +524,7 @@ impl ListSeparator {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         div().h_px().w_full().bg(theme.border)
     }

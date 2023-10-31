@@ -18,7 +18,7 @@ pub enum LabelColor {
 
 impl LabelColor {
     pub fn hsla(&self, cx: &WindowContext) -> Hsla {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         match self {
             Self::Default => theme.text,
@@ -126,7 +126,7 @@ impl HighlightedLabel {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         let highlight_color = theme.text_accent;
 

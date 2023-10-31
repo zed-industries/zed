@@ -90,7 +90,7 @@ impl<V: 'static> PaneGroup<V> {
     }
 
     fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         if !self.panes.is_empty() {
             let el = div()

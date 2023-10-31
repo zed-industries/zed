@@ -86,7 +86,7 @@ impl StatusBar {
         view: &mut Workspace,
         cx: &mut ViewContext<Workspace>,
     ) -> impl Component<Workspace> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         div()
             .py_0p5()

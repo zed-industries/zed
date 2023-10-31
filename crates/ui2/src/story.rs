@@ -6,7 +6,7 @@ pub struct Story {}
 
 impl Story {
     pub fn container<V: 'static>(cx: &mut ViewContext<V>) -> Div<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         div()
             .size_full()
@@ -19,7 +19,7 @@ impl Story {
     }
 
     pub fn title<V: 'static>(cx: &mut ViewContext<V>, title: &str) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         div()
             .text_xl()
@@ -32,7 +32,7 @@ impl Story {
     }
 
     pub fn label<V: 'static>(cx: &mut ViewContext<V>, label: &str) -> impl Component<V> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         div()
             .mt_4()

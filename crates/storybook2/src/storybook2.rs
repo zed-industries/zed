@@ -71,7 +71,7 @@ fn main() {
         theme_settings.active_theme = theme_registry.get(&theme_name).unwrap();
         ThemeSettings::override_global(theme_settings, cx);
 
-        cx.set_global(theme.clone());
+        cx.set_global(old_theme.clone());
         ui::settings::init(cx);
 
         let window = cx.open_window(

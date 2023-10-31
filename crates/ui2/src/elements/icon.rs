@@ -26,7 +26,7 @@ pub enum IconColor {
 
 impl IconColor {
     pub fn color(self, cx: &WindowContext) -> Hsla {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
         match self {
             IconColor::Default => gpui2::red(),
             IconColor::Muted => gpui2::red(),

@@ -30,7 +30,7 @@ impl Render for BufferSearch {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         h_stack().bg(theme.toolbar).p_2().child(
             h_stack().child(Input::new("Search")).child(

@@ -6,7 +6,7 @@ use rand::Rng;
 use theme2::Theme;
 
 use crate::{
-    theme, Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
+    old_theme, Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
     HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListItem,
     Livestream, MicStatus, ModifierKeys, PaletteItem, Player, PlayerCallStatus,
     PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, ToggleState, VideoStatus,
@@ -643,7 +643,7 @@ pub fn empty_buffer_example() -> Buffer {
 }
 
 pub fn hello_world_rust_editor_example(cx: &mut ViewContext<EditorPane>) -> EditorPane {
-    let theme = theme(cx);
+    let theme = old_theme(cx);
 
     EditorPane::new(
         cx,
@@ -782,7 +782,7 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
 }
 
 pub fn hello_world_rust_editor_with_status_example(cx: &mut ViewContext<EditorPane>) -> EditorPane {
-    let theme = theme(cx);
+    let theme = old_theme(cx);
 
     EditorPane::new(
         cx,

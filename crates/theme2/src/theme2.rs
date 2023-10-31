@@ -33,12 +33,12 @@ pub fn init(cx: &mut AppContext) {
     ThemeSettings::register(cx);
 }
 
-pub fn active_theme<'a>(cx: &'a AppContext) -> &'a Arc<Theme> {
+pub fn old_active_theme<'a>(cx: &'a AppContext) -> &'a Arc<Theme> {
     &ThemeSettings::get_global(cx).active_theme
 }
 
-pub fn theme(cx: &AppContext) -> Arc<Theme> {
-    active_theme(cx).clone()
+pub fn old_theme(cx: &AppContext) -> Arc<Theme> {
+    old_active_theme(cx).clone()
 }
 
 pub struct ThemeFamily {

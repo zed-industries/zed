@@ -21,7 +21,7 @@ pub enum ButtonVariant {
 
 impl ButtonVariant {
     pub fn bg_color(&self, cx: &mut WindowContext) -> Hsla {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         match self {
             ButtonVariant::Ghost => theme.ghost_element,
@@ -30,7 +30,7 @@ impl ButtonVariant {
     }
 
     pub fn bg_color_hover(&self, cx: &mut WindowContext) -> Hsla {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         match self {
             ButtonVariant::Ghost => theme.ghost_element_hover,
@@ -39,7 +39,7 @@ impl ButtonVariant {
     }
 
     pub fn bg_color_active(&self, cx: &mut WindowContext) -> Hsla {
-        let theme = theme(cx);
+        let theme = old_theme(cx);
 
         match self {
             ButtonVariant::Ghost => theme.ghost_element_active,
