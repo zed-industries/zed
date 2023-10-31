@@ -1,5 +1,6 @@
 use gpui2::Hsla;
 use indexmap::IndexMap;
+use refineable::Refineable;
 
 use crate::{generate_struct_with_overrides, SyntaxStyles};
 
@@ -107,4 +108,43 @@ generate_struct_with_overrides! {
     git: GitStatusColors,
     player: PlayerColors,
     syntax: SyntaxStyles
+}
+
+#[derive(Refineable, Clone, Debug)]
+#[refineable(debug)]
+pub struct ThemeColors2 {
+    pub text_muted: Hsla,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_refineable_colors_with_none() {
+        let mut base_colors = ThemeColors2 {
+            text_muted: gpui2::red(),
+        };
+
+        let overrides = ThemeColors2Refinement { text_muted: None };
+
+        base_colors.refine(&overrides);
+
+        assert_eq!(base_colors.text_muted, gpui2::red())
+    }
+
+    #[test]
+    fn test_refineable_colors_with_some() {
+        let mut base_colors = ThemeColors2 {
+            text_muted: gpui2::red(),
+        };
+
+        let overrides = ThemeColors2Refinement {
+            text_muted: Some(gpui2::white()),
+        };
+
+        base_colors.refine(&overrides);
+
+        assert_eq!(base_colors.text_muted, gpui2::white())
+    }
 }
