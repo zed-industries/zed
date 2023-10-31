@@ -67,15 +67,6 @@ impl TestAppContext {
         f(&mut *lock)
     }
 
-    pub fn read_window<R>(
-        &self,
-        handle: AnyWindowHandle,
-        read: impl FnOnce(&WindowContext) -> R,
-    ) -> R {
-        let mut app_context = self.app.lock();
-        app_context.read_window(handle, read).unwrap()
-    }
-
     pub fn update_window<R>(
         &self,
         handle: AnyWindowHandle,

@@ -305,20 +305,13 @@ impl ContentMask<Pixels> {
 /// Provides access to application state in the context of a single window. Derefs
 /// to an `AppContext`, so you can also pass a `WindowContext` to any method that takes
 /// an `AppContext` and call any `AppContext` methods.
-pub struct WindowContext<'a, 'w> {
+pub struct WindowContext<'a> {
     pub(crate) app: Reference<'a, AppContext>,
-    pub(crate) window: Reference<'w, Window>,
+    pub(crate) window: Reference<'a, Window>,
 }
 
-impl<'a, 'w> WindowContext<'a, 'w> {
-    pub(crate) fn immutable(app: &'a AppContext, window: &'w Window) -> Self {
-        Self {
-            app: Reference::Immutable(app),
-            window: Reference::Immutable(window),
-        }
-    }
-
-    pub(crate) fn mutable(app: &'a mut AppContext, window: &'w mut Window) -> Self {
+impl<'a> WindowContext<'a> {
+    pub(crate) fn mutable(app: &'a mut AppContext, window: &'a mut Window) -> Self {
         Self {
             app: Reference::Mutable(app),
             window: Reference::Mutable(window),
@@ -388,7 +381,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn subscribe<Emitter, E>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(E, &Emitter::Event, &mut WindowContext<'_, '_>) + Send + 'static,
+        mut on_event: impl FnMut(E, &Emitter::Event, &mut WindowContext<'_>) + Send + 'static,
     ) -> Subscription
     where
         Emitter: EventEmitter,
@@ -419,7 +412,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     /// of the window.
     pub fn run_on_main<R>(
         &mut self,
-        f: impl FnOnce(&mut MainThread<WindowContext<'_, '_>>) -> R + Send + 'static,
+        f: impl FnOnce(&mut MainThread<WindowContext<'_>>) -> R + Send + 'static,
     ) -> Task<Result<R>>
     where
         R: Send + 'static,
@@ -1185,7 +1178,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     /// is updated.
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut WindowContext<'_, '_>) + Send + 'static,
+        f: impl Fn(&mut WindowContext<'_>) + Send + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         self.global_observers.insert(
@@ -1273,7 +1266,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 }
 
-impl Context for WindowContext<'_, '_> {
+impl Context for WindowContext<'_> {
     type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
@@ -1304,7 +1297,7 @@ impl Context for WindowContext<'_, '_> {
     }
 }
 
-impl VisualContext for WindowContext<'_, '_> {
+impl VisualContext for WindowContext<'_> {
     type ViewContext<'a, V: 'static> = ViewContext<'a, V>;
 
     fn build_view<V>(
@@ -1338,7 +1331,7 @@ impl VisualContext for WindowContext<'_, '_> {
     }
 }
 
-impl<'a, 'w> std::ops::Deref for WindowContext<'a, 'w> {
+impl<'a> std::ops::Deref for WindowContext<'a> {
     type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
@@ -1346,19 +1339,19 @@ impl<'a, 'w> std::ops::Deref for WindowContext<'a, 'w> {
     }
 }
 
-impl<'a, 'w> std::ops::DerefMut for WindowContext<'a, 'w> {
+impl<'a> std::ops::DerefMut for WindowContext<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.app
     }
 }
 
-impl<'a, 'w> Borrow<AppContext> for WindowContext<'a, 'w> {
+impl<'a> Borrow<AppContext> for WindowContext<'a> {
     fn borrow(&self) -> &AppContext {
         &self.app
     }
 }
 
-impl<'a, 'w> BorrowMut<AppContext> for WindowContext<'a, 'w> {
+impl<'a> BorrowMut<AppContext> for WindowContext<'a> {
     fn borrow_mut(&mut self) -> &mut AppContext {
         &mut self.app
     }
@@ -1526,13 +1519,13 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     }
 }
 
-impl Borrow<Window> for WindowContext<'_, '_> {
+impl Borrow<Window> for WindowContext<'_> {
     fn borrow(&self) -> &Window {
         &self.window
     }
 }
 
-impl BorrowMut<Window> for WindowContext<'_, '_> {
+impl BorrowMut<Window> for WindowContext<'_> {
     fn borrow_mut(&mut self) -> &mut Window {
         &mut self.window
     }
@@ -1541,7 +1534,7 @@ impl BorrowMut<Window> for WindowContext<'_, '_> {
 impl<T> BorrowWindow for T where T: BorrowMut<AppContext> + BorrowMut<Window> {}
 
 pub struct ViewContext<'a, V> {
-    window_cx: WindowContext<'a, 'a>,
+    window_cx: WindowContext<'a>,
     view: &'a View<V>,
 }
 
@@ -1740,7 +1733,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     move |event: &dyn Any,
                           context_stack: &[&DispatchContext],
                           phase: DispatchPhase,
-                          cx: &mut WindowContext<'_, '_>| {
+                          cx: &mut WindowContext<'_>| {
                         handle
                             .update(cx, |view, cx| {
                                 listener(view, event, context_stack, phase, cx)
@@ -1952,7 +1945,7 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
 }
 
 impl<'a, V> std::ops::Deref for ViewContext<'a, V> {
-    type Target = WindowContext<'a, 'a>;
+    type Target = WindowContext<'a>;
 
     fn deref(&self) -> &Self::Target {
         &self.window_cx

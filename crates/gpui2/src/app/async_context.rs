@@ -58,16 +58,6 @@ impl AsyncAppContext {
         Ok(f(&mut *lock))
     }
 
-    pub fn read_window<R>(
-        &self,
-        handle: AnyWindowHandle,
-        update: impl FnOnce(&WindowContext) -> R,
-    ) -> Result<R> {
-        let app = self.app.upgrade().context("app was released")?;
-        let mut app_context = app.lock();
-        app_context.read_window(handle, update)
-    }
-
     pub fn update_window<R>(
         &self,
         handle: AnyWindowHandle,
@@ -183,7 +173,7 @@ impl AsyncWindowContext {
         read: impl FnOnce(&G, &WindowContext) -> R,
     ) -> Result<R> {
         self.app
-            .read_window(self.window, |cx| read(cx.global(), cx))
+            .update_window(self.window, |cx| read(cx.global(), cx))
     }
 
     pub fn update_global<G, R>(

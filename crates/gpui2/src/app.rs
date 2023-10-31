@@ -267,20 +267,6 @@ impl AppContext {
             .collect()
     }
 
-    pub(crate) fn read_window<R>(
-        &mut self,
-        handle: AnyWindowHandle,
-        read: impl FnOnce(&WindowContext) -> R,
-    ) -> Result<R> {
-        let window = self
-            .windows
-            .get(handle.id)
-            .ok_or_else(|| anyhow!("window not found"))?
-            .as_ref()
-            .unwrap();
-        Ok(read(&WindowContext::immutable(self, &window)))
-    }
-
     pub(crate) fn update_window<R>(
         &mut self,
         handle: AnyWindowHandle,
