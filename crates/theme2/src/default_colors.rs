@@ -1,4 +1,4 @@
-use gpui2::{hsla, Rgba};
+use gpui2::{hsla, FontWeight, Hsla, Rgba};
 use indexmap::IndexMap;
 
 use crate::{
@@ -7,6 +7,8 @@ use crate::{
         StatusColors, SystemColors, ThemeColors, ThemeStyleName,
     },
     scale::{ColorScaleName, ColorScaleSet, ColorScales},
+    syntax::{SyntaxColorName, SyntaxStyles},
+    SyntaxStyle,
 };
 
 impl Default for SystemColors {
@@ -78,9 +80,128 @@ impl Default for PlayerColors {
     }
 }
 
+impl Default for SyntaxStyle {
+    fn default() -> Self {
+        Self {
+            color: gpui2::black(),
+            weight: FontWeight::default(),
+            italic: false,
+            underline: false,
+        }
+    }
+}
+
+impl SyntaxStyles {
+    pub fn default_light() -> Self {
+        use SyntaxColorName::*;
+
+        Self(IndexMap::from_iter([
+            (Comment, SyntaxStyle::builder().build()),
+            (CommentDoc, SyntaxStyle::builder().build()),
+            (Primary, SyntaxStyle::builder().build()),
+            (Predictive, SyntaxStyle::builder().build()),
+            (Hint, SyntaxStyle::builder().build()),
+            (Emphasis, SyntaxStyle::builder().build()),
+            (EmphasisStrong, SyntaxStyle::builder().build()),
+            (Title, SyntaxStyle::builder().build()),
+            (LinkUri, SyntaxStyle::builder().build()),
+            (LinkText, SyntaxStyle::builder().build()),
+            (TextLiteral, SyntaxStyle::builder().build()),
+            (Punctuation, SyntaxStyle::builder().build()),
+            (PunctuationBracket, SyntaxStyle::builder().build()),
+            (PunctuationDelimiter, SyntaxStyle::builder().build()),
+            (PunctuationSpecial, SyntaxStyle::builder().build()),
+            (PunctuationListMarker, SyntaxStyle::builder().build()),
+            (String, SyntaxStyle::builder().build()),
+            (StringSpecial, SyntaxStyle::builder().build()),
+            (StringSpecialSymbol, SyntaxStyle::builder().build()),
+            (StringEscape, SyntaxStyle::builder().build()),
+            (StringRegex, SyntaxStyle::builder().build()),
+            (Constructor, SyntaxStyle::builder().build()),
+            (Variant, SyntaxStyle::builder().build()),
+            (Type, SyntaxStyle::builder().build()),
+            (TypeBuiltin, SyntaxStyle::builder().build()),
+            (Variable, SyntaxStyle::builder().build()),
+            (VariableSpecial, SyntaxStyle::builder().build()),
+            (Label, SyntaxStyle::builder().build()),
+            (Tag, SyntaxStyle::builder().build()),
+            (Attribute, SyntaxStyle::builder().build()),
+            (Property, SyntaxStyle::builder().build()),
+            (Constant, SyntaxStyle::builder().build()),
+            (Keyword, SyntaxStyle::builder().build()),
+            (Enum, SyntaxStyle::builder().build()),
+            (Operator, SyntaxStyle::builder().build()),
+            (Number, SyntaxStyle::builder().build()),
+            (Boolean, SyntaxStyle::builder().build()),
+            (ConstantBuiltin, SyntaxStyle::builder().build()),
+            (Function, SyntaxStyle::builder().build()),
+            (FunctionBuiltin, SyntaxStyle::builder().build()),
+            (FunctionDefinition, SyntaxStyle::builder().build()),
+            (FunctionSpecialDefinition, SyntaxStyle::builder().build()),
+            (FunctionMethod, SyntaxStyle::builder().build()),
+            (FunctionMethodBuiltin, SyntaxStyle::builder().build()),
+            (Preproc, SyntaxStyle::builder().build()),
+            (Embedded, SyntaxStyle::builder().build()),
+        ]))
+    }
+
+    pub fn default_dark() -> Self {
+        use SyntaxColorName::*;
+
+        Self(IndexMap::from_iter([
+            (Comment, SyntaxStyle::builder().build()),
+            (CommentDoc, SyntaxStyle::builder().build()),
+            (Primary, SyntaxStyle::builder().build()),
+            (Predictive, SyntaxStyle::builder().build()),
+            (Hint, SyntaxStyle::builder().build()),
+            (Emphasis, SyntaxStyle::builder().build()),
+            (EmphasisStrong, SyntaxStyle::builder().build()),
+            (Title, SyntaxStyle::builder().build()),
+            (LinkUri, SyntaxStyle::builder().build()),
+            (LinkText, SyntaxStyle::builder().build()),
+            (TextLiteral, SyntaxStyle::builder().build()),
+            (Punctuation, SyntaxStyle::builder().build()),
+            (PunctuationBracket, SyntaxStyle::builder().build()),
+            (PunctuationDelimiter, SyntaxStyle::builder().build()),
+            (PunctuationSpecial, SyntaxStyle::builder().build()),
+            (PunctuationListMarker, SyntaxStyle::builder().build()),
+            (String, SyntaxStyle::builder().build()),
+            (StringSpecial, SyntaxStyle::builder().build()),
+            (StringSpecialSymbol, SyntaxStyle::builder().build()),
+            (StringEscape, SyntaxStyle::builder().build()),
+            (StringRegex, SyntaxStyle::builder().build()),
+            (Constructor, SyntaxStyle::builder().build()),
+            (Variant, SyntaxStyle::builder().build()),
+            (Type, SyntaxStyle::builder().build()),
+            (TypeBuiltin, SyntaxStyle::builder().build()),
+            (Variable, SyntaxStyle::builder().build()),
+            (VariableSpecial, SyntaxStyle::builder().build()),
+            (Label, SyntaxStyle::builder().build()),
+            (Tag, SyntaxStyle::builder().build()),
+            (Attribute, SyntaxStyle::builder().build()),
+            (Property, SyntaxStyle::builder().build()),
+            (Constant, SyntaxStyle::builder().build()),
+            (Keyword, SyntaxStyle::builder().build()),
+            (Enum, SyntaxStyle::builder().build()),
+            (Operator, SyntaxStyle::builder().build()),
+            (Number, SyntaxStyle::builder().build()),
+            (Boolean, SyntaxStyle::builder().build()),
+            (ConstantBuiltin, SyntaxStyle::builder().build()),
+            (Function, SyntaxStyle::builder().build()),
+            (FunctionBuiltin, SyntaxStyle::builder().build()),
+            (FunctionDefinition, SyntaxStyle::builder().build()),
+            (FunctionSpecialDefinition, SyntaxStyle::builder().build()),
+            (FunctionMethod, SyntaxStyle::builder().build()),
+            (FunctionMethodBuiltin, SyntaxStyle::builder().build()),
+            (Preproc, SyntaxStyle::builder().build()),
+            (Embedded, SyntaxStyle::builder().build()),
+        ]))
+    }
+}
+
 impl ThemeColors {
     pub fn default_light() -> Self {
-        ThemeColors(IndexMap::from_iter([
+        Self(IndexMap::from_iter([
             (ThemeStyleName::Border, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::BorderVariant, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::BorderFocused, hsla(0.0, 0.0, 0.0, 0.0)),
@@ -115,7 +236,6 @@ impl ThemeColors {
             (ThemeStyleName::IconDisabled, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::IconPlaceholder, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::IconAccent, hsla(0.0, 0.0, 0.0, 0.0)),
-            (ThemeStyleName::Syntax, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::StatusBar, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::TitleBar, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::Toolbar, hsla(0.0, 0.0, 0.0, 0.0)),
@@ -127,7 +247,7 @@ impl ThemeColors {
     }
 
     pub fn default_dark() -> Self {
-        ThemeColors(IndexMap::from_iter([
+        Self(IndexMap::from_iter([
             (ThemeStyleName::Border, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::BorderVariant, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::BorderFocused, hsla(0.0, 0.0, 0.0, 0.0)),
@@ -162,7 +282,6 @@ impl ThemeColors {
             (ThemeStyleName::IconDisabled, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::IconPlaceholder, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::IconAccent, hsla(0.0, 0.0, 0.0, 0.0)),
-            (ThemeStyleName::Syntax, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::StatusBar, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::TitleBar, hsla(0.0, 0.0, 0.0, 0.0)),
             (ThemeStyleName::Toolbar, hsla(0.0, 0.0, 0.0, 0.0)),

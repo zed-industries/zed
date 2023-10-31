@@ -1,7 +1,7 @@
-use gpui2::{FontWeight, Hsla};
+use gpui2::Hsla;
 use indexmap::IndexMap;
 
-use crate::generate_struct_with_overrides;
+use crate::{generate_struct_with_overrides, SyntaxStyles};
 
 pub struct SystemColors {
     pub transparent: Hsla,
@@ -49,68 +49,6 @@ pub enum GitStatusColorName {
 pub struct GitStatusColors(pub IndexMap<GitStatusColorName, Hsla>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SyntaxColorName {
-    Comment,
-    CommentDoc,
-    Primary,
-    Predictive,
-    Hint,
-    Emphasis,
-    EmphasisStrong,
-    Title,
-    LinkUri,
-    LinkText,
-    TextLiteral,
-    Punctuation,
-    PunctuationBracket,
-    PunctuationDelimiter,
-    PunctuationSpecial,
-    PunctuationListMarker,
-    String,
-    StringSpecial,
-    StringSpecialSymbol,
-    StringEscape,
-    StringRegex,
-    Constructor,
-    Variant,
-    Type,
-    TypeBuiltin,
-    Variable,
-    VariableSpecial,
-    Label,
-    Tag,
-    Attribute,
-    Property,
-    Constant,
-    Keyword,
-    Enum,
-    Operator,
-    Number,
-    Boolean,
-    ConstantBuiltin,
-    Function,
-    FunctionBuiltin,
-    FunctionDefinition,
-    FunctionSpecialDefinition,
-    FunctionMethod,
-    FunctionMethodBuiltin,
-    Preproc,
-    Embedded,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct SyntaxStyle {
-    pub color: Hsla,
-    pub weight: FontWeight,
-    pub underline: bool,
-    pub italic: bool,
-    // Nate: In the future I'd like to enable using background highlights for syntax highlighting
-    // pub highlight: Hsla,
-}
-
-struct SyntaxStyles(pub IndexMap<SyntaxColorName, SyntaxStyle>);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ThemeStyleName {
     Border,
     BorderVariant,
@@ -140,7 +78,6 @@ pub enum ThemeStyleName {
     IconDisabled,
     IconPlaceholder,
     IconAccent,
-    Syntax,
     StatusBar,
     TitleBar,
     Toolbar,
@@ -159,5 +96,6 @@ generate_struct_with_overrides! {
     color: ThemeColors,
     status: StatusColors,
     git: GitStatusColors,
-    player: PlayerColors
+    player: PlayerColors,
+    syntax: SyntaxStyles
 }
