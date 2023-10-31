@@ -2,7 +2,7 @@ use crate::{AppState, FollowerState, Pane, Workspace};
 use anyhow::{anyhow, Result};
 use call2::ActiveCall;
 use collections::HashMap;
-use gpui2::{size, AnyElement, AnyView, Bounds, Handle, Pixels, Point, View, ViewContext};
+use gpui2::{size, AnyElement, AnyView, Bounds, Handle, Model, Pixels, Point, View, ViewContext};
 use project2::Project;
 use serde::Deserialize;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -91,10 +91,10 @@ impl PaneGroup {
 
     pub(crate) fn render(
         &self,
-        project: &Handle<Project>,
+        project: &Model<Project>,
         theme: &Theme,
         follower_states: &HashMap<View<Pane>, FollowerState>,
-        active_call: Option<&Handle<ActiveCall>>,
+        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyView>,
         app_state: &Arc<AppState>,
@@ -120,7 +120,7 @@ impl PaneGroup {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub(crate) enum Member {
     Axis(PaneAxis),
     Pane(View<Pane>),
@@ -153,11 +153,11 @@ impl Member {
 
     pub fn render(
         &self,
-        project: &Handle<Project>,
+        project: &Model<Project>,
         basis: usize,
         theme: &Theme,
         follower_states: &HashMap<View<Pane>, FollowerState>,
-        active_call: Option<&Handle<ActiveCall>>,
+        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyView>,
         app_state: &Arc<AppState>,
@@ -470,11 +470,11 @@ impl PaneAxis {
 
     fn render(
         &self,
-        project: &Handle<Project>,
+        project: &Model<Project>,
         basis: usize,
         theme: &Theme,
         follower_states: &HashMap<View<Pane>, FollowerState>,
-        active_call: Option<&Handle<ActiveCall>>,
+        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyView>,
         app_state: &Arc<AppState>,

@@ -49,7 +49,7 @@ impl Settings for WorkspaceSettings {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _: &gpui2::AppContext,
+        _: &mut gpui2::AppContext,
     ) -> anyhow::Result<Self> {
         Self::load_via_json_merge(default_value, user_values)
     }

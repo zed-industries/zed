@@ -18,7 +18,10 @@ use std::{
     any::Any,
     cmp, fmt, mem,
     path::PathBuf,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -168,7 +171,7 @@ pub struct Pane {
     //     zoomed: bool,
     active_item_index: usize,
     //     last_focused_view_by_item: HashMap<usize, AnyWeakViewHandle>,
-    //     autoscroll: bool,
+    autoscroll: bool,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
     //     tab_bar_context_menu: TabBarContextMenu,
@@ -327,7 +330,7 @@ impl Pane {
             // zoomed: false,
             active_item_index: 0,
             // last_focused_view_by_item: Default::default(),
-            // autoscroll: false,
+            autoscroll: false,
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
                 backward_stack: Default::default(),
@@ -607,9 +610,9 @@ impl Pane {
         cx.emit(Event::AddItem { item });
     }
 
-    //     pub fn items_len(&self) -> usize {
-    //         self.items.len()
-    //     }
+    pub fn items_len(&self) -> usize {
+        self.items.len()
+    }
 
     //     pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> + DoubleEndedIterator {
     //         self.items.iter()
@@ -621,9 +624,9 @@ impl Pane {
     //             .filter_map(|item| item.as_any().clone().downcast())
     //     }
 
-    //     pub fn active_item(&self) -> Option<Box<dyn ItemHandle>> {
-    //         self.items.get(self.active_item_index).cloned()
-    //     }
+    pub fn active_item(&self) -> Option<Box<dyn ItemHandle>> {
+        self.items.get(self.active_item_index).cloned()
+    }
 
     //     pub fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Vector2F> {
     //         self.items
@@ -749,7 +752,8 @@ impl Pane {
         save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.close_items(cx, save_intent, move |view_id| view_id == item_id_to_close)
+        // self.close_items(cx, save_intent, move |view_id| view_id == item_id_to_close)
+        todo!()
     }
 
     // pub fn close_inactive_items(

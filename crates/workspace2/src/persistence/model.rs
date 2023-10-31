@@ -7,7 +7,7 @@ use db2::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui2::{AsyncAppContext, AsyncWindowContext, Handle, Task, View, WeakView, WindowBounds};
+use gpui2::{AsyncAppContext, AsyncWindowContext, Model, Task, View, WeakView, WindowBounds};
 use project2::Project;
 use std::{
     path::{Path, PathBuf},
@@ -151,7 +151,7 @@ impl SerializedPaneGroup {
     #[async_recursion(?Send)]
     pub(crate) async fn deserialize(
         self,
-        project: &Handle<Project>,
+        project: &Model<Project>,
         workspace_id: WorkspaceId,
         workspace: &WeakView<Workspace>,
         cx: &mut AsyncWindowContext,
@@ -200,10 +200,7 @@ impl SerializedPaneGroup {
                     .await
                     .log_err()?;
 
-                if pane
-                    .read_with(cx, |pane, _| pane.items_len() != 0)
-                    .log_err()?
-                {
+                if pane.update(cx, |pane, _| pane.items_len() != 0).log_err()? {
                     let pane = pane.upgrade()?;
                     Some((Member::Pane(pane.clone()), active.then(|| pane), new_items))
                 } else {
@@ -231,7 +228,7 @@ impl SerializedPane {
 
     pub async fn deserialize_to(
         &self,
-        project: &Handle<Project>,
+        project: &Model<Project>,
         pane: &WeakView<Pane>,
         workspace_id: WorkspaceId,
         workspace: &WeakView<Workspace>,

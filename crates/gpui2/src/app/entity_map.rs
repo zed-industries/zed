@@ -164,6 +164,11 @@ impl AnyModel {
         self.entity_id
     }
 
+    // todo!() added for populating `ProjectItemBuilders` in `load_path` method
+    pub fn type_id(&self) -> TypeId {
+        self.entity_type
+    }
+
     pub fn downgrade(&self) -> AnyWeakModel {
         AnyWeakModel {
             entity_id: self.entity_id,
