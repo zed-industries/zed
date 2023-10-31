@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui2::{view, Context, View};
+use gpui2::{Div, Render, View, VisualContext};
 
 use crate::prelude::*;
 use crate::{
@@ -20,7 +20,7 @@ pub struct EditorPane {
 
 impl EditorPane {
     pub fn new(
-        cx: &mut WindowContext,
+        cx: &mut ViewContext<Self>,
         tabs: Vec<Tab>,
         path: PathBuf,
         symbols: Vec<Symbol>,
@@ -43,13 +43,14 @@ impl EditorPane {
     }
 
     pub fn view(cx: &mut WindowContext) -> View<Self> {
-        view(
-            cx.entity(|cx| hello_world_rust_editor_with_status_example(cx)),
-            Self::render,
-        )
+        cx.build_view(|cx| hello_world_rust_editor_with_status_example(cx))
     }
+}
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+impl Render for EditorPane {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
         v_stack()
             .w_full()
             .h_full()

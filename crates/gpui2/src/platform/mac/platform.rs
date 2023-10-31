@@ -185,8 +185,7 @@ impl MacPlatform {
         }))
     }
 
-    unsafe fn read_from_pasteboard(&self, kind: id) -> Option<&[u8]> {
-        let pasteboard = self.0.lock().pasteboard;
+    unsafe fn read_from_pasteboard(&self, pasteboard: *mut Object, kind: id) -> Option<&[u8]> {
         let data = pasteboard.dataForType(kind);
         if data == nil {
             None
@@ -787,14 +786,16 @@ impl Platform for MacPlatform {
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
         unsafe {
-            if let Some(text_bytes) = self.read_from_pasteboard(NSPasteboardTypeString) {
+            if let Some(text_bytes) =
+                self.read_from_pasteboard(state.pasteboard, NSPasteboardTypeString)
+            {
                 let text = String::from_utf8_lossy(text_bytes).to_string();
                 let hash_bytes = self
-                    .read_from_pasteboard(state.text_hash_pasteboard_type)
+                    .read_from_pasteboard(state.pasteboard, state.text_hash_pasteboard_type)
                     .and_then(|bytes| bytes.try_into().ok())
                     .map(u64::from_be_bytes);
                 let metadata_bytes = self
-                    .read_from_pasteboard(state.metadata_pasteboard_type)
+                    .read_from_pasteboard(state.pasteboard, state.metadata_pasteboard_type)
                     .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok());
 
                 if let Some((hash, metadata)) = hash_bytes.zip(metadata_bytes) {

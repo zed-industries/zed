@@ -11,7 +11,6 @@ pub mod items;
 mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
-pub mod multi_buffer;
 mod persistence;
 pub mod scroll;
 pub mod selections_collection;
@@ -25,7 +24,7 @@ use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
 use blink_manager::BlinkManager;
-use client::{ClickhouseEvent, Collaborator, ParticipantIndex, TelemetrySettings};
+use client::{ClickhouseEvent, Client, Collaborator, ParticipantIndex, TelemetrySettings};
 use clock::{Global, ReplicaId};
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -48,9 +47,9 @@ use gpui::{
     impl_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
-    serde_json, AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element,
-    Entity, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
-    WindowContext,
+    serde_json, AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem,
+    CursorRegion, Element, Entity, ModelHandle, MouseRegion, Subscription, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -60,10 +59,10 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
-    point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion,
-    CursorShape, Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language,
-    LanguageServerName, OffsetRangeExt, OffsetUtf16, Point, Selection, SelectionGoal,
-    TransactionId,
+    markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel,
+    Completion, CursorShape, Diagnostic, DiagnosticSeverity, Documentation, File, IndentKind,
+    IndentSize, Language, LanguageRegistry, LanguageServerName, OffsetRangeExt, OffsetUtf16, Point,
+    Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, GoToDefinitionLink, InlayHighlight,
@@ -71,15 +70,17 @@ use link_go_to_definition::{
 };
 use log::error;
 use lsp::LanguageServerId;
+use movement::TextLayoutDetails;
 use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
 };
 use ordered_float::OrderedFloat;
+use parking_lot::RwLock;
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::{seq::SliceRandom, thread_rng};
-use rpc::proto::PeerId;
+use rpc::proto::{self, PeerId};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -117,6 +118,67 @@ pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
+
+pub fn render_parsed_markdown<Tag: 'static>(
+    parsed: &language::ParsedMarkdown,
+    editor_style: &EditorStyle,
+    workspace: Option<WeakViewHandle<Workspace>>,
+    cx: &mut ViewContext<Editor>,
+) -> Text {
+    enum RenderedMarkdown {}
+
+    let parsed = parsed.clone();
+    let view_id = cx.view_id();
+    let code_span_background_color = editor_style.document_highlight_read_background;
+
+    let mut region_id = 0;
+
+    Text::new(parsed.text, editor_style.text.clone())
+        .with_highlights(
+            parsed
+                .highlights
+                .iter()
+                .filter_map(|(range, highlight)| {
+                    let highlight = highlight.to_highlight_style(&editor_style.syntax)?;
+                    Some((range.clone(), highlight))
+                })
+                .collect::<Vec<_>>(),
+        )
+        .with_custom_runs(parsed.region_ranges, move |ix, bounds, cx| {
+            region_id += 1;
+            let region = parsed.regions[ix].clone();
+
+            if let Some(link) = region.link {
+                cx.scene().push_cursor_region(CursorRegion {
+                    bounds,
+                    style: CursorStyle::PointingHand,
+                });
+                cx.scene().push_mouse_region(
+                    MouseRegion::new::<(RenderedMarkdown, Tag)>(view_id, region_id, bounds)
+                        .on_down::<Editor, _>(MouseButton::Left, move |_, _, cx| match &link {
+                            markdown::Link::Web { url } => cx.platform().open_url(url),
+                            markdown::Link::Path { path } => {
+                                if let Some(workspace) = &workspace {
+                                    _ = workspace.update(cx, |workspace, cx| {
+                                        workspace.open_abs_path(path.clone(), false, cx).detach();
+                                    });
+                                }
+                            }
+                        }),
+                );
+            }
+
+            if region.code {
+                cx.scene().push_quad(gpui::Quad {
+                    bounds,
+                    background: Some(code_span_background_color),
+                    border: Default::default(),
+                    corner_radii: (2.0).into(),
+                });
+            }
+        })
+        .with_soft_wrap(true)
+}
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
 pub struct SelectNext {
@@ -594,7 +656,7 @@ pub struct Editor {
     background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
     inlay_background_highlights: TreeMap<Option<TypeId>, InlayBackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
-    context_menu: Option<ContextMenu>,
+    context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     next_completion_id: CompletionId,
@@ -787,10 +849,14 @@ enum ContextMenu {
 }
 
 impl ContextMenu {
-    fn select_first(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+    fn select_first(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_first(cx),
+                ContextMenu::Completions(menu) => menu.select_first(project, cx),
                 ContextMenu::CodeActions(menu) => menu.select_first(cx),
             }
             true
@@ -799,10 +865,14 @@ impl ContextMenu {
         }
     }
 
-    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+    fn select_prev(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_prev(cx),
+                ContextMenu::Completions(menu) => menu.select_prev(project, cx),
                 ContextMenu::CodeActions(menu) => menu.select_prev(cx),
             }
             true
@@ -811,10 +881,14 @@ impl ContextMenu {
         }
     }
 
-    fn select_next(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+    fn select_next(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_next(cx),
+                ContextMenu::Completions(menu) => menu.select_next(project, cx),
                 ContextMenu::CodeActions(menu) => menu.select_next(cx),
             }
             true
@@ -823,10 +897,14 @@ impl ContextMenu {
         }
     }
 
-    fn select_last(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+    fn select_last(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_last(cx),
+                ContextMenu::Completions(menu) => menu.select_last(project, cx),
                 ContextMenu::CodeActions(menu) => menu.select_last(cx),
             }
             true
@@ -846,99 +924,354 @@ impl ContextMenu {
         &self,
         cursor_position: DisplayPoint,
         style: EditorStyle,
+        workspace: Option<WeakViewHandle<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, AnyElement<Editor>) {
         match self {
-            ContextMenu::Completions(menu) => (cursor_position, menu.render(style, cx)),
+            ContextMenu::Completions(menu) => (cursor_position, menu.render(style, workspace, cx)),
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
         }
     }
 }
 
+#[derive(Clone)]
 struct CompletionsMenu {
     id: CompletionId,
     initial_position: Anchor,
     buffer: ModelHandle<Buffer>,
-    project: Option<ModelHandle<Project>>,
-    completions: Arc<[Completion]>,
-    match_candidates: Vec<StringMatchCandidate>,
+    completions: Arc<RwLock<Box<[Completion]>>>,
+    match_candidates: Arc<[StringMatchCandidate]>,
     matches: Arc<[StringMatch]>,
     selected_item: usize,
     list: UniformListState,
 }
 
 impl CompletionsMenu {
-    fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_first(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         self.selected_item = 0;
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
 
-    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_prev(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        } else {
+            self.selected_item = self.matches.len() - 1;
         }
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
 
-    fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_next(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         if self.selected_item + 1 < self.matches.len() {
             self.selected_item += 1;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        } else {
+            self.selected_item = 0;
         }
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
 
-    fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_last(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         self.selected_item = self.matches.len() - 1;
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
+    }
+
+    fn pre_resolve_completion_documentation(
+        &self,
+        project: Option<ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let settings = settings::get::<EditorSettings>(cx);
+        if !settings.show_completion_documentation {
+            return;
+        }
+
+        let Some(project) = project else {
+            return;
+        };
+        let client = project.read(cx).client();
+        let language_registry = project.read(cx).languages().clone();
+
+        let is_remote = project.read(cx).is_remote();
+        let project_id = project.read(cx).remote_id();
+
+        let completions = self.completions.clone();
+        let completion_indices: Vec<_> = self.matches.iter().map(|m| m.candidate_id).collect();
+
+        cx.spawn(move |this, mut cx| async move {
+            if is_remote {
+                let Some(project_id) = project_id else {
+                    log::error!("Remote project without remote_id");
+                    return;
+                };
+
+                for completion_index in completion_indices {
+                    let completions_guard = completions.read();
+                    let completion = &completions_guard[completion_index];
+                    if completion.documentation.is_some() {
+                        continue;
+                    }
+
+                    let server_id = completion.server_id;
+                    let completion = completion.lsp_completion.clone();
+                    drop(completions_guard);
+
+                    Self::resolve_completion_documentation_remote(
+                        project_id,
+                        server_id,
+                        completions.clone(),
+                        completion_index,
+                        completion,
+                        client.clone(),
+                        language_registry.clone(),
+                    )
+                    .await;
+
+                    _ = this.update(&mut cx, |_, cx| cx.notify());
+                }
+            } else {
+                for completion_index in completion_indices {
+                    let completions_guard = completions.read();
+                    let completion = &completions_guard[completion_index];
+                    if completion.documentation.is_some() {
+                        continue;
+                    }
+
+                    let server_id = completion.server_id;
+                    let completion = completion.lsp_completion.clone();
+                    drop(completions_guard);
+
+                    let server = project.read_with(&mut cx, |project, _| {
+                        project.language_server_for_id(server_id)
+                    });
+                    let Some(server) = server else {
+                        return;
+                    };
+
+                    Self::resolve_completion_documentation_local(
+                        server,
+                        completions.clone(),
+                        completion_index,
+                        completion,
+                        language_registry.clone(),
+                    )
+                    .await;
+
+                    _ = this.update(&mut cx, |_, cx| cx.notify());
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn attempt_resolve_selected_completion_documentation(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let settings = settings::get::<EditorSettings>(cx);
+        if !settings.show_completion_documentation {
+            return;
+        }
+
+        let completion_index = self.matches[self.selected_item].candidate_id;
+        let Some(project) = project else {
+            return;
+        };
+        let language_registry = project.read(cx).languages().clone();
+
+        let completions = self.completions.clone();
+        let completions_guard = completions.read();
+        let completion = &completions_guard[completion_index];
+        if completion.documentation.is_some() {
+            return;
+        }
+
+        let server_id = completion.server_id;
+        let completion = completion.lsp_completion.clone();
+        drop(completions_guard);
+
+        if project.read(cx).is_remote() {
+            let Some(project_id) = project.read(cx).remote_id() else {
+                log::error!("Remote project without remote_id");
+                return;
+            };
+
+            let client = project.read(cx).client();
+
+            cx.spawn(move |this, mut cx| async move {
+                Self::resolve_completion_documentation_remote(
+                    project_id,
+                    server_id,
+                    completions.clone(),
+                    completion_index,
+                    completion,
+                    client,
+                    language_registry.clone(),
+                )
+                .await;
+
+                _ = this.update(&mut cx, |_, cx| cx.notify());
+            })
+            .detach();
+        } else {
+            let Some(server) = project.read(cx).language_server_for_id(server_id) else {
+                return;
+            };
+
+            cx.spawn(move |this, mut cx| async move {
+                Self::resolve_completion_documentation_local(
+                    server,
+                    completions,
+                    completion_index,
+                    completion,
+                    language_registry,
+                )
+                .await;
+
+                _ = this.update(&mut cx, |_, cx| cx.notify());
+            })
+            .detach();
+        }
+    }
+
+    async fn resolve_completion_documentation_remote(
+        project_id: u64,
+        server_id: LanguageServerId,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        completion_index: usize,
+        completion: lsp::CompletionItem,
+        client: Arc<Client>,
+        language_registry: Arc<LanguageRegistry>,
+    ) {
+        let request = proto::ResolveCompletionDocumentation {
+            project_id,
+            language_server_id: server_id.0 as u64,
+            lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
+        };
+
+        let Some(response) = client
+            .request(request)
+            .await
+            .context("completion documentation resolve proto request")
+            .log_err()
+        else {
+            return;
+        };
+
+        if response.text.is_empty() {
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(Documentation::Undocumented);
+        }
+
+        let documentation = if response.is_markdown {
+            Documentation::MultiLineMarkdown(
+                markdown::parse_markdown(&response.text, &language_registry, None).await,
+            )
+        } else if response.text.lines().count() <= 1 {
+            Documentation::SingleLine(response.text)
+        } else {
+            Documentation::MultiLinePlainText(response.text)
+        };
+
+        let mut completions = completions.write();
+        let completion = &mut completions[completion_index];
+        completion.documentation = Some(documentation);
+    }
+
+    async fn resolve_completion_documentation_local(
+        server: Arc<lsp::LanguageServer>,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        completion_index: usize,
+        completion: lsp::CompletionItem,
+        language_registry: Arc<LanguageRegistry>,
+    ) {
+        let can_resolve = server
+            .capabilities()
+            .completion_provider
+            .as_ref()
+            .and_then(|options| options.resolve_provider)
+            .unwrap_or(false);
+        if !can_resolve {
+            return;
+        }
+
+        let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
+        let Some(completion_item) = request.await.log_err() else {
+            return;
+        };
+
+        if let Some(lsp_documentation) = completion_item.documentation {
+            let documentation = language::prepare_completion_documentation(
+                &lsp_documentation,
+                &language_registry,
+                None, // TODO: Try to reasonably work out which language the completion is for
+            )
+            .await;
+
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(documentation);
+        } else {
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(Documentation::Undocumented);
+        }
     }
 
     fn visible(&self) -> bool {
         !self.matches.is_empty()
     }
 
-    fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement<Editor> {
+    fn render(
+        &self,
+        style: EditorStyle,
+        workspace: Option<WeakViewHandle<Workspace>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> AnyElement<Editor> {
         enum CompletionTag {}
 
-        let language_servers = self.project.as_ref().map(|project| {
-            project
-                .read(cx)
-                .language_servers_for_buffer(self.buffer.read(cx), cx)
-                .filter(|(_, server)| server.capabilities().completion_provider.is_some())
-                .map(|(adapter, server)| (server.server_id(), adapter.short_name))
-                .collect::<Vec<_>>()
-        });
-        let needs_server_name = language_servers
-            .as_ref()
-            .map_or(false, |servers| servers.len() > 1);
-
-        let get_server_name =
-            move |lookup_server_id: lsp::LanguageServerId| -> Option<&'static str> {
-                language_servers
-                    .iter()
-                    .flatten()
-                    .find_map(|(server_id, server_name)| {
-                        if *server_id == lookup_server_id {
-                            Some(*server_name)
-                        } else {
-                            None
-                        }
-                    })
-            };
+        let settings = settings::get::<EditorSettings>(cx);
+        let show_completion_documentation = settings.show_completion_documentation;
 
         let widest_completion_ix = self
             .matches
             .iter()
             .enumerate()
             .max_by_key(|(_, mat)| {
-                let completion = &self.completions[mat.candidate_id];
-                let mut len = completion.label.text.chars().count();
+                let completions = self.completions.read();
+                let completion = &completions[mat.candidate_id];
+                let documentation = &completion.documentation;
 
-                if let Some(server_name) = get_server_name(completion.server_id) {
-                    len += server_name.chars().count();
+                let mut len = completion.label.text.chars().count();
+                if let Some(Documentation::SingleLine(text)) = documentation {
+                    if show_completion_documentation {
+                        len += text.chars().count();
+                    }
                 }
 
                 len
@@ -948,16 +1281,24 @@ impl CompletionsMenu {
         let completions = self.completions.clone();
         let matches = self.matches.clone();
         let selected_item = self.selected_item;
-        let container_style = style.autocomplete.container;
-        UniformList::new(
-            self.list.clone(),
-            matches.len(),
-            cx,
+
+        let list = UniformList::new(self.list.clone(), matches.len(), cx, {
+            let style = style.clone();
             move |_, range, items, cx| {
                 let start_ix = range.start;
+                let completions_guard = completions.read();
+
                 for (ix, mat) in matches[range].iter().enumerate() {
-                    let completion = &completions[mat.candidate_id];
                     let item_ix = start_ix + ix;
+                    let candidate_id = mat.candidate_id;
+                    let completion = &completions_guard[candidate_id];
+
+                    let documentation = if show_completion_documentation {
+                        &completion.documentation
+                    } else {
+                        &None
+                    };
+
                     items.push(
                         MouseEventHandler::new::<CompletionTag, _>(
                             mat.candidate_id,
@@ -986,22 +1327,18 @@ impl CompletionsMenu {
                                             ),
                                         );
 
-                                if let Some(server_name) = get_server_name(completion.server_id) {
+                                if let Some(Documentation::SingleLine(text)) = documentation {
                                     Flex::row()
                                         .with_child(completion_label)
                                         .with_children((|| {
-                                            if !needs_server_name {
-                                                return None;
-                                            }
-
                                             let text_style = TextStyle {
-                                                color: style.autocomplete.server_name_color,
+                                                color: style.autocomplete.inline_docs_color,
                                                 font_size: style.text.font_size
-                                                    * style.autocomplete.server_name_size_percent,
+                                                    * style.autocomplete.inline_docs_size_percent,
                                                 ..style.text.clone()
                                             };
 
-                                            let label = Text::new(server_name, text_style)
+                                            let label = Text::new(text.clone(), text_style)
                                                 .aligned()
                                                 .constrained()
                                                 .dynamically(move |constraint, _, _| {
@@ -1021,7 +1358,7 @@ impl CompletionsMenu {
                                                         .with_style(
                                                             style
                                                                 .autocomplete
-                                                                .server_name_container,
+                                                                .inline_docs_container,
                                                         )
                                                         .into_any(),
                                                 )
@@ -1060,15 +1397,59 @@ impl CompletionsMenu {
                             )
                             .map(|task| task.detach());
                         })
+                        .constrained()
+                        .with_min_width(style.autocomplete.completion_min_width)
+                        .with_max_width(style.autocomplete.completion_max_width)
                         .into_any(),
                     );
                 }
-            },
-        )
-        .with_width_from_item(widest_completion_ix)
-        .contained()
-        .with_style(container_style)
-        .into_any()
+            }
+        })
+        .with_width_from_item(widest_completion_ix);
+
+        enum MultiLineDocumentation {}
+
+        Flex::row()
+            .with_child(list.flex(1., false))
+            .with_children({
+                let mat = &self.matches[selected_item];
+                let completions = self.completions.read();
+                let completion = &completions[mat.candidate_id];
+                let documentation = &completion.documentation;
+
+                match documentation {
+                    Some(Documentation::MultiLinePlainText(text)) => Some(
+                        Flex::column()
+                            .scrollable::<MultiLineDocumentation>(0, None, cx)
+                            .with_child(
+                                Text::new(text.clone(), style.text.clone()).with_soft_wrap(true),
+                            )
+                            .contained()
+                            .with_style(style.autocomplete.alongside_docs_container)
+                            .constrained()
+                            .with_max_width(style.autocomplete.alongside_docs_max_width)
+                            .flex(1., false),
+                    ),
+
+                    Some(Documentation::MultiLineMarkdown(parsed)) => Some(
+                        Flex::column()
+                            .scrollable::<MultiLineDocumentation>(0, None, cx)
+                            .with_child(render_parsed_markdown::<MultiLineDocumentation>(
+                                parsed, &style, workspace, cx,
+                            ))
+                            .contained()
+                            .with_style(style.autocomplete.alongside_docs_container)
+                            .constrained()
+                            .with_max_width(style.autocomplete.alongside_docs_max_width)
+                            .flex(1., false),
+                    ),
+
+                    _ => None,
+                }
+            })
+            .contained()
+            .with_style(style.autocomplete.container)
+            .into_any()
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: Arc<executor::Background>) {
@@ -1095,13 +1476,13 @@ impl CompletionsMenu {
                 .collect()
         };
 
-        //Remove all candidates where the query's start does not match the start of any word in the candidate
+        // Remove all candidates where the query's start does not match the start of any word in the candidate
         if let Some(query) = query {
             if let Some(query_start) = query.chars().next() {
                 matches.retain(|string_match| {
                     split_words(&string_match.string).any(|word| {
-                        //Check that the first codepoint of the word as lowercase matches the first
-                        //codepoint of the query as lowercase
+                        // Check that the first codepoint of the word as lowercase matches the first
+                        // codepoint of the query as lowercase
                         word.chars()
                             .flat_map(|codepoint| codepoint.to_lowercase())
                             .zip(query_start.to_lowercase())
@@ -1111,23 +1492,27 @@ impl CompletionsMenu {
             }
         }
 
+        let completions = self.completions.read();
         matches.sort_unstable_by_key(|mat| {
-            let completion = &self.completions[mat.candidate_id];
+            let completion = &completions[mat.candidate_id];
             (
                 completion.lsp_completion.sort_text.as_ref(),
                 Reverse(OrderedFloat(mat.score)),
                 completion.sort_key(),
             )
         });
+        drop(completions);
 
         for mat in &mut matches {
-            let filter_start = self.completions[mat.candidate_id].label.filter_range.start;
+            let completions = self.completions.read();
+            let filter_start = completions[mat.candidate_id].label.filter_range.start;
             for position in &mut mat.positions {
                 *position += filter_start;
             }
         }
 
         self.matches = matches.into();
+        self.selected_item = 0;
     }
 }
 
@@ -1150,17 +1535,21 @@ impl CodeActionsMenu {
     fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-            cx.notify()
+        } else {
+            self.selected_item = self.actions.len() - 1;
         }
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        cx.notify();
     }
 
     fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item + 1 < self.actions.len() {
             self.selected_item += 1;
-            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-            cx.notify()
+        } else {
+            self.selected_item = 0;
         }
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        cx.notify();
     }
 
     fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
@@ -1563,7 +1952,7 @@ impl Editor {
             background_highlights: Default::default(),
             inlay_background_highlights: Default::default(),
             nav_history: None,
-            context_menu: None,
+            context_menu: RwLock::new(None),
             mouse_context_menu: cx
                 .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
             completion_tasks: Default::default(),
@@ -1858,10 +2247,12 @@ impl Editor {
 
         if local {
             let new_cursor_position = self.selections.newest_anchor().head();
-            let completion_menu = match self.context_menu.as_mut() {
+            let mut context_menu = self.context_menu.write();
+            let completion_menu = match context_menu.as_ref() {
                 Some(ContextMenu::Completions(menu)) => Some(menu),
+
                 _ => {
-                    self.context_menu.take();
+                    *context_menu = None;
                     None
                 }
             };
@@ -1873,13 +2264,39 @@ impl Editor {
                 if kind == Some(CharKind::Word)
                     && word_range.to_inclusive().contains(&cursor_position)
                 {
+                    let mut completion_menu = completion_menu.clone();
+                    drop(context_menu);
+
                     let query = Self::completion_query(buffer, cursor_position);
-                    cx.background()
-                        .block(completion_menu.filter(query.as_deref(), cx.background().clone()));
+                    cx.spawn(move |this, mut cx| async move {
+                        completion_menu
+                            .filter(query.as_deref(), cx.background().clone())
+                            .await;
+
+                        this.update(&mut cx, |this, cx| {
+                            let mut context_menu = this.context_menu.write();
+                            let Some(ContextMenu::Completions(menu)) = context_menu.as_ref() else {
+                                return;
+                            };
+
+                            if menu.id > completion_menu.id {
+                                return;
+                            }
+
+                            *context_menu = Some(ContextMenu::Completions(completion_menu));
+                            drop(context_menu);
+                            cx.notify();
+                        })
+                    })
+                    .detach();
+
                     self.show_completions(&ShowCompletions, cx);
                 } else {
+                    drop(context_menu);
                     self.hide_context_menu(cx);
                 }
+            } else {
+                drop(context_menu);
             }
 
             hide_hover(self, cx);
@@ -2877,8 +3294,10 @@ impl Editor {
                     i = 0;
                 } else if pair_state.range.start.to_offset(buffer) > range.end {
                     break;
-                } else if pair_state.selection_id == selection.id {
-                    enclosing = Some(pair_state);
+                } else {
+                    if pair_state.selection_id == selection.id {
+                        enclosing = Some(pair_state);
+                    }
                     i += 1;
                 }
             }
@@ -2912,6 +3331,7 @@ impl Editor {
             false
         });
     }
+
     fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
         let offset = position.to_offset(buffer);
         let (word_range, kind) = buffer.surrounding_word(offset);
@@ -3064,6 +3484,14 @@ impl Editor {
             .collect()
     }
 
+    pub fn text_layout_details(&self, cx: &WindowContext) -> TextLayoutDetails {
+        TextLayoutDetails {
+            font_cache: cx.font_cache().clone(),
+            text_layout_cache: cx.text_layout_cache().clone(),
+            editor_style: self.style(cx),
+        }
+    }
+
     fn splice_inlay_hints(
         &self,
         to_remove: Vec<InlayId>,
@@ -3150,7 +3578,6 @@ impl Editor {
         });
 
         let id = post_inc(&mut self.next_completion_id);
-        let project = self.project.clone();
         let task = cx.spawn(|this, mut cx| {
             async move {
                 let menu = if let Some(completions) = completions.await.log_err() {
@@ -3169,8 +3596,7 @@ impl Editor {
                             })
                             .collect(),
                         buffer,
-                        project,
-                        completions: completions.into(),
+                        completions: Arc::new(RwLock::new(completions.into())),
                         matches: Vec::new().into(),
                         selected_item: 0,
                         list: Default::default(),
@@ -3179,6 +3605,9 @@ impl Editor {
                     if menu.matches.is_empty() {
                         None
                     } else {
+                        _ = this.update(&mut cx, |editor, cx| {
+                            menu.pre_resolve_completion_documentation(editor.project.clone(), cx);
+                        });
                         Some(menu)
                     }
                 } else {
@@ -3188,23 +3617,30 @@ impl Editor {
                 this.update(&mut cx, |this, cx| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id > id);
 
-                    match this.context_menu.as_ref() {
+                    let mut context_menu = this.context_menu.write();
+                    match context_menu.as_ref() {
                         None => {}
+
                         Some(ContextMenu::Completions(prev_menu)) => {
                             if prev_menu.id > id {
                                 return;
                             }
                         }
+
                         _ => return,
                     }
 
                     if this.focused && menu.is_some() {
                         let menu = menu.unwrap();
-                        this.show_context_menu(ContextMenu::Completions(menu), cx);
+                        *context_menu = Some(ContextMenu::Completions(menu));
+                        drop(context_menu);
+                        this.discard_copilot_suggestion(cx);
+                        cx.notify();
                     } else if this.completion_tasks.is_empty() {
                         // If there are no more completion tasks and the last menu was
                         // empty, we should hide it. If it was already hidden, we should
                         // also show the copilot suggestion when available.
+                        drop(context_menu);
                         if this.hide_context_menu(cx).is_none() {
                             this.update_visible_copilot_suggestion(cx);
                         }
@@ -3235,7 +3671,8 @@ impl Editor {
             .matches
             .get(action.item_ix.unwrap_or(completions_menu.selected_item))?;
         let buffer_handle = completions_menu.buffer;
-        let completion = completions_menu.completions.get(mat.candidate_id)?;
+        let completions = completions_menu.completions.read();
+        let completion = completions.get(mat.candidate_id)?;
 
         let snippet;
         let text;
@@ -3348,14 +3785,13 @@ impl Editor {
     }
 
     pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
-        if matches!(
-            self.context_menu.as_ref(),
-            Some(ContextMenu::CodeActions(_))
-        ) {
-            self.context_menu.take();
+        let mut context_menu = self.context_menu.write();
+        if matches!(context_menu.as_ref(), Some(ContextMenu::CodeActions(_))) {
+            *context_menu = None;
             cx.notify();
             return;
         }
+        drop(context_menu);
 
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
@@ -3368,16 +3804,16 @@ impl Editor {
             this.update(&mut cx, |this, cx| {
                 if this.focused {
                     if let Some((buffer, actions)) = this.available_code_actions.clone() {
-                        this.show_context_menu(
-                            ContextMenu::CodeActions(CodeActionsMenu {
+                        this.completion_tasks.clear();
+                        this.discard_copilot_suggestion(cx);
+                        *this.context_menu.write() =
+                            Some(ContextMenu::CodeActions(CodeActionsMenu {
                                 buffer,
                                 actions,
                                 selected_item: Default::default(),
                                 list: Default::default(),
                                 deployed_from_indicator,
-                            }),
-                            cx,
-                        );
+                            }));
                     }
                 }
             })?;
@@ -3740,7 +4176,10 @@ impl Editor {
         if self.has_active_copilot_suggestion(cx) {
             self.cycle_copilot_suggestions(Direction::Next, cx);
         } else {
-            self.refresh_copilot_suggestions(false, cx);
+            let is_copilot_disabled = self.refresh_copilot_suggestions(false, cx).is_none();
+            if is_copilot_disabled {
+                cx.propagate_action();
+            }
         }
     }
 
@@ -3752,7 +4191,10 @@ impl Editor {
         if self.has_active_copilot_suggestion(cx) {
             self.cycle_copilot_suggestions(Direction::Prev, cx);
         } else {
-            self.refresh_copilot_suggestions(false, cx);
+            let is_copilot_disabled = self.refresh_copilot_suggestions(false, cx).is_none();
+            if is_copilot_disabled {
+                cx.propagate_action();
+            }
         }
     }
 
@@ -3841,7 +4283,7 @@ impl Editor {
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
 
-        if self.context_menu.is_some()
+        if self.context_menu.read().is_some()
             || !self.completion_tasks.is_empty()
             || selection.start != selection.end
         {
@@ -3975,6 +4417,7 @@ impl Editor {
 
     pub fn context_menu_visible(&self) -> bool {
         self.context_menu
+            .read()
             .as_ref()
             .map_or(false, |menu| menu.visible())
     }
@@ -3985,24 +4428,20 @@ impl Editor {
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, AnyElement<Editor>)> {
-        self.context_menu
-            .as_ref()
-            .map(|menu| menu.render(cursor_position, style, cx))
-    }
-
-    fn show_context_menu(&mut self, menu: ContextMenu, cx: &mut ViewContext<Self>) {
-        if !matches!(menu, ContextMenu::Completions(_)) {
-            self.completion_tasks.clear();
-        }
-        self.context_menu = Some(menu);
-        self.discard_copilot_suggestion(cx);
-        cx.notify();
+        self.context_menu.read().as_ref().map(|menu| {
+            menu.render(
+                cursor_position,
+                style,
+                self.workspace.as_ref().map(|(w, _)| w.clone()),
+                cx,
+            )
+        })
     }
 
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<ContextMenu> {
         cx.notify();
         self.completion_tasks.clear();
-        let context_menu = self.context_menu.take();
+        let context_menu = self.context_menu.write().take();
         if context_menu.is_some() {
             self.update_visible_copilot_suggestion(cx);
         }
@@ -4987,6 +5426,7 @@ impl Editor {
     }
 
     pub fn transpose(&mut self, _: &Transpose, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
         self.transact(cx, |this, cx| {
             let edits = this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 let mut edits: Vec<(Range<usize>, String)> = Default::default();
@@ -5010,7 +5450,10 @@ impl Editor {
 
                     *head.column_mut() += 1;
                     head = display_map.clip_point(head, Bias::Right);
-                    selection.collapse_to(head, SelectionGoal::Column(head.column()));
+                    let goal = SelectionGoal::HorizontalPosition(
+                        display_map.x_for_point(head, &text_layout_details),
+                    );
+                    selection.collapse_to(head, goal);
 
                     let transpose_start = display_map
                         .buffer_snapshot
@@ -5274,13 +5717,21 @@ impl Editor {
             return;
         }
 
+        let text_layout_details = &self.text_layout_details(cx);
+
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::up(map, selection.start, selection.goal, false);
+                let (cursor, goal) = movement::up(
+                    map,
+                    selection.start,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
                 selection.collapse_to(cursor, goal);
             });
         })
@@ -5308,22 +5759,33 @@ impl Editor {
             Autoscroll::fit()
         };
 
+        let text_layout_details = &self.text_layout_details(cx);
+
         self.change_selections(Some(autoscroll), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) =
-                    movement::up_by_rows(map, selection.end, row_count, selection.goal, false);
+                let (cursor, goal) = movement::up_by_rows(
+                    map,
+                    selection.end,
+                    row_count,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
                 selection.collapse_to(cursor, goal);
             });
         });
     }
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            s.move_heads_with(|map, head, goal| movement::up(map, head, goal, false))
+            s.move_heads_with(|map, head, goal| {
+                movement::up(map, head, goal, false, &text_layout_details)
+            })
         })
     }
 
@@ -5335,13 +5797,20 @@ impl Editor {
             return;
         }
 
+        let text_layout_details = &self.text_layout_details(cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::down(map, selection.end, selection.goal, false);
+                let (cursor, goal) = movement::down(
+                    map,
+                    selection.end,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
                 selection.collapse_to(cursor, goal);
             });
         });
@@ -5354,8 +5823,9 @@ impl Editor {
 
         if self
             .context_menu
+            .write()
             .as_mut()
-            .map(|menu| menu.select_last(cx))
+            .map(|menu| menu.select_last(self.project.as_ref(), cx))
             .unwrap_or(false)
         {
             return;
@@ -5378,46 +5848,56 @@ impl Editor {
             Autoscroll::fit()
         };
 
+        let text_layout_details = &self.text_layout_details(cx);
         self.change_selections(Some(autoscroll), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) =
-                    movement::down_by_rows(map, selection.end, row_count, selection.goal, false);
+                let (cursor, goal) = movement::down_by_rows(
+                    map,
+                    selection.end,
+                    row_count,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
                 selection.collapse_to(cursor, goal);
             });
         });
     }
 
     pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            s.move_heads_with(|map, head, goal| movement::down(map, head, goal, false))
+            s.move_heads_with(|map, head, goal| {
+                movement::down(map, head, goal, false, &text_layout_details)
+            })
         });
     }
 
     pub fn context_menu_first(&mut self, _: &ContextMenuFirst, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            context_menu.select_first(cx);
+        if let Some(context_menu) = self.context_menu.write().as_mut() {
+            context_menu.select_first(self.project.as_ref(), cx);
         }
     }
 
     pub fn context_menu_prev(&mut self, _: &ContextMenuPrev, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            context_menu.select_prev(cx);
+        if let Some(context_menu) = self.context_menu.write().as_mut() {
+            context_menu.select_prev(self.project.as_ref(), cx);
         }
     }
 
     pub fn context_menu_next(&mut self, _: &ContextMenuNext, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            context_menu.select_next(cx);
+        if let Some(context_menu) = self.context_menu.write().as_mut() {
+            context_menu.select_next(self.project.as_ref(), cx);
         }
     }
 
     pub fn context_menu_last(&mut self, _: &ContextMenuLast, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            context_menu.select_last(cx);
+        if let Some(context_menu) = self.context_menu.write().as_mut() {
+            context_menu.select_last(self.project.as_ref(), cx);
         }
     }
 
@@ -5912,11 +6392,14 @@ impl Editor {
     fn add_selection(&mut self, above: bool, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections.all::<Point>(cx);
+        let text_layout_details = self.text_layout_details(cx);
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection.display_range(&display_map).sorted();
-            let columns = cmp::min(range.start.column(), range.end.column())
-                ..cmp::max(range.start.column(), range.end.column());
+
+            let start_x = display_map.x_for_point(range.start, &text_layout_details);
+            let end_x = display_map.x_for_point(range.end, &text_layout_details);
+            let positions = start_x.min(end_x)..start_x.max(end_x);
 
             selections.clear();
             let mut stack = Vec::new();
@@ -5924,8 +6407,9 @@ impl Editor {
                 if let Some(selection) = self.selections.build_columnar_selection(
                     &display_map,
                     row,
-                    &columns,
+                    &positions,
                     oldest_selection.reversed,
+                    &text_layout_details,
                 ) {
                     stack.push(selection.id);
                     selections.push(selection);
@@ -5953,12 +6437,15 @@ impl Editor {
                     let range = selection.display_range(&display_map).sorted();
                     debug_assert_eq!(range.start.row(), range.end.row());
                     let mut row = range.start.row();
-                    let columns = if let SelectionGoal::ColumnRange { start, end } = selection.goal
+                    let positions = if let SelectionGoal::HorizontalRange { start, end } =
+                        selection.goal
                     {
                         start..end
                     } else {
-                        cmp::min(range.start.column(), range.end.column())
-                            ..cmp::max(range.start.column(), range.end.column())
+                        let start_x = display_map.x_for_point(range.start, &text_layout_details);
+                        let end_x = display_map.x_for_point(range.end, &text_layout_details);
+
+                        start_x.min(end_x)..start_x.max(end_x)
                     };
 
                     while row != end_row {
@@ -5971,8 +6458,9 @@ impl Editor {
                         if let Some(new_selection) = self.selections.build_columnar_selection(
                             &display_map,
                             row,
-                            &columns,
+                            &positions,
                             selection.reversed,
+                            &text_layout_details,
                         ) {
                             state.stack.push(new_selection.id);
                             if above {
@@ -6061,7 +6549,7 @@ impl Editor {
                     {
                         if selections
                             .iter()
-                            .find(|selection| selection.equals(&offset_range))
+                            .find(|selection| selection.range().overlaps(&offset_range))
                             .is_none()
                         {
                             next_selected_range = Some(offset_range);
@@ -6266,6 +6754,7 @@ impl Editor {
     }
 
     pub fn toggle_comments(&mut self, action: &ToggleComments, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
         self.transact(cx, |this, cx| {
             let mut selections = this.selections.all::<Point>(cx);
             let mut edits = Vec::new();
@@ -6508,7 +6997,10 @@ impl Editor {
                         point.row += 1;
                         point = snapshot.clip_point(point, Bias::Left);
                         let display_point = point.to_display_point(display_snapshot);
-                        (display_point, SelectionGoal::Column(display_point.column()))
+                        let goal = SelectionGoal::HorizontalPosition(
+                            display_snapshot.x_for_point(display_point, &text_layout_details),
+                        );
+                        (display_point, goal)
                     })
                 });
             }
@@ -6717,6 +7209,7 @@ impl Editor {
                     && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
                     && !entry.range.is_empty()
                     && Some(entry.range.end) != active_primary_range.as_ref().map(|r| *r.end())
+                    && !entry.range.contains(&search_start)
                 {
                     Some((entry.range, entry.diagnostic.group_id))
                 } else {
@@ -6823,11 +7316,11 @@ impl Editor {
         let display_point = initial_point.to_display_point(snapshot);
         let mut hunks = hunks
             .map(|hunk| diff_hunk_to_display(hunk, &snapshot))
-            .skip_while(|hunk| {
+            .filter(|hunk| {
                 if is_wrapped {
-                    false
+                    true
                 } else {
-                    hunk.contains_display_row(display_point.row())
+                    !hunk.contains_display_row(display_point.row())
                 }
             })
             .dedup();
@@ -7219,8 +7712,8 @@ impl Editor {
                     let mut buffer_highlights = this
                         .document_highlights_for_position(selection.head(), &buffer)
                         .filter(|highlight| {
-                            highlight.start.excerpt_id() == selection.head().excerpt_id()
-                                && highlight.end.excerpt_id() == selection.head().excerpt_id()
+                            highlight.start.excerpt_id == selection.head().excerpt_id
+                                && highlight.end.excerpt_id == selection.head().excerpt_id
                         });
                     buffer_highlights
                         .next()
@@ -8461,6 +8954,16 @@ impl Editor {
         telemetry.report_clickhouse_event(event, telemetry_settings);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    fn report_editor_event(
+        &self,
+        _operation: &'static str,
+        _file_extension: Option<String>,
+        _cx: &AppContext,
+    ) {
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
     fn report_editor_event(
         &self,
         operation: &'static str,
@@ -8914,7 +9417,7 @@ impl View for Editor {
             keymap.add_identifier("renaming");
         }
         if self.context_menu_visible() {
-            match self.context_menu.as_ref() {
+            match self.context_menu.read().as_ref() {
                 Some(ContextMenu::Completions(_)) => {
                     keymap.add_identifier("menu");
                     keymap.add_identifier("showing_completions")

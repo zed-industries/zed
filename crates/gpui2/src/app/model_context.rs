@@ -1,6 +1,6 @@
 use crate::{
-    AppContext, AsyncAppContext, Context, Effect, EntityId, EventEmitter, Handle, MainThread,
-    Reference, Subscription, Task, WeakHandle,
+    AppContext, AsyncAppContext, Context, Effect, Entity, EntityId, EventEmitter, MainThread,
+    Model, Reference, Subscription, Task, WeakModel,
 };
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
@@ -15,11 +15,11 @@ pub struct ModelContext<'a, T> {
     #[deref]
     #[deref_mut]
     app: Reference<'a, AppContext>,
-    model_state: WeakHandle<T>,
+    model_state: WeakModel<T>,
 }
 
 impl<'a, T: 'static> ModelContext<'a, T> {
-    pub(crate) fn mutable(app: &'a mut AppContext, model_state: WeakHandle<T>) -> Self {
+    pub(crate) fn mutable(app: &'a mut AppContext, model_state: WeakModel<T>) -> Self {
         Self {
             app: Reference::Mutable(app),
             model_state,
@@ -30,30 +30,33 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         self.model_state.entity_id
     }
 
-    pub fn handle(&self) -> Handle<T> {
-        self.weak_handle()
+    pub fn handle(&self) -> Model<T> {
+        self.weak_model()
             .upgrade()
             .expect("The entity must be alive if we have a model context")
     }
 
-    pub fn weak_handle(&self) -> WeakHandle<T> {
+    pub fn weak_model(&self) -> WeakModel<T> {
         self.model_state.clone()
     }
 
-    pub fn observe<T2: 'static>(
+    pub fn observe<T2, E>(
         &mut self,
-        handle: &Handle<T2>,
-        mut on_notify: impl FnMut(&mut T, Handle<T2>, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+        entity: &E,
+        mut on_notify: impl FnMut(&mut T, E, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
+        T2: 'static,
+        E: Entity<T2>,
     {
-        let this = self.weak_handle();
-        let handle = handle.downgrade();
+        let this = self.weak_model();
+        let entity_id = entity.entity_id();
+        let handle = entity.downgrade();
         self.app.observers.insert(
-            handle.entity_id,
+            entity_id,
             Box::new(move |cx| {
-                if let Some((this, handle)) = this.upgrade().zip(handle.upgrade()) {
+                if let Some((this, handle)) = this.upgrade().zip(E::upgrade_from(&handle)) {
                     this.update(cx, |this, cx| on_notify(this, handle, cx));
                     true
                 } else {
@@ -63,24 +66,24 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         )
     }
 
-    pub fn subscribe<E: 'static + EventEmitter>(
+    pub fn subscribe<T2, E>(
         &mut self,
-        handle: &Handle<E>,
-        mut on_event: impl FnMut(&mut T, Handle<E>, &E::Event, &mut ModelContext<'_, T>)
-            + Send
-            + Sync
-            + 'static,
+        entity: &E,
+        mut on_event: impl FnMut(&mut T, E, &T2::Event, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
+        T2: 'static + EventEmitter,
+        E: Entity<T2>,
     {
-        let this = self.weak_handle();
-        let handle = handle.downgrade();
+        let this = self.weak_model();
+        let entity_id = entity.entity_id();
+        let entity = entity.downgrade();
         self.app.event_listeners.insert(
-            handle.entity_id,
+            entity_id,
             Box::new(move |event, cx| {
-                let event: &E::Event = event.downcast_ref().expect("invalid event type");
-                if let Some((this, handle)) = this.upgrade().zip(handle.upgrade()) {
+                let event: &T2::Event = event.downcast_ref().expect("invalid event type");
+                if let Some((this, handle)) = this.upgrade().zip(E::upgrade_from(&entity)) {
                     this.update(cx, |this, cx| on_event(this, handle, event, cx));
                     true
                 } else {
@@ -92,7 +95,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn on_release(
         &mut self,
-        mut on_release: impl FnMut(&mut T, &mut AppContext) + Send + Sync + 'static,
+        mut on_release: impl FnMut(&mut T, &mut AppContext) + Send + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -106,17 +109,20 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         )
     }
 
-    pub fn observe_release<E: 'static>(
+    pub fn observe_release<T2, E>(
         &mut self,
-        handle: &Handle<E>,
-        mut on_release: impl FnMut(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+        entity: &E,
+        mut on_release: impl FnMut(&mut T, &mut T2, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
-        T: Any + Send + Sync,
+        T: Any + Send,
+        T2: 'static,
+        E: Entity<T2>,
     {
-        let this = self.weak_handle();
+        let entity_id = entity.entity_id();
+        let this = self.weak_model();
         self.app.release_listeners.insert(
-            handle.entity_id,
+            entity_id,
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
                 if let Some(this) = this.upgrade() {
@@ -128,12 +134,12 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        mut f: impl FnMut(&mut T, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+        mut f: impl FnMut(&mut T, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
-        let handle = self.weak_handle();
+        let handle = self.weak_model();
         self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| handle.update(cx, |view, cx| f(view, cx)).is_ok()),
@@ -142,13 +148,13 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn on_app_quit<Fut>(
         &mut self,
-        mut on_quit: impl FnMut(&mut T, &mut ModelContext<T>) -> Fut + Send + Sync + 'static,
+        mut on_quit: impl FnMut(&mut T, &mut ModelContext<T>) -> Fut + Send + 'static,
     ) -> Subscription
     where
         Fut: 'static + Future<Output = ()> + Send,
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
-        let handle = self.weak_handle();
+        let handle = self.weak_model();
         self.app.quit_observers.insert(
             (),
             Box::new(move |cx| {
@@ -177,7 +183,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static + Send + Sync,
+        G: 'static + Send,
     {
         let mut global = self.app.lease_global::<G>();
         let result = f(&mut global, self);
@@ -187,26 +193,26 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn spawn<Fut, R>(
         &self,
-        f: impl FnOnce(WeakHandle<T>, AsyncAppContext) -> Fut + Send + 'static,
+        f: impl FnOnce(WeakModel<T>, AsyncAppContext) -> Fut + Send + 'static,
     ) -> Task<R>
     where
         T: 'static,
         Fut: Future<Output = R> + Send + 'static,
         R: Send + 'static,
     {
-        let this = self.weak_handle();
+        let this = self.weak_model();
         self.app.spawn(|cx| f(this, cx))
     }
 
     pub fn spawn_on_main<Fut, R>(
         &self,
-        f: impl FnOnce(WeakHandle<T>, MainThread<AsyncAppContext>) -> Fut + Send + 'static,
+        f: impl FnOnce(WeakModel<T>, MainThread<AsyncAppContext>) -> Fut + Send + 'static,
     ) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
         R: Send + 'static,
     {
-        let this = self.weak_handle();
+        let this = self.weak_model();
         self.app.spawn_on_main(|cx| f(this, cx))
     }
 }
@@ -214,7 +220,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 impl<'a, T> ModelContext<'a, T>
 where
     T: EventEmitter,
-    T::Event: Send + Sync,
+    T::Event: Send,
 {
     pub fn emit(&mut self, event: T::Event) {
         self.app.pending_effects.push_back(Effect::Emit {
@@ -225,25 +231,25 @@ where
 }
 
 impl<'a, T> Context for ModelContext<'a, T> {
-    type EntityContext<'b, 'c, U> = ModelContext<'b, U>;
+    type ModelContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
-    fn entity<U>(
+    fn build_model<U>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, U>) -> U,
-    ) -> Handle<U>
+        build_model: impl FnOnce(&mut Self::ModelContext<'_, U>) -> U,
+    ) -> Model<U>
     where
-        U: 'static + Send + Sync,
+        U: 'static + Send,
     {
-        self.app.entity(build_entity)
+        self.app.build_model(build_model)
     }
 
-    fn update_entity<U: 'static, R>(
+    fn update_model<U: 'static, R>(
         &mut self,
-        handle: &Handle<U>,
-        update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,
+        handle: &Model<U>,
+        update: impl FnOnce(&mut U, &mut Self::ModelContext<'_, U>) -> R,
     ) -> R {
-        self.app.update_entity(handle, update)
+        self.app.update_model(handle, update)
     }
 }
 

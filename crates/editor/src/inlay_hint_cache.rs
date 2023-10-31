@@ -2138,7 +2138,7 @@ pub mod tests {
         });
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_large_buffer_inlay_requests_split(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
@@ -2400,11 +2400,13 @@ pub mod tests {
         ));
         cx.foreground().run_until_parked();
         editor.update(cx, |editor, cx| {
-            let ranges = lsp_request_ranges.lock().drain(..).collect::<Vec<_>>();
+            let mut ranges = lsp_request_ranges.lock().drain(..).collect::<Vec<_>>();
+            ranges.sort_by_key(|r| r.start);
+
             assert_eq!(ranges.len(), 3,
                 "On edit, should scroll to selection and query a range around it: visible + same range above and below. Instead, got query ranges {ranges:?}");
-            let visible_query_range = &ranges[0];
-            let above_query_range = &ranges[1];
+            let above_query_range = &ranges[0];
+            let visible_query_range = &ranges[1];
             let below_query_range = &ranges[2];
             assert!(above_query_range.end.character < visible_query_range.start.character || above_query_range.end.line + 1 == visible_query_range.start.line,
                 "Above range {above_query_range:?} should be before visible range {visible_query_range:?}");

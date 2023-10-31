@@ -1,5 +1,5 @@
 use crate::http::HttpClient;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use futures::AsyncReadExt;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -16,6 +16,7 @@ pub struct GithubRelease {
     pub pre_release: bool,
     pub assets: Vec<GithubReleaseAsset>,
     pub tarball_url: String,
+    pub zipball_url: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -44,6 +45,14 @@ pub async fn latest_github_release(
         .read_to_end(&mut body)
         .await
         .context("error reading latest release")?;
+
+    if response.status().is_client_error() {
+        let text = String::from_utf8_lossy(body.as_slice());
+        bail!(
+            "status error {}, response: {text:?}",
+            response.status().as_u16()
+        );
+    }
 
     let releases = match serde_json::from_slice::<Vec<GithubRelease>>(body.as_slice()) {
         Ok(releases) => releases,

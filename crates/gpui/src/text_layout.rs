@@ -266,6 +266,8 @@ impl Line {
         self.layout.len == 0
     }
 
+    /// index_for_x returns the character containing the given x coordinate.
+    /// (e.g. to handle a mouse-click)
     pub fn index_for_x(&self, x: f32) -> Option<usize> {
         if x >= self.layout.width {
             None
@@ -279,6 +281,28 @@ impl Line {
             }
             Some(0)
         }
+    }
+
+    /// closest_index_for_x returns the character boundary closest to the given x coordinate
+    /// (e.g. to handle aligning up/down arrow keys)
+    pub fn closest_index_for_x(&self, x: f32) -> usize {
+        let mut prev_index = 0;
+        let mut prev_x = 0.0;
+
+        for run in self.layout.runs.iter() {
+            for glyph in run.glyphs.iter() {
+                if glyph.position.x() >= x {
+                    if glyph.position.x() - x < x - prev_x {
+                        return glyph.index;
+                    } else {
+                        return prev_index;
+                    }
+                }
+                prev_index = glyph.index;
+                prev_x = glyph.position.x();
+            }
+        }
+        prev_index
     }
 
     pub fn paint(

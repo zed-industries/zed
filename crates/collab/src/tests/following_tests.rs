@@ -1,6 +1,6 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::ActiveCall;
-use collab_ui::project_shared_notification::ProjectSharedNotification;
+use collab_ui::notifications::project_shared_notification::ProjectSharedNotification;
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{executor::Deterministic, geometry::vector::vec2f, TestAppContext, ViewHandle};
 use live_kit_client::MacOSDisplay;

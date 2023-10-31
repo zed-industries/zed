@@ -18,7 +18,6 @@ async fn test_get_user_flags(db: &Arc<Database>) {
             NewUserParams {
                 github_login: format!("user1"),
                 github_user_id: 1,
-                invite_count: 0,
             },
         )
         .await
@@ -32,7 +31,6 @@ async fn test_get_user_flags(db: &Arc<Database>) {
             NewUserParams {
                 github_login: format!("user2"),
                 github_user_id: 2,
-                invite_count: 0,
             },
         )
         .await

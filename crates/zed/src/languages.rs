@@ -24,6 +24,7 @@ mod rust;
 mod svelte;
 mod tailwind;
 mod typescript;
+mod vue;
 mod yaml;
 
 // 1. Add tree-sitter-{language} parser to zed crate
@@ -75,7 +76,10 @@ pub fn init(
         elixir::ElixirLspSetting::ElixirLs => language(
             "elixir",
             tree_sitter_elixir::language(),
-            vec![Arc::new(elixir::ElixirLspAdapter)],
+            vec![
+                Arc::new(elixir::ElixirLspAdapter),
+                Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+            ],
         ),
         elixir::ElixirLspSetting::NextLs => language(
             "elixir",
@@ -100,7 +104,10 @@ pub fn init(
     language(
         "heex",
         tree_sitter_heex::language(),
-        vec![Arc::new(elixir::ElixirLspAdapter)],
+        vec![
+            Arc::new(elixir::ElixirLspAdapter),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ],
     );
     language(
         "json",
@@ -166,7 +173,10 @@ pub fn init(
     language(
         "erb",
         tree_sitter_embedded_template::language(),
-        vec![Arc::new(ruby::RubyLanguageServer)],
+        vec![
+            Arc::new(ruby::RubyLanguageServer),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ],
     );
     language("scheme", tree_sitter_scheme::language(), vec![]);
     language("racket", tree_sitter_racket::language(), vec![]);
@@ -183,20 +193,29 @@ pub fn init(
     language(
         "svelte",
         tree_sitter_svelte::language(),
-        vec![Arc::new(svelte::SvelteLspAdapter::new(
-            node_runtime.clone(),
-        ))],
+        vec![
+            Arc::new(svelte::SvelteLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ],
     );
     language(
         "php",
         tree_sitter_php::language(),
-        vec![Arc::new(php::IntelephenseLspAdapter::new(node_runtime))],
+        vec![
+            Arc::new(php::IntelephenseLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ],
     );
 
     language("elm", tree_sitter_elm::language(), vec![]);
     language("glsl", tree_sitter_glsl::language(), vec![]);
     language("nix", tree_sitter_nix::language(), vec![]);
     language("nu", tree_sitter_nu::language(), vec![]);
+    language(
+        "vue",
+        tree_sitter_vue::language(),
+        vec![Arc::new(vue::VueLspAdapter::new(node_runtime))],
+    );
 }
 
 #[cfg(any(test, feature = "test-support"))]

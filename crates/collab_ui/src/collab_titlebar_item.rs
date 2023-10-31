@@ -1,10 +1,10 @@
 use crate::{
-    contact_notification::ContactNotification, face_pile::FacePile, toggle_deafen, toggle_mute,
-    toggle_screen_sharing, LeaveCall, ToggleDeafen, ToggleMute, ToggleScreenSharing,
+    face_pile::FacePile, toggle_deafen, toggle_mute, toggle_screen_sharing, LeaveCall,
+    ToggleDeafen, ToggleMute, ToggleScreenSharing,
 };
 use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, Client, ContactEventKind, SignIn, SignOut, User, UserStore};
+use client::{proto::PeerId, Client, SignIn, SignOut, User, UserStore};
 use clock::ReplicaId;
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
@@ -88,8 +88,10 @@ impl View for CollabTitlebarItem {
             .zip(peer_id)
             .zip(ActiveCall::global(cx).read(cx).room().cloned())
         {
-            right_container
-                .add_children(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
+            if room.read(cx).can_publish() {
+                right_container
+                    .add_children(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
+            }
             right_container.add_child(self.render_leave_call(&theme, cx));
             let muted = room.read(cx).is_muted(cx);
             let speaking = room.read(cx).is_speaking();
@@ -97,9 +99,14 @@ impl View for CollabTitlebarItem {
                 self.render_current_user(&workspace, &theme, &user, peer_id, muted, speaking, cx),
             );
             left_container.add_children(self.render_collaborators(&workspace, &theme, &room, cx));
-            right_container.add_child(self.render_toggle_mute(&theme, &room, cx));
+            if room.read(cx).can_publish() {
+                right_container.add_child(self.render_toggle_mute(&theme, &room, cx));
+            }
             right_container.add_child(self.render_toggle_deafen(&theme, &room, cx));
-            right_container.add_child(self.render_toggle_screen_sharing_button(&theme, &room, cx));
+            if room.read(cx).can_publish() {
+                right_container
+                    .add_child(self.render_toggle_screen_sharing_button(&theme, &room, cx));
+            }
         }
 
         let status = workspace.read(cx).client().status();
@@ -151,28 +158,6 @@ impl CollabTitlebarItem {
             this.window_activation_changed(active, cx)
         }));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
-        subscriptions.push(
-            cx.subscribe(&user_store, move |this, user_store, event, cx| {
-                if let Some(workspace) = this.workspace.upgrade(cx) {
-                    workspace.update(cx, |workspace, cx| {
-                        if let client::Event::Contact { user, kind } = event {
-                            if let ContactEventKind::Requested | ContactEventKind::Accepted = kind {
-                                workspace.show_notification(user.id as usize, cx, |cx| {
-                                    cx.add_view(|cx| {
-                                        ContactNotification::new(
-                                            user.clone(),
-                                            *kind,
-                                            user_store,
-                                            cx,
-                                        )
-                                    })
-                                })
-                            }
-                        }
-                    });
-                }
-            }),
-        );
 
         Self {
             workspace: workspace.weak_handle(),
@@ -488,7 +473,11 @@ impl CollabTitlebarItem {
     pub fn toggle_vcs_menu(&mut self, _: &ToggleVcsMenu, cx: &mut ViewContext<Self>) {
         if self.branch_popover.take().is_none() {
             if let Some(workspace) = self.workspace.upgrade(cx) {
-                let view = cx.add_view(|cx| build_branch_list(workspace, cx));
+                let Some(view) =
+                    cx.add_option_view(|cx| build_branch_list(workspace, cx).log_err())
+                else {
+                    return;
+                };
                 cx.subscribe(&view, |this, _, event, cx| {
                     match event {
                         PickerEvent::Dismiss => {

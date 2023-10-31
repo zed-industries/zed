@@ -27,6 +27,7 @@ serde_derive.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 futures.workspace = true
+parking_lot.workspace = true
 
 [dev-dependencies]
 language = { path = "../language", features = ["test-support"] }

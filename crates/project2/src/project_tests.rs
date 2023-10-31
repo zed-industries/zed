@@ -2275,7 +2275,7 @@ async fn test_definition(cx: &mut gpui2::TestAppContext) {
     });
 
     fn list_worktrees<'a>(
-        project: &'a Handle<Project>,
+        project: &'a Model<Project>,
         cx: &'a AppContext,
     ) -> Vec<(&'a Path, bool)> {
         project
@@ -4035,7 +4035,7 @@ fn test_glob_literal_prefix() {
 }
 
 async fn search(
-    project: &Handle<Project>,
+    project: &Model<Project>,
     query: SearchQuery,
     cx: &mut gpui2::TestAppContext,
 ) -> Result<HashMap<String, Vec<Range<usize>>>> {

@@ -1,8 +1,7 @@
 use crate::{AppContext, PlatformDispatcher};
-use futures::{channel::mpsc, pin_mut};
+use futures::{channel::mpsc, pin_mut, FutureExt};
 use smol::prelude::*;
 use std::{
-    borrow::BorrowMut,
     fmt::Debug,
     marker::PhantomData,
     mem,
@@ -181,16 +180,16 @@ impl Executor {
         duration: Duration,
         future: impl Future<Output = R>,
     ) -> Result<R, impl Future<Output = R>> {
-        let mut future = Box::pin(future);
-        let timeout = {
-            let future = &mut future;
-            async {
-                let timer = async {
-                    self.timer(duration).await;
-                    Err(())
-                };
-                let future = async move { Ok(future.await) };
-                timer.race(future).await
+        let mut future = Box::pin(future.fuse());
+        if duration.is_zero() {
+            return Err(future);
+        }
+
+        let mut timer = self.timer(duration).fuse();
+        let timeout = async {
+            futures::select_biased! {
+                value = future => Ok(value),
+                _ = timer => Err(()),
             }
         };
         match self.block(timeout) {

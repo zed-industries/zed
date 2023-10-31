@@ -17,6 +17,7 @@ clock = { path = "../clock" }
 collections = { path = "../collections" }
 gpui = { path = "../gpui", optional = true }
 util = { path = "../util" }
+
 anyhow.workspace = true
 async-lock = "2.4"
 async-tungstenite = "0.16"
@@ -27,8 +28,10 @@ prost.workspace = true
 rand.workspace = true
 rsa = "0.4"
 serde.workspace = true
+serde_json.workspace = true
 serde_derive.workspace = true
 smol-timeout = "0.6"
+strum.workspace = true
 tracing = { version = "0.1.34", features = ["log"] }
 zstd = "0.11"
 

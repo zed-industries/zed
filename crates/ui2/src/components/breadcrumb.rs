@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use gpui2::Div;
 use crate::prelude::*;
 use crate::{h_stack, HighlightedText};
+use gpui2::Div;
 
 #[derive(Clone)]
 pub struct Symbol(pub Vec<HighlightedText>);
@@ -15,10 +15,7 @@ pub struct Breadcrumb {
 
 impl Breadcrumb {
     pub fn new(path: PathBuf, symbols: Vec<Symbol>) -> Self {
-        Self {
-            path,
-            symbols,
-        }
+        Self { path, symbols }
     }
 
     fn render_separator<V: 'static>(&self, cx: &WindowContext) -> Div<V> {
@@ -76,21 +73,17 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
+    use super::*;
+    use crate::Story;
+    use gpui2::Render;
     use std::str::FromStr;
 
-    use crate::Story;
-
-    use super::*;
-
-    #[derive(Component)]
     pub struct BreadcrumbStory;
 
-    impl BreadcrumbStory {
-        pub fn new() -> Self {
-            Self
-        }
+    impl Render for BreadcrumbStory {
+        type Element = Div<Self>;
 
-        fn render<V: 'static>(self, view_state: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let theme = theme(cx);
 
             Story::container(cx)
@@ -102,21 +95,21 @@ mod stories {
                         Symbol(vec![
                             HighlightedText {
                                 text: "impl ".to_string(),
-                                color: theme.syntax.keyword,
+                                color: theme.syntax.color("keyword"),
                             },
                             HighlightedText {
                                 text: "BreadcrumbStory".to_string(),
-                                color: theme.syntax.function,
+                                color: theme.syntax.color("function"),
                             },
                         ]),
                         Symbol(vec![
                             HighlightedText {
                                 text: "fn ".to_string(),
-                                color: theme.syntax.keyword,
+                                color: theme.syntax.color("keyword"),
                             },
                             HighlightedText {
                                 text: "render".to_string(),
-                                color: theme.syntax.function,
+                                color: theme.syntax.color("function"),
                             },
                         ]),
                     ],

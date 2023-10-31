@@ -15,6 +15,7 @@ name = "Zed"
 path = "src/main.rs"
 
 [dependencies]
+ai2 = { path = "../ai2"}
 # audio = { path = "../audio" }
 # activity_indicator = { path = "../activity_indicator" }
 # auto_update = { path = "../auto_update" }
@@ -43,10 +44,10 @@ fuzzy = { path = "../fuzzy" }
 # go_to_line = { path = "../go_to_line" }
 gpui2 = { path = "../gpui2" }
 install_cli = { path = "../install_cli" }
-# journal = { path = "../journal" }
+journal2 = { path = "../journal2" }
 language2 = { path = "../language2" }
 # language_selector = { path = "../language_selector" }
-lsp = { path = "../lsp" }
+lsp2 = { path = "../lsp2" }
 language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
 # assistant = { path = "../assistant" }
@@ -59,7 +60,7 @@ project2 = { path = "../project2" }
 # recent_projects = { path = "../recent_projects" }
 rpc2 = { path = "../rpc2" }
 settings2 = { path = "../settings2" }
-feature_flags = { path = "../feature_flags" }
+feature_flags2 = { path = "../feature_flags2" }
 sum_tree = { path = "../sum_tree" }
 shellexpand = "2.1.0"
 text = { path = "../text" }
@@ -134,6 +135,7 @@ tree-sitter-yaml.workspace = true
 tree-sitter-lua.workspace = true
 tree-sitter-nix.workspace = true
 tree-sitter-nu.workspace = true
+tree-sitter-vue.workspace = true
 
 url = "2.2"
 urlencoding = "2.1.2"

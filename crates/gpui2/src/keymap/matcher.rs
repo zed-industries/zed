@@ -1,17 +1,17 @@
 use crate::{Action, DispatchContext, Keymap, KeymapVersion, Keystroke};
-use parking_lot::RwLock;
+use parking_lot::Mutex;
 use smallvec::SmallVec;
 use std::sync::Arc;
 
 pub struct KeyMatcher {
     pending_keystrokes: Vec<Keystroke>,
-    keymap: Arc<RwLock<Keymap>>,
+    keymap: Arc<Mutex<Keymap>>,
     keymap_version: KeymapVersion,
 }
 
 impl KeyMatcher {
-    pub fn new(keymap: Arc<RwLock<Keymap>>) -> Self {
-        let keymap_version = keymap.read().version();
+    pub fn new(keymap: Arc<Mutex<Keymap>>) -> Self {
+        let keymap_version = keymap.lock().version();
         Self {
             pending_keystrokes: Vec::new(),
             keymap_version,
@@ -21,7 +21,7 @@ impl KeyMatcher {
 
     // todo!("replace with a function that calls an FnMut for every binding matching the action")
     // pub fn bindings_for_action(&self, action_id: TypeId) -> impl Iterator<Item = &Binding> {
-    //     self.keymap.read().bindings_for_action(action_id)
+    //     self.keymap.lock().bindings_for_action(action_id)
     // }
 
     pub fn clear_pending(&mut self) {
@@ -46,7 +46,7 @@ impl KeyMatcher {
         keystroke: &Keystroke,
         context_stack: &[&DispatchContext],
     ) -> KeyMatch {
-        let keymap = self.keymap.read();
+        let keymap = self.keymap.lock();
         // Clear pending keystrokes if the keymap has changed since the last matched keystroke.
         if keymap.version() != self.keymap_version {
             self.keymap_version = keymap.version();
@@ -89,7 +89,7 @@ impl KeyMatcher {
         contexts: &[&DispatchContext],
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         self.keymap
-            .read()
+            .lock()
             .bindings()
             .iter()
             .rev()

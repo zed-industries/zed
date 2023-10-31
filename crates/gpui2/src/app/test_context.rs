@@ -1,10 +1,10 @@
 use crate::{
-    AnyWindowHandle, AppContext, AsyncAppContext, Context, EventEmitter, Executor, Handle,
-    MainThread, ModelContext, Result, Task, TestDispatcher, TestPlatform, WindowContext,
+    AnyWindowHandle, AppContext, AsyncAppContext, Context, EventEmitter, Executor, MainThread,
+    Model, ModelContext, Result, Task, TestDispatcher, TestPlatform, WindowContext,
 };
 use futures::SinkExt;
 use parking_lot::Mutex;
-use std::{any::Any, future::Future, sync::Arc};
+use std::{future::Future, sync::Arc};
 
 #[derive(Clone)]
 pub struct TestAppContext {
@@ -13,27 +13,27 @@ pub struct TestAppContext {
 }
 
 impl Context for TestAppContext {
-    type EntityContext<'a, 'w, T> = ModelContext<'a, T>;
+    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
-    fn entity<T: 'static>(
+    fn build_model<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
-    ) -> Self::Result<Handle<T>>
+        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>>
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
         let mut lock = self.app.lock();
-        lock.entity(build_entity)
+        lock.build_model(build_model)
     }
 
-    fn update_entity<T: 'static, R>(
+    fn update_model<T: 'static, R>(
         &mut self,
-        handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+        handle: &Model<T>,
+        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         let mut lock = self.app.lock();
-        lock.update_entity(handle, update)
+        lock.update_model(handle, update)
     }
 }
 
@@ -151,9 +151,9 @@ impl TestAppContext {
         }
     }
 
-    pub fn subscribe<T: 'static + EventEmitter + Send + Sync>(
+    pub fn subscribe<T: 'static + EventEmitter + Send>(
         &mut self,
-        entity: &Handle<T>,
+        entity: &Model<T>,
     ) -> futures::channel::mpsc::UnboundedReceiver<T::Event>
     where
         T::Event: 'static + Send + Clone,
@@ -161,7 +161,7 @@ impl TestAppContext {
         let (mut tx, rx) = futures::channel::mpsc::unbounded();
         entity
             .update(self, |_, cx: &mut ModelContext<T>| {
-                cx.subscribe(&entity, move |_, _, event, cx| {
+                cx.subscribe(entity, move |_, _, event, cx| {
                     cx.executor().block(tx.send(event.clone())).unwrap();
                 })
             })
@@ -169,20 +169,3 @@ impl TestAppContext {
         rx
     }
 }
-
-// pub fn subscribe<T: Entity>(
-//     entity: &impl Handle<T>,
-//     cx: &mut TestAppContext,
-// ) -> Observation<T::Event>
-// where
-//     T::Event: Clone,
-// {
-//     let (tx, rx) = smol::channel::unbounded();
-//     let _subscription = cx.update(|cx| {
-//         cx.subscribe(entity, move |_, event, _| {
-//             let _ = smol::block_on(tx.send(event.clone()));
-//         })
-//     });
-
-//     Observation { rx, _subscription }
-// }

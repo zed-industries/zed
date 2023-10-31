@@ -993,8 +993,8 @@ mod tests {
     use super::*;
     use crate::display_map::inlay_map::InlayMap;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
-    use crate::multi_buffer::MultiBuffer;
     use gpui::{elements::Empty, Element};
+    use multi_buffer::MultiBuffer;
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::env;

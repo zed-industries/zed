@@ -1,10 +1,8 @@
 use anyhow::{anyhow, Result};
 use client2::ParticipantIndex;
 use client2::{proto, User};
-use collections::HashMap;
-use gpui2::WeakHandle;
+use gpui2::WeakModel;
 pub use live_kit_client::Frame;
-use live_kit_client::RemoteAudioTrack;
 use project2::Project;
 use std::{fmt, sync::Arc};
 
@@ -35,7 +33,7 @@ impl ParticipantLocation {
 #[derive(Clone, Default)]
 pub struct LocalParticipant {
     pub projects: Vec<proto::ParticipantProject>,
-    pub active_project: Option<WeakHandle<Project>>,
+    pub active_project: Option<WeakModel<Project>>,
 }
 
 #[derive(Clone, Debug)]
@@ -47,8 +45,8 @@ pub struct RemoteParticipant {
     pub participant_index: ParticipantIndex,
     pub muted: bool,
     pub speaking: bool,
-    pub video_tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,
-    pub audio_tracks: HashMap<live_kit_client::Sid, Arc<RemoteAudioTrack>>,
+    // pub video_tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,
+    // pub audio_tracks: HashMap<live_kit_client::Sid, Arc<RemoteAudioTrack>>,
 }
 
 #[derive(Clone)]

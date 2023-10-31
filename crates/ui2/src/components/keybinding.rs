@@ -158,21 +158,17 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
+    use super::*;
+    use crate::Story;
+    use gpui2::{Div, Render};
     use itertools::Itertools;
 
-    use crate::Story;
-
-    use super::*;
-
-    #[derive(Component)]
     pub struct KeybindingStory;
 
-    impl KeybindingStory {
-        pub fn new() -> Self {
-            Self
-        }
+    impl Render for KeybindingStory {
+        type Element = Div<Self>;
 
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let all_modifier_permutations = ModifierKey::iter().permutations(2);
 
             Story::container(cx)

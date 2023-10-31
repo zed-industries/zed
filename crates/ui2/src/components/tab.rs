@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use crate::{Icon, IconColor, IconElement, Label, LabelColor};
+use gpui2::{black, red, Div, ElementId, Render, View, VisualContext};
 
 #[derive(Component, Clone)]
 pub struct Tab {
@@ -17,6 +18,14 @@ pub struct Tab {
 #[derive(Clone, Debug)]
 struct TabDragState {
     title: String,
+}
+
+impl Render for TabDragState {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        div().w_8().h_4().bg(red())
+    }
 }
 
 impl Tab {
@@ -118,12 +127,10 @@ impl Tab {
 
         div()
             .id(self.id.clone())
-            .on_drag(move |_view, _cx| {
-                Drag::new(drag_state.clone(), |view, cx| div().w_8().h_4().bg(red()))
-            })
+            .on_drag(move |_view, cx| cx.build_view(|cx| drag_state.clone()))
             .drag_over::<TabDragState>(|d| d.bg(black()))
-            .on_drop(|_view, state: TabDragState, cx| {
-                dbg!(state);
+            .on_drop(|_view, state: View<TabDragState>, cx| {
+                dbg!(state.read(cx));
             })
             .px_2()
             .py_0p5()
@@ -160,27 +167,21 @@ impl Tab {
     }
 }
 
-use gpui2::{black, red, Drag, ElementId};
 #[cfg(feature = "stories")]
 pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
+    use super::*;
+    use crate::{h_stack, v_stack, Icon, Story};
     use strum::IntoEnumIterator;
 
-    use crate::{h_stack, v_stack, Icon, Story};
-
-    use super::*;
-
-    #[derive(Component)]
     pub struct TabStory;
 
-    impl TabStory {
-        pub fn new() -> Self {
-            Self
-        }
+    impl Render for TabStory {
+        type Element = Div<Self>;
 
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let git_statuses = GitStatus::iter();
             let fs_statuses = FileSystemStatus::iter();
 

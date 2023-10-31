@@ -42,6 +42,7 @@ sha1 = "0.10.5"
 ndarray = { version = "0.15.0" }
 
 [dev-dependencies]
+ai = { path = "../ai", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
@@ -51,7 +52,6 @@ workspace = { path = "../workspace", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"]}
 rust-embed = { version = "8.0", features = ["include-exclude"] }
 client = { path = "../client" }
-zed = { path = "../zed"}
 node_runtime = { path = "../node_runtime"}
 
 pretty_assertions.workspace = true
@@ -70,6 +70,3 @@ tree-sitter-elixir.workspace = true
 tree-sitter-lua.workspace = true
 tree-sitter-ruby.workspace = true
 tree-sitter-php.workspace = true
-
-[[example]]
-name = "eval"

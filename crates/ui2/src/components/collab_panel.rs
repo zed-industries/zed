@@ -89,19 +89,16 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use crate::Story;
-
     use super::*;
+    use crate::Story;
+    use gpui2::{Div, Render};
 
-    #[derive(Component)]
     pub struct CollabPanelStory;
 
-    impl CollabPanelStory {
-        pub fn new() -> Self {
-            Self
-        }
+    impl Render for CollabPanelStory {
+        type Element = Div<Self>;
 
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
                 .child(Story::title_for::<_, CollabPanel>(cx))
                 .child(Story::label(cx, "Default"))

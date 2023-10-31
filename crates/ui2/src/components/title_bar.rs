@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use gpui2::{view, Context, View};
+use gpui2::{Div, Render, View, VisualContext};
 
 use crate::prelude::*;
 use crate::settings::user_settings;
@@ -81,13 +81,14 @@ impl TitleBar {
     }
 
     pub fn view(cx: &mut WindowContext, livestream: Option<Livestream>) -> View<Self> {
-        view(
-            cx.entity(|cx| Self::new(cx).set_livestream(livestream)),
-            Self::render,
-        )
+        cx.build_view(|cx| Self::new(cx).set_livestream(livestream))
     }
+}
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+impl Render for TitleBar {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
         let theme = theme(cx);
         let settings = user_settings(cx);
 
@@ -186,9 +187,8 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use crate::Story;
-
     use super::*;
+    use crate::Story;
 
     pub struct TitleBarStory {
         title_bar: View<TitleBar>,
@@ -196,15 +196,16 @@ mod stories {
 
     impl TitleBarStory {
         pub fn view(cx: &mut WindowContext) -> View<Self> {
-            view(
-                cx.entity(|cx| Self {
-                    title_bar: TitleBar::view(cx, None),
-                }),
-                Self::render,
-            )
+            cx.build_view(|cx| Self {
+                title_bar: TitleBar::view(cx, None),
+            })
         }
+    }
 
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+    impl Render for TitleBarStory {
+        type Element = Div<Self>;
+
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
             Story::container(cx)
                 .child(Story::title_for::<_, TitleBar>(cx))
                 .child(Story::label(cx, "Default"))

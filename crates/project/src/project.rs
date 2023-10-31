@@ -39,11 +39,11 @@ use language::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version, split_operations,
     },
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, BundledFormatter, CachedLspAdapter,
-    CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
-    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
-    LspAdapterDelegate, OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16,
-    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeAction,
+    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
+    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
+    OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -52,8 +52,9 @@ use lsp::{
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
+use parking_lot::Mutex;
 use postage::watch;
-use prettier::{LocateStart, Prettier, PRETTIER_SERVER_FILE, PRETTIER_SERVER_JS};
+use prettier::{LocateStart, Prettier};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
@@ -79,17 +80,18 @@ use std::{
     time::{Duration, Instant},
 };
 use terminals::Terminals;
-use text::{Anchor, LineEnding, Rope};
+use text::Anchor;
 use util::{
-    debug_panic, defer,
-    http::HttpClient,
-    merge_json_value_into,
-    paths::{DEFAULT_PRETTIER_DIR, LOCAL_SETTINGS_RELATIVE_PATH},
-    post_inc, ResultExt, TryFutureExt as _,
+    debug_panic, defer, http::HttpClient, merge_json_value_into,
+    paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
 };
 
 pub use fs::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use worktree::*;
+
+const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
 
 pub trait Item {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
@@ -160,10 +162,18 @@ pub struct Project {
     copilot_log_subscription: Option<lsp::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
     node: Option<Arc<dyn NodeRuntime>>,
+    #[cfg(not(any(test, feature = "test-support")))]
+    default_prettier: Option<DefaultPrettier>,
     prettier_instances: HashMap<
         (Option<WorktreeId>, PathBuf),
         Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>,
     >,
+}
+
+#[cfg(not(any(test, feature = "test-support")))]
+struct DefaultPrettier {
+    installation_process: Option<Shared<Task<()>>>,
+    installed_plugins: HashSet<&'static str>,
 }
 
 struct DelayedDebounced {
@@ -592,6 +602,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_inlay_hints);
+        client.add_model_request_handler(Self::handle_resolve_completion_documentation);
         client.add_model_request_handler(Self::handle_resolve_inlay_hint);
         client.add_model_request_handler(Self::handle_refresh_inlay_hints);
         client.add_model_request_handler(Self::handle_reload_buffers);
@@ -674,6 +685,8 @@ impl Project {
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
                 node: Some(node),
+                #[cfg(not(any(test, feature = "test-support")))]
+                default_prettier: None,
                 prettier_instances: HashMap::default(),
             }
         })
@@ -773,6 +786,8 @@ impl Project {
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
                 node: None,
+                #[cfg(not(any(test, feature = "test-support")))]
+                default_prettier: None,
                 prettier_instances: HashMap::default(),
             };
             for worktree in worktrees {
@@ -833,16 +848,6 @@ impl Project {
                 .await;
         }
         project
-    }
-
-    /// Enables a prettier mock that avoids interacting with node runtime, prettier LSP wrapper, or any real file changes.
-    /// Instead, if appends the suffix to every input, this suffix is returned by this method.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn enable_test_prettier(&mut self, plugins: &[&'static str]) -> &'static str {
-        self.node = Some(node_runtime::FakeNodeRuntime::with_prettier_support(
-            plugins,
-        ));
-        Prettier::FORMAT_SUFFIX
     }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
@@ -2731,12 +2736,18 @@ impl Project {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
+        if adapter.reinstall_attempt_count.load(SeqCst) > MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
+            return;
+        }
+
         let key = (worktree_id, adapter.name.clone());
         if self.language_server_ids.contains_key(&key) {
             return;
         }
 
+        let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let pending_server = match self.languages.create_pending_language_server(
+            stderr_capture.clone(),
             language.clone(),
             adapter.clone(),
             worktree_path,
@@ -2751,15 +2762,6 @@ impl Project {
         let lsp = project_settings.lsp.get(&adapter.name.0);
         let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
 
-        let mut initialization_options = adapter.initialization_options.clone();
-        match (&mut initialization_options, override_options) {
-            (Some(initialization_options), Some(override_options)) => {
-                merge_json_value_into(override_options, initialization_options);
-            }
-            (None, override_options) => initialization_options = override_options,
-            _ => {}
-        }
-
         let server_id = pending_server.server_id;
         let container_dir = pending_server.container_dir.clone();
         let state = LanguageServerState::Starting({
@@ -2771,7 +2773,7 @@ impl Project {
             cx.spawn_weak(|this, mut cx| async move {
                 let result = Self::setup_and_insert_language_server(
                     this,
-                    initialization_options,
+                    override_options,
                     pending_server,
                     adapter.clone(),
                     language.clone(),
@@ -2782,28 +2784,40 @@ impl Project {
                 .await;
 
                 match result {
-                    Ok(server) => server,
+                    Ok(server) => {
+                        stderr_capture.lock().take();
+                        Some(server)
+                    }
 
                     Err(err) => {
-                        log::error!("failed to start language server {:?}: {}", server_name, err);
+                        log::error!("failed to start language server {server_name:?}: {err}");
+                        log::error!("server stderr: {:?}", stderr_capture.lock().take());
 
-                        if let Some(this) = this.upgrade(&cx) {
-                            if let Some(container_dir) = container_dir {
-                                let installation_test_binary = adapter
-                                    .installation_test_binary(container_dir.to_path_buf())
-                                    .await;
+                        let this = this.upgrade(&cx)?;
+                        let container_dir = container_dir?;
 
-                                this.update(&mut cx, |_, cx| {
-                                    Self::check_errored_server(
-                                        language,
-                                        adapter,
-                                        server_id,
-                                        installation_test_binary,
-                                        cx,
-                                    )
-                                });
-                            }
+                        let attempt_count = adapter.reinstall_attempt_count.fetch_add(1, SeqCst);
+                        if attempt_count >= MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
+                            let max = MAX_SERVER_REINSTALL_ATTEMPT_COUNT;
+                            log::error!(
+                                "Hit {max} max reinstallation attempts for {server_name:?}"
+                            );
+                            return None;
                         }
+
+                        let installation_test_binary = adapter
+                            .installation_test_binary(container_dir.to_path_buf())
+                            .await;
+
+                        this.update(&mut cx, |_, cx| {
+                            Self::check_errored_server(
+                                language,
+                                adapter,
+                                server_id,
+                                installation_test_binary,
+                                cx,
+                            )
+                        });
 
                         None
                     }
@@ -2874,27 +2888,24 @@ impl Project {
 
     async fn setup_and_insert_language_server(
         this: WeakModelHandle<Self>,
-        initialization_options: Option<serde_json::Value>,
+        override_initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
         language: Arc<Language>,
         server_id: LanguageServerId,
         key: (WorktreeId, LanguageServerName),
         cx: &mut AsyncAppContext,
-    ) -> Result<Option<Arc<LanguageServer>>> {
-        let setup = Self::setup_pending_language_server(
+    ) -> Result<Arc<LanguageServer>> {
+        let language_server = Self::setup_pending_language_server(
             this,
-            initialization_options,
+            override_initialization_options,
             pending_server,
             adapter.clone(),
             server_id,
             cx,
-        );
+        )
+        .await?;
 
-        let language_server = match setup.await? {
-            Some(language_server) => language_server,
-            None => return Ok(None),
-        };
         let this = match this.upgrade(cx) {
             Some(this) => this,
             None => return Err(anyhow!("failed to upgrade project handle")),
@@ -2911,22 +2922,19 @@ impl Project {
             )
         })?;
 
-        Ok(Some(language_server))
+        Ok(language_server)
     }
 
     async fn setup_pending_language_server(
         this: WeakModelHandle<Self>,
-        initialization_options: Option<serde_json::Value>,
+        override_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
-    ) -> Result<Option<Arc<LanguageServer>>> {
+    ) -> Result<Arc<LanguageServer>> {
         let workspace_config = cx.update(|cx| adapter.workspace_configuration(cx)).await;
-        let language_server = match pending_server.task.await? {
-            Some(server) => server,
-            None => return Ok(None),
-        };
+        let language_server = pending_server.task.await?;
 
         language_server
             .on_notification::<lsp::notification::PublishDiagnostics, _>({
@@ -2934,8 +2942,8 @@ impl Project {
                 move |mut params, mut cx| {
                     let this = this;
                     let adapter = adapter.clone();
-                    adapter.process_diagnostics(&mut params);
                     if let Some(this) = this.upgrade(&cx) {
+                        adapter.process_diagnostics(&mut params);
                         this.update(&mut cx, |this, cx| {
                             this.update_diagnostics(
                                 server_id,
@@ -2997,6 +3005,7 @@ impl Project {
                 },
             )
             .detach();
+
         language_server
             .on_request::<lsp::request::RegisterCapability, _, _>({
                 move |params, mut cx| async move {
@@ -3063,6 +3072,15 @@ impl Project {
             })
             .detach();
 
+        let mut initialization_options = adapter.adapter.initialization_options().await;
+        match (&mut initialization_options, override_options) {
+            (Some(initialization_options), Some(override_options)) => {
+                merge_json_value_into(override_options, initialization_options);
+            }
+            (None, override_options) => initialization_options = override_options,
+            _ => {}
+        }
+
         let language_server = language_server.initialize(initialization_options).await?;
 
         language_server
@@ -3073,7 +3091,7 @@ impl Project {
             )
             .ok();
 
-        Ok(Some(language_server))
+        Ok(language_server)
     }
 
     fn insert_newly_running_language_server(
@@ -7353,6 +7371,40 @@ impl Project {
         })
     }
 
+    async fn handle_resolve_completion_documentation(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::ResolveCompletionDocumentation>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ResolveCompletionDocumentationResponse> {
+        let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
+
+        let completion = this
+            .read_with(&mut cx, |this, _| {
+                let id = LanguageServerId(envelope.payload.language_server_id as usize);
+                let Some(server) = this.language_server_for_id(id) else {
+                    return Err(anyhow!("No language server {id}"));
+                };
+
+                Ok(server.request::<lsp::request::ResolveCompletionItem>(lsp_completion))
+            })?
+            .await?;
+
+        let mut is_markdown = false;
+        let text = match completion.documentation {
+            Some(lsp::Documentation::String(text)) => text,
+
+            Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value })) => {
+                is_markdown = kind == lsp::MarkupKind::Markdown;
+                value
+            }
+
+            _ => String::new(),
+        };
+
+        Ok(proto::ResolveCompletionDocumentationResponse { text, is_markdown })
+    }
+
     async fn handle_apply_code_action(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::ApplyCodeAction>,
@@ -8318,12 +8370,7 @@ impl Project {
         let Some(buffer_language) = buffer.language() else {
             return Task::ready(None);
         };
-        if !buffer_language
-            .lsp_adapters()
-            .iter()
-            .flat_map(|adapter| adapter.enabled_formatters())
-            .any(|formatter| matches!(formatter, BundledFormatter::Prettier { .. }))
-        {
+        if buffer_language.prettier_parser_name().is_none() {
             return Task::ready(None);
         }
 
@@ -8460,8 +8507,20 @@ impl Project {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn install_default_formatters(
-        &self,
+        &mut self,
+        _worktree: Option<WorktreeId>,
+        _new_language: &Language,
+        _language_settings: &LanguageSettings,
+        _cx: &mut ModelContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        return Task::ready(Ok(()));
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    fn install_default_formatters(
+        &mut self,
         worktree: Option<WorktreeId>,
         new_language: &Language,
         language_settings: &LanguageSettings,
@@ -8476,66 +8535,122 @@ impl Project {
         };
 
         let mut prettier_plugins = None;
-        for formatter in new_language
-            .lsp_adapters()
-            .into_iter()
-            .flat_map(|adapter| adapter.enabled_formatters())
-        {
-            match formatter {
-                BundledFormatter::Prettier { plugin_names, .. } => prettier_plugins
-                    .get_or_insert_with(|| HashSet::default())
-                    .extend(plugin_names),
-            }
+        if new_language.prettier_parser_name().is_some() {
+            prettier_plugins
+                .get_or_insert_with(|| HashSet::default())
+                .extend(
+                    new_language
+                        .lsp_adapters()
+                        .iter()
+                        .flat_map(|adapter| adapter.prettier_plugins()),
+                )
         }
         let Some(prettier_plugins) = prettier_plugins else {
             return Task::ready(Ok(()));
         };
 
-        let default_prettier_dir = DEFAULT_PRETTIER_DIR.as_path();
+        let mut plugins_to_install = prettier_plugins;
+        let (mut install_success_tx, mut install_success_rx) =
+            futures::channel::mpsc::channel::<HashSet<&'static str>>(1);
+        let new_installation_process = cx
+            .spawn(|this, mut cx| async move {
+                if let Some(installed_plugins) = install_success_rx.next().await {
+                    this.update(&mut cx, |this, _| {
+                        let default_prettier =
+                            this.default_prettier
+                                .get_or_insert_with(|| DefaultPrettier {
+                                    installation_process: None,
+                                    installed_plugins: HashSet::default(),
+                                });
+                        if !installed_plugins.is_empty() {
+                            log::info!("Installed new prettier plugins: {installed_plugins:?}");
+                            default_prettier.installed_plugins.extend(installed_plugins);
+                        }
+                    })
+                }
+            })
+            .shared();
+        let previous_installation_process =
+            if let Some(default_prettier) = &mut self.default_prettier {
+                plugins_to_install
+                    .retain(|plugin| !default_prettier.installed_plugins.contains(plugin));
+                if plugins_to_install.is_empty() {
+                    return Task::ready(Ok(()));
+                }
+                std::mem::replace(
+                    &mut default_prettier.installation_process,
+                    Some(new_installation_process.clone()),
+                )
+            } else {
+                None
+            };
+
+        let default_prettier_dir = util::paths::DEFAULT_PRETTIER_DIR.as_path();
         let already_running_prettier = self
             .prettier_instances
             .get(&(worktree, default_prettier_dir.to_path_buf()))
             .cloned();
-
         let fs = Arc::clone(&self.fs);
-        cx.background()
-            .spawn(async move {
-                let prettier_wrapper_path = default_prettier_dir.join(PRETTIER_SERVER_FILE);
-                // method creates parent directory if it doesn't exist
-                fs.save(&prettier_wrapper_path, &Rope::from(PRETTIER_SERVER_JS), LineEnding::Unix).await
-                .with_context(|| format!("writing {PRETTIER_SERVER_FILE} file at {prettier_wrapper_path:?}"))?;
-
-                let packages_to_versions = future::try_join_all(
-                    prettier_plugins
-                        .iter()
-                        .chain(Some(&"prettier"))
-                        .map(|package_name| async {
-                            let returned_package_name = package_name.to_string();
-                            let latest_version = node.npm_package_latest_version(package_name)
-                                .await
-                                .with_context(|| {
-                                    format!("fetching latest npm version for package {returned_package_name}")
-                                })?;
-                            anyhow::Ok((returned_package_name, latest_version))
-                        }),
-                )
-                .await
-                .context("fetching latest npm versions")?;
-
-                log::info!("Fetching default prettier and plugins: {packages_to_versions:?}");
-                let borrowed_packages = packages_to_versions.iter().map(|(package, version)| {
-                    (package.as_str(), version.as_str())
-                }).collect::<Vec<_>>();
-                node.npm_install_packages(default_prettier_dir, &borrowed_packages).await.context("fetching formatter packages")?;
-
-                if !prettier_plugins.is_empty() {
-                    if let Some(prettier) = already_running_prettier {
-                        prettier.await.map_err(|e| anyhow::anyhow!("Default prettier startup await failure: {e:#}"))?.clear_cache().await.context("clearing default prettier cache after plugins install")?;
-                    }
+        cx.spawn(|this, mut cx| async move {
+            if let Some(previous_installation_process) = previous_installation_process {
+                previous_installation_process.await;
+            }
+            let mut everything_was_installed = false;
+            this.update(&mut cx, |this, _| {
+                match &mut this.default_prettier {
+                    Some(default_prettier) => {
+                        plugins_to_install
+                            .retain(|plugin| !default_prettier.installed_plugins.contains(plugin));
+                        everything_was_installed = plugins_to_install.is_empty();
+                    },
+                    None => this.default_prettier = Some(DefaultPrettier { installation_process: Some(new_installation_process), installed_plugins: HashSet::default() }),
                 }
+            });
+            if everything_was_installed {
+                return Ok(());
+            }
 
-                anyhow::Ok(())
-            })
+            cx.background()
+                .spawn(async move {
+                    let prettier_wrapper_path = default_prettier_dir.join(prettier::PRETTIER_SERVER_FILE);
+                    // method creates parent directory if it doesn't exist
+                    fs.save(&prettier_wrapper_path, &text::Rope::from(prettier::PRETTIER_SERVER_JS), text::LineEnding::Unix).await
+                    .with_context(|| format!("writing {} file at {prettier_wrapper_path:?}", prettier::PRETTIER_SERVER_FILE))?;
+
+                    let packages_to_versions = future::try_join_all(
+                        plugins_to_install
+                            .iter()
+                            .chain(Some(&"prettier"))
+                            .map(|package_name| async {
+                                let returned_package_name = package_name.to_string();
+                                let latest_version = node.npm_package_latest_version(package_name)
+                                    .await
+                                    .with_context(|| {
+                                        format!("fetching latest npm version for package {returned_package_name}")
+                                    })?;
+                                anyhow::Ok((returned_package_name, latest_version))
+                            }),
+                    )
+                    .await
+                    .context("fetching latest npm versions")?;
+
+                    log::info!("Fetching default prettier and plugins: {packages_to_versions:?}");
+                    let borrowed_packages = packages_to_versions.iter().map(|(package, version)| {
+                        (package.as_str(), version.as_str())
+                    }).collect::<Vec<_>>();
+                    node.npm_install_packages(default_prettier_dir, &borrowed_packages).await.context("fetching formatter packages")?;
+                    let installed_packages = !plugins_to_install.is_empty();
+                    install_success_tx.try_send(plugins_to_install).ok();
+
+                    if !installed_packages {
+                        if let Some(prettier) = already_running_prettier {
+                            prettier.await.map_err(|e| anyhow::anyhow!("Default prettier startup await failure: {e:#}"))?.clear_cache().await.context("clearing default prettier cache after plugins install")?;
+                        }
+                    }
+
+                    anyhow::Ok(())
+                }).await
+        })
     }
 }
 

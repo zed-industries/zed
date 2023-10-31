@@ -7,7 +7,8 @@ pub mod semantic_index_settings;
 mod semantic_index_tests;
 
 use crate::semantic_index_settings::SemanticIndexSettings;
-use ai::embedding::{Embedding, EmbeddingProvider, OpenAIEmbeddings};
+use ai::embedding::{Embedding, EmbeddingProvider};
+use ai::providers::open_ai::OpenAIEmbeddingProvider;
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use db::VectorDatabase;
@@ -88,7 +89,7 @@ pub fn init(
         let semantic_index = SemanticIndex::new(
             fs,
             db_file_path,
-            Arc::new(OpenAIEmbeddings::new(http_client, cx.background())),
+            Arc::new(OpenAIEmbeddingProvider::new(http_client, cx.background())),
             language_registry,
             cx.clone(),
         )
@@ -268,7 +269,7 @@ pub struct SearchResult {
 }
 
 impl SemanticIndex {
-    pub fn global(cx: &AppContext) -> Option<ModelHandle<SemanticIndex>> {
+    pub fn global(cx: &mut AppContext) -> Option<ModelHandle<SemanticIndex>> {
         if cx.has_global::<ModelHandle<Self>>() {
             Some(cx.global::<ModelHandle<SemanticIndex>>().clone())
         } else {
@@ -276,12 +277,26 @@ impl SemanticIndex {
         }
     }
 
+    pub fn authenticate(&mut self, cx: &AppContext) -> bool {
+        if !self.embedding_provider.has_credentials() {
+            self.embedding_provider.retrieve_credentials(cx);
+        } else {
+            return true;
+        }
+
+        self.embedding_provider.has_credentials()
+    }
+
+    pub fn is_authenticated(&self) -> bool {
+        self.embedding_provider.has_credentials()
+    }
+
     pub fn enabled(cx: &AppContext) -> bool {
         settings::get::<SemanticIndexSettings>(cx).enabled
     }
 
     pub fn status(&self, project: &ModelHandle<Project>) -> SemanticIndexStatus {
-        if !self.embedding_provider.is_authenticated() {
+        if !self.is_authenticated() {
             return SemanticIndexStatus::NotAuthenticated;
         }
 
@@ -706,6 +721,7 @@ impl SemanticIndex {
         cx.spawn(|this, mut cx| async move {
             index.await?;
             let t0 = Instant::now();
+
             let query = embedding_provider
                 .embed_batch(vec![query])
                 .await?
@@ -982,8 +998,10 @@ impl SemanticIndex {
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        if !self.embedding_provider.is_authenticated() {
-            return Task::ready(Err(anyhow!("user is not authenticated")));
+        if !self.is_authenticated() {
+            if !self.authenticate(cx) {
+                return Task::ready(Err(anyhow!("user is not authenticated")));
+            }
         }
 
         if !self.projects.contains_key(&project.downgrade()) {

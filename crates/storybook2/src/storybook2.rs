@@ -4,21 +4,20 @@ mod assets;
 mod stories;
 mod story;
 mod story_selector;
-mod themes;
 
 use std::sync::Arc;
 
 use clap::Parser;
 use gpui2::{
-    div, px, size, view, AnyView, AppContext, Bounds, Context, ViewContext, WindowBounds,
-    WindowOptions,
+    div, px, size, AnyView, AppContext, Bounds, Div, Render, ViewContext, VisualContext,
+    WindowBounds, WindowOptions,
 };
 use log::LevelFilter;
 use settings2::{default_settings, Settings, SettingsStore};
 use simplelog::SimpleLogger;
 use story_selector::ComponentStory;
 use theme2::{ThemeRegistry, ThemeSettings};
-use ui::{prelude::*, themed};
+use ui::prelude::*;
 
 use crate::assets::Assets;
 use crate::story_selector::StorySelector;
@@ -50,7 +49,6 @@ fn main() {
 
     let story_selector = args.story.clone();
     let theme_name = args.theme.unwrap_or("One Dark".to_string());
-    let theme = themes::load_theme(theme_name.clone()).unwrap();
 
     let asset_source = Arc::new(Assets);
     gpui2::App::production(asset_source).run(move |cx| {
@@ -84,12 +82,7 @@ fn main() {
                 }),
                 ..Default::default()
             },
-            move |cx| {
-                view(
-                    cx.entity(|cx| StoryWrapper::new(selector.story(cx), theme)),
-                    StoryWrapper::render,
-                )
-            },
+            move |cx| cx.build_view(|cx| StoryWrapper::new(selector.story(cx))),
         );
 
         cx.activate(true);
@@ -99,22 +92,23 @@ fn main() {
 #[derive(Clone)]
 pub struct StoryWrapper {
     story: AnyView,
-    theme: Theme,
 }
 
 impl StoryWrapper {
-    pub(crate) fn new(story: AnyView, theme: Theme) -> Self {
-        Self { story, theme }
+    pub(crate) fn new(story: AnyView) -> Self {
+        Self { story }
     }
+}
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
-        themed(self.theme.clone(), cx, |cx| {
-            div()
-                .flex()
-                .flex_col()
-                .size_full()
-                .child(self.story.clone())
-        })
+impl Render for StoryWrapper {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(self.story.clone())
     }
 }
 

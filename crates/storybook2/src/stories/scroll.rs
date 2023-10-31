@@ -1,56 +1,54 @@
-use crate::themes::rose_pine;
 use gpui2::{
-    div, px, view, Component, Context, ParentElement, SharedString, Styled, View, WindowContext,
+    div, px, Component, Div, ParentElement, Render, SharedString, StatefulInteraction, Styled,
+    View, VisualContext, WindowContext,
 };
+use theme2::theme;
 
-pub struct ScrollStory {
-    text: View<()>,
-}
+pub struct ScrollStory;
 
 impl ScrollStory {
-    pub fn view(cx: &mut WindowContext) -> View<()> {
-        let theme = rose_pine();
-
-        view(cx.entity(|cx| ()), move |_, cx| checkerboard(1))
+    pub fn view(cx: &mut WindowContext) -> View<ScrollStory> {
+        cx.build_view(|cx| ScrollStory)
     }
 }
 
-fn checkerboard<S>(depth: usize) -> impl Component<S>
-where
-    S: 'static + Send + Sync,
-{
-    let theme = rose_pine();
-    let color_1 = theme.lowest.positive.default.background;
-    let color_2 = theme.lowest.warning.default.background;
+impl Render for ScrollStory {
+    type Element = Div<Self, StatefulInteraction<Self>>;
 
-    div()
-        .id("parent")
-        .bg(theme.lowest.base.default.background)
-        .size_full()
-        .overflow_scroll()
-        .children((0..10).map(|row| {
-            div()
-                .w(px(1000.))
-                .h(px(100.))
-                .flex()
-                .flex_row()
-                .children((0..10).map(|column| {
-                    let id = SharedString::from(format!("{}, {}", row, column));
-                    let bg = if row % 2 == column % 2 {
-                        color_1
-                    } else {
-                        color_2
-                    };
-                    div().id(id).bg(bg).size(px(100. / depth as f32)).when(
-                        row >= 5 && column >= 5,
-                        |d| {
-                            d.overflow_scroll()
-                                .child(div().size(px(50.)).bg(color_1))
-                                .child(div().size(px(50.)).bg(color_2))
-                                .child(div().size(px(50.)).bg(color_1))
-                                .child(div().size(px(50.)).bg(color_2))
-                        },
-                    )
-                }))
-        }))
+    fn render(&mut self, cx: &mut gpui2::ViewContext<Self>) -> Self::Element {
+        let theme = theme(cx);
+        let color_1 = theme.git_created;
+        let color_2 = theme.git_modified;
+
+        div()
+            .id("parent")
+            .bg(theme.background)
+            .size_full()
+            .overflow_scroll()
+            .children((0..10).map(|row| {
+                div()
+                    .w(px(1000.))
+                    .h(px(100.))
+                    .flex()
+                    .flex_row()
+                    .children((0..10).map(|column| {
+                        let id = SharedString::from(format!("{}, {}", row, column));
+                        let bg = if row % 2 == column % 2 {
+                            color_1
+                        } else {
+                            color_2
+                        };
+                        div().id(id).bg(bg).size(px(100. as f32)).when(
+                            row >= 5 && column >= 5,
+                            |d| {
+                                d.overflow_scroll()
+                                    .child(div().size(px(50.)).bg(color_1))
+                                    .child(div().size(px(50.)).bg(color_2))
+                                    .child(div().size(px(50.)).bg(color_1))
+                                    .child(div().size(px(50.)).bg(color_2))
+                            },
+                        )
+                    }))
+            }))
+    }
 }

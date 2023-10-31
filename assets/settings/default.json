@@ -50,6 +50,9 @@
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
+  // Whether to display inline and alongside documentation for items in the
+  // completions menu
+  "show_completion_documentation": true,
   // Whether to show wrap guides in the editor. Setting this to true will
   // show a guide at the 'preferred_line_length' value if softwrap is set to
   // 'preferred_line_length', and will show any additional guides as specified
@@ -138,6 +141,14 @@
     "dock": "right",
     // Default width of the channels panel.
     "default_width": 240
+  },
+  "notification_panel": {
+    // Whether to show the collaboration panel button in the status bar.
+    "button": true,
+    // Where to dock channels panel. Can be 'left' or 'right'.
+    "dock": "right",
+    // Default width of the channels panel.
+    "default_width": 380
   },
   "assistant": {
     // Whether to show the assistant panel button in the status bar.

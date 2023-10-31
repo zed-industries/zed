@@ -166,7 +166,7 @@ impl Buffer {
         let line_number_color = if row.current {
             theme.text
         } else {
-            theme.syntax.comment
+            theme.syntax.get("comment").color.unwrap_or_default()
         };
 
         h_stack()
@@ -233,24 +233,19 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui2::rems;
-
+    use super::*;
     use crate::{
         empty_buffer_example, hello_world_rust_buffer_example,
         hello_world_rust_buffer_with_status_example, Story,
     };
+    use gpui2::{rems, Div, Render};
 
-    use super::*;
-
-    #[derive(Component)]
     pub struct BufferStory;
 
-    impl BufferStory {
-        pub fn new() -> Self {
-            Self
-        }
+    impl Render for BufferStory {
+        type Element = Div<Self>;
 
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let theme = theme(cx);
 
             Story::container(cx)

@@ -24,6 +24,12 @@ mod util;
 mod view;
 mod window;
 
+mod private {
+    /// A mechanism for restricting implementations of a trait to only those in GPUI.
+    /// See: https://predr.ag/blog/definitive-guide-to-sealed-traits-in-rust/
+    pub trait Sealed {}
+}
+
 pub use action::*;
 pub use anyhow::Result;
 pub use app::*;
@@ -39,6 +45,7 @@ pub use image_cache::*;
 pub use interactive::*;
 pub use keymap::*;
 pub use platform::*;
+use private::Sealed;
 pub use refineable::*;
 pub use scene::*;
 pub use serde;
@@ -67,24 +74,51 @@ use std::{
 };
 use taffy::TaffyLayoutEngine;
 
-type AnyBox = Box<dyn Any + Send + Sync>;
+type AnyBox = Box<dyn Any + Send>;
 
 pub trait Context {
-    type EntityContext<'a, 'w, T>;
+    type ModelContext<'a, T>;
     type Result<T>;
 
-    fn entity<T>(
+    fn build_model<T>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
-    ) -> Self::Result<Handle<T>>
+        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>>
     where
-        T: 'static + Send + Sync;
+        T: 'static + Send;
 
-    fn update_entity<T: 'static, R>(
+    fn update_model<T: 'static, R>(
         &mut self,
-        handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+        handle: &Model<T>,
+        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Self::Result<R>;
+}
+
+pub trait VisualContext: Context {
+    type ViewContext<'a, 'w, V>;
+
+    fn build_view<V>(
+        &mut self,
+        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
+    ) -> Self::Result<View<V>>
+    where
+        V: 'static + Send;
+
+    fn update_view<V: 'static, R>(
+        &mut self,
+        view: &View<V>,
+        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, '_, V>) -> R,
+    ) -> Self::Result<R>;
+}
+
+pub trait Entity<T>: Sealed {
+    type Weak: 'static + Send;
+
+    fn entity_id(&self) -> EntityId;
+    fn downgrade(&self) -> Self::Weak;
+    fn upgrade_from(weak: &Self::Weak) -> Option<Self>
+    where
+        Self: Sized;
 }
 
 pub enum GlobalKey {
@@ -111,40 +145,78 @@ impl<T> DerefMut for MainThread<T> {
 }
 
 impl<C: Context> Context for MainThread<C> {
-    type EntityContext<'a, 'w, T> = MainThread<C::EntityContext<'a, 'w, T>>;
+    type ModelContext<'a, T> = MainThread<C::ModelContext<'a, T>>;
     type Result<T> = C::Result<T>;
 
-    fn entity<T>(
+    fn build_model<T>(
         &mut self,
-        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
-    ) -> Self::Result<Handle<T>>
+        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>>
     where
-        T: Any + Send + Sync,
+        T: 'static + Send,
     {
-        self.0.entity(|cx| {
+        self.0.build_model(|cx| {
             let cx = unsafe {
                 mem::transmute::<
-                    &mut C::EntityContext<'_, '_, T>,
-                    &mut MainThread<C::EntityContext<'_, '_, T>>,
+                    &mut C::ModelContext<'_, T>,
+                    &mut MainThread<C::ModelContext<'_, T>>,
                 >(cx)
             };
-            build_entity(cx)
+            build_model(cx)
         })
     }
 
-    fn update_entity<T: 'static, R>(
+    fn update_model<T: 'static, R>(
         &mut self,
-        handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+        handle: &Model<T>,
+        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
-        self.0.update_entity(handle, |entity, cx| {
+        self.0.update_model(handle, |entity, cx| {
             let cx = unsafe {
                 mem::transmute::<
-                    &mut C::EntityContext<'_, '_, T>,
-                    &mut MainThread<C::EntityContext<'_, '_, T>>,
+                    &mut C::ModelContext<'_, T>,
+                    &mut MainThread<C::ModelContext<'_, T>>,
                 >(cx)
             };
             update(entity, cx)
+        })
+    }
+}
+
+impl<C: VisualContext> VisualContext for MainThread<C> {
+    type ViewContext<'a, 'w, V> = MainThread<C::ViewContext<'a, 'w, V>>;
+
+    fn build_view<V>(
+        &mut self,
+        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
+    ) -> Self::Result<View<V>>
+    where
+        V: 'static + Send,
+    {
+        self.0.build_view(|cx| {
+            let cx = unsafe {
+                mem::transmute::<
+                    &mut C::ViewContext<'_, '_, V>,
+                    &mut MainThread<C::ViewContext<'_, '_, V>>,
+                >(cx)
+            };
+            build_view_state(cx)
+        })
+    }
+
+    fn update_view<V: 'static, R>(
+        &mut self,
+        view: &View<V>,
+        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, '_, V>) -> R,
+    ) -> Self::Result<R> {
+        self.0.update_view(view, |view_state, cx| {
+            let cx = unsafe {
+                mem::transmute::<
+                    &mut C::ViewContext<'_, '_, V>,
+                    &mut MainThread<C::ViewContext<'_, '_, V>>,
+                >(cx)
+            };
+            update(view_state, cx)
         })
     }
 }
@@ -154,7 +226,7 @@ pub trait BorrowAppContext {
     where
         F: FnOnce(&mut Self) -> R;
 
-    fn set_global<T: Send + Sync + 'static>(&mut self, global: T);
+    fn set_global<T: Send + 'static>(&mut self, global: T);
 }
 
 impl<C> BorrowAppContext for C
@@ -171,7 +243,7 @@ where
         result
     }
 
-    fn set_global<G: 'static + Send + Sync>(&mut self, global: G) {
+    fn set_global<G: 'static + Send>(&mut self, global: G) {
         self.borrow_mut().set_global(global)
     }
 }

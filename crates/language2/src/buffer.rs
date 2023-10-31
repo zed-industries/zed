@@ -159,7 +159,7 @@ pub struct CodeAction {
     pub lsp_action: lsp2::CodeAction,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
     Buffer(text::Operation),
 
@@ -182,7 +182,7 @@ pub enum Operation {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     Operation(Operation),
     Edited,
@@ -331,8 +331,8 @@ pub(crate) struct DiagnosticEndpoint {
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
 pub enum CharKind {
-    Punctuation,
     Whitespace,
+    Punctuation,
     Word,
 }
 

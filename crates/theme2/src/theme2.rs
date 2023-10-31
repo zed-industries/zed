@@ -1,13 +1,23 @@
+mod default;
 mod registry;
+mod scale;
 mod settings;
 mod themes;
 
+pub use default::*;
 pub use registry::*;
+pub use scale::*;
 pub use settings::*;
 
 use gpui2::{AppContext, HighlightStyle, Hsla, SharedString};
 use settings2::Settings;
 use std::sync::Arc;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Appearance {
+    Light,
+    Dark,
+}
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ThemeRegistry::default());
@@ -16,6 +26,10 @@ pub fn init(cx: &mut AppContext) {
 
 pub fn active_theme<'a>(cx: &'a AppContext) -> &'a Arc<Theme> {
     &ThemeSettings::get_global(cx).active_theme
+}
+
+pub fn theme(cx: &AppContext) -> Arc<Theme> {
+    active_theme(cx).clone()
 }
 
 pub struct Theme {
@@ -90,11 +104,38 @@ pub struct Theme {
 
 #[derive(Clone)]
 pub struct SyntaxTheme {
-    pub comment: Hsla,
-    pub string: Hsla,
-    pub function: Hsla,
-    pub keyword: Hsla,
     pub highlights: Vec<(String, HighlightStyle)>,
+}
+
+impl SyntaxTheme {
+    // TOOD: Get this working with `#[cfg(test)]`. Why isn't it?
+    pub fn new_test(colors: impl IntoIterator<Item = (&'static str, Hsla)>) -> Self {
+        SyntaxTheme {
+            highlights: colors
+                .into_iter()
+                .map(|(key, color)| {
+                    (
+                        key.to_owned(),
+                        HighlightStyle {
+                            color: Some(color),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    pub fn get(&self, name: &str) -> HighlightStyle {
+        self.highlights
+            .iter()
+            .find_map(|entry| if entry.0 == name { Some(entry.1) } else { None })
+            .unwrap_or_default()
+    }
+
+    pub fn color(&self, name: &str) -> Hsla {
+        self.get(name).color.unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Copy)]

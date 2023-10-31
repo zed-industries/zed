@@ -1,4 +1,4 @@
-use gpui2::{view, Context, View};
+use gpui2::{Div, Render, View, VisualContext};
 
 use crate::prelude::*;
 use crate::{h_stack, Icon, IconButton, IconColor, Input};
@@ -22,10 +22,14 @@ impl BufferSearch {
     }
 
     pub fn view(cx: &mut WindowContext) -> View<Self> {
-        view(cx.entity(|cx| Self::new()), Self::render)
+        cx.build_view(|cx| Self::new())
     }
+}
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+impl Render for BufferSearch {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
         let theme = theme(cx);
 
         h_stack().bg(theme.toolbar).p_2().child(

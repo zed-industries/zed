@@ -48,19 +48,16 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use crate::{Panel, Story};
-
     use super::*;
+    use crate::{Panel, Story};
+    use gpui2::{Div, Render};
 
-    #[derive(Component)]
     pub struct NotificationsPanelStory;
 
-    impl NotificationsPanelStory {
-        pub fn new() -> Self {
-            Self
-        }
+    impl Render for NotificationsPanelStory {
+        type Element = Div<Self>;
 
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
                 .child(Story::title_for::<_, NotificationsPanel>(cx))
                 .child(Story::label(cx, "Default"))

@@ -2,6 +2,7 @@ mod buffer;
 mod diagnostic_set;
 mod highlight_map;
 pub mod language_settings;
+pub mod markdown;
 mod outline;
 pub mod proto;
 mod syntax_map;
@@ -37,7 +38,7 @@ use std::{
     path::{Path, PathBuf},
     str,
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
 };
@@ -110,18 +111,17 @@ pub struct LanguageServerName(pub Arc<str>);
 pub struct CachedLspAdapter {
     pub name: LanguageServerName,
     pub short_name: &'static str,
-    pub initialization_options: Option<Value>,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub language_ids: HashMap<String, String>,
     pub adapter: Arc<dyn LspAdapter>,
+    pub reinstall_attempt_count: AtomicU64,
 }
 
 impl CachedLspAdapter {
     pub async fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
         let name = adapter.name().await;
         let short_name = adapter.short_name();
-        let initialization_options = adapter.initialization_options().await;
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources().await;
         let disk_based_diagnostics_progress_token =
             adapter.disk_based_diagnostics_progress_token().await;
@@ -130,11 +130,11 @@ impl CachedLspAdapter {
         Arc::new(CachedLspAdapter {
             name,
             short_name,
-            initialization_options,
             disk_based_diagnostic_sources,
             disk_based_diagnostics_progress_token,
             language_ids,
             adapter,
+            reinstall_attempt_count: AtomicU64::new(0),
         })
     }
 
@@ -228,8 +228,8 @@ impl CachedLspAdapter {
         self.adapter.label_for_symbol(name, kind, language).await
     }
 
-    pub fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        self.adapter.enabled_formatters()
+    pub fn prettier_plugins(&self) -> &[&'static str] {
+        self.adapter.prettier_plugins()
     }
 }
 
@@ -338,31 +338,8 @@ pub trait LspAdapter: 'static + Send + Sync {
         Default::default()
     }
 
-    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        Vec::new()
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BundledFormatter {
-    Prettier {
-        // See https://prettier.io/docs/en/options.html#parser for a list of valid values.
-        // Usually, every language has a single parser (standard or plugin-provided), hence `Some("parser_name")` can be used.
-        // There can not be multiple parsers for a single language, in case of a conflict, we would attempt to select the one with most plugins.
-        //
-        // But exceptions like Tailwind CSS exist, which uses standard parsers for CSS/JS/HTML/etc. but require an extra plugin to be installed.
-        // For those cases, `None` will install the plugin but apply other, regular parser defined for the language, and this would not be a conflict.
-        parser_name: Option<&'static str>,
-        plugin_names: Vec<&'static str>,
-    },
-}
-
-impl BundledFormatter {
-    pub fn prettier(parser_name: &'static str) -> Self {
-        Self::Prettier {
-            parser_name: Some(parser_name),
-            plugin_names: Vec::new(),
-        }
+    fn prettier_plugins(&self) -> &[&'static str] {
+        &[]
     }
 }
 
@@ -400,6 +377,8 @@ pub struct LanguageConfig {
     pub overrides: HashMap<String, LanguageConfigOverride>,
     #[serde(default)]
     pub word_characters: HashSet<char>,
+    #[serde(default)]
+    pub prettier_parser_name: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -473,6 +452,7 @@ impl Default for LanguageConfig {
             overrides: Default::default(),
             collapsed_placeholder: Default::default(),
             word_characters: Default::default(),
+            prettier_parser_name: None,
         }
     }
 }
@@ -498,7 +478,7 @@ pub struct FakeLspAdapter {
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
-    pub enabled_formatters: Vec<BundledFormatter>,
+    pub prettier_plugins: Vec<&'static str>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -667,7 +647,7 @@ struct LanguageRegistryState {
 
 pub struct PendingLanguageServer {
     pub server_id: LanguageServerId,
-    pub task: Task<Result<Option<lsp::LanguageServer>>>,
+    pub task: Task<Result<lsp::LanguageServer>>,
     pub container_dir: Option<Arc<Path>>,
 }
 
@@ -906,6 +886,7 @@ impl LanguageRegistry {
 
     pub fn create_pending_language_server(
         self: &Arc<Self>,
+        stderr_capture: Arc<Mutex<Option<String>>>,
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
@@ -945,7 +926,7 @@ impl LanguageRegistry {
                     })
                     .detach();
 
-                Ok(Some(server))
+                Ok(server)
             });
 
             return Some(PendingLanguageServer {
@@ -993,24 +974,23 @@ impl LanguageRegistry {
                     .clone();
                 drop(lock);
 
-                let binary = match entry.clone().await.log_err() {
-                    Some(binary) => binary,
-                    None => return Ok(None),
+                let binary = match entry.clone().await {
+                    Ok(binary) => binary,
+                    Err(err) => anyhow::bail!("{err}"),
                 };
 
                 if let Some(task) = adapter.will_start_server(&delegate, &mut cx) {
-                    if task.await.log_err().is_none() {
-                        return Ok(None);
-                    }
+                    task.await?;
                 }
 
-                Ok(Some(lsp::LanguageServer::new(
+                lsp::LanguageServer::new(
+                    stderr_capture,
                     server_id,
                     binary,
                     &root_path,
                     adapter.code_action_kinds(),
                     cx,
-                )?))
+                )
             })
         };
 
@@ -1599,6 +1579,10 @@ impl Language {
             override_id: None,
         }
     }
+
+    pub fn prettier_parser_name(&self) -> Option<&str> {
+        self.config.prettier_parser_name.as_deref()
+    }
 }
 
 impl LanguageScope {
@@ -1761,7 +1745,7 @@ impl Default for FakeLspAdapter {
             disk_based_diagnostics_progress_token: None,
             initialization_options: None,
             disk_based_diagnostics_sources: Vec::new(),
-            enabled_formatters: Vec::new(),
+            prettier_plugins: Vec::new(),
         }
     }
 }
@@ -1819,8 +1803,8 @@ impl LspAdapter for Arc<FakeLspAdapter> {
         self.initialization_options.clone()
     }
 
-    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        self.enabled_formatters.clone()
+    fn prettier_plugins(&self) -> &[&'static str] {
+        &self.prettier_plugins
     }
 }
 

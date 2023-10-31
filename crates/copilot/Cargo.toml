@@ -36,6 +36,7 @@ serde.workspace = true
 serde_derive.workspace = true
 smol.workspace = true
 futures.workspace = true
+parking_lot.workspace = true
 
 [dev-dependencies]
 clock = { path = "../clock" }

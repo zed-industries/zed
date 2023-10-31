@@ -1,10 +1,11 @@
 use crate::streaming_diff::{Hunk, StreamingDiff};
-use ai::completion::{CompletionProvider, OpenAIRequest};
+use ai::completion::{CompletionProvider, CompletionRequest};
 use anyhow::Result;
-use editor::{multi_buffer, Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
+use editor::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{Entity, ModelContext, ModelHandle, Task};
 use language::{Rope, TransactionId};
+use multi_buffer;
 use std::{cmp, future, ops::Range, sync::Arc};
 
 pub enum Event {
@@ -95,7 +96,7 @@ impl Codegen {
         self.error.as_ref()
     }
 
-    pub fn start(&mut self, prompt: OpenAIRequest, cx: &mut ModelContext<Self>) {
+    pub fn start(&mut self, prompt: Box<dyn CompletionRequest>, cx: &mut ModelContext<Self>) {
         let range = self.range();
         let snapshot = self.snapshot.clone();
         let selected_text = snapshot
@@ -335,17 +336,25 @@ fn strip_markdown_codeblock(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::{
-        future::BoxFuture,
-        stream::{self, BoxStream},
-    };
+    use ai::test::FakeCompletionProvider;
+    use futures::stream::{self};
     use gpui::{executor::Deterministic, TestAppContext};
     use indoc::indoc;
     use language::{language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, Point};
-    use parking_lot::Mutex;
     use rand::prelude::*;
+    use serde::Serialize;
     use settings::SettingsStore;
-    use smol::future::FutureExt;
+
+    #[derive(Serialize)]
+    pub struct DummyCompletionRequest {
+        pub name: String,
+    }
+
+    impl CompletionRequest for DummyCompletionRequest {
+        fn data(&self) -> serde_json::Result<String> {
+            serde_json::to_string(self)
+        }
+    }
 
     #[gpui::test(iterations = 10)]
     async fn test_transform_autoindent(
@@ -371,7 +380,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
-        let provider = Arc::new(TestCompletionProvider::new());
+        let provider = Arc::new(FakeCompletionProvider::new());
         let codegen = cx.add_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -380,7 +389,11 @@ mod tests {
                 cx,
             )
         });
-        codegen.update(cx, |codegen, cx| codegen.start(Default::default(), cx));
+
+        let request = Box::new(DummyCompletionRequest {
+            name: "test".to_string(),
+        });
+        codegen.update(cx, |codegen, cx| codegen.start(request, cx));
 
         let mut new_text = concat!(
             "       let mut x = 0;\n",
@@ -433,7 +446,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 6))
         });
-        let provider = Arc::new(TestCompletionProvider::new());
+        let provider = Arc::new(FakeCompletionProvider::new());
         let codegen = cx.add_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -442,7 +455,11 @@ mod tests {
                 cx,
             )
         });
-        codegen.update(cx, |codegen, cx| codegen.start(Default::default(), cx));
+
+        let request = Box::new(DummyCompletionRequest {
+            name: "test".to_string(),
+        });
+        codegen.update(cx, |codegen, cx| codegen.start(request, cx));
 
         let mut new_text = concat!(
             "t mut x = 0;\n",
@@ -495,7 +512,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 2))
         });
-        let provider = Arc::new(TestCompletionProvider::new());
+        let provider = Arc::new(FakeCompletionProvider::new());
         let codegen = cx.add_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -504,7 +521,11 @@ mod tests {
                 cx,
             )
         });
-        codegen.update(cx, |codegen, cx| codegen.start(Default::default(), cx));
+
+        let request = Box::new(DummyCompletionRequest {
+            name: "test".to_string(),
+        });
+        codegen.update(cx, |codegen, cx| codegen.start(request, cx));
 
         let mut new_text = concat!(
             "let mut x = 0;\n",
@@ -589,38 +610,6 @@ mod tests {
                     .map(|chunk| Ok(chunk.iter().collect::<String>()))
                     .collect::<Vec<_>>(),
             )
-        }
-    }
-
-    struct TestCompletionProvider {
-        last_completion_tx: Mutex<Option<mpsc::Sender<String>>>,
-    }
-
-    impl TestCompletionProvider {
-        fn new() -> Self {
-            Self {
-                last_completion_tx: Mutex::new(None),
-            }
-        }
-
-        fn send_completion(&self, completion: impl Into<String>) {
-            let mut tx = self.last_completion_tx.lock();
-            tx.as_mut().unwrap().try_send(completion.into()).unwrap();
-        }
-
-        fn finish_completion(&self) {
-            self.last_completion_tx.lock().take().unwrap();
-        }
-    }
-
-    impl CompletionProvider for TestCompletionProvider {
-        fn complete(
-            &self,
-            _prompt: OpenAIRequest,
-        ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-            let (tx, rx) = mpsc::channel(1);
-            *self.last_completion_tx.lock() = Some(tx);
-            async move { Ok(rx.map(|rx| Ok(rx)).boxed()) }.boxed()
         }
     }
 

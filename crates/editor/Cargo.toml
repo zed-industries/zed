@@ -14,6 +14,7 @@ test-support = [
     "text/test-support",
     "language/test-support",
     "gpui/test-support",
+    "multi_buffer/test-support",
     "project/test-support",
     "util/test-support",
     "workspace/test-support",
@@ -34,6 +35,7 @@ git = { path = "../git" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
+multi_buffer = { path = "../multi_buffer" }
 project = { path = "../project" }
 rpc = { path = "../rpc" }
 rich_text = { path = "../rich_text" }
@@ -57,7 +59,6 @@ log.workspace = true
 ordered-float.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-pulldown-cmark = { version = "0.9.2", default-features = false }
 rand.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -79,6 +80,7 @@ util = { path = "../util", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
+multi_buffer = { path = "../multi_buffer", features = ["test-support"] }
 
 ctor.workspace = true
 env_logger.workspace = true

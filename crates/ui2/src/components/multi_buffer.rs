@@ -40,19 +40,16 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use crate::{hello_world_rust_buffer_example, Story};
-
     use super::*;
+    use crate::{hello_world_rust_buffer_example, Story};
+    use gpui2::{Div, Render};
 
-    #[derive(Component)]
     pub struct MultiBufferStory;
 
-    impl MultiBufferStory {
-        pub fn new() -> Self {
-            Self
-        }
+    impl Render for MultiBufferStory {
+        type Element = Div<Self>;
 
-        fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let theme = theme(cx);
 
             Story::container(cx)

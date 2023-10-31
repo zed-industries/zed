@@ -8,7 +8,6 @@ impl Database {
             user_id_b: UserId,
             a_to_b: bool,
             accepted: bool,
-            should_notify: bool,
             user_a_busy: bool,
             user_b_busy: bool,
         }
@@ -53,7 +52,6 @@ impl Database {
                     if db_contact.accepted {
                         contacts.push(Contact::Accepted {
                             user_id: db_contact.user_id_b,
-                            should_notify: db_contact.should_notify && db_contact.a_to_b,
                             busy: db_contact.user_b_busy,
                         });
                     } else if db_contact.a_to_b {
@@ -63,19 +61,16 @@ impl Database {
                     } else {
                         contacts.push(Contact::Incoming {
                             user_id: db_contact.user_id_b,
-                            should_notify: db_contact.should_notify,
                         });
                     }
                 } else if db_contact.accepted {
                     contacts.push(Contact::Accepted {
                         user_id: db_contact.user_id_a,
-                        should_notify: db_contact.should_notify && !db_contact.a_to_b,
                         busy: db_contact.user_a_busy,
                     });
                 } else if db_contact.a_to_b {
                     contacts.push(Contact::Incoming {
                         user_id: db_contact.user_id_a,
-                        should_notify: db_contact.should_notify,
                     });
                 } else {
                     contacts.push(Contact::Outgoing {
@@ -124,7 +119,11 @@ impl Database {
         .await
     }
 
-    pub async fn send_contact_request(&self, sender_id: UserId, receiver_id: UserId) -> Result<()> {
+    pub async fn send_contact_request(
+        &self,
+        sender_id: UserId,
+        receiver_id: UserId,
+    ) -> Result<NotificationBatch> {
         self.transaction(|tx| async move {
             let (id_a, id_b, a_to_b) = if sender_id < receiver_id {
                 (sender_id, receiver_id, true)
@@ -161,11 +160,22 @@ impl Database {
             .exec_without_returning(&*tx)
             .await?;
 
-            if rows_affected == 1 {
-                Ok(())
-            } else {
-                Err(anyhow!("contact already requested"))?
+            if rows_affected == 0 {
+                Err(anyhow!("contact already requested"))?;
             }
+
+            Ok(self
+                .create_notification(
+                    receiver_id,
+                    rpc::Notification::ContactRequest {
+                        sender_id: sender_id.to_proto(),
+                    },
+                    true,
+                    &*tx,
+                )
+                .await?
+                .into_iter()
+                .collect())
         })
         .await
     }
@@ -179,7 +189,11 @@ impl Database {
     ///
     /// * `requester_id` - The user that initiates this request
     /// * `responder_id` - The user that will be removed
-    pub async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<bool> {
+    pub async fn remove_contact(
+        &self,
+        requester_id: UserId,
+        responder_id: UserId,
+    ) -> Result<(bool, Option<NotificationId>)> {
         self.transaction(|tx| async move {
             let (id_a, id_b) = if responder_id < requester_id {
                 (responder_id, requester_id)
@@ -198,7 +212,21 @@ impl Database {
                 .ok_or_else(|| anyhow!("no such contact"))?;
 
             contact::Entity::delete_by_id(contact.id).exec(&*tx).await?;
-            Ok(contact.accepted)
+
+            let mut deleted_notification_id = None;
+            if !contact.accepted {
+                deleted_notification_id = self
+                    .remove_notification(
+                        responder_id,
+                        rpc::Notification::ContactRequest {
+                            sender_id: requester_id.to_proto(),
+                        },
+                        &*tx,
+                    )
+                    .await?;
+            }
+
+            Ok((contact.accepted, deleted_notification_id))
         })
         .await
     }
@@ -249,7 +277,7 @@ impl Database {
         responder_id: UserId,
         requester_id: UserId,
         accept: bool,
-    ) -> Result<()> {
+    ) -> Result<NotificationBatch> {
         self.transaction(|tx| async move {
             let (id_a, id_b, a_to_b) = if responder_id < requester_id {
                 (responder_id, requester_id, false)
@@ -287,11 +315,38 @@ impl Database {
                 result.rows_affected
             };
 
-            if rows_affected == 1 {
-                Ok(())
-            } else {
+            if rows_affected == 0 {
                 Err(anyhow!("no such contact request"))?
             }
+
+            let mut notifications = Vec::new();
+            notifications.extend(
+                self.mark_notification_as_read_with_response(
+                    responder_id,
+                    &rpc::Notification::ContactRequest {
+                        sender_id: requester_id.to_proto(),
+                    },
+                    accept,
+                    &*tx,
+                )
+                .await?,
+            );
+
+            if accept {
+                notifications.extend(
+                    self.create_notification(
+                        requester_id,
+                        rpc::Notification::ContactRequestAccepted {
+                            responder_id: responder_id.to_proto(),
+                        },
+                        true,
+                        &*tx,
+                    )
+                    .await?,
+                );
+            }
+
+            Ok(notifications)
         })
         .await
     }

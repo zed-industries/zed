@@ -57,7 +57,10 @@ impl<V: 'static> IconButton<V> {
         self
     }
 
-    pub fn on_click(mut self, handler: impl 'static + Fn(&mut V, &mut ViewContext<V>) + Send + Sync) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl 'static + Fn(&mut V, &mut ViewContext<V>) + Send + Sync,
+    ) -> Self {
         self.handlers.click = Some(Arc::new(handler));
         self
     }
