@@ -967,7 +967,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     self.window.mouse_position = position;
                     if self.active_drag.is_none() {
                         self.active_drag = Some(AnyDrag {
-                            view: self.build_view(|_| files).into_any(),
+                            view: self.build_view(|_| files).into(),
                             cursor_offset: position,
                         });
                     }
