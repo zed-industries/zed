@@ -1305,11 +1305,11 @@ impl Context for WindowContext<'_, '_> {
 }
 
 impl VisualContext for WindowContext<'_, '_> {
-    type ViewContext<'a, 'w, V: 'static> = ViewContext<'a, 'w, V>;
+    type ViewContext<'a, V: 'static> = ViewContext<'a, V>;
 
     fn build_view<V>(
         &mut self,
-        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
+        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Send,
@@ -1328,7 +1328,7 @@ impl VisualContext for WindowContext<'_, '_> {
     fn update_view<T: 'static, R>(
         &mut self,
         view: &View<T>,
-        update: impl FnOnce(&mut T, &mut Self::ViewContext<'_, '_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Self::ViewContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         let mut lease = self.app.entities.lease(&view.model);
         let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
@@ -1540,37 +1540,37 @@ impl BorrowMut<Window> for WindowContext<'_, '_> {
 
 impl<T> BorrowWindow for T where T: BorrowMut<AppContext> + BorrowMut<Window> {}
 
-pub struct ViewContext<'a, 'w, V> {
-    window_cx: WindowContext<'a, 'w>,
-    view: &'w View<V>,
+pub struct ViewContext<'a, V> {
+    window_cx: WindowContext<'a, 'a>,
+    view: &'a View<V>,
 }
 
-impl<V> Borrow<AppContext> for ViewContext<'_, '_, V> {
+impl<V> Borrow<AppContext> for ViewContext<'_, V> {
     fn borrow(&self) -> &AppContext {
         &*self.window_cx.app
     }
 }
 
-impl<V> BorrowMut<AppContext> for ViewContext<'_, '_, V> {
+impl<V> BorrowMut<AppContext> for ViewContext<'_, V> {
     fn borrow_mut(&mut self) -> &mut AppContext {
         &mut *self.window_cx.app
     }
 }
 
-impl<V> Borrow<Window> for ViewContext<'_, '_, V> {
+impl<V> Borrow<Window> for ViewContext<'_, V> {
     fn borrow(&self) -> &Window {
         &*self.window_cx.window
     }
 }
 
-impl<V> BorrowMut<Window> for ViewContext<'_, '_, V> {
+impl<V> BorrowMut<Window> for ViewContext<'_, V> {
     fn borrow_mut(&mut self) -> &mut Window {
         &mut *self.window_cx.window
     }
 }
 
-impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
-    pub(crate) fn new(app: &'a mut AppContext, window: &'w mut Window, view: &'w View<V>) -> Self {
+impl<'a, V: 'static> ViewContext<'a, V> {
+    pub(crate) fn new(app: &'a mut AppContext, window: &'a mut Window, view: &'a View<V>) -> Self {
         Self {
             window_cx: WindowContext::mutable(app, window),
             view,
@@ -1612,7 +1612,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn observe<V2, E>(
         &mut self,
         entity: &E,
-        mut on_notify: impl FnMut(&mut V, E, &mut ViewContext<'_, '_, V>) + Send + 'static,
+        mut on_notify: impl FnMut(&mut V, E, &mut ViewContext<'_, V>) + Send + 'static,
     ) -> Subscription
     where
         V2: 'static,
@@ -1642,7 +1642,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn subscribe<V2, E>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(&mut V, E, &V2::Event, &mut ViewContext<'_, '_, V>) + Send + 'static,
+        mut on_event: impl FnMut(&mut V, E, &V2::Event, &mut ViewContext<'_, V>) + Send + 'static,
     ) -> Subscription
     where
         V2: EventEmitter,
@@ -1687,7 +1687,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn observe_release<V2, E>(
         &mut self,
         entity: &E,
-        mut on_release: impl FnMut(&mut V, &mut V2, &mut ViewContext<'_, '_, V>) + Send + 'static,
+        mut on_release: impl FnMut(&mut V, &mut V2, &mut ViewContext<'_, V>) + Send + 'static,
     ) -> Subscription
     where
         V: Any + Send,
@@ -1816,7 +1816,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn run_on_main<R>(
         &mut self,
         view: &mut V,
-        f: impl FnOnce(&mut V, &mut MainThread<ViewContext<'_, '_, V>>) -> R + Send + 'static,
+        f: impl FnOnce(&mut V, &mut MainThread<ViewContext<'_, V>>) -> R + Send + 'static,
     ) -> Task<Result<R>>
     where
         R: Send + 'static,
@@ -1857,7 +1857,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) + Send + 'static,
+        f: impl Fn(&mut V, &mut ViewContext<'_, V>) + Send + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         let view = self.view().downgrade();
@@ -1885,10 +1885,10 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     }
 }
 
-impl<'a, 'w, V> ViewContext<'a, 'w, V>
+impl<V> ViewContext<'_, V>
 where
     V: EventEmitter,
-    V::Event: Any + Send,
+    V::Event: 'static + Send,
 {
     pub fn emit(&mut self, event: V::Event) {
         let emitter = self.view.model.entity_id;
@@ -1899,7 +1899,7 @@ where
     }
 }
 
-impl<'a, 'w, V: 'static> MainThread<ViewContext<'a, 'w, V>> {
+impl<V: 'static> MainThread<ViewContext<'_, V>> {
     fn platform_window(&self) -> &dyn PlatformWindow {
         self.window.platform_window.borrow_on_main_thread().as_ref()
     }
@@ -1909,7 +1909,7 @@ impl<'a, 'w, V: 'static> MainThread<ViewContext<'a, 'w, V>> {
     }
 }
 
-impl<'a, 'w, V> Context for ViewContext<'a, 'w, V> {
+impl<V> Context for ViewContext<'_, V> {
     type ModelContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
@@ -1932,12 +1932,12 @@ impl<'a, 'w, V> Context for ViewContext<'a, 'w, V> {
     }
 }
 
-impl<V: 'static> VisualContext for ViewContext<'_, '_, V> {
-    type ViewContext<'a, 'w, V2: 'static> = ViewContext<'a, 'w, V2>;
+impl<V: 'static> VisualContext for ViewContext<'_, V> {
+    type ViewContext<'a, W: 'static> = ViewContext<'a, W>;
 
     fn build_view<W: 'static + Send>(
         &mut self,
-        build_view: impl FnOnce(&mut Self::ViewContext<'_, '_, W>) -> W,
+        build_view: impl FnOnce(&mut Self::ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>> {
         self.window_cx.build_view(build_view)
     }
@@ -1945,21 +1945,21 @@ impl<V: 'static> VisualContext for ViewContext<'_, '_, V> {
     fn update_view<V2: 'static, R>(
         &mut self,
         view: &View<V2>,
-        update: impl FnOnce(&mut V2, &mut Self::ViewContext<'_, '_, V2>) -> R,
+        update: impl FnOnce(&mut V2, &mut Self::ViewContext<'_, V2>) -> R,
     ) -> Self::Result<R> {
         self.window_cx.update_view(view, update)
     }
 }
 
-impl<'a, 'w, V> std::ops::Deref for ViewContext<'a, 'w, V> {
-    type Target = WindowContext<'a, 'w>;
+impl<'a, V> std::ops::Deref for ViewContext<'a, V> {
+    type Target = WindowContext<'a, 'a>;
 
     fn deref(&self) -> &Self::Target {
         &self.window_cx
     }
 }
 
-impl<'a, 'w, V> std::ops::DerefMut for ViewContext<'a, 'w, V> {
+impl<'a, V> std::ops::DerefMut for ViewContext<'a, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.window_cx
     }

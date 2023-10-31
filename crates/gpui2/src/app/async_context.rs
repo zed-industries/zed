@@ -81,7 +81,7 @@ impl AsyncAppContext {
     pub fn update_window_root<V, R>(
         &mut self,
         handle: &WindowHandle<V>,
-        update: impl FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> Result<R>
     where
         V: 'static + Send,
@@ -259,11 +259,11 @@ impl Context for AsyncWindowContext {
 }
 
 impl VisualContext for AsyncWindowContext {
-    type ViewContext<'a, 'w, V: 'static> = ViewContext<'a, 'w, V>;
+    type ViewContext<'a, V: 'static> = ViewContext<'a, V>;
 
     fn build_view<V>(
         &mut self,
-        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
+        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Send,
@@ -275,7 +275,7 @@ impl VisualContext for AsyncWindowContext {
     fn update_view<V: 'static, R>(
         &mut self,
         view: &View<V>,
-        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, '_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, V>) -> R,
     ) -> Self::Result<R> {
         self.app
             .update_window(self.window, |cx| cx.update_view(view, update))

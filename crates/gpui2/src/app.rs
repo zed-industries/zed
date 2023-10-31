@@ -308,7 +308,7 @@ impl AppContext {
     pub fn update_window_root<V, R>(
         &mut self,
         handle: &WindowHandle<V>,
-        update: impl FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> Result<R>
     where
         V: 'static + Send,
@@ -882,7 +882,7 @@ impl MainThread<AppContext> {
     pub fn update_window_root<V, R>(
         &mut self,
         handle: &WindowHandle<V>,
-        update: impl FnOnce(&mut V, &mut MainThread<ViewContext<'_, '_, V>>) -> R,
+        update: impl FnOnce(&mut V, &mut MainThread<ViewContext<'_, V>>) -> R,
     ) -> Result<R>
     where
         V: 'static + Send,
