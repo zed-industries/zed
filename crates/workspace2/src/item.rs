@@ -5,7 +5,7 @@
 // use crate::{AutosaveSetting, DelayedDebouncedEditAction, WorkspaceSettings};
 use anyhow::Result;
 use client2::{
-    proto::{self, PeerId, ViewId},
+    proto::{self, PeerId},
     Client,
 };
 use settings2::Settings;
@@ -98,12 +98,12 @@ pub struct BreadcrumbText {
     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
 }
 
-pub trait Item: EventEmitter + Sized {
-    //     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
-    //     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
-    //     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
-    //         false
-    //     }
+pub trait Item: Render + EventEmitter + Send {
+    fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
+    fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
+    fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
+        false
+    }
     fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
         None
     }
@@ -117,53 +117,53 @@ pub trait Item: EventEmitter + Sized {
     fn is_singleton(&self, _cx: &AppContext) -> bool {
         false
     }
-    //     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
-    fn clone_on_split(&self, _workspace_id: WorkspaceId, _: &mut ViewContext<Self>) -> Option<Self>
+    fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
+    fn clone_on_split(
+        &self,
+        _workspace_id: WorkspaceId,
+        _: &mut ViewContext<Self>,
+    ) -> Option<View<Self>>
     where
         Self: Sized,
     {
         None
     }
-    //     fn is_dirty(&self, _: &AppContext) -> bool {
-    //         false
-    //     }
-    //     fn has_conflict(&self, _: &AppContext) -> bool {
-    //         false
-    //     }
-    //     fn can_save(&self, _cx: &AppContext) -> bool {
-    //         false
-    //     }
-    //     fn save(
-    //         &mut self,
-    //         _project: Model<Project>,
-    //         _cx: &mut ViewContext<Self>,
-    //     ) -> Task<Result<()>> {
-    //         unimplemented!("save() must be implemented if can_save() returns true")
-    //     }
-    //     fn save_as(
-    //         &mut self,
-    //         _project: Model<Project>,
-    //         _abs_path: PathBuf,
-    //         _cx: &mut ViewContext<Self>,
-    //     ) -> Task<Result<()>> {
-    //         unimplemented!("save_as() must be implemented if can_save() returns true")
-    //     }
-    //     fn reload(
-    //         &mut self,
-    //         _project: Model<Project>,
-    //         _cx: &mut ViewContext<Self>,
-    //     ) -> Task<Result<()>> {
-    //         unimplemented!("reload() must be implemented if can_save() returns true")
-    //     }
+    fn is_dirty(&self, _: &AppContext) -> bool {
+        false
+    }
+    fn has_conflict(&self, _: &AppContext) -> bool {
+        false
+    }
+    fn can_save(&self, _cx: &AppContext) -> bool {
+        false
+    }
+    fn save(&mut self, _project: Model<Project>, _cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+        unimplemented!("save() must be implemented if can_save() returns true")
+    }
+    fn save_as(
+        &mut self,
+        _project: Model<Project>,
+        _abs_path: PathBuf,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("save_as() must be implemented if can_save() returns true")
+    }
+    fn reload(
+        &mut self,
+        _project: Model<Project>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("reload() must be implemented if can_save() returns true")
+    }
     fn to_item_events(_event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
         SmallVec::new()
     }
-    //     fn should_close_item_on_event(_: &Self::Event) -> bool {
-    //         false
-    //     }
-    //     fn should_update_tab_on_event(_: &Self::Event) -> bool {
-    //         false
-    //     }
+    fn should_close_item_on_event(_: &Self::Event) -> bool {
+        false
+    }
+    fn should_update_tab_on_event(_: &Self::Event) -> bool {
+        false
+    }
 
     //     fn act_as_type<'a>(
     //         &'a self,
@@ -178,41 +178,41 @@ pub trait Item: EventEmitter + Sized {
     //         }
     //     }
 
-    //     fn as_searchable(&self, _: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
-    //         None
-    //     }
+    fn as_searchable(&self, _: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        None
+    }
 
-    //     fn breadcrumb_location(&self) -> ToolbarItemLocation {
-    //         ToolbarItemLocation::Hidden
-    //     }
+    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+        ToolbarItemLocation::Hidden
+    }
 
-    //     fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
-    //         None
-    //     }
+    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+        None
+    }
 
-    //     fn added_to_workspace(&mut self, _workspace: &mut Workspace, _cx: &mut ViewContext<Self>) {}
+    fn added_to_workspace(&mut self, _workspace: &mut Workspace, _cx: &mut ViewContext<Self>) {}
 
-    //     fn serialized_item_kind() -> Option<&'static str> {
-    //         None
-    //     }
+    fn serialized_item_kind() -> Option<&'static str> {
+        None
+    }
 
-    //     fn deserialize(
-    //         _project: Model<Project>,
-    //         _workspace: WeakViewHandle<Workspace>,
-    //         _workspace_id: WorkspaceId,
-    //         _item_id: ItemId,
-    //         _cx: &mut ViewContext<Pane>,
-    //     ) -> Task<Result<View<Self>>> {
-    //         unimplemented!(
-    //             "deserialize() must be implemented if serialized_item_kind() returns Some(_)"
-    //         )
-    //     }
-    //     fn show_toolbar(&self) -> bool {
-    //         true
-    //     }
-    //     fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Vector2F> {
-    //         None
-    //     }
+    fn deserialize(
+        _project: Model<Project>,
+        _workspace: WeakView<Workspace>,
+        _workspace_id: WorkspaceId,
+        _item_id: ItemId,
+        _cx: &mut ViewContext<Pane>,
+    ) -> Task<Result<View<Self>>> {
+        unimplemented!(
+            "deserialize() must be implemented if serialized_item_kind() returns Some(_)"
+        )
+    }
+    fn show_toolbar(&self) -> bool {
+        true
+    }
+    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
+        None
+    }
 }
 
 use std::{
@@ -229,18 +229,19 @@ use std::{
 };
 
 use gpui2::{
-    AnyElement, AnyWindowHandle, AppContext, EventEmitter, HighlightStyle, Model, Pixels, Point,
-    SharedString, Task, View, ViewContext, WindowContext,
+    AnyElement, AnyView, AnyWindowHandle, AppContext, EventEmitter, HighlightStyle, Model, Pixels,
+    Point, Render, SharedString, Task, View, ViewContext, WeakView, WindowContext,
 };
 use project2::{Project, ProjectEntryId, ProjectPath};
 use smallvec::SmallVec;
 
 use crate::{
     pane::{self, Pane},
+    persistence::model::ItemId,
     searchable::SearchableItemHandle,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
-    DelayedDebouncedEditAction, FollowableItemBuilders, ToolbarItemLocation, Workspace,
-    WorkspaceId,
+    DelayedDebouncedEditAction, FollowableItemBuilders, ItemNavHistory, ToolbarItemLocation,
+    ViewId, Workspace, WorkspaceId,
 };
 
 pub trait ItemHandle: 'static + Send {
@@ -275,7 +276,7 @@ pub trait ItemHandle: 'static + Send {
     fn navigate(&self, data: Box<dyn Any>, cx: &mut WindowContext) -> bool;
     fn id(&self) -> usize;
     fn window(&self) -> AnyWindowHandle;
-    // fn as_any(&self) -> &AnyView; todo!()
+    fn to_any(&self) -> AnyView;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
@@ -302,10 +303,10 @@ pub trait ItemHandle: 'static + Send {
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
 }
 
-pub trait WeakItemHandle {
+pub trait WeakItemHandle: Send {
     fn id(&self) -> usize;
     fn window(&self) -> AnyWindowHandle;
-    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>>;
+    fn upgrade(&self) -> Option<Box<dyn ItemHandle>>;
 }
 
 // todo!()
@@ -399,10 +400,8 @@ impl<T: Item> ItemHandle for View<T> {
         workspace_id: WorkspaceId,
         cx: &mut WindowContext,
     ) -> Option<Box<dyn ItemHandle>> {
-        self.update(cx, |item, cx| {
-            cx.add_option_view(|cx| item.clone_on_split(workspace_id, cx))
-        })
-        .map(|handle| Box::new(handle) as Box<dyn ItemHandle>)
+        self.update(cx, |item, cx| item.clone_on_split(workspace_id, cx))
+            .map(|handle| Box::new(handle) as Box<dyn ItemHandle>)
     }
 
     fn added_to_pane(
@@ -447,7 +446,7 @@ impl<T: Item> ItemHandle for View<T> {
                     let pane = if let Some(pane) = workspace
                         .panes_by_item
                         .get(&item.id())
-                        .and_then(|pane| pane.upgrade(cx))
+                        .and_then(|pane| pane.upgrade())
                     {
                         pane
                     } else {
@@ -570,10 +569,9 @@ impl<T: Item> ItemHandle for View<T> {
         // AnyViewHandle::window(self)
     }
 
-    // todo!()
-    // fn as_any(&self) -> &AnyViewHandle {
-    //     self
-    // }
+    fn to_any(&self) -> AnyView {
+        self.clone().into_any()
+    }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
         self.read(cx).is_dirty(cx)
@@ -652,17 +650,17 @@ impl<T: Item> ItemHandle for View<T> {
     }
 }
 
-// impl From<Box<dyn ItemHandle>> for AnyViewHandle {
-//     fn from(val: Box<dyn ItemHandle>) -> Self {
-//         val.as_any().clone()
-//     }
-// }
+impl From<Box<dyn ItemHandle>> for AnyView {
+    fn from(val: Box<dyn ItemHandle>) -> Self {
+        val.to_any()
+    }
+}
 
-// impl From<&Box<dyn ItemHandle>> for AnyViewHandle {
-//     fn from(val: &Box<dyn ItemHandle>) -> Self {
-//         val.as_any().clone()
-//     }
-// }
+impl From<&Box<dyn ItemHandle>> for AnyView {
+    fn from(val: &Box<dyn ItemHandle>) -> Self {
+        val.to_any()
+    }
+}
 
 impl Clone for Box<dyn ItemHandle> {
     fn clone(&self) -> Box<dyn ItemHandle> {
@@ -670,19 +668,19 @@ impl Clone for Box<dyn ItemHandle> {
     }
 }
 
-// impl<T: Item> WeakItemHandle for WeakViewHandle<T> {
-//     fn id(&self) -> usize {
-//         self.id()
-//     }
+impl<T: Item> WeakItemHandle for WeakView<T> {
+    fn id(&self) -> usize {
+        self.id()
+    }
 
-//     fn window(&self) -> AnyWindowHandle {
-//         self.window()
-//     }
+    fn window(&self) -> AnyWindowHandle {
+        self.window()
+    }
 
-//     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
-//         self.upgrade(cx).map(|v| Box::new(v) as Box<dyn ItemHandle>)
-//     }
-// }
+    fn upgrade(&self) -> Option<Box<dyn ItemHandle>> {
+        self.upgrade().map(|v| Box::new(v) as Box<dyn ItemHandle>)
+    }
+}
 
 pub trait ProjectItem: Item {
     type Item: project2::Item;

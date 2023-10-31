@@ -305,42 +305,6 @@ impl<ParentV: 'static> Component<ParentV> for AnyView {
     }
 }
 
-impl Element<()> for AnyView {
-    type ElementState = AnyBox;
-
-    fn id(&self) -> Option<crate::ElementId> {
-        Some(ElementId::View(self.0.entity_id()))
-    }
-
-    fn initialize(
-        &mut self,
-        _: &mut (),
-        _: Option<Self::ElementState>,
-        cx: &mut ViewContext<()>,
-    ) -> Self::ElementState {
-        self.0.initialize(cx)
-    }
-
-    fn layout(
-        &mut self,
-        _: &mut (),
-        element: &mut Self::ElementState,
-        cx: &mut ViewContext<()>,
-    ) -> LayoutId {
-        self.0.layout(element, cx)
-    }
-
-    fn paint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        _: &mut (),
-        element: &mut AnyBox,
-        cx: &mut ViewContext<()>,
-    ) {
-        self.0.paint(bounds, element, cx)
-    }
-}
-
 impl std::fmt::Debug for AnyView {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.debug(f)
@@ -376,7 +340,7 @@ impl<ParentV: 'static> Element<ParentV> for EraseAnyViewState<ParentV> {
     type ElementState = AnyBox;
 
     fn id(&self) -> Option<ElementId> {
-        Element::id(&self.view)
+        Some(self.view.0.entity_id().into())
     }
 
     fn initialize(

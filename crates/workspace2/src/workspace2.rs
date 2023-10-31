@@ -11,65 +11,30 @@ mod toolbar;
 mod workspace_settings;
 
 use anyhow::{anyhow, Result};
-// use call2::ActiveCall;
-// use client2::{
-//     proto::{self, PeerId},
-//     Client, Status, TypedEnvelope, UserStore,
-// };
-// use collections::{hash_map, HashMap, HashSet};
-// use futures::{
-//     channel::{mpsc, oneshot},
-//     future::try_join_all,
-//     FutureExt, StreamExt,
-// };
-// use gpui2::{
-//     actions,
-//     elements::*,
-//     geometry::{
-//         rect::RectF,
-//         vector::{vec2f, Vector2F},
-//     },
-//     impl_actions,
-//     platform::{
-//         CursorStyle, ModifiersChangedEvent, MouseButton, PathPromptOptions, Platform, PromptLevel,
-//         WindowBounds, WindowOptions,
-//     },
-//     AnyModelHandle, AnyViewHandle, AnyWeakViewHandle, AnyWindowHandle, AppContext, AsyncAppContext,
-//     Entity, ModelContext, ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext,
-//     View, WeakViewHandle, WindowContext, WindowHandle,
-// };
-// use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
-// use itertools::Itertools;
-// use language2::{LanguageRegistry, Rope};
-// use node_runtime::NodeRuntime;// //
-
-use futures::channel::oneshot;
-// use crate::{
-//     notifications::{simple_message_notification::MessageNotification, NotificationTracker},
-//     persistence::model::{
-//         DockData, DockStructure, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
-//     },
-// };
-// use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
-// use lazy_static::lazy_static;
-// use notifications::{NotificationHandle, NotifyResultExt};
+use client2::{
+    proto::{self, PeerId},
+    Client, UserStore,
+};
+use collections::{HashMap, HashSet};
+use futures::{channel::oneshot, FutureExt};
+use gpui2::{
+    AnyModel, AnyView, AppContext, AsyncAppContext, DisplayId, MainThread, Model, Task, View,
+    ViewContext, VisualContext, WeakModel, WeakView, WindowBounds, WindowHandle, WindowOptions,
+};
+use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
+use language2::LanguageRegistry;
+use node_runtime::NodeRuntime;
 pub use pane::*;
 pub use pane_group::*;
-// use persistence::{model::SerializedItem, DB};
-// pub use persistence::{
-//     model::{ItemId, WorkspaceLocation},
-//     WorkspaceDb, DB as WORKSPACE_DB,
-// };
-// use postage::prelude::Stream;
-// use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
-// use serde::Deserialize;
-// use shared_screen::SharedScreen;
-// use status_bar::StatusBar;
-// pub use status_bar::StatusItemView;
-// use theme::{Theme, ThemeSettings};
+use project2::{Project, ProjectEntryId, ProjectPath, Worktree};
+use std::{
+    any::TypeId,
+    path::{Path, PathBuf},
+    sync::{atomic::AtomicUsize, Arc},
+    time::Duration,
+};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-// use util::ResultExt;
-// pub use workspace_settings::{AutosaveSetting, GitGutterSetting, WorkspaceSettings};
+use util::ResultExt;
 
 // lazy_static! {
 //     static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
@@ -367,13 +332,12 @@ pub type WorkspaceId = i64;
 // }
 
 type ProjectItemBuilders =
-    HashMap<TypeId, fn(Handle<Project>, AnyHandle, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>>;
+    HashMap<TypeId, fn(Model<Project>, AnyModel, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>>;
 pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
-    cx.update_default_global(|builders: &mut ProjectItemBuilders, _| {
-        builders.insert(TypeId::of::<I::Item>(), |project, model, cx| {
-            let item = model.downcast::<I::Item>().unwrap();
-            Box::new(cx.add_view(|cx| I::for_project_item(project, item, cx)))
-        });
+    let builders = cx.default_global::<ProjectItemBuilders>();
+    builders.insert(TypeId::of::<I::Item>(), |project, model, cx| {
+        let item = model.downcast::<I::Item>().unwrap();
+        Box::new(cx.build_view(|cx| I::for_project_item(project, item, cx)))
     });
 }
 
@@ -392,26 +356,25 @@ type FollowableItemBuilders = HashMap<
     ),
 >;
 pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
-    cx.update_default_global(|builders: &mut FollowableItemBuilders, _| {
-        builders.insert(
-            TypeId::of::<I>(),
-            (
-                |pane, workspace, id, state, cx| {
-                    I::from_state_proto(pane, workspace, id, state, cx).map(|task| {
-                        cx.foreground()
-                            .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
-                    })
-                },
-                |this| Box::new(this.clone().downcast::<I>().unwrap()),
-            ),
-        );
-    });
+    let builders = cx.default_global::<FollowableItemBuilders>();
+    builders.insert(
+        TypeId::of::<I>(),
+        (
+            |pane, workspace, id, state, cx| {
+                I::from_state_proto(pane, workspace, id, state, cx).map(|task| {
+                    cx.executor()
+                        .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
+                })
+            },
+            |this| Box::new(this.clone().downcast::<I>().unwrap()),
+        ),
+    );
 }
 
 type ItemDeserializers = HashMap<
     Arc<str>,
     fn(
-        Handle<Project>,
+        Model<Project>,
         WeakView<Workspace>,
         WorkspaceId,
         ItemId,
@@ -436,18 +399,18 @@ pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
 pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
-    pub user_store: Handle<UserStore>,
-    pub workspace_store: Handle<WorkspaceStore>,
+    pub user_store: Model<UserStore>,
+    pub workspace_store: Model<WorkspaceStore>,
     pub fs: Arc<dyn fs2::Fs>,
     pub build_window_options:
         fn(Option<WindowBounds>, Option<DisplayId>, &MainThread<AppContext>) -> WindowOptions,
     pub initialize_workspace:
-        fn(WeakHandle<Workspace>, bool, Arc<AppState>, AsyncAppContext) -> Task<anyhow::Result<()>>,
+        fn(WeakModel<Workspace>, bool, Arc<AppState>, AsyncAppContext) -> Task<anyhow::Result<()>>,
     pub node_runtime: Arc<dyn NodeRuntime>,
 }
 
 pub struct WorkspaceStore {
-    workspaces: HashSet<WeakHandle<Workspace>>,
+    workspaces: HashSet<WeakModel<Workspace>>,
     followers: Vec<Follower>,
     client: Arc<Client>,
     _subscriptions: Vec<client2::Subscription>,
@@ -520,7 +483,7 @@ impl DelayedDebouncedEditAction {
 
         let previous_task = self.task.take();
         self.task = Some(cx.spawn(|workspace, mut cx| async move {
-            let mut timer = cx.background().timer(delay).fuse();
+            let mut timer = cx.executor().timer(delay).fuse();
             if let Some(previous_task) = previous_task {
                 previous_task.await;
             }
@@ -540,13 +503,13 @@ impl DelayedDebouncedEditAction {
     }
 }
 
-// pub enum Event {
-//     PaneAdded(View<Pane>),
-//     ContactRequestedJoin(u64),
-// }
+pub enum Event {
+    PaneAdded(View<Pane>),
+    ContactRequestedJoin(u64),
+}
 
 pub struct Workspace {
-    weak_self: WeakHandle<Self>,
+    weak_self: WeakView<Self>,
     //     modal: Option<ActiveModal>,
     //     zoomed: Option<AnyWeakViewHandle>,
     //     zoomed_position: Option<DockPosition>,
@@ -555,16 +518,16 @@ pub struct Workspace {
     //     bottom_dock: View<Dock>,
     //     right_dock: View<Dock>,
     panes: Vec<View<Pane>>,
-    //     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
+    panes_by_item: HashMap<usize, WeakView<Pane>>,
     //     active_pane: View<Pane>,
     last_active_center_pane: Option<WeakView<Pane>>,
     //     last_active_view_id: Option<proto::ViewId>,
     //     status_bar: View<StatusBar>,
     //     titlebar_item: Option<AnyViewHandle>,
     //     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
-    project: Handle<Project>,
+    project: Model<Project>,
     //     follower_states: HashMap<View<Pane>, FollowerState>,
-    //     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
+    //     last_leaders_by_pane: HashMap<WeakView<Pane>, PeerId>,
     //     window_edited: bool,
     //     active_call: Option<(ModelHandle<ActiveCall>, Vec<Subscription>)>,
     //     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
@@ -574,7 +537,7 @@ pub struct Workspace {
     //     _apply_leader_updates: Task<Result<()>>,
     //     _observe_current_user: Task<Result<()>>,
     //     _schedule_serialize: Option<Task<()>>,
-    //     pane_history_timestamp: Arc<AtomicUsize>,
+    pane_history_timestamp: Arc<AtomicUsize>,
 }
 
 // struct ActiveModal {
@@ -582,11 +545,11 @@ pub struct Workspace {
 //     previously_focused_view_id: Option<usize>,
 // }
 
-// #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-// pub struct ViewId {
-//     pub creator: PeerId,
-//     pub id: u64,
-// }
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ViewId {
+    pub creator: PeerId,
+    pub id: u64,
+}
 
 #[derive(Default)]
 struct FollowerState {
@@ -595,7 +558,7 @@ struct FollowerState {
     items_by_leader_view_id: HashMap<ViewId, Box<dyn FollowableItemHandle>>,
 }
 
-// enum WorkspaceBounds {}
+enum WorkspaceBounds {}
 
 impl Workspace {
     //     pub fn new(
@@ -799,7 +762,7 @@ impl Workspace {
     //         requesting_window: Option<WindowHandle<Workspace>>,
     //         cx: &mut AppContext,
     //     ) -> Task<(
-    //         WeakViewHandle<Workspace>,
+    //         WeakView<Workspace>,
     //         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
     //     )> {
     //         let project_handle = Project::local(
@@ -927,21 +890,21 @@ impl Workspace {
     //         })
     //     }
 
-    //     pub fn weak_handle(&self) -> WeakViewHandle<Self> {
-    //         self.weak_self.clone()
-    //     }
+    pub fn weak_handle(&self) -> WeakView<Self> {
+        self.weak_self.clone()
+    }
 
-    //     pub fn left_dock(&self) -> &View<Dock> {
-    //         &self.left_dock
-    //     }
+    // pub fn left_dock(&self) -> &View<Dock> {
+    //     &self.left_dock
+    // }
 
-    //     pub fn bottom_dock(&self) -> &View<Dock> {
-    //         &self.bottom_dock
-    //     }
+    // pub fn bottom_dock(&self) -> &View<Dock> {
+    //     &self.bottom_dock
+    // }
 
-    //     pub fn right_dock(&self) -> &View<Dock> {
-    //         &self.right_dock
-    //     }
+    // pub fn right_dock(&self) -> &View<Dock> {
+    //     &self.right_dock
+    // }
 
     //     pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>)
     //     where
@@ -1038,15 +1001,15 @@ impl Workspace {
     //         &self.status_bar
     //     }
 
-    //     pub fn app_state(&self) -> &Arc<AppState> {
-    //         &self.app_state
-    //     }
+    pub fn app_state(&self) -> &Arc<AppState> {
+        &self.app_state
+    }
 
-    //     pub fn user_store(&self) -> &ModelHandle<UserStore> {
-    //         &self.app_state.user_store
-    //     }
+    pub fn user_store(&self) -> &Model<UserStore> {
+        &self.app_state.user_store
+    }
 
-    pub fn project(&self) -> &Handle<Project> {
+    pub fn project(&self) -> &Model<Project> {
         &self.project
     }
 
@@ -1108,7 +1071,7 @@ impl Workspace {
 
     //     fn navigate_history(
     //         &mut self,
-    //         pane: WeakViewHandle<Pane>,
+    //         pane: WeakView<Pane>,
     //         mode: NavigationMode,
     //         cx: &mut ViewContext<Workspace>,
     //     ) -> Task<Result<()>> {
@@ -1193,7 +1156,7 @@ impl Workspace {
 
     //     pub fn go_back(
     //         &mut self,
-    //         pane: WeakViewHandle<Pane>,
+    //         pane: WeakView<Pane>,
     //         cx: &mut ViewContext<Workspace>,
     //     ) -> Task<Result<()>> {
     //         self.navigate_history(pane, NavigationMode::GoingBack, cx)
@@ -1201,7 +1164,7 @@ impl Workspace {
 
     //     pub fn go_forward(
     //         &mut self,
-    //         pane: WeakViewHandle<Pane>,
+    //         pane: WeakView<Pane>,
     //         cx: &mut ViewContext<Workspace>,
     //     ) -> Task<Result<()>> {
     //         self.navigate_history(pane, NavigationMode::GoingForward, cx)
@@ -1592,11 +1555,11 @@ impl Workspace {
     //     }
 
     fn project_path_for_path(
-        project: Handle<Project>,
+        project: Model<Project>,
         abs_path: &Path,
         visible: bool,
         cx: &mut AppContext,
-    ) -> Task<Result<(Handle<Worktree>, ProjectPath)>> {
+    ) -> Task<Result<(Model<Worktree>, ProjectPath)>> {
         let entry = project.update(cx, |project, cx| {
             project.find_or_create_local_worktree(abs_path, visible, cx)
         });
@@ -1957,21 +1920,21 @@ impl Workspace {
     //         cx.notify();
     //     }
 
-    //     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> View<Pane> {
-    //         let pane = cx.add_view(|cx| {
-    //             Pane::new(
-    //                 self.weak_handle(),
-    //                 self.project.clone(),
-    //                 self.pane_history_timestamp.clone(),
-    //                 cx,
-    //             )
-    //         });
-    //         cx.subscribe(&pane, Self::handle_pane_event).detach();
-    //         self.panes.push(pane.clone());
-    //         cx.focus(&pane);
-    //         cx.emit(Event::PaneAdded(pane.clone()));
-    //         pane
-    //     }
+    fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> View<Pane> {
+        let pane = cx.build_view(|cx| {
+            Pane::new(
+                self.weak_handle(),
+                self.project.clone(),
+                self.pane_history_timestamp.clone(),
+                cx,
+            )
+        });
+        cx.subscribe(&pane, Self::handle_pane_event).detach();
+        self.panes.push(pane.clone());
+        cx.focus(&pane);
+        cx.emit(Event::PaneAdded(pane.clone()));
+        pane
+    }
 
     //     pub fn add_item_to_center(
     //         &mut self,
@@ -2397,9 +2360,9 @@ impl Workspace {
 
     //     pub fn split_pane_with_item(
     //         &mut self,
-    //         pane_to_split: WeakViewHandle<Pane>,
+    //         pane_to_split: WeakView<Pane>,
     //         split_direction: SplitDirection,
-    //         from: WeakViewHandle<Pane>,
+    //         from: WeakView<Pane>,
     //         item_id_to_move: usize,
     //         cx: &mut ViewContext<Self>,
     //     ) {
@@ -2420,7 +2383,7 @@ impl Workspace {
 
     //     pub fn split_pane_with_project_entry(
     //         &mut self,
-    //         pane_to_split: WeakViewHandle<Pane>,
+    //         pane_to_split: WeakView<Pane>,
     //         split_direction: SplitDirection,
     //         project_entry: ProjectEntryId,
     //         cx: &mut ViewContext<Self>,
@@ -2899,7 +2862,7 @@ impl Workspace {
     //     }
 
     //     async fn process_leader_update(
-    //         this: &WeakViewHandle<Self>,
+    //         this: &WeakView<Self>,
     //         leader_id: PeerId,
     //         update: proto::UpdateFollowers,
     //         cx: &mut AsyncAppContext,
@@ -2958,7 +2921,7 @@ impl Workspace {
     //     }
 
     //     async fn add_views_from_leader(
-    //         this: WeakViewHandle<Self>,
+    //         this: WeakView<Self>,
     //         leader_id: PeerId,
     //         panes: Vec<View<Pane>>,
     //         views: Vec<proto::View>,
@@ -3045,25 +3008,25 @@ impl Workspace {
     //         }
     //     }
 
-    //     fn update_followers(
-    //         &self,
-    //         project_only: bool,
-    //         update: proto::update_followers::Variant,
-    //         cx: &AppContext,
-    //     ) -> Option<()> {
-    //         let project_id = if project_only {
-    //             self.project.read(cx).remote_id()
-    //         } else {
-    //             None
-    //         };
-    //         self.app_state().workspace_store.read_with(cx, |store, cx| {
-    //             store.update_followers(project_id, update, cx)
-    //         })
-    //     }
+    fn update_followers(
+        &self,
+        project_only: bool,
+        update: proto::update_followers::Variant,
+        cx: &AppContext,
+    ) -> Option<()> {
+        let project_id = if project_only {
+            self.project.read(cx).remote_id()
+        } else {
+            None
+        };
+        self.app_state().workspace_store.read_with(cx, |store, cx| {
+            store.update_followers(project_id, update, cx)
+        })
+    }
 
-    //     pub fn leader_for_pane(&self, pane: &View<Pane>) -> Option<PeerId> {
-    //         self.follower_states.get(pane).map(|state| state.leader_id)
-    //     }
+    pub fn leader_for_pane(&self, pane: &View<Pane>) -> Option<PeerId> {
+        self.follower_states.get(pane).map(|state| state.leader_id)
+    }
 
     //     fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
     //         cx.notify();
@@ -3380,7 +3343,7 @@ impl Workspace {
     //     }
 
     //     pub(crate) fn load_workspace(
-    //         workspace: WeakViewHandle<Workspace>,
+    //         workspace: WeakView<Workspace>,
     //         serialized_workspace: SerializedWorkspace,
     //         paths_to_open: Vec<Option<ProjectPath>>,
     //         cx: &mut AppContext,
@@ -3570,7 +3533,7 @@ impl Workspace {
 
     // async fn open_items(
     //     serialized_workspace: Option<SerializedWorkspace>,
-    //     workspace: &WeakViewHandle<Workspace>,
+    //     workspace: &WeakView<Workspace>,
     //     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
     //     app_state: Arc<AppState>,
     //     mut cx: AsyncAppContext,
@@ -3660,7 +3623,7 @@ impl Workspace {
     //     Ok(opened_items)
     // }
 
-    // fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
+    // fn notify_of_new_dock(workspace: &WeakView<Workspace>, cx: &mut AsyncAppContext) {
     //     const NEW_PANEL_BLOG_POST: &str = "https://zed.dev/blog/new-panel-system";
     //     const NEW_DOCK_HINT_KEY: &str = "show_new_dock_key";
     //     const MESSAGE_ID: usize = 2;
@@ -3741,7 +3704,7 @@ impl Workspace {
     //         .ok();
 }
 
-// fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
+// fn notify_if_database_failed(workspace: &WeakView<Workspace>, cx: &mut AsyncAppContext) {
 //     const REPORT_ISSUE_URL: &str ="https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml";
 
 //     workspace
@@ -4054,23 +4017,23 @@ impl Workspace {
 //     type Event = ();
 // }
 
-// impl ViewId {
-//     pub(crate) fn from_proto(message: proto::ViewId) -> Result<Self> {
-//         Ok(Self {
-//             creator: message
-//                 .creator
-//                 .ok_or_else(|| anyhow!("creator is missing"))?,
-//             id: message.id,
-//         })
-//     }
+impl ViewId {
+    pub(crate) fn from_proto(message: proto::ViewId) -> Result<Self> {
+        Ok(Self {
+            creator: message
+                .creator
+                .ok_or_else(|| anyhow!("creator is missing"))?,
+            id: message.id,
+        })
+    }
 
-//     pub(crate) fn to_proto(&self) -> proto::ViewId {
-//         proto::ViewId {
-//             creator: Some(self.creator),
-//             id: self.id,
-//         }
-//     }
-// }
+    pub(crate) fn to_proto(&self) -> proto::ViewId {
+        proto::ViewId {
+            creator: Some(self.creator),
+            id: self.id,
+        }
+    }
+}
 
 // pub trait WorkspaceHandle {
 //     fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath>;
@@ -4099,7 +4062,7 @@ impl Workspace {
 //     }
 // }
 
-// pub struct WorkspaceCreated(pub WeakViewHandle<Workspace>);
+// pub struct WorkspaceCreated(pub WeakView<Workspace>);
 
 pub async fn activate_workspace_for_project(
     cx: &mut AsyncAppContext,
@@ -4320,27 +4283,6 @@ pub async fn activate_workspace_for_project(
 //     }
 //     None
 // }
-
-use client2::{
-    proto::{self, PeerId, ViewId},
-    Client, UserStore,
-};
-use collections::{HashMap, HashSet};
-use gpui2::{
-    AnyHandle, AnyView, AppContext, AsyncAppContext, DisplayId, Handle, MainThread, Task, View,
-    ViewContext, WeakHandle, WeakView, WindowBounds, WindowHandle, WindowOptions,
-};
-use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
-use language2::LanguageRegistry;
-use node_runtime::NodeRuntime;
-use project2::{Project, ProjectEntryId, ProjectPath, Worktree};
-use std::{
-    any::TypeId,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
-use util::ResultExt;
 
 #[allow(clippy::type_complexity)]
 pub fn open_paths(

@@ -7,7 +7,7 @@ use db2::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui2::{AsyncAppContext, Handle, Task, View, WeakView, WindowBounds};
+use gpui2::{AsyncAppContext, AsyncWindowContext, Handle, Task, View, WeakView, WindowBounds};
 use project2::Project;
 use std::{
     path::{Path, PathBuf},
@@ -154,7 +154,7 @@ impl SerializedPaneGroup {
         project: &Handle<Project>,
         workspace_id: WorkspaceId,
         workspace: &WeakView<Workspace>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncWindowContext,
     ) -> Option<(Member, Option<View<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
         match self {
             SerializedPaneGroup::Group {
