@@ -280,7 +280,7 @@ impl AppContext {
                 .take()
                 .unwrap();
 
-            let result = update(&mut WindowContext::mutable(cx, &mut window));
+            let result = update(&mut WindowContext::new(cx, &mut window));
 
             cx.windows
                 .get_mut(handle.id)
@@ -765,7 +765,7 @@ impl Context for AppContext {
     ) -> Model<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
-            let entity = build_model(&mut ModelContext::mutable(cx, slot.downgrade()));
+            let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
             cx.entities.insert(slot, entity)
         })
     }
@@ -779,10 +779,7 @@ impl Context for AppContext {
     ) -> R {
         self.update(|cx| {
             let mut entity = cx.entities.lease(model);
-            let result = update(
-                &mut entity,
-                &mut ModelContext::mutable(cx, model.downgrade()),
-            );
+            let result = update(&mut entity, &mut ModelContext::new(cx, model.downgrade()));
             cx.entities.end_lease(entity);
             result
         })
@@ -898,7 +895,7 @@ impl MainThread<AppContext> {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
             let mut window = Window::new(handle.into(), options, cx);
-            let root_view = build_root_view(&mut WindowContext::mutable(cx, &mut window));
+            let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
             window.root_view.replace(root_view.into());
             cx.windows.get_mut(id).unwrap().replace(window);
             handle

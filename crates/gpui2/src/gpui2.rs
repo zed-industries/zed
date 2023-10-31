@@ -307,33 +307,6 @@ impl<T: Into<ArcCow<'static, str>>> From<T> for SharedString {
     }
 }
 
-pub enum Reference<'a, T> {
-    Immutable(&'a T),
-    Mutable(&'a mut T),
-}
-
-impl<'a, T> Deref for Reference<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Reference::Immutable(target) => target,
-            Reference::Mutable(target) => target,
-        }
-    }
-}
-
-impl<'a, T> DerefMut for Reference<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Reference::Immutable(_) => {
-                panic!("cannot mutably deref an immutable reference. this is a bug in GPUI.");
-            }
-            Reference::Mutable(target) => target,
-        }
-    }
-}
-
 pub(crate) struct MainThreadOnly<T: ?Sized> {
     executor: Executor,
     value: Arc<T>,

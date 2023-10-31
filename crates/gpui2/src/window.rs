@@ -5,10 +5,10 @@ use crate::{
     Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
     MainThread, MainThreadOnly, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow,
-    Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowOptions, SUBPIXEL_VARIANTS,
+    Point, PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams, RenderSvgParams,
+    ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine,
+    Task, Underline, UnderlineStyle, View, VisualContext, WeakView, WindowOptions,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -306,16 +306,13 @@ impl ContentMask<Pixels> {
 /// to an `AppContext`, so you can also pass a `WindowContext` to any method that takes
 /// an `AppContext` and call any `AppContext` methods.
 pub struct WindowContext<'a> {
-    pub(crate) app: Reference<'a, AppContext>,
-    pub(crate) window: Reference<'a, Window>,
+    pub(crate) app: &'a mut AppContext,
+    pub(crate) window: &'a mut Window,
 }
 
 impl<'a> WindowContext<'a> {
-    pub(crate) fn mutable(app: &'a mut AppContext, window: &'a mut Window) -> Self {
-        Self {
-            app: Reference::Mutable(app),
-            window: Reference::Mutable(window),
-        }
+    pub(crate) fn new(app: &'a mut AppContext, window: &'a mut Window) -> Self {
+        Self { app, window }
     }
 
     /// Obtain a handle to the window that belongs to this context.
@@ -1278,7 +1275,7 @@ impl Context for WindowContext<'_> {
         T: 'static + Send,
     {
         let slot = self.app.entities.reserve();
-        let model = build_model(&mut ModelContext::mutable(&mut *self.app, slot.downgrade()));
+        let model = build_model(&mut ModelContext::new(&mut *self.app, slot.downgrade()));
         self.entities.insert(slot, model)
     }
 
@@ -1290,7 +1287,7 @@ impl Context for WindowContext<'_> {
         let mut entity = self.entities.lease(model);
         let result = update(
             &mut *entity,
-            &mut ModelContext::mutable(&mut *self.app, model.downgrade()),
+            &mut ModelContext::new(&mut *self.app, model.downgrade()),
         );
         self.entities.end_lease(entity);
         result
@@ -1565,7 +1562,7 @@ impl<V> BorrowMut<Window> for ViewContext<'_, V> {
 impl<'a, V: 'static> ViewContext<'a, V> {
     pub(crate) fn new(app: &'a mut AppContext, window: &'a mut Window, view: &'a View<V>) -> Self {
         Self {
-            window_cx: WindowContext::mutable(app, window),
+            window_cx: WindowContext::new(app, window),
             view,
         }
     }

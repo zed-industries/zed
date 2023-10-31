@@ -1,6 +1,6 @@
 use crate::{
     AppContext, AsyncAppContext, Context, Effect, Entity, EntityId, EventEmitter, MainThread,
-    Model, Reference, Subscription, Task, WeakModel,
+    Model, Subscription, Task, WeakModel,
 };
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
@@ -14,16 +14,13 @@ use std::{
 pub struct ModelContext<'a, T> {
     #[deref]
     #[deref_mut]
-    app: Reference<'a, AppContext>,
+    app: &'a mut AppContext,
     model_state: WeakModel<T>,
 }
 
 impl<'a, T: 'static> ModelContext<'a, T> {
-    pub(crate) fn mutable(app: &'a mut AppContext, model_state: WeakModel<T>) -> Self {
-        Self {
-            app: Reference::Mutable(app),
-            model_state,
-        }
+    pub(crate) fn new(app: &'a mut AppContext, model_state: WeakModel<T>) -> Self {
+        Self { app, model_state }
     }
 
     pub fn entity_id(&self) -> EntityId {
