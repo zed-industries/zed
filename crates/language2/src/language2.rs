@@ -230,8 +230,8 @@ impl CachedLspAdapter {
         self.adapter.label_for_symbol(name, kind, language).await
     }
 
-    pub fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        self.adapter.enabled_formatters()
+    pub fn prettier_plugins(&self) -> &[&'static str] {
+        self.adapter.prettier_plugins()
     }
 }
 
@@ -340,31 +340,8 @@ pub trait LspAdapter: 'static + Send + Sync {
         Default::default()
     }
 
-    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        Vec::new()
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BundledFormatter {
-    Prettier {
-        // See https://prettier.io/docs/en/options.html#parser for a list of valid values.
-        // Usually, every language has a single parser (standard or plugin-provided), hence `Some("parser_name")` can be used.
-        // There can not be multiple parsers for a single language, in case of a conflict, we would attempt to select the one with most plugins.
-        //
-        // But exceptions like Tailwind CSS exist, which uses standard parsers for CSS/JS/HTML/etc. but require an extra plugin to be installed.
-        // For those cases, `None` will install the plugin but apply other, regular parser defined for the language, and this would not be a conflict.
-        parser_name: Option<&'static str>,
-        plugin_names: Vec<&'static str>,
-    },
-}
-
-impl BundledFormatter {
-    pub fn prettier(parser_name: &'static str) -> Self {
-        Self::Prettier {
-            parser_name: Some(parser_name),
-            plugin_names: Vec::new(),
-        }
+    fn prettier_plugins(&self) -> &[&'static str] {
+        &[]
     }
 }
 
@@ -402,6 +379,8 @@ pub struct LanguageConfig {
     pub overrides: HashMap<String, LanguageConfigOverride>,
     #[serde(default)]
     pub word_characters: HashSet<char>,
+    #[serde(default)]
+    pub prettier_parser_name: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -475,6 +454,7 @@ impl Default for LanguageConfig {
             overrides: Default::default(),
             collapsed_placeholder: Default::default(),
             word_characters: Default::default(),
+            prettier_parser_name: None,
         }
     }
 }
@@ -500,7 +480,7 @@ pub struct FakeLspAdapter {
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp2::FakeLanguageServer)>>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
-    pub enabled_formatters: Vec<BundledFormatter>,
+    pub prettier_plugins: Vec<&'static str>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1604,6 +1584,10 @@ impl Language {
             override_id: None,
         }
     }
+
+    pub fn prettier_parser_name(&self) -> Option<&str> {
+        self.config.prettier_parser_name.as_deref()
+    }
 }
 
 impl LanguageScope {
@@ -1766,7 +1750,7 @@ impl Default for FakeLspAdapter {
             disk_based_diagnostics_progress_token: None,
             initialization_options: None,
             disk_based_diagnostics_sources: Vec::new(),
-            enabled_formatters: Vec::new(),
+            prettier_plugins: Vec::new(),
         }
     }
 }
@@ -1824,8 +1808,8 @@ impl LspAdapter for Arc<FakeLspAdapter> {
         self.initialization_options.clone()
     }
 
-    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        self.enabled_formatters.clone()
+    fn prettier_plugins(&self) -> &[&'static str] {
+        &self.prettier_plugins
     }
 }
 

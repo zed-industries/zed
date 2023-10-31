@@ -1,8 +1,8 @@
 use anyhow::Context;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use fs2::Fs;
 use gpui2::{AsyncAppContext, Model};
-use language2::{language_settings::language_settings, Buffer, BundledFormatter, Diff};
+use language2::{language_settings::language_settings, Buffer, Diff};
 use lsp2::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
@@ -189,128 +189,134 @@ impl Prettier {
     ) -> anyhow::Result<Diff> {
         match self {
             Self::Real(local) => {
-                let params = buffer.update(cx, |buffer, cx| {
-                    let buffer_language = buffer.language();
-                    let parsers_with_plugins = buffer_language
-                        .into_iter()
-                        .flat_map(|language| {
-                            language
+                let params = buffer
+                    .update(cx, |buffer, cx| {
+                        let buffer_language = buffer.language();
+                        let parser_with_plugins = buffer_language.and_then(|l| {
+                            let prettier_parser = l.prettier_parser_name()?;
+                            let mut prettier_plugins = l
                                 .lsp_adapters()
                                 .iter()
-                                .flat_map(|adapter| adapter.enabled_formatters())
-                                .filter_map(|formatter| match formatter {
-                                    BundledFormatter::Prettier {
-                                        parser_name,
-                                        plugin_names,
-                                    } => Some((parser_name, plugin_names)),
-                                })
-                        })
-                        .fold(
-                            HashMap::default(),
-                            |mut parsers_with_plugins, (parser_name, plugins)| {
-                                match parser_name {
-                                    Some(parser_name) => parsers_with_plugins
-                                        .entry(parser_name)
-                                        .or_insert_with(HashSet::default)
-                                        .extend(plugins),
-                                    None => parsers_with_plugins.values_mut().for_each(|existing_plugins| {
-                                        existing_plugins.extend(plugins.iter());
-                                    }),
+                                .flat_map(|adapter| adapter.prettier_plugins())
+                                .collect::<Vec<_>>();
+                            prettier_plugins.dedup();
+                            Some((prettier_parser, prettier_plugins))
+                        });
+
+                        let prettier_node_modules = self.prettier_dir().join("node_modules");
+                        anyhow::ensure!(
+                            prettier_node_modules.is_dir(),
+                            "Prettier node_modules dir does not exist: {prettier_node_modules:?}"
+                        );
+                        let plugin_name_into_path = |plugin_name: &str| {
+                            let prettier_plugin_dir = prettier_node_modules.join(plugin_name);
+                            for possible_plugin_path in [
+                                prettier_plugin_dir.join("dist").join("index.mjs"),
+                                prettier_plugin_dir.join("dist").join("index.js"),
+                                prettier_plugin_dir.join("dist").join("plugin.js"),
+                                prettier_plugin_dir.join("index.mjs"),
+                                prettier_plugin_dir.join("index.js"),
+                                prettier_plugin_dir.join("plugin.js"),
+                                prettier_plugin_dir,
+                            ] {
+                                if possible_plugin_path.is_file() {
+                                    return Some(possible_plugin_path);
                                 }
-                                parsers_with_plugins
-                            },
+                            }
+                            None
+                        };
+                        let (parser, located_plugins) = match parser_with_plugins {
+                            Some((parser, plugins)) => {
+                                // Tailwind plugin requires being added last
+                                // https://github.com/tailwindlabs/prettier-plugin-tailwindcss#compatibility-with-other-prettier-plugins
+                                let mut add_tailwind_back = false;
+
+                                let mut plugins = plugins
+                                    .into_iter()
+                                    .filter(|&&plugin_name| {
+                                        if plugin_name == TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME {
+                                            add_tailwind_back = true;
+                                            false
+                                        } else {
+                                            true
+                                        }
+                                    })
+                                    .map(|plugin_name| {
+                                        (plugin_name, plugin_name_into_path(plugin_name))
+                                    })
+                                    .collect::<Vec<_>>();
+                                if add_tailwind_back {
+                                    plugins.push((
+                                        &TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME,
+                                        plugin_name_into_path(
+                                            TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME,
+                                        ),
+                                    ));
+                                }
+                                (Some(parser.to_string()), plugins)
+                            }
+                            None => (None, Vec::new()),
+                        };
+
+                        let prettier_options = if self.is_default() {
+                            let language_settings =
+                                language_settings(buffer_language, buffer.file(), cx);
+                            let mut options = language_settings.prettier.clone();
+                            if !options.contains_key("tabWidth") {
+                                options.insert(
+                                    "tabWidth".to_string(),
+                                    serde_json::Value::Number(serde_json::Number::from(
+                                        language_settings.tab_size.get(),
+                                    )),
+                                );
+                            }
+                            if !options.contains_key("printWidth") {
+                                options.insert(
+                                    "printWidth".to_string(),
+                                    serde_json::Value::Number(serde_json::Number::from(
+                                        language_settings.preferred_line_length,
+                                    )),
+                                );
+                            }
+                            Some(options)
+                        } else {
+                            None
+                        };
+
+                        let plugins = located_plugins
+                            .into_iter()
+                            .filter_map(|(plugin_name, located_plugin_path)| {
+                                match located_plugin_path {
+                                    Some(path) => Some(path),
+                                    None => {
+                                        log::error!(
+                                            "Have not found plugin path for {:?} inside {:?}",
+                                            plugin_name,
+                                            prettier_node_modules
+                                        );
+                                        None
+                                    }
+                                }
+                            })
+                            .collect();
+                        log::debug!(
+                            "Formatting file {:?} with prettier, plugins :{:?}, options: {:?}",
+                            plugins,
+                            prettier_options,
+                            buffer.file().map(|f| f.full_path(cx))
                         );
 
-                    let selected_parser_with_plugins = parsers_with_plugins.iter().max_by_key(|(_, plugins)| plugins.len());
-                    if parsers_with_plugins.len() > 1 {
-                        log::warn!("Found multiple parsers with plugins {parsers_with_plugins:?}, will select only one: {selected_parser_with_plugins:?}");
-                    }
-
-                    let prettier_node_modules = self.prettier_dir().join("node_modules");
-                    anyhow::ensure!(prettier_node_modules.is_dir(), "Prettier node_modules dir does not exist: {prettier_node_modules:?}");
-                    let plugin_name_into_path = |plugin_name: &str| {
-                        let prettier_plugin_dir = prettier_node_modules.join(plugin_name);
-                        for possible_plugin_path in [
-                            prettier_plugin_dir.join("dist").join("index.mjs"),
-                            prettier_plugin_dir.join("dist").join("index.js"),
-                            prettier_plugin_dir.join("dist").join("plugin.js"),
-                            prettier_plugin_dir.join("index.mjs"),
-                            prettier_plugin_dir.join("index.js"),
-                            prettier_plugin_dir.join("plugin.js"),
-                            prettier_plugin_dir,
-                        ] {
-                            if possible_plugin_path.is_file() {
-                                return Some(possible_plugin_path);
-                            }
-                        }
-                        None
-                    };
-                    let (parser, located_plugins) = match selected_parser_with_plugins {
-                        Some((parser, plugins)) => {
-                            // Tailwind plugin requires being added last
-                            // https://github.com/tailwindlabs/prettier-plugin-tailwindcss#compatibility-with-other-prettier-plugins
-                            let mut add_tailwind_back = false;
-
-                            let mut plugins = plugins.into_iter().filter(|&&plugin_name| {
-                                if plugin_name == TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME {
-                                    add_tailwind_back = true;
-                                    false
-                                } else {
-                                    true
-                                }
-                            }).map(|plugin_name| (plugin_name, plugin_name_into_path(plugin_name))).collect::<Vec<_>>();
-                            if add_tailwind_back {
-                                plugins.push((&TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME, plugin_name_into_path(TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME)));
-                            }
-                            (Some(parser.to_string()), plugins)
-                        },
-                        None => (None, Vec::new()),
-                    };
-
-                    let prettier_options = if self.is_default() {
-                        let language_settings = language_settings(buffer_language, buffer.file(), cx);
-                        let mut options = language_settings.prettier.clone();
-                        if !options.contains_key("tabWidth") {
-                            options.insert(
-                                "tabWidth".to_string(),
-                                serde_json::Value::Number(serde_json::Number::from(
-                                    language_settings.tab_size.get(),
-                                )),
-                            );
-                        }
-                        if !options.contains_key("printWidth") {
-                            options.insert(
-                                "printWidth".to_string(),
-                                serde_json::Value::Number(serde_json::Number::from(
-                                    language_settings.preferred_line_length,
-                                )),
-                            );
-                        }
-                        Some(options)
-                    } else {
-                        None
-                    };
-
-                    let plugins = located_plugins.into_iter().filter_map(|(plugin_name, located_plugin_path)| {
-                        match located_plugin_path {
-                            Some(path) => Some(path),
-                            None => {
-                                log::error!("Have not found plugin path for {plugin_name:?} inside {prettier_node_modules:?}");
-                                None},
-                        }
-                    }).collect();
-                    log::debug!("Formatting file {:?} with prettier, plugins :{plugins:?}, options: {prettier_options:?}", buffer.file().map(|f| f.full_path(cx)));
-
-                    anyhow::Ok(FormatParams {
-                        text: buffer.text(),
-                        options: FormatOptions {
-                            parser,
-                            plugins,
-                            path: buffer_path,
-                            prettier_options,
-                        },
-                    })
-                })?.context("prettier params calculation")?;
+                        anyhow::Ok(FormatParams {
+                            text: buffer.text(),
+                            options: FormatOptions {
+                                parser,
+                                plugins,
+                                path: buffer_path,
+                                prettier_options,
+                            },
+                        })
+                    })?
+                    .context("prettier params calculation")?;
                 let response = local
                     .server
                     .request::<Format>(params)

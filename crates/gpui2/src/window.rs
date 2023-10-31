@@ -1,11 +1,11 @@
 use crate::{
     px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect,
-    EntityHandle, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId,
-    GlyphId, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke,
-    LayoutId, MainThread, MainThreadOnly, Model, ModelContext, Modifiers, MonochromeSprite,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
+    Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId,
+    Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
+    MainThread, MainThreadOnly, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow,
+    Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
     RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
     TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakModel, WeakView,
     WindowOptions, SUBPIXEL_VARIANTS,
@@ -376,23 +376,23 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.notify();
     }
 
-    pub fn subscribe<E, H>(
+    pub fn subscribe<Emitter, E>(
         &mut self,
-        handle: &H,
-        mut on_event: impl FnMut(H, &E::Event, &mut WindowContext<'_, '_>) + Send + 'static,
+        entity: &E,
+        mut on_event: impl FnMut(E, &Emitter::Event, &mut WindowContext<'_, '_>) + Send + 'static,
     ) -> Subscription
     where
-        E: EventEmitter,
-        H: EntityHandle<E>,
+        Emitter: EventEmitter,
+        E: Entity<Emitter>,
     {
-        let entity_id = handle.entity_id();
-        let handle = handle.downgrade();
+        let entity_id = entity.entity_id();
+        let entity = entity.downgrade();
         let window_handle = self.window.handle;
         self.app.event_listeners.insert(
             entity_id,
             Box::new(move |event, cx| {
                 cx.update_window(window_handle, |cx| {
-                    if let Some(handle) = H::upgrade_from(&handle) {
+                    if let Some(handle) = E::upgrade_from(&entity) {
                         let event = event.downcast_ref().expect("invalid event type");
                         on_event(handle, event, cx);
                         true
@@ -1280,7 +1280,7 @@ impl Context for WindowContext<'_, '_> {
         self.entities.insert(slot, model)
     }
 
-    fn update_entity<T: 'static, R>(
+    fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
@@ -1595,23 +1595,25 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         self.window_cx.on_next_frame(move |cx| view.update(cx, f));
     }
 
-    pub fn observe<E>(
+    pub fn observe<V2, E>(
         &mut self,
-        handle: &Model<E>,
-        mut on_notify: impl FnMut(&mut V, Model<E>, &mut ViewContext<'_, '_, V>) + Send + 'static,
+        entity: &E,
+        mut on_notify: impl FnMut(&mut V, E, &mut ViewContext<'_, '_, V>) + Send + 'static,
     ) -> Subscription
     where
-        E: 'static,
+        V2: 'static,
         V: Any + Send,
+        E: Entity<V2>,
     {
         let view = self.view();
-        let handle = handle.downgrade();
+        let entity_id = entity.entity_id();
+        let entity = entity.downgrade();
         let window_handle = self.window.handle;
         self.app.observers.insert(
-            handle.entity_id,
+            entity_id,
             Box::new(move |cx| {
                 cx.update_window(window_handle, |cx| {
-                    if let Some(handle) = handle.upgrade() {
+                    if let Some(handle) = E::upgrade_from(&entity) {
                         view.update(cx, |this, cx| on_notify(this, handle, cx))
                             .is_ok()
                     } else {
@@ -1623,24 +1625,24 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         )
     }
 
-    pub fn subscribe<E, H>(
+    pub fn subscribe<V2, E>(
         &mut self,
-        handle: &H,
-        mut on_event: impl FnMut(&mut V, H, &E::Event, &mut ViewContext<'_, '_, V>) + Send + 'static,
+        entity: &E,
+        mut on_event: impl FnMut(&mut V, E, &V2::Event, &mut ViewContext<'_, '_, V>) + Send + 'static,
     ) -> Subscription
     where
-        E: EventEmitter,
-        H: EntityHandle<E>,
+        V2: EventEmitter,
+        E: Entity<V2>,
     {
         let view = self.view();
-        let entity_id = handle.entity_id();
-        let handle = handle.downgrade();
+        let entity_id = entity.entity_id();
+        let handle = entity.downgrade();
         let window_handle = self.window.handle;
         self.app.event_listeners.insert(
             entity_id,
             Box::new(move |event, cx| {
                 cx.update_window(window_handle, |cx| {
-                    if let Some(handle) = H::upgrade_from(&handle) {
+                    if let Some(handle) = E::upgrade_from(&handle) {
                         let event = event.downcast_ref().expect("invalid event type");
                         view.update(cx, |this, cx| on_event(this, handle, event, cx))
                             .is_ok()
@@ -1668,18 +1670,21 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         )
     }
 
-    pub fn observe_release<T: 'static>(
+    pub fn observe_release<V2, E>(
         &mut self,
-        handle: &Model<T>,
-        mut on_release: impl FnMut(&mut V, &mut T, &mut ViewContext<'_, '_, V>) + Send + 'static,
+        entity: &E,
+        mut on_release: impl FnMut(&mut V, &mut V2, &mut ViewContext<'_, '_, V>) + Send + 'static,
     ) -> Subscription
     where
         V: Any + Send,
+        V2: 'static,
+        E: Entity<V2>,
     {
         let view = self.view();
+        let entity_id = entity.entity_id();
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
-            handle.entity_id,
+            entity_id,
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
                 let _ = cx.update_window(window_handle, |cx| {
@@ -1904,12 +1909,12 @@ impl<'a, 'w, V> Context for ViewContext<'a, 'w, V> {
         self.window_cx.build_model(build_model)
     }
 
-    fn update_entity<T: 'static, R>(
+    fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> R {
-        self.window_cx.update_entity(model, update)
+        self.window_cx.update_model(model, update)
     }
 }
 

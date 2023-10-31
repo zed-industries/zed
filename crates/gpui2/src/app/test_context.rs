@@ -26,13 +26,13 @@ impl Context for TestAppContext {
         lock.build_model(build_model)
     }
 
-    fn update_entity<T: 'static, R>(
+    fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         let mut lock = self.app.lock();
-        lock.update_entity(handle, update)
+        lock.update_model(handle, update)
     }
 }
 

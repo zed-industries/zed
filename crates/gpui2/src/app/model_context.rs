@@ -1,6 +1,6 @@
 use crate::{
-    AppContext, AsyncAppContext, Context, Effect, EntityId, EventEmitter, MainThread, Model,
-    Reference, Subscription, Task, WeakModel,
+    AppContext, AsyncAppContext, Context, Effect, Entity, EntityId, EventEmitter, MainThread,
+    Model, Reference, Subscription, Task, WeakModel,
 };
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
@@ -31,29 +31,32 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     }
 
     pub fn handle(&self) -> Model<T> {
-        self.weak_handle()
+        self.weak_model()
             .upgrade()
             .expect("The entity must be alive if we have a model context")
     }
 
-    pub fn weak_handle(&self) -> WeakModel<T> {
+    pub fn weak_model(&self) -> WeakModel<T> {
         self.model_state.clone()
     }
 
-    pub fn observe<T2: 'static>(
+    pub fn observe<T2, E>(
         &mut self,
-        handle: &Model<T2>,
-        mut on_notify: impl FnMut(&mut T, Model<T2>, &mut ModelContext<'_, T>) + Send + 'static,
+        entity: &E,
+        mut on_notify: impl FnMut(&mut T, E, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
         T: 'static + Send,
+        T2: 'static,
+        E: Entity<T2>,
     {
-        let this = self.weak_handle();
-        let handle = handle.downgrade();
+        let this = self.weak_model();
+        let entity_id = entity.entity_id();
+        let handle = entity.downgrade();
         self.app.observers.insert(
-            handle.entity_id,
+            entity_id,
             Box::new(move |cx| {
-                if let Some((this, handle)) = this.upgrade().zip(handle.upgrade()) {
+                if let Some((this, handle)) = this.upgrade().zip(E::upgrade_from(&handle)) {
                     this.update(cx, |this, cx| on_notify(this, handle, cx));
                     true
                 } else {
@@ -63,21 +66,24 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         )
     }
 
-    pub fn subscribe<E: 'static + EventEmitter>(
+    pub fn subscribe<T2, E>(
         &mut self,
-        handle: &Model<E>,
-        mut on_event: impl FnMut(&mut T, Model<E>, &E::Event, &mut ModelContext<'_, T>) + Send + 'static,
+        entity: &E,
+        mut on_event: impl FnMut(&mut T, E, &T2::Event, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
         T: 'static + Send,
+        T2: 'static + EventEmitter,
+        E: Entity<T2>,
     {
-        let this = self.weak_handle();
-        let handle = handle.downgrade();
+        let this = self.weak_model();
+        let entity_id = entity.entity_id();
+        let entity = entity.downgrade();
         self.app.event_listeners.insert(
-            handle.entity_id,
+            entity_id,
             Box::new(move |event, cx| {
-                let event: &E::Event = event.downcast_ref().expect("invalid event type");
-                if let Some((this, handle)) = this.upgrade().zip(handle.upgrade()) {
+                let event: &T2::Event = event.downcast_ref().expect("invalid event type");
+                if let Some((this, handle)) = this.upgrade().zip(E::upgrade_from(&entity)) {
                     this.update(cx, |this, cx| on_event(this, handle, event, cx));
                     true
                 } else {
@@ -103,20 +109,27 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         )
     }
 
-    pub fn observe_release<E: 'static>(
+    pub fn observe_release<T2, E>(
         &mut self,
-        handle: &Model<E>,
-        mut on_release: impl FnMut(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + 'static,
+        entity: &E,
+        mut on_release: impl FnMut(&mut T, &mut T2, &mut ModelContext<'_, T>) + Send + 'static,
     ) -> Subscription
     where
         T: Any + Send,
+        T2: 'static,
+        E: Entity<T2>,
     {
-        let this = self.weak_handle();
-        self.app.observe_release(handle, move |entity, cx| {
-            if let Some(this) = this.upgrade() {
-                this.update(cx, |this, cx| on_release(this, entity, cx));
-            }
-        })
+        let entity_id = entity.entity_id();
+        let this = self.weak_model();
+        self.app.release_listeners.insert(
+            entity_id,
+            Box::new(move |entity, cx| {
+                let entity = entity.downcast_mut().expect("invalid entity type");
+                if let Some(this) = this.upgrade() {
+                    this.update(cx, |this, cx| on_release(this, entity, cx));
+                }
+            }),
+        )
     }
 
     pub fn observe_global<G: 'static>(
@@ -126,7 +139,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     where
         T: 'static + Send,
     {
-        let handle = self.weak_handle();
+        let handle = self.weak_model();
         self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| handle.update(cx, |view, cx| f(view, cx)).is_ok()),
@@ -141,7 +154,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         Fut: 'static + Future<Output = ()> + Send,
         T: 'static + Send,
     {
-        let handle = self.weak_handle();
+        let handle = self.weak_model();
         self.app.quit_observers.insert(
             (),
             Box::new(move |cx| {
@@ -187,7 +200,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         Fut: Future<Output = R> + Send + 'static,
         R: Send + 'static,
     {
-        let this = self.weak_handle();
+        let this = self.weak_model();
         self.app.spawn(|cx| f(this, cx))
     }
 
@@ -199,7 +212,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         Fut: Future<Output = R> + 'static,
         R: Send + 'static,
     {
-        let this = self.weak_handle();
+        let this = self.weak_model();
         self.app.spawn_on_main(|cx| f(this, cx))
     }
 }
@@ -231,12 +244,12 @@ impl<'a, T> Context for ModelContext<'a, T> {
         self.app.build_model(build_model)
     }
 
-    fn update_entity<U: 'static, R>(
+    fn update_model<U: 'static, R>(
         &mut self,
         handle: &Model<U>,
         update: impl FnOnce(&mut U, &mut Self::ModelContext<'_, U>) -> R,
     ) -> R {
-        self.app.update_entity(handle, update)
+        self.app.update_model(handle, update)
     }
 }
 

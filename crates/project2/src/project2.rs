@@ -26,8 +26,8 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui2::{
-    AnyModel, AppContext, AsyncAppContext, Context, EventEmitter, Executor, Model, ModelContext,
-    Task, WeakModel,
+    AnyModel, AppContext, AsyncAppContext, Context, Entity, EventEmitter, Executor, Model,
+    ModelContext, Task, WeakModel,
 };
 use itertools::Itertools;
 use language2::{
@@ -39,11 +39,11 @@ use language2::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version, split_operations,
     },
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, BundledFormatter, CachedLspAdapter,
-    CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
-    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
-    LspAdapterDelegate, OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16,
-    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeAction,
+    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
+    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
+    OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp2::{
@@ -2491,7 +2491,7 @@ impl Project {
             delay
         } else {
             if first_insertion {
-                let this = cx.weak_handle();
+                let this = cx.weak_model();
                 cx.defer(move |cx| {
                     if let Some(this) = this.upgrade() {
                         this.update(cx, |this, cx| {
@@ -2986,8 +2986,8 @@ impl Project {
                 let this = this.clone();
                 move |mut params, mut cx| {
                     let adapter = adapter.clone();
-                    adapter.process_diagnostics(&mut params);
                     if let Some(this) = this.upgrade() {
+                        adapter.process_diagnostics(&mut params);
                         this.update(&mut cx, |this, cx| {
                             this.update_diagnostics(
                                 server_id,
@@ -8410,12 +8410,7 @@ impl Project {
         let Some(buffer_language) = buffer.language() else {
             return Task::ready(None);
         };
-        if !buffer_language
-            .lsp_adapters()
-            .iter()
-            .flat_map(|adapter| adapter.enabled_formatters())
-            .any(|formatter| matches!(formatter, BundledFormatter::Prettier { .. }))
-        {
+        if buffer_language.prettier_parser_name().is_none() {
             return Task::ready(None);
         }
 
@@ -8574,16 +8569,15 @@ impl Project {
         };
 
         let mut prettier_plugins = None;
-        for formatter in new_language
-            .lsp_adapters()
-            .into_iter()
-            .flat_map(|adapter| adapter.enabled_formatters())
-        {
-            match formatter {
-                BundledFormatter::Prettier { plugin_names, .. } => prettier_plugins
-                    .get_or_insert_with(|| HashSet::default())
-                    .extend(plugin_names),
-            }
+        if new_language.prettier_parser_name().is_some() {
+            prettier_plugins
+                .get_or_insert_with(|| HashSet::default())
+                .extend(
+                    new_language
+                        .lsp_adapters()
+                        .iter()
+                        .flat_map(|adapter| adapter.prettier_plugins()),
+                )
         }
         let Some(prettier_plugins) = prettier_plugins else {
             return Task::ready(Ok(()));
@@ -8650,7 +8644,7 @@ fn subscribe_for_copilot_events(
                         // Another event wants to re-add the server that was already added and subscribed to, avoid doing it again.
                         if !copilot_server.has_notification_handler::<copilot2::request::LogMessage>() {
                             let new_server_id = copilot_server.server_id();
-                            let weak_project = cx.weak_handle();
+                            let weak_project = cx.weak_model();
                             let copilot_log_subscription = copilot_server
                                 .on_notification::<copilot2::request::LogMessage, _>(
                                     move |params, mut cx| {
