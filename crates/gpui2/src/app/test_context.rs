@@ -161,8 +161,8 @@ impl TestAppContext {
         let (mut tx, rx) = futures::channel::mpsc::unbounded();
         entity
             .update(self, |_, cx: &mut ModelContext<T>| {
-                cx.subscribe(&entity, move |_, _, event, _| {
-                    let _ = tx.send(event.clone());
+                cx.subscribe(&entity, move |_, _, event, cx| {
+                    cx.executor().block(tx.send(event.clone())).unwrap();
                 })
             })
             .detach();
