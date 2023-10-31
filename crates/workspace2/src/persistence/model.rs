@@ -7,7 +7,7 @@ use db2::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui2::{AsyncAppContext, AsyncWindowContext, Model, Task, View, WeakView, WindowBounds};
+use gpui2::{AsyncWindowContext, Model, Task, View, WeakView, WindowBounds};
 use project2::Project;
 use std::{
     path::{Path, PathBuf},
@@ -232,7 +232,7 @@ impl SerializedPane {
         pane: &WeakView<Pane>,
         workspace_id: WorkspaceId,
         workspace: &WeakView<Workspace>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncWindowContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
         let mut items = Vec::new();
         let mut active_item_index = None;

@@ -1,7 +1,11 @@
 use crate::{AppState, FollowerState, Pane, Workspace};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use call2::ActiveCall;
 use collections::HashMap;
+use db2::sqlez::{
+    bindable::{Bind, Column, StaticColumnCount},
+    statement::Statement,
+};
 use gpui2::{point, size, AnyElement, AnyView, Bounds, Model, Pixels, Point, View, ViewContext};
 use parking_lot::Mutex;
 use project2::Project;
@@ -13,10 +17,36 @@ const HANDLE_HITBOX_SIZE: f32 = 4.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
 const VERTICAL_MIN_SIZE: f32 = 100.;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Axis {
     Vertical,
     Horizontal,
+}
+
+impl StaticColumnCount for Axis {}
+impl Bind for Axis {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        match self {
+            Axis::Horizontal => "Horizontal",
+            Axis::Vertical => "Vertical",
+        }
+        .bind(statement, start_index)
+    }
+}
+
+impl Column for Axis {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        String::column(statement, start_index).and_then(|(axis_text, next_index)| {
+            Ok((
+                match axis_text.as_str() {
+                    "Horizontal" => Axis::Horizontal,
+                    "Vertical" => Axis::Vertical,
+                    _ => bail!("Stored serialized item kind is incorrect"),
+                },
+                next_index,
+            ))
+        })
+    }
 }
 
 #[derive(Clone, PartialEq)]

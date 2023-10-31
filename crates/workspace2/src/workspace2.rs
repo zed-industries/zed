@@ -491,7 +491,7 @@ impl DelayedDebouncedEditAction {
         self.cancel_channel = Some(sender);
 
         let previous_task = self.task.take();
-        self.task = Some(cx.spawn(|workspace, mut cx| async move {
+        self.task = Some(cx.spawn(move |workspace, mut cx| async move {
             let mut timer = cx.executor().timer(delay).fuse();
             if let Some(previous_task) = previous_task {
                 previous_task.await;
@@ -765,47 +765,47 @@ impl Workspace {
     //         }
     //     }
 
-    //     fn new_local(
-    //         abs_paths: Vec<PathBuf>,
-    //         app_state: Arc<AppState>,
-    //         requesting_window: Option<WindowHandle<Workspace>>,
-    //         cx: &mut AppContext,
-    //     ) -> Task<(
-    //         WeakView<Workspace>,
-    //         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
-    //     )> {
-    //         let project_handle = Project::local(
-    //             app_state.client.clone(),
-    //             app_state.node_runtime.clone(),
-    //             app_state.user_store.clone(),
-    //             app_state.languages.clone(),
-    //             app_state.fs.clone(),
-    //             cx,
-    //         );
+    // fn new_local(
+    //     abs_paths: Vec<PathBuf>,
+    //     app_state: Arc<AppState>,
+    //     requesting_window: Option<WindowHandle<Workspace>>,
+    //     cx: &mut AppContext,
+    // ) -> Task<(
+    //     WeakView<Workspace>,
+    //     Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
+    // )> {
+    //     let project_handle = Project::local(
+    //         app_state.client.clone(),
+    //         app_state.node_runtime.clone(),
+    //         app_state.user_store.clone(),
+    //         app_state.languages.clone(),
+    //         app_state.fs.clone(),
+    //         cx,
+    //     );
 
-    //         cx.spawn(|mut cx| async move {
-    //             let serialized_workspace = persistence::DB.workspace_for_roots(&abs_paths.as_slice());
+    //     cx.spawn(|mut cx| async move {
+    //         let serialized_workspace = persistence::DB.workspace_for_roots(&abs_paths.as_slice());
 
-    //             let paths_to_open = Arc::new(abs_paths);
+    //         let paths_to_open = Arc::new(abs_paths);
 
-    //             // Get project paths for all of the abs_paths
-    //             let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
-    //             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
-    //                 Vec::with_capacity(paths_to_open.len());
-    //             for path in paths_to_open.iter().cloned() {
-    //                 if let Some((worktree, project_entry)) = cx
-    //                     .update(|cx| {
-    //                         Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
-    //                     })
-    //                     .await
-    //                     .log_err()
-    //                 {
-    //                     worktree_roots.insert(worktree.read_with(&mut cx, |tree, _| tree.abs_path()));
-    //                     project_paths.push((path, Some(project_entry)));
-    //                 } else {
-    //                     project_paths.push((path, None));
-    //                 }
+    //         // Get project paths for all of the abs_paths
+    //         let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
+    //         let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
+    //             Vec::with_capacity(paths_to_open.len());
+    //         for path in paths_to_open.iter().cloned() {
+    //             if let Some((worktree, project_entry)) = cx
+    //                 .update(|cx| {
+    //                     Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
+    //                 })
+    //                 .await
+    //                 .log_err()
+    //             {
+    //                 worktree_roots.insert(worktree.read_with(&mut cx, |tree, _| tree.abs_path()));
+    //                 project_paths.push((path, Some(project_entry)));
+    //             } else {
+    //                 project_paths.push((path, None));
     //             }
+    //         }
 
     //             let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
     //                 serialized_workspace.id
@@ -1470,13 +1470,13 @@ impl Workspace {
         visible: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
-        log::info!("open paths {:?}", abs_paths);
+        log::info!("open paths {abs_paths:?}");
 
         let fs = self.app_state.fs.clone();
 
         // Sort the paths to ensure we add worktrees for parents before their children.
         abs_paths.sort_unstable();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             let mut tasks = Vec::with_capacity(abs_paths.len());
             for abs_path in &abs_paths {
                 let project_path = match this
@@ -1495,45 +1495,41 @@ impl Workspace {
                 };
 
                 let this = this.clone();
-                let task = cx.spawn(|mut cx| {
-                    let fs = fs.clone();
-                    let abs_path = abs_path.clone();
-                    async move {
-                        let (worktree, project_path) = project_path?;
-                        if fs.is_file(&abs_path).await {
-                            Some(
-                                this.update(&mut cx, |this, cx| {
-                                    this.open_path(project_path, None, true, cx)
-                                })
-                                .log_err()?
-                                .await,
-                            )
-                        } else {
-                            this.update(&mut cx, |workspace, cx| {
-                                let worktree = worktree.read(cx);
-                                let worktree_abs_path = worktree.abs_path();
-                                let entry_id = if abs_path == worktree_abs_path.as_ref() {
-                                    worktree.root_entry()
-                                } else {
-                                    abs_path
-                                        .strip_prefix(worktree_abs_path.as_ref())
-                                        .ok()
-                                        .and_then(|relative_path| {
-                                            worktree.entry_for_path(relative_path)
-                                        })
-                                }
-                                .map(|entry| entry.id);
-                                if let Some(entry_id) = entry_id {
-                                    workspace.project.update(cx, |_, cx| {
-                                        cx.emit(project2::Event::ActiveEntryChanged(Some(
-                                            entry_id,
-                                        )));
-                                    })
-                                }
+                let abs_path = abs_path.clone();
+                let fs = fs.clone();
+                let task = cx.spawn(move |mut cx| async move {
+                    let (worktree, project_path) = project_path?;
+                    if fs.is_file(&abs_path).await {
+                        Some(
+                            this.update(&mut cx, |this, cx| {
+                                this.open_path(project_path, None, true, cx)
                             })
-                            .log_err()?;
-                            None
-                        }
+                            .log_err()?
+                            .await,
+                        )
+                    } else {
+                        this.update(&mut cx, |workspace, cx| {
+                            let worktree = worktree.read(cx);
+                            let worktree_abs_path = worktree.abs_path();
+                            let entry_id = if abs_path == worktree_abs_path.as_ref() {
+                                worktree.root_entry()
+                            } else {
+                                abs_path
+                                    .strip_prefix(worktree_abs_path.as_ref())
+                                    .ok()
+                                    .and_then(|relative_path| {
+                                        worktree.entry_for_path(relative_path)
+                                    })
+                            }
+                            .map(|entry| entry.id);
+                            if let Some(entry_id) = entry_id {
+                                workspace.project.update(cx, |_, cx| {
+                                    cx.emit(project2::Event::ActiveEntryChanged(Some(entry_id)));
+                                })
+                            }
+                        })
+                        .log_err()?;
+                        None
                     }
                 });
                 tasks.push(task);
@@ -1572,7 +1568,7 @@ impl Workspace {
         let entry = project.update(cx, |project, cx| {
             project.find_or_create_local_worktree(abs_path, visible, cx)
         });
-        cx.spawn(|cx| async move {
+        cx.spawn(|mut cx| async move {
             let (worktree, path) = entry.await?;
             let worktree_id = worktree.update(&mut cx, |t, _| t.id())?;
             Ok((
@@ -2043,7 +2039,7 @@ impl Workspace {
         });
 
         let task = self.load_path(path.into(), cx);
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(move |_, mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
             pane.update(&mut cx, |pane, cx| {
                 pane.open_item(project_entry_id, focus_item, cx, build_item)
@@ -3220,7 +3216,7 @@ impl Workspace {
     //         }));
     //     }
 
-    fn serialize_workspace(&self, cx: &ViewContext<Self>) {
+    fn serialize_workspace(&self, cx: &mut ViewContext<Self>) {
         fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &AppContext) -> SerializedPane {
             let (items, active) = {
                 let pane = pane_handle.read(cx);
@@ -3266,7 +3262,10 @@ impl Workspace {
             }
         }
 
-        fn build_serialized_docks(this: &Workspace, cx: &ViewContext<Workspace>) -> DockStructure {
+        fn build_serialized_docks(
+            this: &Workspace,
+            cx: &mut ViewContext<Workspace>,
+        ) -> DockStructure {
             let left_dock = this.left_dock.read(cx);
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock.visible_panel().and_then(|panel| {
@@ -4313,9 +4312,9 @@ pub fn open_paths(
 > {
     let app_state = app_state.clone();
     let abs_paths = abs_paths.to_vec();
-    cx.spawn(|mut cx| async move {
+    cx.spawn(move |mut cx| async move {
         // Open paths in existing workspace if possible
-        let existing = activate_workspace_for_project(&mut cx, |project, cx| {
+        let existing = activate_workspace_for_project(&mut cx, move |project, cx| {
             project.contains_paths(&abs_paths, cx)
         })
         .await;
@@ -4330,12 +4329,12 @@ pub fn open_paths(
             // ))
             todo!()
         } else {
-            todo!()
             // Ok(cx
             //     .update(|cx| {
             //         Workspace::new_local(abs_paths, app_state.clone(), requesting_window, cx)
             //     })
             //     .await)
+            todo!()
         }
     })
 }
