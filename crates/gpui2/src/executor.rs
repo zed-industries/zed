@@ -161,7 +161,12 @@ impl Executor {
                         #[cfg(any(test, feature = "test-support"))]
                         if let Some(test) = self.dispatcher.as_test() {
                             if !test.parking_allowed() {
-                                panic!("blocked with nothing left to run")
+                                let mut backtrace_message = String::new();
+                                if let Some(backtrace) = test.waiting_backtrace() {
+                                    backtrace_message =
+                                        format!("\nbacktrace of waiting future:\n{:?}", backtrace);
+                                }
+                                panic!("parked with nothing left to run\n{:?}", backtrace_message)
                             }
                         }
                         parker.park();
@@ -220,12 +225,12 @@ impl Executor {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn start_waiting(&self) {
-        todo!("start_waiting")
+        self.dispatcher.as_test().unwrap().start_waiting();
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn finish_waiting(&self) {
-        todo!("finish_waiting")
+        self.dispatcher.as_test().unwrap().finish_waiting();
     }
 
     #[cfg(any(test, feature = "test-support"))]

@@ -1,5 +1,6 @@
 use crate::PlatformDispatcher;
 use async_task::Runnable;
+use backtrace::Backtrace;
 use collections::{HashMap, VecDeque};
 use parking_lot::Mutex;
 use rand::prelude::*;
@@ -29,6 +30,7 @@ struct TestDispatcherState {
     is_main_thread: bool,
     next_id: TestDispatcherId,
     allow_parking: bool,
+    waiting_backtrace: Option<Backtrace>,
 }
 
 impl TestDispatcher {
@@ -42,6 +44,7 @@ impl TestDispatcher {
             is_main_thread: true,
             next_id: TestDispatcherId(1),
             allow_parking: false,
+            waiting_backtrace: None,
         };
 
         TestDispatcher {
@@ -102,6 +105,21 @@ impl TestDispatcher {
 
     pub fn allow_parking(&self) {
         self.state.lock().allow_parking = true
+    }
+
+    pub fn start_waiting(&self) {
+        self.state.lock().waiting_backtrace = Some(Backtrace::new_unresolved());
+    }
+
+    pub fn finish_waiting(&self) {
+        self.state.lock().waiting_backtrace.take();
+    }
+
+    pub fn waiting_backtrace(&self) -> Option<Backtrace> {
+        self.state.lock().waiting_backtrace.take().map(|mut b| {
+            b.resolve();
+            b
+        })
     }
 }
 
