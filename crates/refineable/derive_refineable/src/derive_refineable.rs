@@ -35,7 +35,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
     let field_visibilities: Vec<_> = fields.iter().map(|f| &f.vis).collect();
     let wrapped_types: Vec<_> = fields.iter().map(|f| get_wrapper_type(f, &f.ty)).collect();
 
-    // Create trait bound that each wrapped type must implement Clone & Default
+    // Create trait bound that each wrapped type must implement Clone // & Default
     let type_param_bounds: Vec<_> = wrapped_types
         .iter()
         .map(|ty| {
@@ -51,13 +51,14 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                         lifetimes: None,
                         path: parse_quote!(Clone),
                     }));
-                    punctuated.push_punct(syn::token::Add::default());
-                    punctuated.push_value(TypeParamBound::Trait(TraitBound {
-                        paren_token: None,
-                        modifier: syn::TraitBoundModifier::None,
-                        lifetimes: None,
-                        path: parse_quote!(Default),
-                    }));
+
+                    // punctuated.push_punct(syn::token::Add::default());
+                    // punctuated.push_value(TypeParamBound::Trait(TraitBound {
+                    //     paren_token: None,
+                    //     modifier: syn::TraitBoundModifier::None,
+                    //     lifetimes: None,
+                    //     path: parse_quote!(Default),
+                    // }));
                     punctuated
                 },
             })
@@ -78,7 +79,11 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         },
     };
 
-    let field_assignments: Vec<TokenStream2> = fields
+    // refinable_refine_assignments
+    // refinable_refined_assignments
+    // refinement_refine_assignments
+
+    let refineable_refine_assignments: Vec<TokenStream2> = fields
         .iter()
         .map(|field| {
             let name = &field.ident;
@@ -105,7 +110,34 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let refinement_field_assignments: Vec<TokenStream2> = fields
+    let refineable_refined_assignments: Vec<TokenStream2> = fields
+        .iter()
+        .map(|field| {
+            let name = &field.ident;
+            let is_refineable = is_refineable_field(field);
+            let is_optional = is_optional_field(field);
+
+            if is_refineable {
+                quote! {
+                    self.#name = self.#name.refined(refinement.#name);
+                }
+            } else if is_optional {
+                quote! {
+                    if let Some(value) = refinement.#name {
+                        self.#name = Some(value);
+                    }
+                }
+            } else {
+                quote! {
+                    if let Some(value) = refinement.#name {
+                        self.#name = value;
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let refinement_refine_assigments: Vec<TokenStream2> = fields
         .iter()
         .map(|field| {
             let name = &field.ident;
@@ -120,6 +152,49 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                     if let Some(ref value) = &refinement.#name {
                         self.#name = Some(value.clone());
                     }
+                }
+            }
+        })
+        .collect();
+
+    let refinement_refined_assigments: Vec<TokenStream2> = fields
+        .iter()
+        .map(|field| {
+            let name = &field.ident;
+            let is_refineable = is_refineable_field(field);
+
+            if is_refineable {
+                quote! {
+                    self.#name = self.#name.refined(refinement.#name);
+                }
+            } else {
+                quote! {
+                    if let Some(value) = refinement.#name {
+                        self.#name = Some(value);
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let from_refinement_assigments: Vec<TokenStream2> = fields
+        .iter()
+        .map(|field| {
+            let name = &field.ident;
+            let is_refineable = is_refineable_field(field);
+            let is_optional = is_optional_field(field);
+
+            if is_refineable {
+                quote! {
+                    #name: value.#name.into(),
+                }
+            } else if is_optional {
+                quote! {
+                    #name: value.#name.map(|v| v.into()),
+                }
+            } else {
+                quote! {
+                    #name: value.#name.map(|v| v.into()).unwrap_or_default(),
                 }
             }
         })
@@ -161,7 +236,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
     };
 
     let gen = quote! {
-        #[derive(Default, Clone)]
+        #[derive(Clone)]
         pub struct #refinement_ident #impl_generics {
             #( #field_visibilities #field_names: #wrapped_types ),*
         }
@@ -172,7 +247,12 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             type Refinement = #refinement_ident #ty_generics;
 
             fn refine(&mut self, refinement: &Self::Refinement) {
-                #( #field_assignments )*
+                #( #refineable_refine_assignments )*
+            }
+
+            fn refined(mut self, refinement: Self::Refinement) -> Self {
+                #( #refineable_refined_assignments )*
+                self
             }
         }
 
@@ -182,7 +262,32 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             type Refinement = #refinement_ident #ty_generics;
 
             fn refine(&mut self, refinement: &Self::Refinement) {
-                #( #refinement_field_assignments )*
+                #( #refinement_refine_assigments )*
+            }
+
+            fn refined(mut self, refinement: Self::Refinement) -> Self {
+                #( #refinement_refined_assigments )*
+                self
+            }
+        }
+
+        impl #impl_generics From<#refinement_ident #ty_generics> for #ident #ty_generics
+            #where_clause
+        {
+            fn from(value: #refinement_ident #ty_generics) -> Self {
+                Self {
+                    #( #from_refinement_assigments )*
+                }
+            }
+        }
+
+        impl #impl_generics ::core::default::Default for #refinement_ident #ty_generics
+            #where_clause
+        {
+            fn default() -> Self {
+                #refinement_ident {
+                    #( #field_names: Default::default() ),*
+                }
             }
         }
 

@@ -1,0 +1,33 @@
+[package]
+name = "db2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/db2.rs"
+doctest = false
+
+[features]
+test-support = []
+
+[dependencies]
+collections = { path = "../collections" }
+gpui2 = { path = "../gpui2" }
+sqlez = { path = "../sqlez" }
+sqlez_macros = { path = "../sqlez_macros" }
+util = { path = "../util" }
+anyhow.workspace = true
+indoc.workspace = true
+async-trait.workspace = true
+lazy_static.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+smol.workspace = true
+
+[dev-dependencies]
+gpui2 = { path = "../gpui2", features = ["test-support"] }
+env_logger.workspace = true
+tempdir.workspace = true

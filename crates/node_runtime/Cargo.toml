@@ -9,7 +9,6 @@ path = "src/node_runtime.rs"
 doctest = false
 
 [dependencies]
-gpui = { path = "../gpui" }
 util = { path = "../util" }
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-tar = "0.4.2"

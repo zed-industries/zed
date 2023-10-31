@@ -84,7 +84,6 @@ impl ImageCache {
                         let format = image::guess_format(&body)?;
                         let image =
                             image::load_from_memory_with_format(&body, format)?.into_bgra8();
-
                         Ok(ImageData::new(image))
                     }
                 }

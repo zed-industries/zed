@@ -1,0 +1,36 @@
+[package]
+name = "theme2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+test-support = [
+    "gpui2/test-support",
+    "fs/test-support",
+    "settings2/test-support"
+]
+
+[lib]
+path = "src/theme2.rs"
+doctest = false
+
+[dependencies]
+gpui2 = { path = "../gpui2" }
+fs = { path = "../fs" }
+schemars.workspace = true
+settings2 = { path = "../settings2" }
+util = { path = "../util" }
+
+anyhow.workspace = true
+indexmap = "1.6.2"
+parking_lot.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+gpui2 = { path = "../gpui2", features = ["test-support"] }
+fs = { path = "../fs", features = ["test-support"] }
+settings2 = { path = "../settings2", features = ["test-support"] }

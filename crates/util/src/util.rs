@@ -13,6 +13,7 @@ use std::{
     ops::{AddAssign, Range, RangeInclusive},
     panic::Location,
     pin::Pin,
+    sync::atomic::AtomicU32,
     task::{Context, Poll},
 };
 
@@ -407,6 +408,20 @@ impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
 
     fn contains_inclusive(&self, other: &Range<T>) -> bool {
         self.start() <= &other.start && &other.end <= self.end()
+    }
+}
+
+static GPUI_LOADED: AtomicU32 = AtomicU32::new(0);
+
+pub fn gpui2_loaded() {
+    if GPUI_LOADED.fetch_add(2, std::sync::atomic::Ordering::SeqCst) != 0 {
+        panic!("=========\nYou are loading both GPUI1 and GPUI2 in the same build!\nFix Your Dependencies with cargo tree!\n=========")
+    }
+}
+
+pub fn gpui1_loaded() {
+    if GPUI_LOADED.fetch_add(1, std::sync::atomic::Ordering::SeqCst) != 0 {
+        panic!("=========\nYou are loading both GPUI1 and GPUI2 in the same build!\nFix Your Dependencies with cargo tree!\n=========")
     }
 }
 

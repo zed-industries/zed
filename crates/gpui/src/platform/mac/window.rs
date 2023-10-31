@@ -82,6 +82,7 @@ const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
 
 #[ctor]
 unsafe fn build_classes() {
+    ::util::gpui1_loaded();
     WINDOW_CLASS = build_window_class("GPUIWindow", class!(NSWindow));
     PANEL_CLASS = build_window_class("GPUIPanel", class!(NSPanel));
     VIEW_CLASS = {

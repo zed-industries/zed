@@ -1,10 +1,9 @@
-pub mod div;
-pub mod hoverable;
+mod div;
 mod img;
-pub mod pressable;
-pub mod svg;
-pub mod text;
+mod svg;
+mod text;
 
-pub use div::div;
-pub use img::img;
-pub use svg::svg;
+pub use div::*;
+pub use img::*;
+pub use svg::*;
+pub use text::*;

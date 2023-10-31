@@ -1,3 +1,4 @@
+#[cfg(not(any(test, feature = "test-support")))]
 pub mod prod;
 
 #[cfg(not(any(test, feature = "test-support")))]

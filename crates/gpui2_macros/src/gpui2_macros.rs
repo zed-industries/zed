@@ -1,20 +1,20 @@
 use proc_macro::TokenStream;
 
-mod derive_element;
-mod derive_into_element;
-mod styleable_helpers;
+mod derive_component;
+mod style_helpers;
+mod test;
 
 #[proc_macro]
-pub fn styleable_helpers(args: TokenStream) -> TokenStream {
-    styleable_helpers::styleable_helpers(args)
+pub fn style_helpers(args: TokenStream) -> TokenStream {
+    style_helpers::style_helpers(args)
 }
 
-#[proc_macro_derive(Element, attributes(element_crate))]
-pub fn derive_element(input: TokenStream) -> TokenStream {
-    derive_element::derive_element(input)
+#[proc_macro_derive(Component, attributes(component))]
+pub fn derive_component(input: TokenStream) -> TokenStream {
+    derive_component::derive_component(input)
 }
 
-#[proc_macro_derive(IntoElement, attributes(element_crate))]
-pub fn derive_into_element(input: TokenStream) -> TokenStream {
-    derive_into_element::derive_into_element(input)
+#[proc_macro_attribute]
+pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
+    test::test(args, function)
 }

@@ -109,6 +109,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "futures 0.3.28",
+ "gpui2",
+ "isahc",
+ "language2",
+ "lazy_static",
+ "log",
+ "matrixmultiply",
+ "ordered-float 2.10.0",
+ "parking_lot 0.11.2",
+ "parse_duration",
+ "postage",
+ "rand 0.8.5",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tiktoken-rs",
+ "util",
+]
+
+[[package]]
 name = "alacritty_config"
 version = "0.1.2-dev"
 source = "git+https://github.com/zed-industries/alacritty?rev=33306142195b354ef3485ca2b1d8a85dfc6605ca#33306142195b354ef3485ca2b1d8a85dfc6605ca"
@@ -660,6 +687,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "audio2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.28",
+ "gpui2",
+ "log",
+ "parking_lot 0.11.2",
+ "rodio",
+ "util",
+]
+
+[[package]]
 name = "auto_update"
 version = "0.1.0"
 dependencies = [
@@ -774,6 +815,17 @@ dependencies = [
  "miniz_oxide 0.7.1",
  "object 0.32.1",
  "rustc-demangle",
+]
+
+[[package]]
+name = "backtrace-on-stack-overflow"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fd2d70527f3737a1ad17355e260706c1badebabd1fa06a7a053407380df841b"
+dependencies = [
+ "backtrace",
+ "libc",
+ "nix 0.23.2",
 ]
 
 [[package]]
@@ -1105,6 +1157,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "call2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-broadcast",
+ "audio2",
+ "client2",
+ "collections",
+ "fs2",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "live_kit_client",
+ "log",
+ "media",
+ "postage",
+ "project2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "util",
+]
+
+[[package]]
 name = "cap-fs-ext"
 version = "0.24.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1175,6 +1253,25 @@ name = "castaway"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2698f953def977c68f935bb0dfa959375ad4638570e969e2f1e9f433cbf1af6"
+
+[[package]]
+name = "cbindgen"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da6bc11b07529f16944307272d5bd9b22530bc7d05751717c9d416586cedab49"
+dependencies = [
+ "clap 3.2.25",
+ "heck 0.4.1",
+ "indexmap 1.9.3",
+ "log",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn 1.0.109",
+ "tempfile",
+ "toml 0.5.11",
+]
 
 [[package]]
 name = "cc"
@@ -1409,6 +1506,43 @@ dependencies = [
  "serde",
  "serde_derive",
  "settings",
+ "smol",
+ "sum_tree",
+ "sysinfo",
+ "tempfile",
+ "text",
+ "thiserror",
+ "time",
+ "tiny_http",
+ "url",
+ "util",
+ "uuid 1.4.1",
+]
+
+[[package]]
+name = "client2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-recursion 0.3.2",
+ "async-tungstenite",
+ "collections",
+ "db2",
+ "feature_flags2",
+ "futures 0.3.28",
+ "gpui2",
+ "image",
+ "lazy_static",
+ "log",
+ "parking_lot 0.11.2",
+ "postage",
+ "rand 0.8.5",
+ "rpc2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "settings",
+ "settings2",
  "smol",
  "sum_tree",
  "sysinfo",
@@ -1719,6 +1853,33 @@ dependencies = [
  "serde",
  "serde_derive",
  "settings",
+ "smol",
+ "theme",
+ "util",
+]
+
+[[package]]
+name = "copilot2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-tar",
+ "clock",
+ "collections",
+ "context_menu",
+ "fs",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "log",
+ "lsp2",
+ "node_runtime",
+ "parking_lot 0.11.2",
+ "rpc",
+ "serde",
+ "serde_derive",
+ "settings2",
  "smol",
  "theme",
  "util",
@@ -2141,6 +2302,28 @@ dependencies = [
  "collections",
  "env_logger 0.9.3",
  "gpui",
+ "indoc",
+ "lazy_static",
+ "log",
+ "parking_lot 0.11.2",
+ "serde",
+ "serde_derive",
+ "smol",
+ "sqlez",
+ "sqlez_macros",
+ "tempdir",
+ "util",
+]
+
+[[package]]
+name = "db2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "env_logger 0.9.3",
+ "gpui2",
  "indoc",
  "lazy_static",
  "log",
@@ -2622,6 +2805,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "feature_flags2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui2",
+]
+
+[[package]]
 name = "feedback"
 version = "0.1.0"
 dependencies = [
@@ -2867,6 +3058,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "fsevent",
+ "futures 0.3.28",
+ "git2",
+ "gpui2",
+ "lazy_static",
+ "libc",
+ "log",
+ "parking_lot 0.11.2",
+ "regex",
+ "rope",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "smol",
+ "sum_tree",
+ "tempfile",
+ "text",
+ "time",
+ "util",
+]
+
+[[package]]
 name = "fsevent"
 version = "2.0.2"
 dependencies = [
@@ -3041,6 +3260,14 @@ name = "fuzzy"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "util",
+]
+
+[[package]]
+name = "fuzzy2"
+version = "0.1.0"
+dependencies = [
+ "gpui2",
  "util",
 ]
 
@@ -3258,20 +3485,64 @@ name = "gpui2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-task",
+ "backtrace",
+ "bindgen 0.65.1",
+ "bitflags 2.4.0",
+ "block",
+ "cbindgen",
+ "cocoa",
+ "collections",
+ "core-foundation",
+ "core-graphics",
+ "core-text",
+ "ctor",
  "derive_more",
+ "dhat",
+ "env_logger 0.9.3",
+ "etagere",
+ "font-kit",
+ "foreign-types",
  "futures 0.3.28",
- "gpui",
  "gpui2_macros",
+ "gpui_macros",
+ "image",
+ "itertools 0.10.5",
+ "lazy_static",
  "log",
+ "media",
+ "metal",
+ "num_cpus",
+ "objc",
+ "ordered-float 2.10.0",
+ "parking",
  "parking_lot 0.11.2",
+ "pathfinder_geometry",
+ "plane-split",
+ "png",
+ "postage",
+ "rand 0.8.5",
  "refineable",
- "rust-embed",
+ "resvg",
+ "schemars",
+ "seahash",
  "serde",
- "settings",
+ "serde_derive",
+ "serde_json",
  "simplelog",
+ "slotmap",
  "smallvec",
- "theme",
+ "smol",
+ "sqlez",
+ "sum_tree",
+ "taffy",
+ "thiserror",
+ "time",
+ "tiny-skia",
+ "usvg",
  "util",
+ "uuid 1.4.1",
+ "waker-fn",
 ]
 
 [[package]]
@@ -3699,6 +3970,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "install_cli2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui2",
+ "log",
+ "smol",
+ "util",
+]
+
+[[package]]
 name = "instant"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3917,6 +4199,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "journal2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dirs 4.0.0",
+ "editor",
+ "gpui2",
+ "log",
+ "schemars",
+ "serde",
+ "settings2",
+ "shellexpand",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "jpeg-decoder"
 version = "0.1.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4016,6 +4316,59 @@ dependencies = [
  "sum_tree",
  "text",
  "theme",
+ "tree-sitter",
+ "tree-sitter-elixir",
+ "tree-sitter-embedded-template",
+ "tree-sitter-heex",
+ "tree-sitter-html",
+ "tree-sitter-json 0.20.0",
+ "tree-sitter-markdown",
+ "tree-sitter-python",
+ "tree-sitter-ruby",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "unicase",
+ "unindent",
+ "util",
+]
+
+[[package]]
+name = "language2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-broadcast",
+ "async-trait",
+ "client2",
+ "clock",
+ "collections",
+ "ctor",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "fuzzy2",
+ "git",
+ "globset",
+ "gpui2",
+ "indoc",
+ "lazy_static",
+ "log",
+ "lsp2",
+ "parking_lot 0.11.2",
+ "postage",
+ "rand 0.8.5",
+ "regex",
+ "rpc2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "similar",
+ "smallvec",
+ "smol",
+ "sum_tree",
+ "text",
+ "theme2",
  "tree-sitter",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
@@ -4311,6 +4664,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "lsp2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-pipe",
+ "collections",
+ "ctor",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "gpui2",
+ "log",
+ "lsp-types",
+ "parking_lot 0.11.2",
+ "postage",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "smol",
+ "unindent",
+ "util",
+]
+
+[[package]]
 name = "mach"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4444,6 +4820,13 @@ name = "menu"
 version = "0.1.0"
 dependencies = [
  "gpui",
+]
+
+[[package]]
+name = "menu2"
+version = "0.1.0"
+dependencies = [
+ "gpui2",
 ]
 
 [[package]]
@@ -4740,6 +5123,19 @@ dependencies = [
 
 [[package]]
 name = "nix"
+version = "0.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f3790c00a0150112de0f4cd161e3d7fc4b2d8a5542ffc35f099a2562aecb35c"
+dependencies = [
+ "bitflags 1.3.2",
+ "cc",
+ "cfg-if 1.0.0",
+ "libc",
+ "memoffset 0.6.5",
+]
+
+[[package]]
+name = "nix"
 version = "0.24.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fa52e972a9a719cecb6864fb88568781eb706bac2cd1d4f04a648542dbf78069"
@@ -4769,7 +5165,6 @@ dependencies = [
  "async-tar",
  "async-trait",
  "futures 0.3.28",
- "gpui",
  "log",
  "parking_lot 0.11.2",
  "serde",
@@ -5492,6 +5887,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26072860ba924cbfa98ea39c8c19b4dd6a4a25423dbdf219c1eca91aa0cf6964"
 
 [[package]]
+name = "plane-split"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c1f7d82649829ecdef8e258790b0587acf0a8403f0ce963473d8e918acc1643"
+dependencies = [
+ "euclid",
+ "log",
+ "smallvec",
+]
+
+[[package]]
 name = "plist"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5613,6 +6019,27 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "node_runtime",
+ "parking_lot 0.11.2",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "util",
+]
+
+[[package]]
+name = "prettier2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "collections",
+ "fs2",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "log",
+ "lsp2",
  "node_runtime",
  "parking_lot 0.11.2",
  "serde",
@@ -5752,6 +6179,61 @@ dependencies = [
  "sum_tree",
  "tempdir",
  "terminal",
+ "text",
+ "thiserror",
+ "toml 0.5.11",
+ "unindent",
+ "util",
+]
+
+[[package]]
+name = "project2"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "anyhow",
+ "async-trait",
+ "backtrace",
+ "client2",
+ "clock",
+ "collections",
+ "copilot2",
+ "ctor",
+ "db2",
+ "env_logger 0.9.3",
+ "fs2",
+ "fsevent",
+ "futures 0.3.28",
+ "fuzzy2",
+ "git",
+ "git2",
+ "globset",
+ "gpui2",
+ "ignore",
+ "itertools 0.10.5",
+ "language2",
+ "lazy_static",
+ "log",
+ "lsp2",
+ "node_runtime",
+ "parking_lot 0.11.2",
+ "postage",
+ "prettier2",
+ "pretty_assertions",
+ "rand 0.8.5",
+ "regex",
+ "rpc2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "sha2 0.10.7",
+ "similar",
+ "smol",
+ "sum_tree",
+ "tempdir",
+ "terminal2",
  "text",
  "thiserror",
  "toml 0.5.11",
@@ -6495,6 +6977,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpc2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-lock",
+ "async-tungstenite",
+ "base64 0.13.1",
+ "clock",
+ "collections",
+ "ctor",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "gpui2",
+ "parking_lot 0.11.2",
+ "prost 0.8.0",
+ "prost-build",
+ "rand 0.8.5",
+ "rsa 0.4.0",
+ "serde",
+ "serde_derive",
+ "smol",
+ "smol-timeout",
+ "tempdir",
+ "tracing",
+ "util",
+ "zstd",
+]
+
+[[package]]
 name = "rsa"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7199,6 +7710,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "settings2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "feature_flags2",
+ "fs",
+ "fs2",
+ "futures 0.3.28",
+ "gpui2",
+ "indoc",
+ "lazy_static",
+ "postage",
+ "pretty_assertions",
+ "rust-embed",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "serde_json_lenient",
+ "smallvec",
+ "sqlez",
+ "toml 0.5.11",
+ "tree-sitter",
+ "tree-sitter-json 0.19.0",
+ "unindent",
+ "util",
+]
+
+[[package]]
 name = "sha-1"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7767,6 +8308,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "storybook2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "backtrace-on-stack-overflow",
+ "chrono",
+ "clap 4.4.4",
+ "gpui2",
+ "itertools 0.11.0",
+ "log",
+ "rust-embed",
+ "serde",
+ "settings2",
+ "simplelog",
+ "smallvec",
+ "strum",
+ "theme",
+ "theme2",
+ "ui2",
+ "util",
+]
+
+[[package]]
 name = "stringprep"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8076,6 +8640,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "terminal2"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "db2",
+ "dirs 4.0.0",
+ "futures 0.3.28",
+ "gpui2",
+ "itertools 0.10.5",
+ "lazy_static",
+ "libc",
+ "mio-extras",
+ "ordered-float 2.10.0",
+ "procinfo",
+ "rand 0.8.5",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "settings2",
+ "shellexpand",
+ "smallvec",
+ "smol",
+ "theme2",
+ "thiserror",
+ "util",
+]
+
+[[package]]
 name = "terminal_view"
 version = "0.1.0"
 dependencies = [
@@ -8155,6 +8748,39 @@ dependencies = [
  "settings",
  "toml 0.5.11",
  "util",
+]
+
+[[package]]
+name = "theme2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fs",
+ "gpui2",
+ "indexmap 1.9.3",
+ "parking_lot 0.11.2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "toml 0.5.11",
+ "util",
+]
+
+[[package]]
+name = "theme_converter"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap 4.4.4",
+ "convert_case 0.6.0",
+ "gpui2",
+ "log",
+ "rust-embed",
+ "serde",
+ "simplelog",
+ "theme2",
 ]
 
 [[package]]
@@ -8963,6 +9589,21 @@ name = "typenum"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42ff0bf0c66b8238c6f3b578df37d0b7848e55df8577b3f74f92a69acceeb825"
+
+[[package]]
+name = "ui2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "gpui2",
+ "itertools 0.11.0",
+ "rand 0.8.5",
+ "serde",
+ "smallvec",
+ "strum",
+ "theme2",
+]
 
 [[package]]
 name = "unicase"
@@ -10283,6 +10924,105 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "serde",
+]
+
+[[package]]
+name = "zed2"
+version = "0.109.0"
+dependencies = [
+ "ai2",
+ "anyhow",
+ "async-compression",
+ "async-recursion 0.3.2",
+ "async-tar",
+ "async-trait",
+ "backtrace",
+ "call2",
+ "chrono",
+ "cli",
+ "client2",
+ "collections",
+ "copilot2",
+ "ctor",
+ "db2",
+ "env_logger 0.9.3",
+ "feature_flags2",
+ "fs2",
+ "fsevent",
+ "futures 0.3.28",
+ "fuzzy",
+ "gpui2",
+ "ignore",
+ "image",
+ "indexmap 1.9.3",
+ "install_cli",
+ "isahc",
+ "journal2",
+ "language2",
+ "language_tools",
+ "lazy_static",
+ "libc",
+ "log",
+ "lsp2",
+ "node_runtime",
+ "num_cpus",
+ "parking_lot 0.11.2",
+ "postage",
+ "project2",
+ "rand 0.8.5",
+ "regex",
+ "rpc2",
+ "rsa 0.4.0",
+ "rust-embed",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "shellexpand",
+ "simplelog",
+ "smallvec",
+ "smol",
+ "sum_tree",
+ "tempdir",
+ "text",
+ "theme2",
+ "thiserror",
+ "tiny_http",
+ "toml 0.5.11",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "tree-sitter-c",
+ "tree-sitter-cpp",
+ "tree-sitter-css",
+ "tree-sitter-elixir",
+ "tree-sitter-elm",
+ "tree-sitter-embedded-template",
+ "tree-sitter-glsl",
+ "tree-sitter-go",
+ "tree-sitter-heex",
+ "tree-sitter-html",
+ "tree-sitter-json 0.20.0",
+ "tree-sitter-lua",
+ "tree-sitter-markdown",
+ "tree-sitter-nix",
+ "tree-sitter-nu",
+ "tree-sitter-php",
+ "tree-sitter-python",
+ "tree-sitter-racket",
+ "tree-sitter-ruby",
+ "tree-sitter-rust",
+ "tree-sitter-scheme",
+ "tree-sitter-svelte",
+ "tree-sitter-toml",
+ "tree-sitter-typescript",
+ "tree-sitter-vue",
+ "tree-sitter-yaml",
+ "unindent",
+ "url",
+ "urlencoding",
+ "util",
+ "uuid 1.4.1",
 ]
 
 [[package]]

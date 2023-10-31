@@ -1,0 +1,13 @@
+[package]
+name = "fuzzy2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/fuzzy2.rs"
+doctest = false
+
+[dependencies]
+gpui2 = { path = "../gpui2" }
+util = { path = "../util" }
