@@ -12,7 +12,7 @@ use client2::UserStore;
 use db2::kvp::KEY_VALUE_STORE;
 use fs2::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui2::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
+use gpui2::{Action, App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
 use language2::LanguageRegistry;
 use log::LevelFilter;
@@ -45,7 +45,7 @@ use util::{
     paths, ResultExt,
 };
 use uuid::Uuid;
-use workspace2::AppState;
+use workspace2::{AppState, WorkspaceStore};
 use zed2::languages;
 use zed2::{ensure_only_instance, Assets, IsOnlyInstance};
 
@@ -120,7 +120,7 @@ fn main() {
         language2::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
-        // let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let workspace_store = cx.build_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         cx.set_global(client.clone());
 
@@ -165,20 +165,18 @@ fn main() {
 
         // client.telemetry().start(installation_id, session_id, cx);
 
-        // todo!("app_state")
-        let app_state: Arc<AppState> = todo!();
-        // let app_state = Arc::new(AppState {
-        //     languages,
-        //     client: client.clone(),
-        //     user_store,
-        //     fs,
-        //     build_window_options,
-        //     initialize_workspace,
-        //     background_actions,
-        //     workspace_store,
-        //     node_runtime,
-        // });
-        // cx.set_global(Arc::downgrade(&app_state));
+        let app_state = Arc::new(AppState {
+            languages,
+            client: client.clone(),
+            user_store,
+            fs,
+            build_window_options,
+            initialize_workspace,
+            background_actions,
+            workspace_store,
+            node_runtime,
+        });
+        cx.set_global(Arc::downgrade(&app_state));
 
         // audio::init(Assets, cx);
         // auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
@@ -914,11 +912,13 @@ async fn handle_cli_connection(
     }
 }
 
-// pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
-//     &[
-//         ("Go to file", &file_finder::Toggle),
-//         ("Open command palette", &command_palette::Toggle),
-//         ("Open recent projects", &recent_projects::OpenRecent),
-//         ("Change your settings", &zed_actions::OpenSettings),
-//     ]
-// }
+pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
+    // &[
+    //     ("Go to file", &file_finder::Toggle),
+    //     ("Open command palette", &command_palette::Toggle),
+    //     ("Open recent projects", &recent_projects::OpenRecent),
+    //     ("Change your settings", &zed_actions::OpenSettings),
+    // ]
+    // todo!()
+    &[]
+}

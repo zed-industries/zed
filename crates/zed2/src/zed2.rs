@@ -5,7 +5,10 @@ mod open_listener;
 
 pub use assets::*;
 use collections::HashMap;
-use gpui2::{AsyncAppContext, Point};
+use gpui2::{
+    point, px, AsyncAppContext, Point, Styled, TitlebarOptions, WindowBounds, WindowKind,
+    WindowOptions,
+};
 pub use only_instance::*;
 pub use open_listener::*;
 
@@ -20,6 +23,7 @@ use futures::{
 };
 use std::{path::Path, sync::Arc, thread, time::Duration};
 use util::{paths::PathLikeWithPosition, ResultExt};
+use uuid::Uuid;
 use workspace2::AppState;
 
 pub fn connect_to_cli(
@@ -209,5 +213,29 @@ pub async fn handle_cli_connection(
                 }
             }
         }
+    }
+}
+
+pub fn build_window_options(
+    bounds: Option<WindowBounds>,
+    display: Option<Uuid>,
+    platform: &dyn Platform,
+) -> WindowOptions {
+    let bounds = bounds.unwrap_or(WindowBounds::Maximized);
+    let display_id = display.and_then(|display| platform.screen_by_id(display));
+
+    WindowOptions {
+        bounds,
+        titlebar: Some(TitlebarOptions {
+            title: None,
+            appears_transparent: true,
+            traffic_light_position: Some(point(px(8.), px(8.))),
+        }),
+        center: false,
+        focus: false,
+        show: false,
+        kind: WindowKind::Normal,
+        is_movable: false,
+        display_id,
     }
 }
