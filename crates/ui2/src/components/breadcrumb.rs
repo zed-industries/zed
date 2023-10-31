@@ -23,7 +23,7 @@ impl Breadcrumb {
 
         div()
             .child(" › ")
-            .text_color(theme.styles.colors.text_muted())
+            .text_color(theme.styles.colors.text_muted)
     }
 
     fn render<V: 'static>(self, view_state: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {

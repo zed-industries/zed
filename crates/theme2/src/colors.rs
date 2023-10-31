@@ -49,54 +49,44 @@ pub enum GitStatusColorName {
 
 pub struct GitStatusColors(pub IndexMap<GitStatusColorName, Hsla>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ThemeStyleName {
-    Border,
-    BorderVariant,
-    BorderFocused,
-    BorderTransparent,
-    ElevatedSurface,
-    Surface,
-    Background,
-    Element,
-    ElementHover,
-    ElementActive,
-    ElementSelected,
-    ElementDisabled,
-    ElementPlaceholder,
-    GhostElement,
-    GhostElementHover,
-    GhostElementActive,
-    GhostElementSelected,
-    GhostElementDisabled,
-    Text,
-    TextMuted,
-    TextPlaceholder,
-    TextDisabled,
-    TextAccent,
-    Icon,
-    IconMuted,
-    IconDisabled,
-    IconPlaceholder,
-    IconAccent,
-    StatusBar,
-    TitleBar,
-    Toolbar,
-    TabBar,
-    Editor,
-    EditorSubheader,
-    EditorActiveLine,
-}
-
-pub struct ThemeColors(pub IndexMap<ThemeStyleName, Hsla>);
-
-impl ThemeColors {
-    pub fn text_muted(&self) -> Hsla {
-        self.0
-            .get(&ThemeStyleName::TextMuted)
-            .cloned()
-            .unwrap_or_default()
-    }
+#[derive(Refineable, Clone, Debug)]
+#[refineable(debug)]
+pub struct ThemeColors {
+    pub border: Hsla,
+    pub border_variant: Hsla,
+    pub border_focused: Hsla,
+    pub border_transparent: Hsla,
+    pub elevated_surface: Hsla,
+    pub surface: Hsla,
+    pub background: Hsla,
+    pub element: Hsla,
+    pub element_hover: Hsla,
+    pub element_active: Hsla,
+    pub element_selected: Hsla,
+    pub element_disabled: Hsla,
+    pub element_placeholder: Hsla,
+    pub ghost_element: Hsla,
+    pub ghost_element_hover: Hsla,
+    pub ghost_element_active: Hsla,
+    pub ghost_element_selected: Hsla,
+    pub ghost_element_disabled: Hsla,
+    pub text: Hsla,
+    pub text_muted: Hsla,
+    pub text_placeholder: Hsla,
+    pub text_disabled: Hsla,
+    pub text_accent: Hsla,
+    pub icon: Hsla,
+    pub icon_muted: Hsla,
+    pub icon_disabled: Hsla,
+    pub icon_placeholder: Hsla,
+    pub icon_accent: Hsla,
+    pub status_bar: Hsla,
+    pub title_bar: Hsla,
+    pub toolbar: Hsla,
+    pub tab_bar: Hsla,
+    pub editor: Hsla,
+    pub editor_subheader: Hsla,
+    pub editor_active_line: Hsla,
 }
 
 generate_struct_with_overrides! {
@@ -110,41 +100,47 @@ generate_struct_with_overrides! {
     syntax: SyntaxStyles
 }
 
-#[derive(Refineable, Clone, Debug)]
-#[refineable(debug)]
-pub struct ThemeColors2 {
-    pub text_muted: Hsla,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_refineable_colors_with_none() {
-        let mut base_colors = ThemeColors2 {
-            text_muted: gpui2::red(),
+    fn override_a_single_theme_color() {
+        let mut colors = ThemeColors::default_light();
+
+        let magenta: Hsla = gpui2::rgb(0xff00ff);
+
+        assert_ne!(colors.text, magenta);
+
+        let overrides = ThemeColorsRefinement {
+            text: Some(magenta),
+            ..Default::default()
         };
 
-        let overrides = ThemeColors2Refinement { text_muted: None };
+        colors.refine(&overrides);
 
-        base_colors.refine(&overrides);
-
-        assert_eq!(base_colors.text_muted, gpui2::red())
+        assert_eq!(colors.text, magenta);
     }
 
     #[test]
-    fn test_refineable_colors_with_some() {
-        let mut base_colors = ThemeColors2 {
-            text_muted: gpui2::red(),
+    fn override_multiple_theme_colors() {
+        let mut colors = ThemeColors::default_light();
+
+        let magenta: Hsla = gpui2::rgb(0xff00ff);
+        let green: Hsla = gpui2::rgb(0x00ff00);
+
+        assert_ne!(colors.text, magenta);
+        assert_ne!(colors.background, green);
+
+        let overrides = ThemeColorsRefinement {
+            text: Some(magenta),
+            background: Some(green),
+            ..Default::default()
         };
 
-        let overrides = ThemeColors2Refinement {
-            text_muted: Some(gpui2::white()),
-        };
+        colors.refine(&overrides);
 
-        base_colors.refine(&overrides);
-
-        assert_eq!(base_colors.text_muted, gpui2::white())
+        assert_eq!(colors.text, magenta);
+        assert_eq!(colors.background, green);
     }
 }
