@@ -46,7 +46,7 @@ use util::{
 };
 use uuid::Uuid;
 use workspace2::{AppState, WorkspaceStore};
-use zed2::languages;
+use zed2::{build_window_options, languages};
 use zed2::{ensure_only_instance, Assets, IsOnlyInstance};
 
 mod open_listener;

@@ -28,6 +28,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use uuid::Uuid;
 
 pub use keystroke::*;
 #[cfg(target_os = "macos")]
@@ -106,6 +107,9 @@ pub(crate) trait Platform: 'static {
 
 pub trait PlatformDisplay: Send + Sync + Debug {
     fn id(&self) -> DisplayId;
+    /// Returns a stable identifier for this display that can be persisted and used
+    /// across system restarts.
+    fn uuid(&self) -> Result<Uuid>;
     fn as_any(&self) -> &dyn Any;
     fn bounds(&self) -> Bounds<GlobalPixels>;
 }

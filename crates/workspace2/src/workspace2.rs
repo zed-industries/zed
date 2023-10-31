@@ -42,6 +42,7 @@ use std::{
 };
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
+use uuid::Uuid;
 
 use crate::persistence::model::{
     DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup,
@@ -414,7 +415,7 @@ pub struct AppState {
     pub workspace_store: Model<WorkspaceStore>,
     pub fs: Arc<dyn fs2::Fs>,
     pub build_window_options:
-        fn(Option<WindowBounds>, Option<DisplayId>, &MainThread<AppContext>) -> WindowOptions,
+        fn(Option<WindowBounds>, Option<Uuid>, MainThread<AppContext>) -> WindowOptions,
     pub initialize_workspace:
         fn(WeakModel<Workspace>, bool, Arc<AppState>, AsyncAppContext) -> Task<anyhow::Result<()>>,
     pub node_runtime: Arc<dyn NodeRuntime>,

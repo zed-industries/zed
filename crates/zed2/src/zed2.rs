@@ -6,8 +6,8 @@ mod open_listener;
 pub use assets::*;
 use collections::HashMap;
 use gpui2::{
-    point, px, AsyncAppContext, Point, Styled, TitlebarOptions, WindowBounds, WindowKind,
-    WindowOptions,
+    point, px, AppContext, AsyncAppContext, MainThread, Point, TitlebarOptions, WindowBounds,
+    WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -218,11 +218,11 @@ pub async fn handle_cli_connection(
 
 pub fn build_window_options(
     bounds: Option<WindowBounds>,
-    display: Option<Uuid>,
-    platform: &dyn Platform,
+    display_uuid: Option<Uuid>,
+    cx: MainThread<AppContext>,
 ) -> WindowOptions {
     let bounds = bounds.unwrap_or(WindowBounds::Maximized);
-    let display_id = display.and_then(|display| platform.screen_by_id(display));
+    let display = display_uuid.and_then(|uuid| cx.display_for_uuid(uuid));
 
     WindowOptions {
         bounds,
@@ -236,6 +236,6 @@ pub fn build_window_options(
         show: false,
         kind: WindowKind::Normal,
         is_movable: false,
-        display_id,
+        display_id: display.map(|display| display.id()),
     }
 }

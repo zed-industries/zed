@@ -11,14 +11,15 @@ use refineable::Refineable;
 use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
+use uuid::Uuid;
 
 use crate::{
     current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AnyWindowHandle,
     AppMetadata, AssetSource, ClipboardItem, Context, DispatchPhase, DisplayId, Entity, Executor,
     FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly,
-    Pixels, Platform, Point, Render, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window, WindowContext,
-    WindowHandle, WindowId,
+    Pixels, Platform, PlatformDisplay, Point, Render, SharedString, SubscriberSet, Subscription,
+    SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window,
+    WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -32,6 +33,7 @@ use std::{
     mem,
     ops::{Deref, DerefMut},
     path::PathBuf,
+    rc::Rc,
     sync::{atomic::Ordering::SeqCst, Arc, Weak},
     time::Duration,
 };
@@ -846,6 +848,13 @@ where
 
     pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         self.platform().path_for_auxiliary_executable(name)
+    }
+
+    pub fn display_for_uuid(&self, uuid: Uuid) -> Option<Rc<dyn PlatformDisplay>> {
+        self.platform()
+            .displays()
+            .into_iter()
+            .find(|display| display.uuid().ok() == Some(uuid))
     }
 }
 

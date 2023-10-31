@@ -128,6 +128,7 @@ pub trait SearchableItemHandle: ItemHandle {
     ) -> Option<usize>;
 }
 
+// todo!("here is where we need to use AnyWeakView");
 impl<T: SearchableItem> SearchableItemHandle for View<T> {
     fn downgrade(&self) -> Box<dyn WeakSearchableItemHandle> {
         // Box::new(self.downgrade())
