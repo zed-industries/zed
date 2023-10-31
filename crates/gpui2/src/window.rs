@@ -1620,7 +1620,7 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     ) -> Subscription
     where
         V2: 'static,
-        V: Any + Send,
+        V: 'static + Send,
         E: Entity<V2>,
     {
         let view = self.view();
