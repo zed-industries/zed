@@ -106,7 +106,12 @@ impl EntityMap {
         dropped_entity_ids
             .into_iter()
             .map(|entity_id| {
-                ref_counts.counts.remove(entity_id);
+                let count = ref_counts.counts.remove(entity_id).unwrap();
+                debug_assert_eq!(
+                    count.load(SeqCst),
+                    0,
+                    "dropped an entity that was referenced"
+                );
                 (entity_id, self.entities.remove(entity_id).unwrap())
             })
             .collect()
@@ -356,11 +361,15 @@ impl AnyWeakHandle {
 
     pub fn upgrade(&self) -> Option<AnyHandle> {
         let entity_map = self.entity_ref_counts.upgrade()?;
-        entity_map
-            .read()
-            .counts
-            .get(self.entity_id)?
-            .fetch_add(1, SeqCst);
+        let entity_map = entity_map.read();
+        let ref_count = entity_map.counts.get(self.entity_id)?;
+
+        // entity_id is in dropped_entity_ids
+        if ref_count.load(SeqCst) == 0 {
+            return None;
+        }
+        ref_count.fetch_add(1, SeqCst);
+
         Some(AnyHandle {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
@@ -458,5 +467,62 @@ impl<T> Eq for WeakHandle<T> {}
 impl<T> PartialEq<Handle<T>> for WeakHandle<T> {
     fn eq(&self, other: &Handle<T>) -> bool {
         self.entity_id() == other.entity_id()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::EntityMap;
+
+    struct TestEntity {
+        pub i: i32,
+    }
+
+    #[test]
+    fn test_entity_map_slot_assignment_before_cleanup() {
+        // Tests that slots are not re-used before take_dropped.
+        let mut entity_map = EntityMap::new();
+
+        let slot = entity_map.reserve::<TestEntity>();
+        entity_map.insert(slot, TestEntity { i: 1 });
+
+        let slot = entity_map.reserve::<TestEntity>();
+        entity_map.insert(slot, TestEntity { i: 2 });
+
+        let dropped = entity_map.take_dropped();
+        assert_eq!(dropped.len(), 2);
+
+        assert_eq!(
+            dropped
+                .into_iter()
+                .map(|(_, entity)| entity.downcast::<TestEntity>().unwrap().i)
+                .collect::<Vec<i32>>(),
+            vec![1, 2],
+        );
+    }
+
+    #[test]
+    fn test_entity_map_weak_upgrade_before_cleanup() {
+        // Tests that weak handles are not upgraded before take_dropped
+        let mut entity_map = EntityMap::new();
+
+        let slot = entity_map.reserve::<TestEntity>();
+        let handle = entity_map.insert(slot, TestEntity { i: 1 });
+        let weak = handle.downgrade();
+        drop(handle);
+
+        let strong = weak.upgrade();
+        assert_eq!(strong, None);
+
+        let dropped = entity_map.take_dropped();
+        assert_eq!(dropped.len(), 1);
+
+        assert_eq!(
+            dropped
+                .into_iter()
+                .map(|(_, entity)| entity.downcast::<TestEntity>().unwrap().i)
+                .collect::<Vec<i32>>(),
+            vec![1],
+        );
     }
 }
