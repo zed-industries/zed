@@ -1,0 +1,16 @@
+name = "Python"
+path_suffixes = ["py", "pyi", "mpy"]
+first_line_pattern = '^#!.*\bpython[0-9.]*\b'
+line_comment = "# "
+autoclose_before = ";:.,=}])>"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
+    { start = "'", end = "'", close = false, newline = false, not_in = ["string"] },
+]
+
+auto_indent_using_last_non_empty_line = false
+increase_indent_pattern = ":\\s*$"
+decrease_indent_pattern = "^\\s*(else|elif|except|finally)\\b.*:"

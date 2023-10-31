@@ -637,6 +637,10 @@ impl AppContext {
         )
     }
 
+    pub fn all_action_names<'a>(&'a self) -> impl Iterator<Item = SharedString> + 'a {
+        self.action_builders.keys().cloned()
+    }
+
     /// Move the global of the given type to the stack.
     pub(crate) fn lease_global<G: 'static>(&mut self) -> GlobalLease<G> {
         GlobalLease::new(

@@ -108,6 +108,24 @@ pub struct SyntaxTheme {
 }
 
 impl SyntaxTheme {
+    // TOOD: Get this working with `#[cfg(test)]`. Why isn't it?
+    pub fn new_test(colors: impl IntoIterator<Item = (&'static str, Hsla)>) -> Self {
+        SyntaxTheme {
+            highlights: colors
+                .into_iter()
+                .map(|(key, color)| {
+                    (
+                        key.to_owned(),
+                        HighlightStyle {
+                            color: Some(color),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
     pub fn get(&self, name: &str) -> HighlightStyle {
         self.highlights
             .iter()
