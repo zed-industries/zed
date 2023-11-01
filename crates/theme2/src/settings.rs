@@ -123,9 +123,10 @@ impl settings2::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
-            active_theme: themes.get("Zed Pro Moonlight").unwrap(),
-            // todo!(Read the theme name from the settings)
-            // active_theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
+            active_theme: themes
+                .get(defaults.theme.as_ref().unwrap())
+                .or(themes.get("Zed Pro Moonlight"))
+                .unwrap(),
         };
 
         for value in user_values.into_iter().copied().cloned() {
