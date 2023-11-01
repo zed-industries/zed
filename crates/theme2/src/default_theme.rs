@@ -1,6 +1,6 @@
 use crate::{
     colors::{GitStatusColors, PlayerColors, StatusColors, SystemColors, ThemeColors, ThemeStyle},
-    default_color_scales, Appearance, SyntaxStyles, ThemeFamily, ThemeVariant,
+    default_color_scales, Appearance, SyntaxTheme, ThemeFamily, ThemeVariant,
 };
 
 fn zed_pro_daylight() -> ThemeVariant {
@@ -14,7 +14,7 @@ fn zed_pro_daylight() -> ThemeVariant {
             status: StatusColors::default(),
             git: GitStatusColors::default(),
             player: PlayerColors::default(),
-            syntax: SyntaxStyles::default_light(),
+            syntax: SyntaxTheme::default_light(),
         },
     }
 }
@@ -30,7 +30,7 @@ pub(crate) fn zed_pro_moonlight() -> ThemeVariant {
             status: StatusColors::default(),
             git: GitStatusColors::default(),
             player: PlayerColors::default(),
-            syntax: SyntaxStyles::default_dark(),
+            syntax: SyntaxTheme::default_dark(),
         },
     }
 }
