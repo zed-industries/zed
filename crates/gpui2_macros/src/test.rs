@@ -136,7 +136,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     &mut |dispatcher, _seed| {
                         let executor = gpui2::BackgroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
                         #cx_vars
-                        executor.block(#inner_fn_name(#inner_fn_args));
+                        executor.block_test(#inner_fn_name(#inner_fn_args));
                         #cx_teardowns
                     },
                     #on_failure_fn_name,

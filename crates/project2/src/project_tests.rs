@@ -2942,7 +2942,6 @@ async fn test_buffer_deduping(cx: &mut gpui2::TestAppContext) {
 #[gpui2::test]
 async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
     init_test(cx);
-    dbg!("GAH");
 
     let fs = FakeFs::new(cx.executor().clone());
     fs.insert_tree(
@@ -2954,7 +2953,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
         }),
     )
     .await;
-    dbg!("NOOP");
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
 
@@ -2963,8 +2961,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
         .await
         .unwrap();
     let events = Arc::new(Mutex::new(Vec::new()));
-
-    dbg!("BOOP");
 
     // initially, the buffer isn't dirty.
     buffer1.update(cx, |buffer, cx| {
@@ -2982,7 +2978,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
 
         buffer.edit([(1..2, "")], None, cx);
     });
-    dbg!("ADSASD");
 
     // after the first edit, the buffer is dirty, and emits a dirtied event.
     buffer1.update(cx, |buffer, cx| {
@@ -3000,7 +2995,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
             cx,
         );
     });
-    dbg!("1111");
 
     // after saving, the buffer is not dirty, and emits a saved event.
     buffer1.update(cx, |buffer, cx| {
@@ -3011,8 +3005,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
         buffer.edit([(1..1, "B")], None, cx);
         buffer.edit([(2..2, "D")], None, cx);
     });
-
-    dbg!("5555555");
 
     // after editing again, the buffer is dirty, and emits another dirty event.
     buffer1.update(cx, |buffer, cx| {
@@ -3035,7 +3027,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
         assert!(!buffer.is_dirty());
     });
 
-    dbg!("666666");
     assert_eq!(
         *events.lock(),
         &[language2::Event::Edited, language2::Event::DirtyChanged]
@@ -3054,8 +3045,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
         })
         .detach();
     });
-
-    dbg!("0000000");
 
     fs.remove_file("/dir/file2".as_ref(), Default::default())
         .await
@@ -3084,7 +3073,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
         .detach();
     });
 
-    dbg!(";;;;;;");
     buffer3.update(cx, |buffer, cx| {
         buffer.edit([(0..0, "x")], None, cx);
     });

@@ -86,7 +86,20 @@ impl BackgroundExecutor {
         Task::Spawned(task)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
+        self.block_internal(false, future)
+    }
+
     pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
+        self.block_internal(true, future)
+    }
+
+    pub(crate) fn block_internal<R>(
+        &self,
+        background_only: bool,
+        future: impl Future<Output = R>,
+    ) -> R {
         pin_mut!(future);
         let (parker, unparker) = parking::pair();
         let awoken = Arc::new(AtomicBool::new(false));
@@ -102,7 +115,7 @@ impl BackgroundExecutor {
             match future.as_mut().poll(&mut cx) {
                 Poll::Ready(result) => return result,
                 Poll::Pending => {
-                    if !self.dispatcher.poll(true) {
+                    if !self.dispatcher.poll(background_only) {
                         if awoken.swap(false, SeqCst) {
                             continue;
                         }
@@ -184,7 +197,7 @@ impl BackgroundExecutor {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_random_delay(&self) -> impl Future<Output = ()> {
-        self.spawn(self.dispatcher.as_test().unwrap().simulate_random_delay())
+        self.dispatcher.as_test().unwrap().simulate_random_delay()
     }
 
     #[cfg(any(test, feature = "test-support"))]
