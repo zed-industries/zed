@@ -342,7 +342,7 @@ impl Peer {
     pub fn add_test_connection(
         self: &Arc<Self>,
         connection: Connection,
-        executor: gpui2::Executor,
+        executor: gpui2::BackgroundExecutor,
     ) -> (
         ConnectionId,
         impl Future<Output = anyhow::Result<()>> + Send,

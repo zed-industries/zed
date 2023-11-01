@@ -505,7 +505,7 @@ impl Client {
                                 },
                                 &cx,
                             );
-                            cx.executor().timer(delay).await;
+                            cx.background_executor().timer(delay).await;
                             delay = delay
                                 .mul_f32(rng.gen_range(1.0..=2.0))
                                 .min(reconnect_interval);
@@ -763,7 +763,8 @@ impl Client {
             self.set_status(Status::Reconnecting, cx);
         }
 
-        let mut timeout = futures::FutureExt::fuse(cx.executor().timer(CONNECTION_TIMEOUT));
+        let mut timeout =
+            futures::FutureExt::fuse(cx.background_executor().timer(CONNECTION_TIMEOUT));
         futures::select_biased! {
             connection = self.establish_connection(&credentials, cx).fuse() => {
                 match connection {
@@ -814,7 +815,7 @@ impl Client {
         conn: Connection,
         cx: &AsyncAppContext,
     ) -> Result<()> {
-        let executor = cx.executor();
+        let executor = cx.background_executor();
         log::info!("add connection to peer");
         let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn, {
             let executor = executor.clone();
@@ -978,7 +979,7 @@ impl Client {
             .header("x-zed-protocol-version", rpc2::PROTOCOL_VERSION);
 
         let http = self.http.clone();
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             let mut rpc_url = Self::get_rpc_url(http, use_preview_server).await?;
             let rpc_host = rpc_url
                 .host_str()
@@ -1382,7 +1383,7 @@ mod tests {
     use super::*;
     use crate::test::FakeServer;
 
-    use gpui2::{Context, Executor, TestAppContext};
+    use gpui2::{BackgroundExecutor, Context, TestAppContext};
     use parking_lot::Mutex;
     use std::future;
     use util::http::FakeHttpClient;
@@ -1422,7 +1423,7 @@ mod tests {
     }
 
     #[gpui2::test(iterations = 10)]
-    async fn test_connection_timeout(executor: Executor, cx: &mut TestAppContext) {
+    async fn test_connection_timeout(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         let user_id = 5;
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let mut status = client.status();
@@ -1490,7 +1491,10 @@ mod tests {
     }
 
     #[gpui2::test(iterations = 10)]
-    async fn test_authenticating_more_than_once(cx: &mut TestAppContext, executor: Executor) {
+    async fn test_authenticating_more_than_once(
+        cx: &mut TestAppContext,
+        executor: BackgroundExecutor,
+    ) {
         let auth_count = Arc::new(Mutex::new(0));
         let dropped_auth_count = Arc::new(Mutex::new(0));
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));

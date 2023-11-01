@@ -1,6 +1,6 @@
 use assets::SoundRegistry;
 use futures::{channel::mpsc, StreamExt};
-use gpui2::{AppContext, AssetSource, Executor};
+use gpui2::{AppContext, AssetSource, BackgroundExecutor};
 use rodio::{OutputStream, OutputStreamHandle};
 use util::ResultExt;
 
@@ -34,7 +34,7 @@ impl Sound {
 }
 
 pub struct Audio {
-    tx: mpsc::UnboundedSender<Box<dyn FnOnce(&mut AudioState) + Send>>,
+    tx: mpsc::UnboundedSender<Box<dyn FnOnce(&mut AudioState)>>,
 }
 
 struct AudioState {
@@ -60,8 +60,8 @@ impl AudioState {
 }
 
 impl Audio {
-    pub fn new(executor: &Executor) -> Self {
-        let (tx, mut rx) = mpsc::unbounded::<Box<dyn FnOnce(&mut AudioState) + Send>>();
+    pub fn new(executor: &BackgroundExecutor) -> Self {
+        let (tx, mut rx) = mpsc::unbounded::<Box<dyn FnOnce(&mut AudioState)>>();
         executor
             .spawn_on_main(|| async move {
                 let mut audio = AudioState {

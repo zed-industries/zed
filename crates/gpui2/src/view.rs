@@ -4,10 +4,13 @@ use crate::{
     Size, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
-use std::{any::TypeId, marker::PhantomData};
+use std::{
+    any::{Any, TypeId},
+    marker::PhantomData,
+};
 
 pub trait Render: 'static + Sized {
-    type Element: Element<Self> + 'static + Send;
+    type Element: Element<Self> + 'static;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element;
 }
@@ -163,7 +166,7 @@ impl<V: Render, ParentV: 'static> Component<ParentV> for EraseViewState<V, Paren
 }
 
 impl<V: Render, ParentV: 'static> Element<ParentV> for EraseViewState<V, ParentV> {
-    type ElementState = AnyBox;
+    type ElementState = Box<dyn Any>;
 
     fn id(&self) -> Option<crate::ElementId> {
         Element::id(&self.view)
@@ -343,7 +346,7 @@ impl<V: Render> From<View<V>> for AnyView {
 }
 
 impl<ParentViewState: 'static> Element<ParentViewState> for AnyView {
-    type ElementState = AnyBox;
+    type ElementState = Box<dyn Any>;
 
     fn id(&self) -> Option<ElementId> {
         Some(self.model.entity_id.into())

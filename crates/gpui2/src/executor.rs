@@ -6,6 +6,7 @@ use std::{
     marker::PhantomData,
     mem,
     pin::Pin,
+    rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
@@ -17,8 +18,14 @@ use util::TryFutureExt;
 use waker_fn::waker_fn;
 
 #[derive(Clone)]
-pub struct Executor {
+pub struct BackgroundExecutor {
     dispatcher: Arc<dyn PlatformDispatcher>,
+}
+
+#[derive(Clone)]
+pub struct ForegroundExecutor {
+    dispatcher: Arc<dyn PlatformDispatcher>,
+    not_send: PhantomData<Rc<()>>,
 }
 
 #[must_use]
@@ -61,7 +68,7 @@ impl<T> Future for Task<T> {
     }
 }
 
-impl Executor {
+impl BackgroundExecutor {
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         Self { dispatcher }
     }
@@ -75,63 +82,6 @@ impl Executor {
         let dispatcher = self.dispatcher.clone();
         let (runnable, task) =
             async_task::spawn(future, move |runnable| dispatcher.dispatch(runnable));
-        runnable.schedule();
-        Task::Spawned(task)
-    }
-
-    /// Enqueues the given closure to run on the application's event loop.
-    /// Returns the result asynchronously.
-    pub fn run_on_main<F, R>(&self, func: F) -> Task<R>
-    where
-        F: FnOnce() -> R + Send + 'static,
-        R: Send + 'static,
-    {
-        if self.dispatcher.is_main_thread() {
-            Task::ready(func())
-        } else {
-            self.spawn_on_main(move || async move { func() })
-        }
-    }
-
-    /// Enqueues the given closure to be run on the application's event loop. The
-    /// closure returns a future which will be run to completion on the main thread.
-    pub fn spawn_on_main<F, R>(&self, func: impl FnOnce() -> F + Send + 'static) -> Task<R>
-    where
-        F: Future<Output = R> + 'static,
-        R: Send + 'static,
-    {
-        let (runnable, task) = async_task::spawn(
-            {
-                let this = self.clone();
-                async move {
-                    let task = this.spawn_on_main_local(func());
-                    task.await
-                }
-            },
-            {
-                let dispatcher = self.dispatcher.clone();
-                move |runnable| dispatcher.dispatch_on_main_thread(runnable)
-            },
-        );
-        runnable.schedule();
-        Task::Spawned(task)
-    }
-
-    /// Enqueues the given closure to be run on the application's event loop. Must
-    /// be called on the main thread.
-    pub fn spawn_on_main_local<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
-    where
-        R: 'static,
-    {
-        assert!(
-            self.dispatcher.is_main_thread(),
-            "must be called on main thread"
-        );
-
-        let dispatcher = self.dispatcher.clone();
-        let (runnable, task) = async_task::spawn_local(future, move |runnable| {
-            dispatcher.dispatch_on_main_thread(runnable)
-        });
         runnable.schedule();
         Task::Spawned(task)
     }
@@ -261,8 +211,31 @@ impl Executor {
     }
 }
 
+impl ForegroundExecutor {
+    pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
+        Self {
+            dispatcher,
+            not_send: PhantomData,
+        }
+    }
+
+    /// Enqueues the given closure to be run on any thread. The closure returns
+    /// a future which will be run to completion on any available thread.
+    pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
+    where
+        R: 'static,
+    {
+        let dispatcher = self.dispatcher.clone();
+        let (runnable, task) = async_task::spawn_local(future, move |runnable| {
+            dispatcher.dispatch_on_main_thread(runnable)
+        });
+        runnable.schedule();
+        Task::Spawned(task)
+    }
+}
+
 pub struct Scope<'a> {
-    executor: Executor,
+    executor: BackgroundExecutor,
     futures: Vec<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     tx: Option<mpsc::Sender<()>>,
     rx: mpsc::Receiver<()>,
@@ -270,7 +243,7 @@ pub struct Scope<'a> {
 }
 
 impl<'a> Scope<'a> {
-    fn new(executor: Executor) -> Self {
+    fn new(executor: BackgroundExecutor) -> Self {
         let (tx, rx) = mpsc::channel(1);
         Self {
             executor,

@@ -26,8 +26,8 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui2::{
-    AnyModel, AppContext, AsyncAppContext, Context, Entity, EventEmitter, Executor, Model,
-    ModelContext, Task, WeakModel,
+    AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, Context, Entity, EventEmitter,
+    Model, ModelContext, Task, WeakModel,
 };
 use itertools::Itertools;
 use language2::{
@@ -207,7 +207,7 @@ impl DelayedDebounced {
 
         let previous_task = self.task.take();
         self.task = Some(cx.spawn(move |project, mut cx| async move {
-            let mut timer = cx.executor().timer(delay).fuse();
+            let mut timer = cx.background_executor().timer(delay).fuse();
             if let Some(previous_task) = previous_task {
                 previous_task.await;
             }
@@ -1453,7 +1453,7 @@ impl Project {
                             };
                             if client.send(initial_state).log_err().is_some() {
                                 let client = client.clone();
-                                cx.executor()
+                                cx.background_executor()
                                     .spawn(async move {
                                         let mut chunks = split_operations(operations).peekable();
                                         while let Some(chunk) = chunks.next() {
@@ -2436,7 +2436,7 @@ impl Project {
                                 Duration::from_secs(1);
 
                             let task = cx.spawn(move |this, mut cx| async move {
-                                cx.executor().timer(DISK_BASED_DIAGNOSTICS_DEBOUNCE).await;
+                                cx.background_executor().timer(DISK_BASED_DIAGNOSTICS_DEBOUNCE).await;
                                 if let Some(this) = this.upgrade() {
                                     this.update(&mut cx, |this, cx| {
                                         this.disk_based_diagnostics_finished(
@@ -3477,7 +3477,7 @@ impl Project {
             });
 
             const PROCESS_TIMEOUT: Duration = Duration::from_secs(5);
-            let mut timeout = cx.executor().timer(PROCESS_TIMEOUT).fuse();
+            let mut timeout = cx.background_executor().timer(PROCESS_TIMEOUT).fuse();
 
             let mut errored = false;
             if let Some(mut process) = process {
@@ -5741,7 +5741,7 @@ impl Project {
     async fn background_search(
         unnamed_buffers: Vec<Model<Buffer>>,
         opened_buffers: HashMap<Arc<Path>, (Model<Buffer>, BufferSnapshot)>,
-        executor: Executor,
+        executor: BackgroundExecutor,
         fs: Arc<dyn Fs>,
         workers: usize,
         query: SearchQuery,
@@ -6376,7 +6376,7 @@ impl Project {
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
             let diff_bases_by_buffer = cx
-                .executor()
+                .background_executor()
                 .spawn(async move {
                     future_buffers
                         .into_iter()
@@ -7983,7 +7983,7 @@ impl Project {
             // Any incomplete buffers have open requests waiting. Request that the host sends
             // creates these buffers for us again to unblock any waiting futures.
             for id in incomplete_buffer_ids {
-                cx.executor()
+                cx.background_executor()
                     .spawn(client.request(proto::OpenBufferById { project_id, id }))
                     .detach();
             }
@@ -8438,7 +8438,7 @@ impl Project {
             let fs = self.fs.clone();
             cx.spawn(move |this, mut cx| async move {
                 let prettier_dir = match cx
-                    .executor()
+                    .background_executor()
                     .spawn(Prettier::locate(
                         worktree_path.zip(buffer_path).map(
                             |(worktree_root_path, starting_path)| LocateStart {

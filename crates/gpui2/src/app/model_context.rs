@@ -1,6 +1,6 @@
 use crate::{
-    AppContext, AsyncAppContext, Context, Effect, Entity, EntityId, EventEmitter, MainThread,
-    Model, Reference, Subscription, Task, WeakModel,
+    AppContext, AsyncAppContext, Context, Effect, Entity, EntityId, EventEmitter, Model, Reference,
+    Subscription, Task, WeakModel,
 };
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
@@ -191,36 +191,20 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         result
     }
 
-    pub fn spawn<Fut, R>(
-        &self,
-        f: impl FnOnce(WeakModel<T>, AsyncAppContext) -> Fut + Send + 'static,
-    ) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakModel<T>, AsyncAppContext) -> Fut) -> Task<R>
     where
         T: 'static,
-        Fut: Future<Output = R> + Send + 'static,
-        R: Send + 'static,
+        Fut: Future<Output = R> + 'static,
+        R: 'static,
     {
         let this = self.weak_model();
         self.app.spawn(|cx| f(this, cx))
-    }
-
-    pub fn spawn_on_main<Fut, R>(
-        &self,
-        f: impl FnOnce(WeakModel<T>, MainThread<AsyncAppContext>) -> Fut + Send + 'static,
-    ) -> Task<R>
-    where
-        Fut: Future<Output = R> + 'static,
-        R: Send + 'static,
-    {
-        let this = self.weak_model();
-        self.app.spawn_on_main(|cx| f(this, cx))
     }
 }
 
 impl<'a, T> ModelContext<'a, T>
 where
     T: EventEmitter,
-    T::Event: Send,
 {
     pub fn emit(&mut self, event: T::Event) {
         self.app.pending_effects.push_back(Effect::Emit {
@@ -234,13 +218,10 @@ impl<'a, T> Context for ModelContext<'a, T> {
     type ModelContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
-    fn build_model<U>(
+    fn build_model<U: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut Self::ModelContext<'_, U>) -> U,
-    ) -> Model<U>
-    where
-        U: 'static + Send,
-    {
+    ) -> Model<U> {
         self.app.build_model(build_model)
     }
 

@@ -133,9 +133,9 @@ impl<'a> VimTestContext<'a> {
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
     where
         T: 'static + request::Request,
-        T::Params: 'static + Send,
-        F: 'static + Send + FnMut(lsp::Url, T::Params, gpui::AsyncAppContext) -> Fut,
-        Fut: 'static + Send + Future<Output = Result<T::Result>>,
+        T::Params: 'static,
+        F: 'static + FnMut(lsp::Url, T::Params, gpui::AsyncAppContext) -> Fut,
+        Fut: 'static + Future<Output = Result<T::Result>>,
     {
         self.cx.handle_request::<T, F, Fut>(handler)
     }

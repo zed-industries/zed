@@ -22,7 +22,8 @@ use futures::{
 use fuzzy2::CharBag;
 use git::{DOT_GIT, GITIGNORE};
 use gpui2::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Executor, Model, ModelContext, Task,
+    AppContext, AsyncAppContext, BackgroundExecutor, Context, EventEmitter, Model, ModelContext,
+    Task,
 };
 use language2::{
     proto::{
@@ -600,7 +601,7 @@ impl LocalWorktree {
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))?
                 .await?;
             let text_buffer = cx
-                .executor()
+                .background_executor()
                 .spawn(async move { text::Buffer::new(0, id, contents) })
                 .await;
             cx.build_model(|_| Buffer::build(text_buffer, diff_base, Some(Arc::new(file))))
@@ -888,7 +889,7 @@ impl LocalWorktree {
                 if let Some(repo) = snapshot.git_repositories.get(&*repo.work_directory) {
                     let repo = repo.repo_ptr.clone();
                     index_task = Some(
-                        cx.executor()
+                        cx.background_executor()
                             .spawn(async move { repo.lock().load_index_text(&repo_path) }),
                     );
                 }
@@ -3012,7 +3013,7 @@ struct BackgroundScanner {
     state: Mutex<BackgroundScannerState>,
     fs: Arc<dyn Fs>,
     status_updates_tx: UnboundedSender<ScanState>,
-    executor: Executor,
+    executor: BackgroundExecutor,
     scan_requests_rx: channel::Receiver<ScanRequest>,
     path_prefixes_to_scan_rx: channel::Receiver<Arc<Path>>,
     next_entry_id: Arc<AtomicUsize>,
@@ -3032,7 +3033,7 @@ impl BackgroundScanner {
         next_entry_id: Arc<AtomicUsize>,
         fs: Arc<dyn Fs>,
         status_updates_tx: UnboundedSender<ScanState>,
-        executor: Executor,
+        executor: BackgroundExecutor,
         scan_requests_rx: channel::Receiver<ScanRequest>,
         path_prefixes_to_scan_rx: channel::Receiver<Arc<Path>>,
     ) -> Self {

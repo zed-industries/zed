@@ -1,9 +1,9 @@
 use super::BoolExt;
 use crate::{
-    AnyWindowHandle, ClipboardItem, CursorStyle, DisplayId, Executor, InputEvent, MacDispatcher,
-    MacDisplay, MacDisplayLinker, MacTextSystem, MacWindow, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, VideoTimestamp,
-    WindowOptions,
+    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
+    InputEvent, MacDispatcher, MacDisplay, MacDisplayLinker, MacTextSystem, MacWindow,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Result,
+    SemanticVersion, VideoTimestamp, WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -143,7 +143,8 @@ unsafe fn build_classes() {
 pub struct MacPlatform(Mutex<MacPlatformState>);
 
 pub struct MacPlatformState {
-    executor: Executor,
+    background_executor: BackgroundExecutor,
+    foreground_executor: ForegroundExecutor,
     text_system: Arc<MacTextSystem>,
     display_linker: MacDisplayLinker,
     pasteboard: id,
@@ -164,8 +165,10 @@ pub struct MacPlatformState {
 
 impl MacPlatform {
     pub fn new() -> Self {
+        let dispatcher = Arc::new(MacDispatcher);
         Self(Mutex::new(MacPlatformState {
-            executor: Executor::new(Arc::new(MacDispatcher)),
+            background_executor: BackgroundExecutor::new(dispatcher.clone()),
+            foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system: Arc::new(MacTextSystem::new()),
             display_linker: MacDisplayLinker::new(),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
@@ -345,8 +348,12 @@ impl MacPlatform {
 }
 
 impl Platform for MacPlatform {
-    fn executor(&self) -> Executor {
-        self.0.lock().executor.clone()
+    fn background_executor(&self) -> BackgroundExecutor {
+        self.0.lock().background_executor.clone()
+    }
+
+    fn foreground_executor(&self) -> crate::ForegroundExecutor {
+        self.0.lock().foreground_executor.clone()
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
@@ -457,16 +464,16 @@ impl Platform for MacPlatform {
         }
     }
 
+    // fn add_status_item(&self, _handle: AnyWindowHandle) -> Box<dyn platform::Window> {
+    //     Box::new(StatusItem::add(self.fonts()))
+    // }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         MacDisplay::all()
             .into_iter()
             .map(|screen| Rc::new(screen) as Rc<_>)
             .collect()
     }
-
-    // fn add_status_item(&self, _handle: AnyWindowHandle) -> Box<dyn platform::Window> {
-    //     Box::new(StatusItem::add(self.fonts()))
-    // }
 
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
         MacDisplay::find_by_id(id).map(|screen| Rc::new(screen) as Rc<_>)
@@ -481,7 +488,7 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        Box::new(MacWindow::open(handle, options, self.executor()))
+        Box::new(MacWindow::open(handle, options, self.foreground_executor()))
     }
 
     fn set_display_link_output_callback(
@@ -589,8 +596,8 @@ impl Platform for MacPlatform {
             let path = path.to_path_buf();
             self.0
                 .lock()
-                .executor
-                .spawn_on_main_local(async move {
+                .background_executor
+                .spawn(async move {
                     let full_path = ns_string(path.to_str().unwrap_or(""));
                     let root_full_path = ns_string("");
                     let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
@@ -674,23 +681,6 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
-        unsafe {
-            let bundle: id = NSBundle::mainBundle();
-            if bundle.is_null() {
-                Err(anyhow!("app is not running inside a bundle"))
-            } else {
-                let name = ns_string(name);
-                let url: id = msg_send![bundle, URLForAuxiliaryExecutable: name];
-                if url.is_null() {
-                    Err(anyhow!("resource not found"))
-                } else {
-                    ns_url_to_path(url)
-                }
-            }
-        }
-    }
-
     // fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>) {
     //     self.0.lock().menu_command = Some(callback);
     // }
@@ -716,6 +706,23 @@ impl Platform for MacPlatform {
     //         ));
     //     }
     // }
+
+    fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
+        unsafe {
+            let bundle: id = NSBundle::mainBundle();
+            if bundle.is_null() {
+                Err(anyhow!("app is not running inside a bundle"))
+            } else {
+                let name = ns_string(name);
+                let url: id = msg_send![bundle, URLForAuxiliaryExecutable: name];
+                if url.is_null() {
+                    Err(anyhow!("resource not found"))
+                } else {
+                    ns_url_to_path(url)
+                }
+            }
+        }
+    }
 
     fn set_cursor_style(&self, style: CursorStyle) {
         unsafe {

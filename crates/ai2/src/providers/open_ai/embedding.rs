@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
-use gpui2::Executor;
+use gpui2::BackgroundExecutor;
 use gpui2::{serde_json, AppContext};
 use isahc::http::StatusCode;
 use isahc::prelude::Configurable;
@@ -35,7 +35,7 @@ pub struct OpenAIEmbeddingProvider {
     model: OpenAILanguageModel,
     credential: Arc<RwLock<ProviderCredential>>,
     pub client: Arc<dyn HttpClient>,
-    pub executor: Arc<Executor>,
+    pub executor: Arc<BackgroundExecutor>,
     rate_limit_count_rx: watch::Receiver<Option<Instant>>,
     rate_limit_count_tx: Arc<Mutex<watch::Sender<Option<Instant>>>>,
 }
@@ -66,7 +66,7 @@ struct OpenAIEmbeddingUsage {
 }
 
 impl OpenAIEmbeddingProvider {
-    pub fn new(client: Arc<dyn HttpClient>, executor: Arc<Executor>) -> Self {
+    pub fn new(client: Arc<dyn HttpClient>, executor: Arc<BackgroundExecutor>) -> Self {
         let (rate_limit_count_tx, rate_limit_count_rx) = watch::channel_with(None);
         let rate_limit_count_tx = Arc::new(Mutex::new(rate_limit_count_tx));
 

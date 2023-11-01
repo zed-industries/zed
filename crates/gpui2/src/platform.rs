@@ -5,9 +5,9 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, Executor, Font, FontId, FontMetrics, FontRun,
-    GlobalPixels, GlyphId, InputEvent, LineLayout, Pixels, Point, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Result, Scene, SharedString, Size,
+    AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId, FontMetrics, FontRun,
+    ForegroundExecutor, GlobalPixels, GlyphId, InputEvent, LineLayout, Pixels, Point,
+    RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -35,12 +35,13 @@ pub use test::*;
 pub use time::UtcOffset;
 
 #[cfg(target_os = "macos")]
-pub(crate) fn current_platform() -> Arc<dyn Platform> {
-    Arc::new(MacPlatform::new())
+pub(crate) fn current_platform() -> Rc<dyn Platform> {
+    Rc::new(MacPlatform::new())
 }
 
 pub(crate) trait Platform: 'static {
-    fn executor(&self) -> Executor;
+    fn background_executor(&self) -> BackgroundExecutor;
+    fn foreground_executor(&self) -> ForegroundExecutor;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);

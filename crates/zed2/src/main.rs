@@ -62,20 +62,26 @@ fn main() {
     log::info!("========== starting zed ==========");
     let app = App::production(Arc::new(Assets));
 
-    let installation_id = app.executor().block(installation_id()).ok();
+    let installation_id = app.background_executor().block(installation_id()).ok();
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
     let fs = Arc::new(RealFs);
-    let user_settings_file_rx =
-        watch_config_file(&app.executor(), fs.clone(), paths::SETTINGS.clone());
-    let _user_keymap_file_rx =
-        watch_config_file(&app.executor(), fs.clone(), paths::KEYMAP.clone());
+    let user_settings_file_rx = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::SETTINGS.clone(),
+    );
+    let _user_keymap_file_rx = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::KEYMAP.clone(),
+    );
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
     } else {
-        app.executor().spawn(async {
+        app.background_executor().spawn(async {
             load_login_shell_environment().await.log_err();
         })
     };

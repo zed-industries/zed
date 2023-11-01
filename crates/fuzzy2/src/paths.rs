@@ -1,4 +1,4 @@
-use gpui2::Executor;
+use gpui2::BackgroundExecutor;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -134,7 +134,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     smart_case: bool,
     max_results: usize,
     cancel_flag: &AtomicBool,
-    executor: Executor,
+    executor: BackgroundExecutor,
 ) -> Vec<PathMatch> {
     let path_count: usize = candidate_sets.iter().map(|s| s.len()).sum();
     if path_count == 0 {

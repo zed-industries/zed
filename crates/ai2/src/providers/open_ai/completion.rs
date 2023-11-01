@@ -4,7 +4,7 @@ use futures::{
     future::BoxFuture, io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt,
     Stream, StreamExt,
 };
-use gpui2::{AppContext, Executor};
+use gpui2::{AppContext, BackgroundExecutor};
 use isahc::{http::StatusCode, Request, RequestExt};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -105,7 +105,7 @@ pub struct OpenAIResponseStreamEvent {
 
 pub async fn stream_completion(
     credential: ProviderCredential,
-    executor: Arc<Executor>,
+    executor: Arc<BackgroundExecutor>,
     request: Box<dyn CompletionRequest>,
 ) -> Result<impl Stream<Item = Result<OpenAIResponseStreamEvent>>> {
     let api_key = match credential {
@@ -198,11 +198,11 @@ pub async fn stream_completion(
 pub struct OpenAICompletionProvider {
     model: OpenAILanguageModel,
     credential: Arc<RwLock<ProviderCredential>>,
-    executor: Arc<Executor>,
+    executor: Arc<BackgroundExecutor>,
 }
 
 impl OpenAICompletionProvider {
-    pub fn new(model_name: &str, executor: Arc<Executor>) -> Self {
+    pub fn new(model_name: &str, executor: Arc<BackgroundExecutor>) -> Self {
         let model = OpenAILanguageModel::load(model_name);
         let credential = Arc::new(RwLock::new(ProviderCredential::NoCredentials));
         Self {

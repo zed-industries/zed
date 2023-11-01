@@ -208,7 +208,7 @@ impl RegisteredBuffer {
                 let new_snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot()).ok()?;
 
                 let content_changes = cx
-                    .executor()
+                    .background_executor()
                     .spawn({
                         let new_snapshot = new_snapshot.clone();
                         async move {

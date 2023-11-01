@@ -2,7 +2,7 @@ use crate::{settings_store::SettingsStore, Settings};
 use anyhow::Result;
 use fs2::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui2::{AppContext, Executor};
+use gpui2::{AppContext, BackgroundExecutor};
 use std::{io::ErrorKind, path::PathBuf, str, sync::Arc, time::Duration};
 use util::{paths, ResultExt};
 
@@ -28,7 +28,7 @@ pub fn test_settings() -> String {
 }
 
 pub fn watch_config_file(
-    executor: &Executor,
+    executor: &BackgroundExecutor,
     fs: Arc<dyn Fs>,
     path: PathBuf,
 ) -> mpsc::UnboundedReceiver<String> {

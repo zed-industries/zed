@@ -445,7 +445,8 @@ impl Room {
 
                 // Wait for client to re-establish a connection to the server.
                 {
-                    let mut reconnection_timeout = cx.executor().timer(RECONNECT_TIMEOUT).fuse();
+                    let mut reconnection_timeout =
+                        cx.background_executor().timer(RECONNECT_TIMEOUT).fuse();
                     let client_reconnection = async {
                         let mut remaining_attempts = 3;
                         while remaining_attempts > 0 {

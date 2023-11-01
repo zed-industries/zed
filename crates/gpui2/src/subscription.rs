@@ -21,8 +21,8 @@ struct SubscriberSetState<EmitterKey, Callback> {
 
 impl<EmitterKey, Callback> SubscriberSet<EmitterKey, Callback>
 where
-    EmitterKey: 'static + Send + Ord + Clone + Debug,
-    Callback: 'static + Send,
+    EmitterKey: 'static + Ord + Clone + Debug,
+    Callback: 'static,
 {
     pub fn new() -> Self {
         Self(Arc::new(Mutex::new(SubscriberSetState {
@@ -96,7 +96,7 @@ where
 
 #[must_use]
 pub struct Subscription {
-    unsubscribe: Option<Box<dyn FnOnce() + Send + 'static>>,
+    unsubscribe: Option<Box<dyn FnOnce() + 'static>>,
 }
 
 impl Subscription {

@@ -1,15 +1,16 @@
 use crate::{
-    AnyWindowHandle, AppContext, AsyncAppContext, Context, EventEmitter, Executor, MainThread,
-    Model, ModelContext, Result, Task, TestDispatcher, TestPlatform, WindowContext,
+    AnyWindowHandle, AppContext, AsyncAppContext, BackgroundExecutor, Context, EventEmitter,
+    ForegroundExecutor, Model, ModelContext, Result, Task, TestDispatcher, TestPlatform,
+    WindowContext,
 };
 use futures::SinkExt;
-use parking_lot::Mutex;
-use std::{future::Future, sync::Arc};
+use std::{cell::RefCell, future::Future, rc::Rc, sync::Arc};
 
 #[derive(Clone)]
 pub struct TestAppContext {
-    pub app: Arc<Mutex<AppContext>>,
-    pub executor: Executor,
+    pub app: Rc<RefCell<AppContext>>,
+    pub background_executor: BackgroundExecutor,
+    pub foreground_executor: ForegroundExecutor,
 }
 
 impl Context for TestAppContext {
@@ -21,10 +22,10 @@ impl Context for TestAppContext {
         build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>>
     where
-        T: 'static + Send,
+        T: 'static,
     {
-        let mut lock = self.app.lock();
-        lock.build_model(build_model)
+        let mut app = self.app.borrow_mut();
+        app.build_model(build_model)
     }
 
     fn update_model<T: 'static, R>(
@@ -32,39 +33,45 @@ impl Context for TestAppContext {
         handle: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
-        let mut lock = self.app.lock();
-        lock.update_model(handle, update)
+        let mut app = self.app.borrow_mut();
+        app.update_model(handle, update)
     }
 }
 
 impl TestAppContext {
     pub fn new(dispatcher: TestDispatcher) -> Self {
-        let executor = Executor::new(Arc::new(dispatcher));
-        let platform = Arc::new(TestPlatform::new(executor.clone()));
+        let dispatcher = Arc::new(dispatcher);
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(dispatcher);
+        let platform = Rc::new(TestPlatform::new(
+            background_executor.clone(),
+            foreground_executor.clone(),
+        ));
         let asset_source = Arc::new(());
         let http_client = util::http::FakeHttpClient::with_404_response();
         Self {
             app: AppContext::new(platform, asset_source, http_client),
-            executor,
+            background_executor,
+            foreground_executor,
         }
     }
 
     pub fn quit(&self) {
-        self.app.lock().quit();
+        self.app.borrow_mut().quit();
     }
 
     pub fn refresh(&mut self) -> Result<()> {
-        let mut lock = self.app.lock();
-        lock.refresh();
+        let mut app = self.app.borrow_mut();
+        app.refresh();
         Ok(())
     }
 
-    pub fn executor(&self) -> &Executor {
-        &self.executor
+    pub fn executor(&self) -> &BackgroundExecutor {
+        &self.background_executor
     }
 
     pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> R {
-        let mut cx = self.app.lock();
+        let mut cx = self.app.borrow_mut();
         cx.update(f)
     }
 
@@ -73,7 +80,7 @@ impl TestAppContext {
         handle: AnyWindowHandle,
         read: impl FnOnce(&WindowContext) -> R,
     ) -> R {
-        let mut app_context = self.app.lock();
+        let app_context = self.app.borrow();
         app_context.read_window(handle.id, read).unwrap()
     }
 
@@ -82,57 +89,33 @@ impl TestAppContext {
         handle: AnyWindowHandle,
         update: impl FnOnce(&mut WindowContext) -> R,
     ) -> R {
-        let mut app = self.app.lock();
+        let mut app = self.app.borrow_mut();
         app.update_window(handle.id, update).unwrap()
     }
 
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static) -> Task<R>
-    where
-        Fut: Future<Output = R> + Send + 'static,
-        R: Send + 'static,
-    {
-        let cx = self.to_async();
-        self.executor.spawn(async move { f(cx).await })
-    }
-
-    pub fn spawn_on_main<Fut, R>(
-        &self,
-        f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static,
-    ) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
-        R: Send + 'static,
+        R: 'static,
     {
-        let cx = self.to_async();
-        self.executor.spawn_on_main(|| f(cx))
-    }
-
-    pub fn run_on_main<R>(
-        &self,
-        f: impl FnOnce(&mut MainThread<AppContext>) -> R + Send + 'static,
-    ) -> Task<R>
-    where
-        R: Send + 'static,
-    {
-        let mut app_context = self.app.lock();
-        app_context.run_on_main(f)
+        self.foreground_executor.spawn(f(self.to_async()))
     }
 
     pub fn has_global<G: 'static>(&self) -> bool {
-        let lock = self.app.lock();
-        lock.has_global::<G>()
+        let app = self.app.borrow();
+        app.has_global::<G>()
     }
 
     pub fn read_global<G: 'static, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> R {
-        let lock = self.app.lock();
-        read(lock.global(), &lock)
+        let app = self.app.borrow();
+        read(app.global(), &app)
     }
 
     pub fn try_read_global<G: 'static, R>(
         &self,
         read: impl FnOnce(&G, &AppContext) -> R,
     ) -> Option<R> {
-        let lock = self.app.lock();
+        let lock = self.app.borrow();
         Some(read(lock.try_global()?, &lock))
     }
 
@@ -140,14 +123,15 @@ impl TestAppContext {
         &mut self,
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
     ) -> R {
-        let mut lock = self.app.lock();
+        let mut lock = self.app.borrow_mut();
         lock.update_global(update)
     }
 
     pub fn to_async(&self) -> AsyncAppContext {
         AsyncAppContext {
-            app: Arc::downgrade(&self.app),
-            executor: self.executor.clone(),
+            app: Rc::downgrade(&self.app),
+            background_executor: self.background_executor.clone(),
+            foreground_executor: self.foreground_executor.clone(),
         }
     }
 

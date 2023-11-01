@@ -59,7 +59,7 @@ impl EntityMap {
     /// Insert an entity into a slot obtained by calling `reserve`.
     pub fn insert<T>(&mut self, slot: Slot<T>, entity: T) -> Model<T>
     where
-        T: 'static + Send,
+        T: 'static,
     {
         let model = slot.0;
         self.entities.insert(model.entity_id, Box::new(entity));
