@@ -1,4 +1,4 @@
-use crate::{zed_pro_moonlight, Theme, ThemeRegistry, ThemeVariant};
+use crate::{ThemeRegistry, ThemeVariant};
 use anyhow::Result;
 use gpui2::{px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels};
 use schemars::{
@@ -21,7 +21,6 @@ pub struct ThemeSettings {
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
     pub active_theme: Arc<ThemeVariant>,
-    pub old_active_theme: Arc<Theme>,
 }
 
 #[derive(Default)]
@@ -124,8 +123,9 @@ impl settings2::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
-            active_theme: Arc::new(zed_pro_moonlight()),
-            old_active_theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
+            active_theme: themes.get("Zed Pro Moonlight").unwrap(),
+            // todo!(Read the theme name from the settings)
+            // active_theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
         };
 
         for value in user_values.into_iter().copied().cloned() {
@@ -138,7 +138,7 @@ impl settings2::Settings for ThemeSettings {
 
             if let Some(value) = &value.theme {
                 if let Some(theme) = themes.get(value).log_err() {
-                    this.old_active_theme = theme;
+                    this.active_theme = theme;
                 }
             }
 
