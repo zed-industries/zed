@@ -48,7 +48,7 @@ fn main() {
     let args = Args::parse();
 
     let story_selector = args.story.clone();
-    let theme_name = args.theme.unwrap_or("One Dark".to_string());
+    let theme_name = args.theme.unwrap_or("Zed Pro Moonlight".to_string());
 
     let asset_source = Arc::new(Assets);
     gpui2::App::production(asset_source).run(move |cx| {
@@ -68,7 +68,7 @@ fn main() {
         let theme_registry = cx.global::<ThemeRegistry>();
 
         let mut theme_settings = ThemeSettings::get_global(cx).clone();
-        theme_settings.old_active_theme = theme_registry.get(&theme_name).unwrap();
+        theme_settings.active_theme = theme_registry.get(&theme_name).unwrap();
         ThemeSettings::override_global(theme_settings, cx);
 
         ui::settings::init(cx);

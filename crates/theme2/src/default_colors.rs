@@ -1,11 +1,9 @@
-use gpui2::{hsla, FontWeight, Rgba};
-use indexmap::IndexMap;
+use gpui2::{hsla, Rgba};
 
 use crate::{
     colors::{GitStatusColors, PlayerColor, PlayerColors, StatusColors, SystemColors, ThemeColors},
     scale::{ColorScaleSet, ColorScales},
-    syntax::{SyntaxStyleName, SyntaxStyles},
-    SyntaxStyle,
+    syntax::SyntaxTheme,
 };
 
 impl Default for SystemColors {
@@ -77,541 +75,115 @@ impl Default for PlayerColors {
     }
 }
 
-impl SyntaxStyles {
+impl SyntaxTheme {
     pub fn default_light() -> Self {
-        use SyntaxStyleName::*;
-
-        let neutral: ColorScaleSet = slate().into();
-
-        Self(IndexMap::from_iter([
-            (
-                Comment,
-                SyntaxStyle::builder().color(neutral.light(11)).build(),
-            ),
-            (
-                CommentDoc,
-                SyntaxStyle::builder().color(neutral.light(11)).build(),
-            ),
-            (
-                Primary,
-                SyntaxStyle::builder().color(neutral.light(12)).build(),
-            ),
-            (
-                Predictive,
-                SyntaxStyle::builder().color(neutral.light(10)).build(),
-            ),
-            (
-                Hint,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(cyan()).light(10))
-                    .build(),
-            ),
-            (
-                Emphasis,
-                SyntaxStyle::builder().weight(FontWeight(600.0)).build(),
-            ),
-            (
-                EmphasisStrong,
-                SyntaxStyle::builder().weight(FontWeight(800.0)).build(),
-            ),
-            (
-                Title,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                LinkUri,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(blue()).light(12))
-                    .build(),
-            ),
-            (
-                LinkText,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(orange()).light(12))
-                    .build(),
-            ),
-            (
-                TextLiteral,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(purple()).light(12))
-                    .build(),
-            ),
-            (
-                Punctuation,
-                SyntaxStyle::builder().color(neutral.light(10)).build(),
-            ),
-            (
-                PunctuationBracket,
-                SyntaxStyle::builder().color(neutral.light(10)).build(),
-            ),
-            (
-                PunctuationDelimiter,
-                SyntaxStyle::builder().color(neutral.light(10)).build(),
-            ),
-            (
-                PunctuationSpecial,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                PunctuationListMarker,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(blue()).light(12))
-                    .build(),
-            ),
-            (
-                String,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(green()).light(12))
-                    .build(),
-            ),
-            (
-                StringSpecial,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                StringSpecialSymbol,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                StringEscape,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(blue()).light(12))
-                    .build(),
-            ),
-            (
-                StringRegex,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(orange()).light(12))
-                    .build(),
-            ),
-            (
-                Constructor,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(purple()).light(12))
-                    .build(),
-            ),
-            // TODO: Continue assigning syntax colors from here
-            (
-                Variant,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Type,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                TypeBuiltin,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Variable,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                VariableSpecial,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Label,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Tag,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Attribute,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Property,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Constant,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Keyword,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Enum,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Operator,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Number,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Boolean,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                ConstantBuiltin,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Function,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                FunctionBuiltin,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                FunctionDefinition,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                FunctionSpecialDefinition,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                FunctionMethod,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                FunctionMethodBuiltin,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Preproc,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-            (
-                Embedded,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).light(12))
-                    .build(),
-            ),
-        ]))
+        Self {
+            highlights: vec![
+                (
+                    "string.special.symbol".into(),
+                    gpui2::rgba(0xad6e26ff).into(),
+                ),
+                ("hint".into(), gpui2::rgba(0x9294beff).into()),
+                ("link_uri".into(), gpui2::rgba(0x3882b7ff).into()),
+                ("type".into(), gpui2::rgba(0x3882b7ff).into()),
+                ("string.regex".into(), gpui2::rgba(0xad6e26ff).into()),
+                ("constant".into(), gpui2::rgba(0x669f59ff).into()),
+                ("function".into(), gpui2::rgba(0x5b79e3ff).into()),
+                ("string.special".into(), gpui2::rgba(0xad6e26ff).into()),
+                ("punctuation.bracket".into(), gpui2::rgba(0x4d4f52ff).into()),
+                ("variable".into(), gpui2::rgba(0x383a41ff).into()),
+                ("punctuation".into(), gpui2::rgba(0x383a41ff).into()),
+                ("property".into(), gpui2::rgba(0xd3604fff).into()),
+                ("string".into(), gpui2::rgba(0x649f57ff).into()),
+                ("predictive".into(), gpui2::rgba(0x9b9ec6ff).into()),
+                ("attribute".into(), gpui2::rgba(0x5c78e2ff).into()),
+                ("number".into(), gpui2::rgba(0xad6e25ff).into()),
+                ("constructor".into(), gpui2::rgba(0x5c78e2ff).into()),
+                ("embedded".into(), gpui2::rgba(0x383a41ff).into()),
+                ("title".into(), gpui2::rgba(0xd3604fff).into()),
+                ("tag".into(), gpui2::rgba(0x5c78e2ff).into()),
+                ("boolean".into(), gpui2::rgba(0xad6e25ff).into()),
+                (
+                    "punctuation.list_marker".into(),
+                    gpui2::rgba(0xd3604fff).into(),
+                ),
+                ("variant".into(), gpui2::rgba(0x5b79e3ff).into()),
+                ("emphasis".into(), gpui2::rgba(0x5c78e2ff).into()),
+                ("link_text".into(), gpui2::rgba(0x5b79e3ff).into()),
+                ("comment".into(), gpui2::rgba(0xa2a3a7ff).into()),
+                ("punctuation.special".into(), gpui2::rgba(0xb92b46ff).into()),
+                ("emphasis.strong".into(), gpui2::rgba(0xad6e25ff).into()),
+                ("primary".into(), gpui2::rgba(0x383a41ff).into()),
+                (
+                    "punctuation.delimiter".into(),
+                    gpui2::rgba(0x4d4f52ff).into(),
+                ),
+                ("label".into(), gpui2::rgba(0x5c78e2ff).into()),
+                ("keyword".into(), gpui2::rgba(0xa449abff).into()),
+                ("string.escape".into(), gpui2::rgba(0x7c7e86ff).into()),
+                ("text.literal".into(), gpui2::rgba(0x649f57ff).into()),
+                ("variable.special".into(), gpui2::rgba(0xad6e25ff).into()),
+                ("comment.doc".into(), gpui2::rgba(0x7c7e86ff).into()),
+                ("enum".into(), gpui2::rgba(0xd3604fff).into()),
+                ("operator".into(), gpui2::rgba(0x3882b7ff).into()),
+                ("preproc".into(), gpui2::rgba(0x383a41ff).into()),
+            ],
+        }
     }
 
     pub fn default_dark() -> Self {
-        use SyntaxStyleName::*;
-
-        let neutral: ColorScaleSet = slate().into();
-
-        Self(IndexMap::from_iter([
-            (
-                Comment,
-                SyntaxStyle::builder().color(neutral.dark(11)).build(),
-            ),
-            (
-                CommentDoc,
-                SyntaxStyle::builder().color(neutral.dark(11)).build(),
-            ),
-            (
-                Primary,
-                SyntaxStyle::builder().color(neutral.dark(12)).build(),
-            ),
-            (
-                Predictive,
-                SyntaxStyle::builder().color(neutral.dark(10)).build(),
-            ),
-            (
-                Hint,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(cyan()).dark(10))
-                    .build(),
-            ),
-            (
-                Emphasis,
-                SyntaxStyle::builder().weight(FontWeight(600.0)).build(),
-            ),
-            (
-                EmphasisStrong,
-                SyntaxStyle::builder().weight(FontWeight(800.0)).build(),
-            ),
-            (
-                Title,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                LinkUri,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(blue()).dark(12))
-                    .build(),
-            ),
-            (
-                LinkText,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(orange()).dark(12))
-                    .build(),
-            ),
-            (
-                TextLiteral,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(purple()).dark(12))
-                    .build(),
-            ),
-            (
-                Punctuation,
-                SyntaxStyle::builder().color(neutral.dark(10)).build(),
-            ),
-            (
-                PunctuationBracket,
-                SyntaxStyle::builder().color(neutral.dark(10)).build(),
-            ),
-            (
-                PunctuationDelimiter,
-                SyntaxStyle::builder().color(neutral.dark(10)).build(),
-            ),
-            (
-                PunctuationSpecial,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                PunctuationListMarker,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(blue()).dark(12))
-                    .build(),
-            ),
-            (
-                String,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(green()).dark(12))
-                    .build(),
-            ),
-            (
-                StringSpecial,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                StringSpecialSymbol,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                StringEscape,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(blue()).dark(12))
-                    .build(),
-            ),
-            (
-                StringRegex,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(orange()).dark(12))
-                    .build(),
-            ),
-            (
-                Constructor,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(purple()).dark(12))
-                    .build(),
-            ),
-            // TODO: Continue assigning syntax colors from here
-            (
-                Variant,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Type,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                TypeBuiltin,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Variable,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                VariableSpecial,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Label,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Tag,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Attribute,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Property,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Constant,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Keyword,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Enum,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Operator,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Number,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Boolean,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                ConstantBuiltin,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Function,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                FunctionBuiltin,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                FunctionDefinition,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                FunctionSpecialDefinition,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                FunctionMethod,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                FunctionMethodBuiltin,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Preproc,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-            (
-                Embedded,
-                SyntaxStyle::builder()
-                    .color(ColorScaleSet::from(red()).dark(12))
-                    .build(),
-            ),
-        ]))
+        Self {
+            highlights: vec![
+                ("keyword".into(), gpui2::rgba(0xb477cfff).into()),
+                ("comment.doc".into(), gpui2::rgba(0x878e98ff).into()),
+                ("variant".into(), gpui2::rgba(0x73ade9ff).into()),
+                ("property".into(), gpui2::rgba(0xd07277ff).into()),
+                ("function".into(), gpui2::rgba(0x73ade9ff).into()),
+                ("type".into(), gpui2::rgba(0x6eb4bfff).into()),
+                ("tag".into(), gpui2::rgba(0x74ade8ff).into()),
+                ("string.escape".into(), gpui2::rgba(0x878e98ff).into()),
+                ("punctuation.bracket".into(), gpui2::rgba(0xb2b9c6ff).into()),
+                ("hint".into(), gpui2::rgba(0x5a6f89ff).into()),
+                ("punctuation".into(), gpui2::rgba(0xacb2beff).into()),
+                ("comment".into(), gpui2::rgba(0x5d636fff).into()),
+                ("emphasis".into(), gpui2::rgba(0x74ade8ff).into()),
+                ("punctuation.special".into(), gpui2::rgba(0xb1574bff).into()),
+                ("link_uri".into(), gpui2::rgba(0x6eb4bfff).into()),
+                ("string.regex".into(), gpui2::rgba(0xbf956aff).into()),
+                ("constructor".into(), gpui2::rgba(0x73ade9ff).into()),
+                ("operator".into(), gpui2::rgba(0x6eb4bfff).into()),
+                ("constant".into(), gpui2::rgba(0xdfc184ff).into()),
+                ("string.special".into(), gpui2::rgba(0xbf956aff).into()),
+                ("emphasis.strong".into(), gpui2::rgba(0xbf956aff).into()),
+                (
+                    "string.special.symbol".into(),
+                    gpui2::rgba(0xbf956aff).into(),
+                ),
+                ("primary".into(), gpui2::rgba(0xacb2beff).into()),
+                ("preproc".into(), gpui2::rgba(0xc8ccd4ff).into()),
+                ("string".into(), gpui2::rgba(0xa1c181ff).into()),
+                (
+                    "punctuation.delimiter".into(),
+                    gpui2::rgba(0xb2b9c6ff).into(),
+                ),
+                ("embedded".into(), gpui2::rgba(0xc8ccd4ff).into()),
+                ("enum".into(), gpui2::rgba(0xd07277ff).into()),
+                ("variable.special".into(), gpui2::rgba(0xbf956aff).into()),
+                ("text.literal".into(), gpui2::rgba(0xa1c181ff).into()),
+                ("attribute".into(), gpui2::rgba(0x74ade8ff).into()),
+                ("link_text".into(), gpui2::rgba(0x73ade9ff).into()),
+                ("title".into(), gpui2::rgba(0xd07277ff).into()),
+                ("predictive".into(), gpui2::rgba(0x5a6a87ff).into()),
+                ("number".into(), gpui2::rgba(0xbf956aff).into()),
+                ("label".into(), gpui2::rgba(0x74ade8ff).into()),
+                ("variable".into(), gpui2::rgba(0xc8ccd4ff).into()),
+                ("boolean".into(), gpui2::rgba(0xbf956aff).into()),
+                (
+                    "punctuation.list_marker".into(),
+                    gpui2::rgba(0xd07277ff).into(),
+                ),
+            ],
+        }
     }
 }
 

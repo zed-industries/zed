@@ -1,7 +1,7 @@
 use gpui2::Hsla;
 use refineable::Refineable;
 
-use crate::{generate_struct_with_overrides, SyntaxStyles};
+use crate::{generate_struct_with_overrides, SyntaxTheme};
 
 pub struct SystemColors {
     pub transparent: Hsla,
@@ -94,7 +94,7 @@ generate_struct_with_overrides! {
     status: StatusColors,
     git: GitStatusColors,
     player: PlayerColors,
-    syntax: SyntaxStyles
+    syntax: SyntaxTheme
 }
 
 #[cfg(test)]
