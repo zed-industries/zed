@@ -11,9 +11,9 @@ use lsp2::Url;
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use serde_json::json;
-use std::{os::unix, task::Poll};
+use std::task::Poll;
 use unindent::Unindent as _;
-use util::{assert_set_eq, test::temp_tree};
+use util::assert_set_eq;
 
 // #[gpui2::test]
 // async fn test_symlinks(cx: &mut gpui2::TestAppContext) {
