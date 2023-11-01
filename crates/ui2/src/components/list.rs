@@ -39,7 +39,7 @@ impl ListHeader {
             left_icon: None,
             meta: None,
             variant: ListItemVariant::default(),
-            toggleable: Toggleable::Toggleable(ToggleState::Toggled),
+            toggleable: Toggleable::NotToggleable,
         }
     }
 
@@ -105,7 +105,6 @@ impl ListHeader {
         };
 
         h_stack()
-            .flex_1()
             .w_full()
             .bg(cx.theme().colors().surface)
             // TODO: Add focus state
@@ -560,7 +559,7 @@ impl ListSeparator {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        div().h_px().w_full().bg(cx.theme().colors().border)
+        div().h_px().w_full().bg(cx.theme().colors().border_variant)
     }
 }
 
@@ -602,9 +601,9 @@ impl<V: 'static> List<V> {
         let is_toggled = Toggleable::is_toggled(&self.toggleable);
 
         let list_content = match (self.items.is_empty(), is_toggled) {
-            (_, false) => div(),
             (false, _) => div().children(self.items),
-            (true, _) => {
+            (true, false) => div(),
+            (true, true) => {
                 div().child(Label::new(self.empty_message.clone()).color(LabelColor::Muted))
             }
         };

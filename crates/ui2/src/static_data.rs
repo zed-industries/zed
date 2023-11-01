@@ -8,8 +8,8 @@ use theme2::ActiveTheme;
 use crate::{
     Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
     HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListHeaderMeta,
-    ListItem, ListSubHeader, Livestream, MicStatus, ModifierKeys, PaletteItem, Player,
-    PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, ToggleState,
+    ListItem, ListSubHeader, Livestream, MicStatus, ModifierKeys, NotificationItem, PaletteItem,
+    Player, PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, ToggleState,
     VideoStatus,
 };
 use crate::{HighlightedText, ListDetailsEntry};
@@ -326,6 +326,9 @@ pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
     ]
 }
 
+pub fn static_new_notification_items_2<V: 'static>() -> Vec<NotificationItem<V>> {
+    vec![]
+}
 pub fn static_new_notification_items<V: 'static>() -> Vec<ListItem<V>> {
     vec![
         ListItem::Header(ListSubHeader::new("New")),
@@ -351,6 +354,52 @@ pub fn static_new_notification_items<V: 'static>() -> Vec<ListItem<V>> {
         ListItem::Details(ListDetailsEntry::new(
             "as-cii accepted your contact request.",
         )),
+        ListItem::Details(
+            ListDetailsEntry::new("You were added as an admin on the #gpui2 channel.").seen(true),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "osiewicz accepted your contact request.",
+        )),
+        ListItem::Details(ListDetailsEntry::new(
+            "ConradIrwin accepted your contact request.",
+        )),
+        ListItem::Details(
+            ListDetailsEntry::new("nathansobo invited you to a stream in #gpui2.")
+                .seen(true)
+                .meta("This stream has ended."),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "nathansobo accepted your contact request.",
+        )),
+        ListItem::Header(ListSubHeader::new("Earlier")),
+        ListItem::Details(
+            ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
+                Button::new("Decline"),
+                Button::new("Accept").variant(crate::ButtonVariant::Filled),
+            ]),
+        ),
+        ListItem::Details(
+            ListDetailsEntry::new("maxdeviant invited you to a stream in #design.")
+                .seen(true)
+                .meta("This stream has ended."),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "as-cii accepted your contact request.",
+        )),
+        ListItem::Details(
+            ListDetailsEntry::new("You were added as an admin on the #gpui2 channel.").seen(true),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "osiewicz accepted your contact request.",
+        )),
+        ListItem::Details(ListDetailsEntry::new(
+            "ConradIrwin accepted your contact request.",
+        )),
+        ListItem::Details(
+            ListDetailsEntry::new("nathansobo invited you to a stream in #gpui2.")
+                .seen(true)
+                .meta("This stream has ended."),
+        ),
     ]
     .into_iter()
     .map(From::from)
