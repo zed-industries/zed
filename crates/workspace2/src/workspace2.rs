@@ -23,8 +23,8 @@ use futures::{
     FutureExt,
 };
 use gpui2::{
-    AnyModel, AnyView, AppContext, AsyncAppContext, AsyncWindowContext, DisplayId, Entity,
-    EventEmitter, MainThread, Model, ModelContext, Subscription, Task, View, ViewContext,
+    div, AnyModel, AnyView, AppContext, AsyncAppContext, AsyncWindowContext, Div, Entity,
+    EventEmitter, MainThread, Model, ModelContext, Render, Subscription, Task, View, ViewContext,
     VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
@@ -32,7 +32,10 @@ use language2::LanguageRegistry;
 use node_runtime::NodeRuntime;
 pub use pane::*;
 pub use pane_group::*;
-use persistence::model::{ItemId, WorkspaceLocation};
+use persistence::{
+    model::{ItemId, WorkspaceLocation},
+    DB,
+};
 use project2::{Project, ProjectEntryId, ProjectPath, Worktree};
 use std::{
     any::TypeId,
@@ -773,139 +776,137 @@ impl Workspace {
     //         }
     //     }
 
-    // fn new_local(
-    //     abs_paths: Vec<PathBuf>,
-    //     app_state: Arc<AppState>,
-    //     requesting_window: Option<WindowHandle<Workspace>>,
-    //     cx: &mut AppContext,
-    // ) -> Task<(
-    //     WeakView<Workspace>,
-    //     Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
-    // )> {
-    //     let project_handle = Project::local(
-    //         app_state.client.clone(),
-    //         app_state.node_runtime.clone(),
-    //         app_state.user_store.clone(),
-    //         app_state.languages.clone(),
-    //         app_state.fs.clone(),
-    //         cx,
-    //     );
+    fn new_local(
+        abs_paths: Vec<PathBuf>,
+        app_state: Arc<AppState>,
+        requesting_window: Option<WindowHandle<Workspace>>,
+        cx: &mut MainThread<AppContext>,
+    ) -> Task<(
+        WeakView<Workspace>,
+        Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
+    )> {
+        let project_handle = Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            cx,
+        );
 
-    //     cx.spawn(|mut cx| async move {
-    //         let serialized_workspace = persistence::DB.workspace_for_roots(&abs_paths.as_slice());
+        cx.spawn_on_main(|mut cx| async move {
+            let serialized_workspace = persistence::DB.workspace_for_roots(&abs_paths.as_slice());
 
-    //         let paths_to_open = Arc::new(abs_paths);
+            let paths_to_open = Arc::new(abs_paths);
 
-    //         // Get project paths for all of the abs_paths
-    //         let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
-    //         let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
-    //             Vec::with_capacity(paths_to_open.len());
-    //         for path in paths_to_open.iter().cloned() {
-    //             if let Some((worktree, project_entry)) = cx
-    //                 .update(|cx| {
-    //                     Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
-    //                 })
-    //                 .await
-    //                 .log_err()
-    //             {
-    //                 worktree_roots.insert(worktree.read_with(&mut cx, |tree, _| tree.abs_path()));
-    //                 project_paths.push((path, Some(project_entry)));
-    //             } else {
-    //                 project_paths.push((path, None));
-    //             }
-    //         }
+            // Get project paths for all of the abs_paths
+            let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
+            let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
+                Vec::with_capacity(paths_to_open.len());
+            for path in paths_to_open.iter().cloned() {
+                if let Some((worktree, project_entry)) = cx
+                    .update(|cx| {
+                        Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
+                    })?
+                    .await
+                    .log_err()
+                {
+                    worktree_roots.extend(worktree.update(&mut cx, |tree, _| tree.abs_path()).ok());
+                    project_paths.push((path, Some(project_entry)));
+                } else {
+                    project_paths.push((path, None));
+                }
+            }
 
-    //             let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
-    //                 serialized_workspace.id
-    //             } else {
-    //                 DB.next_id().await.unwrap_or(0)
-    //             };
+            let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
+                serialized_workspace.id
+            } else {
+                DB.next_id().await.unwrap_or(0)
+            };
 
-    //             let window = if let Some(window) = requesting_window {
-    //                 window.replace_root(&mut cx, |cx| {
-    //                     Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
-    //                 });
-    //                 window
-    //             } else {
-    //                 {
-    //                     let window_bounds_override = window_bounds_env_override(&cx);
-    //                     let (bounds, display) = if let Some(bounds) = window_bounds_override {
-    //                         (Some(bounds), None)
-    //                     } else {
-    //                         serialized_workspace
-    //                             .as_ref()
-    //                             .and_then(|serialized_workspace| {
-    //                                 let display = serialized_workspace.display?;
-    //                                 let mut bounds = serialized_workspace.bounds?;
+            let window = if let Some(window) = requesting_window {
+                cx.update_window(window.into(), |cx| {
+                    cx.replace_root_view(|cx| {
+                        Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
+                    });
+                });
+                window
+            } else {
+                {
+                    let window_bounds_override = window_bounds_env_override(&cx);
+                    let (bounds, display) = if let Some(bounds) = window_bounds_override {
+                        (Some(bounds), None)
+                    } else {
+                        serialized_workspace
+                            .as_ref()
+                            .and_then(|serialized_workspace| {
+                                let display = serialized_workspace.display?;
+                                let mut bounds = serialized_workspace.bounds?;
 
-    //                                 // Stored bounds are relative to the containing display.
-    //                                 // So convert back to global coordinates if that screen still exists
-    //                                 if let WindowBounds::Fixed(mut window_bounds) = bounds {
-    //                                     if let Some(screen) = cx.platform().screen_by_id(display) {
-    //                                         let screen_bounds = screen.bounds();
-    //                                         window_bounds.set_origin_x(
-    //                                             window_bounds.origin_x() + screen_bounds.origin_x(),
-    //                                         );
-    //                                         window_bounds.set_origin_y(
-    //                                             window_bounds.origin_y() + screen_bounds.origin_y(),
-    //                                         );
-    //                                         bounds = WindowBounds::Fixed(window_bounds);
-    //                                     } else {
-    //                                         // Screen no longer exists. Return none here.
-    //                                         return None;
-    //                                     }
-    //                                 }
+                                // Stored bounds are relative to the containing display.
+                                // So convert back to global coordinates if that screen still exists
+                                if let WindowBounds::Fixed(mut window_bounds) = bounds {
+                                    if let Some(screen) = cx.platform().screen_by_id(display) {
+                                        let screen_bounds = screen.bounds();
+                                        window_bounds.origin.x += screen_bounds.origin.x;
+                                        window_bounds.origin.y += screen_bounds.origin.y;
+                                        bounds = WindowBounds::Fixed(window_bounds);
+                                    } else {
+                                        // Screen no longer exists. Return none here.
+                                        return None;
+                                    }
+                                }
 
-    //                                 Some((bounds, display))
-    //                             })
-    //                             .unzip()
-    //                     };
+                                Some((bounds, display))
+                            })
+                            .unzip()
+                    };
 
-    //                     // Use the serialized workspace to construct the new window
-    //                     cx.add_window(
-    //                         (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
-    //                         |cx| {
-    //                             Workspace::new(
-    //                                 workspace_id,
-    //                                 project_handle.clone(),
-    //                                 app_state.clone(),
-    //                                 cx,
-    //                             )
-    //                         },
-    //                     )
-    //                 }
-    //             };
+                    // Use the serialized workspace to construct the new window
+                    cx.open_window(
+                        (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
+                        |cx| {
+                            Workspace::new(
+                                workspace_id,
+                                project_handle.clone(),
+                                app_state.clone(),
+                                cx,
+                            )
+                        },
+                    )
+                }
+            };
 
-    //             // We haven't yielded the main thread since obtaining the window handle,
-    //             // so the window exists.
-    //             let workspace = window.root(&cx).unwrap();
+            // We haven't yielded the main thread since obtaining the window handle,
+            // so the window exists.
+            let workspace = window.root(&cx).unwrap();
 
-    //             (app_state.initialize_workspace)(
-    //                 workspace.downgrade(),
-    //                 serialized_workspace.is_some(),
-    //                 app_state.clone(),
-    //                 cx.clone(),
-    //             )
-    //             .await
-    //             .log_err();
+            (app_state.initialize_workspace)(
+                workspace.downgrade(),
+                serialized_workspace.is_some(),
+                app_state.clone(),
+                cx.clone(),
+            )
+            .await
+            .log_err();
 
-    //             window.update(&mut cx, |cx| cx.activate_window());
+            window.update_root(&mut cx, |cx| cx.activate_window());
 
-    //             let workspace = workspace.downgrade();
-    //             notify_if_database_failed(&workspace, &mut cx);
-    //             let opened_items = open_items(
-    //                 serialized_workspace,
-    //                 &workspace,
-    //                 project_paths,
-    //                 app_state,
-    //                 cx,
-    //             )
-    //             .await
-    //             .unwrap_or_default();
+            let workspace = workspace.downgrade();
+            notify_if_database_failed(&workspace, &mut cx);
+            let opened_items = open_items(
+                serialized_workspace,
+                &workspace,
+                project_paths,
+                app_state,
+                cx,
+            )
+            .await
+            .unwrap_or_default();
 
-    //             (workspace, opened_items)
-    //         })
-    //     }
+            (workspace, opened_items)
+        })
+    }
 
     pub fn weak_handle(&self) -> WeakView<Self> {
         self.weak_self.clone()
@@ -3744,6 +3745,14 @@ impl EventEmitter for Workspace {
     type Event = Event;
 }
 
+impl Render for Workspace {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        div()
+    }
+}
+
 // todo!()
 // impl Entity for Workspace {
 //     type Event = Event;
@@ -3960,7 +3969,7 @@ impl WorkspaceStore {
             let mut response = proto::FollowResponse::default();
             for workspace in &this.workspaces {
                 workspace
-                    .update(cx, |workspace, cx| {
+                    .update_root(cx, |workspace, cx| {
                         let handler_response = workspace.handle_follow(follower.project_id, cx);
                         if response.views.is_empty() {
                             response.views = handler_response.views;
@@ -4118,9 +4127,9 @@ pub async fn activate_workspace_for_project(
     .await
 }
 
-// pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
-//     DB.last_workspace().await.log_err().flatten()
-// }
+pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
+    DB.last_workspace().await.log_err().flatten()
+}
 
 // async fn join_channel_internal(
 //     channel_id: u64,
@@ -4345,24 +4354,24 @@ pub fn open_paths(
     })
 }
 
-// pub fn open_new(
-//     app_state: &Arc<AppState>,
-//     cx: &mut AppContext,
-//     init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static,
-// ) -> Task<()> {
-//     let task = Workspace::new_local(Vec::new(), app_state.clone(), None, cx);
-//     cx.spawn(|mut cx| async move {
-//         let (workspace, opened_paths) = task.await;
+pub fn open_new(
+    app_state: &Arc<AppState>,
+    cx: &mut AppContext,
+    init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static,
+) -> Task<()> {
+    let task = Workspace::new_local(Vec::new(), app_state.clone(), None, cx);
+    cx.spawn(|mut cx| async move {
+        let (workspace, opened_paths) = task.await;
 
-//         workspace
-//             .update(&mut cx, |workspace, cx| {
-//                 if opened_paths.is_empty() {
-//                     init(workspace, cx)
-//                 }
-//             })
-//             .log_err();
-//     })
-// }
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                if opened_paths.is_empty() {
+                    init(workspace, cx)
+                }
+            })
+            .log_err();
+    })
+}
 
 // pub fn create_and_open_local_file(
 //     path: &'static Path,

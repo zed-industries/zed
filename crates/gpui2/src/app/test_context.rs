@@ -12,6 +12,7 @@ pub struct TestAppContext {
 }
 
 impl Context for TestAppContext {
+    type WindowContext<'a> = WindowContext<'a>;
     type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
@@ -33,6 +34,14 @@ impl Context for TestAppContext {
     ) -> Self::Result<R> {
         let mut lock = self.app.lock();
         lock.update_model(handle, update)
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self::WindowContext<'_>) -> T,
+    {
+        let mut lock = self.app.lock();
+        lock.update_window(window, f)
     }
 }
 

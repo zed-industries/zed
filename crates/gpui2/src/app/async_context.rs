@@ -1,6 +1,6 @@
 use crate::{
-    AnyWindowHandle, AppContext, Context, Executor, MainThread, Model, ModelContext, Result, Task,
-    View, ViewContext, VisualContext, WindowContext, WindowHandle,
+    AnyWindowHandle, AppContext, Context, Executor, MainThread, Model, ModelContext, Render,
+    Result, Task, View, ViewContext, VisualContext, WindowContext, WindowHandle,
 };
 use anyhow::Context as _;
 use derive_more::{Deref, DerefMut};
@@ -14,6 +14,7 @@ pub struct AsyncAppContext {
 }
 
 impl Context for AsyncAppContext {
+    type WindowContext<'a> = WindowContext<'a>;
     type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = Result<T>;
 
@@ -38,6 +39,13 @@ impl Context for AsyncAppContext {
         let mut lock = app.lock(); // Need this to compile
         Ok(lock.update_model(handle, update))
     }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self::WindowContext<'_>) -> T,
+    {
+        todo!()
+    }
 }
 
 impl AsyncAppContext {
@@ -60,12 +68,12 @@ impl AsyncAppContext {
 
     pub fn update_window<R>(
         &self,
-        handle: AnyWindowHandle,
+        window: AnyWindowHandle,
         update: impl FnOnce(&mut WindowContext) -> R,
     ) -> Result<R> {
         let app = self.app.upgrade().context("app was released")?;
         let mut app_context = app.lock();
-        app_context.update_window(handle, update)
+        app_context.update_window(window, update)
     }
 
     pub fn update_window_root<V, R>(
@@ -224,7 +232,9 @@ impl AsyncWindowContext {
 }
 
 impl Context for AsyncWindowContext {
+    type WindowContext<'a> = WindowContext<'a>;
     type ModelContext<'a, T> = ModelContext<'a, T>;
+
     type Result<T> = Result<T>;
 
     fn build_model<T>(
@@ -245,6 +255,13 @@ impl Context for AsyncWindowContext {
     ) -> Result<R> {
         self.app
             .update_window(self.window, |cx| cx.update_model(handle, update))
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self::WindowContext<'_>) -> T,
+    {
+        self.app.update_window(window, update)
     }
 }
 
@@ -269,6 +286,17 @@ impl VisualContext for AsyncWindowContext {
     ) -> Self::Result<R> {
         self.app
             .update_window(self.window, |cx| cx.update_view(view, update))
+    }
+
+    fn replace_root_view<V>(
+        &mut self,
+        build_view: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
+    ) -> Self::Result<View<V>>
+    where
+        V: 'static + Send + Render,
+    {
+        self.app
+            .update_window(self.window, |cx| cx.replace_root_view(build_view))
     }
 }
 

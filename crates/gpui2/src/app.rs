@@ -267,30 +267,6 @@ impl AppContext {
             .collect()
     }
 
-    pub(crate) fn update_window<R>(
-        &mut self,
-        handle: AnyWindowHandle,
-        update: impl FnOnce(&mut WindowContext) -> R,
-    ) -> Result<R> {
-        self.update(|cx| {
-            let mut window = cx
-                .windows
-                .get_mut(handle.id)
-                .ok_or_else(|| anyhow!("window not found"))?
-                .take()
-                .unwrap();
-
-            let result = update(&mut WindowContext::new(cx, &mut window));
-
-            cx.windows
-                .get_mut(handle.id)
-                .ok_or_else(|| anyhow!("window not found"))?
-                .replace(window);
-
-            Ok(result)
-        })
-    }
-
     pub fn update_window_root<V, R>(
         &mut self,
         handle: &WindowHandle<V>,
@@ -753,6 +729,7 @@ impl AppContext {
 }
 
 impl Context for AppContext {
+    type WindowContext<'a> = WindowContext<'a>;
     type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
@@ -782,6 +759,29 @@ impl Context for AppContext {
             let result = update(&mut entity, &mut ModelContext::new(cx, model.downgrade()));
             cx.entities.end_lease(entity);
             result
+        })
+    }
+
+    fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self::WindowContext<'_>) -> T,
+    {
+        self.update(|cx| {
+            let mut window = cx
+                .windows
+                .get_mut(handle.id)
+                .ok_or_else(|| anyhow!("window not found"))?
+                .take()
+                .unwrap();
+
+            let result = update(&mut WindowContext::new(cx, &mut window));
+
+            cx.windows
+                .get_mut(handle.id)
+                .ok_or_else(|| anyhow!("window not found"))?
+                .replace(window);
+
+            Ok(result)
         })
     }
 }

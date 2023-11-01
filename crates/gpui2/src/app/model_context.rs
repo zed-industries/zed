@@ -1,7 +1,8 @@
 use crate::{
-    AppContext, AsyncAppContext, Context, Effect, Entity, EntityId, EventEmitter, MainThread,
-    Model, Subscription, Task, WeakModel,
+    AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity, EntityId, EventEmitter,
+    MainThread, Model, Subscription, Task, WeakModel, WindowContext,
 };
+use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use std::{
@@ -228,6 +229,7 @@ where
 }
 
 impl<'a, T> Context for ModelContext<'a, T> {
+    type WindowContext<'b> = WindowContext<'b>;
     type ModelContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
@@ -247,6 +249,13 @@ impl<'a, T> Context for ModelContext<'a, T> {
         update: impl FnOnce(&mut U, &mut Self::ModelContext<'_, U>) -> R,
     ) -> R {
         self.app.update_model(handle, update)
+    }
+
+    fn update_window<R, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<R>
+    where
+        F: FnOnce(&mut Self::WindowContext<'_>) -> R,
+    {
+        self.app.update_window(window, update)
     }
 }
 

@@ -314,21 +314,20 @@ async fn installation_id() -> Result<String> {
 }
 
 async fn restore_or_create_workspace(_app_state: &Arc<AppState>, mut _cx: AsyncAppContext) {
-    todo!("workspace")
-    // if let Some(location) = workspace::last_opened_workspace_paths().await {
-    //     cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))
-    //         .await
-    //         .log_err();
-    // } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-    //     cx.update(|cx| show_welcome_experience(app_state, cx));
-    // } else {
-    //     cx.update(|cx| {
-    //         workspace::open_new(app_state, cx, |workspace, cx| {
-    //             Editor::new_file(workspace, &Default::default(), cx)
-    //         })
-    //         .detach();
-    //     });
-    // }
+    if let Some(location) = workspace2::last_opened_workspace_paths().await {
+        cx.update(|cx| workspace2::open_paths(location.paths().as_ref(), app_state, None, cx))
+            .await
+            .log_err();
+    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+        cx.update(|cx| show_welcome_experience(app_state, cx));
+    } else {
+        cx.update(|cx| {
+            workspace2::open_new(app_state, cx, |workspace, cx| {
+                Editor::new_file(workspace, &Default::default(), cx)
+            })
+            .detach();
+        });
+    }
 }
 
 fn init_paths() {

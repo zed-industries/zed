@@ -5,7 +5,7 @@ use crate::{
     Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
     MainThread, MainThreadOnly, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow,
-    Point, PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams, RenderSvgParams,
+    Point, PolychromeSprite, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams,
     ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine,
     Task, Underline, UnderlineStyle, View, VisualContext, WeakView, WindowOptions,
     SUBPIXEL_VARIANTS,
@@ -314,6 +314,8 @@ impl<'a> WindowContext<'a> {
     pub(crate) fn new(app: &'a mut AppContext, window: &'a mut Window) -> Self {
         Self { app, window }
     }
+
+    // fn replace_root(&mut )
 
     /// Obtain a handle to the window that belongs to this context.
     pub fn window_handle(&self) -> AnyWindowHandle {
@@ -1264,6 +1266,7 @@ impl<'a> WindowContext<'a> {
 }
 
 impl Context for WindowContext<'_> {
+    type WindowContext<'a> = WindowContext<'a>;
     type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
@@ -1291,6 +1294,17 @@ impl Context for WindowContext<'_> {
         );
         self.entities.end_lease(entity);
         result
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self::WindowContext<'_>) -> T,
+    {
+        if window == self.window.handle {
+            Ok(update(self))
+        } else {
+            self.app.update_window(window, update)
+        }
     }
 }
 
@@ -1325,6 +1339,24 @@ impl VisualContext for WindowContext<'_> {
         let result = update(&mut *lease, &mut cx);
         cx.app.entities.end_lease(lease);
         result
+    }
+
+    fn replace_root_view<V>(
+        &mut self,
+        build_view: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
+    ) -> Self::Result<View<V>>
+    where
+        V: 'static + Send + Render,
+    {
+        let slot = self.app.entities.reserve();
+        let view = View {
+            model: slot.clone(),
+        };
+        let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
+        let entity = build_view(&mut cx);
+        self.entities.insert(slot, entity);
+        self.window.root_view = Some(view.clone().into());
+        view
     }
 }
 
@@ -1900,6 +1932,7 @@ impl<V: 'static> MainThread<ViewContext<'_, V>> {
 }
 
 impl<V> Context for ViewContext<'_, V> {
+    type WindowContext<'a> = WindowContext<'a>;
     type ModelContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
@@ -1920,6 +1953,13 @@ impl<V> Context for ViewContext<'_, V> {
     ) -> R {
         self.window_cx.update_model(model, update)
     }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self::WindowContext<'_>) -> T,
+    {
+        self.window_cx.update_window(window, update)
+    }
 }
 
 impl<V: 'static> VisualContext for ViewContext<'_, V> {
@@ -1938,6 +1978,16 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
         update: impl FnOnce(&mut V2, &mut Self::ViewContext<'_, V2>) -> R,
     ) -> Self::Result<R> {
         self.window_cx.update_view(view, update)
+    }
+
+    fn replace_root_view<W>(
+        &mut self,
+        build_view: impl FnOnce(&mut Self::ViewContext<'_, W>) -> W,
+    ) -> Self::Result<View<W>>
+    where
+        W: 'static + Send + Render,
+    {
+        self.window_cx.replace_root_view(build_view)
     }
 }
 
@@ -1972,18 +2022,7 @@ pub struct WindowHandle<V> {
     state_type: PhantomData<V>,
 }
 
-impl<V> Copy for WindowHandle<V> {}
-
-impl<V> Clone for WindowHandle<V> {
-    fn clone(&self) -> Self {
-        WindowHandle {
-            any_handle: self.any_handle,
-            state_type: PhantomData,
-        }
-    }
-}
-
-impl<V: 'static> WindowHandle<V> {
+impl<V: 'static + Render> WindowHandle<V> {
     pub fn new(id: WindowId) -> Self {
         WindowHandle {
             any_handle: AnyWindowHandle {
@@ -1994,7 +2033,7 @@ impl<V: 'static> WindowHandle<V> {
         }
     }
 
-    pub fn update<R>(
+    pub fn update_root<R>(
         &self,
         cx: &mut AppContext,
         update: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
@@ -2009,6 +2048,17 @@ impl<V: 'static> WindowHandle<V> {
                 .unwrap();
             root_view.update(cx, update)
         })
+    }
+}
+
+impl<V> Copy for WindowHandle<V> {}
+
+impl<V> Clone for WindowHandle<V> {
+    fn clone(&self) -> Self {
+        WindowHandle {
+            any_handle: self.any_handle,
+            state_type: PhantomData,
+        }
     }
 }
 

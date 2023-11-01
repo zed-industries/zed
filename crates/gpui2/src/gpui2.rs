@@ -77,6 +77,7 @@ use taffy::TaffyLayoutEngine;
 type AnyBox = Box<dyn Any + Send>;
 
 pub trait Context {
+    type WindowContext<'a>: VisualContext;
     type ModelContext<'a, T>;
     type Result<T>;
 
@@ -87,11 +88,17 @@ pub trait Context {
     where
         T: 'static + Send;
 
-    fn update_model<T: 'static, R>(
+    fn update_model<T, R>(
         &mut self,
         handle: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
-    ) -> Self::Result<R>;
+    ) -> Self::Result<R>
+    where
+        T: 'static;
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self::WindowContext<'_>) -> T;
 }
 
 pub trait VisualContext: Context {
@@ -99,7 +106,7 @@ pub trait VisualContext: Context {
 
     fn build_view<V>(
         &mut self,
-        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
+        build_view: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Send;
@@ -109,6 +116,13 @@ pub trait VisualContext: Context {
         view: &View<V>,
         update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, V>) -> R,
     ) -> Self::Result<R>;
+
+    fn replace_root_view<V>(
+        &mut self,
+        build_view: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
+    ) -> Self::Result<View<V>>
+    where
+        V: 'static + Send + Render;
 }
 
 pub trait Entity<T>: Sealed {
@@ -145,6 +159,7 @@ impl<T> DerefMut for MainThread<T> {
 }
 
 impl<C: Context> Context for MainThread<C> {
+    type WindowContext<'a> = MainThread<C::WindowContext<'a>>;
     type ModelContext<'a, T> = MainThread<C::ModelContext<'a, T>>;
     type Result<T> = C::Result<T>;
 
@@ -179,6 +194,20 @@ impl<C: Context> Context for MainThread<C> {
                 >(cx)
             };
             update(entity, cx)
+        })
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self::WindowContext<'_>) -> T,
+    {
+        self.0.update_window(window, |cx| {
+            let cx = unsafe {
+                mem::transmute::<&mut C::WindowContext<'_>, &mut MainThread<C::WindowContext<'_>>>(
+                    cx,
+                )
+            };
+            update(cx)
         })
     }
 }
@@ -217,6 +246,24 @@ impl<C: VisualContext> VisualContext for MainThread<C> {
                 >(cx)
             };
             update(view_state, cx)
+        })
+    }
+
+    fn replace_root_view<V>(
+        &mut self,
+        build_view: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
+    ) -> Self::Result<View<V>>
+    where
+        V: 'static + Send + Render,
+    {
+        self.0.replace_root_view(|cx| {
+            let cx = unsafe {
+                mem::transmute::<
+                    &mut C::ViewContext<'_, V>,
+                    &mut MainThread<C::ViewContext<'_, V>>,
+                >(cx)
+            };
+            build_view(cx)
         })
     }
 }
