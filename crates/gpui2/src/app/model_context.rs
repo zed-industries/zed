@@ -43,10 +43,10 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe<T2, E>(
         &mut self,
         entity: &E,
-        mut on_notify: impl FnMut(&mut T, E, &mut ModelContext<'_, T>) + Send + 'static,
+        mut on_notify: impl FnMut(&mut T, E, &mut ModelContext<'_, T>) + 'static,
     ) -> Subscription
     where
-        T: 'static + Send,
+        T: 'static,
         T2: 'static,
         E: Entity<T2>,
     {
@@ -69,10 +69,10 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn subscribe<T2, E>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(&mut T, E, &T2::Event, &mut ModelContext<'_, T>) + Send + 'static,
+        mut on_event: impl FnMut(&mut T, E, &T2::Event, &mut ModelContext<'_, T>) + 'static,
     ) -> Subscription
     where
-        T: 'static + Send,
+        T: 'static,
         T2: 'static + EventEmitter,
         E: Entity<T2>,
     {
@@ -95,7 +95,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn on_release(
         &mut self,
-        mut on_release: impl FnMut(&mut T, &mut AppContext) + Send + 'static,
+        mut on_release: impl FnMut(&mut T, &mut AppContext) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -112,10 +112,10 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe_release<T2, E>(
         &mut self,
         entity: &E,
-        mut on_release: impl FnMut(&mut T, &mut T2, &mut ModelContext<'_, T>) + Send + 'static,
+        mut on_release: impl FnMut(&mut T, &mut T2, &mut ModelContext<'_, T>) + 'static,
     ) -> Subscription
     where
-        T: Any + Send,
+        T: Any,
         T2: 'static,
         E: Entity<T2>,
     {
@@ -134,10 +134,10 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        mut f: impl FnMut(&mut T, &mut ModelContext<'_, T>) + Send + 'static,
+        mut f: impl FnMut(&mut T, &mut ModelContext<'_, T>) + 'static,
     ) -> Subscription
     where
-        T: 'static + Send,
+        T: 'static,
     {
         let handle = self.weak_model();
         self.global_observers.insert(
@@ -148,11 +148,11 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn on_app_quit<Fut>(
         &mut self,
-        mut on_quit: impl FnMut(&mut T, &mut ModelContext<T>) -> Fut + Send + 'static,
+        mut on_quit: impl FnMut(&mut T, &mut ModelContext<T>) -> Fut + 'static,
     ) -> Subscription
     where
-        Fut: 'static + Future<Output = ()> + Send,
-        T: 'static + Send,
+        Fut: 'static + Future<Output = ()>,
+        T: 'static,
     {
         let handle = self.weak_model();
         self.app.quit_observers.insert(
@@ -164,7 +164,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
                         future.await;
                     }
                 }
-                .boxed()
+                .boxed_local()
             }),
         )
     }
@@ -183,7 +183,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static + Send,
+        G: 'static,
     {
         let mut global = self.app.lease_global::<G>();
         let result = f(&mut global, self);

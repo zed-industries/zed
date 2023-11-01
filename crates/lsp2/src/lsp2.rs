@@ -595,8 +595,8 @@ impl LanguageServer {
     where
         T: request::Request,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(T::Params, AsyncAppContext) -> Fut,
-        Fut: 'static + Future<Output = Result<T::Result>> + Send,
+        F: 'static + FnMut(T::Params, AsyncAppContext) -> Fut + Send,
+        Fut: 'static + Future<Output = Result<T::Result>>,
     {
         self.on_custom_request(T::METHOD, f)
     }
@@ -629,7 +629,7 @@ impl LanguageServer {
     #[must_use]
     pub fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
-        F: 'static + Send + FnMut(Params, AsyncAppContext),
+        F: 'static + FnMut(Params, AsyncAppContext) + Send,
         Params: DeserializeOwned,
     {
         let prev_handler = self.notification_handlers.lock().insert(
@@ -657,8 +657,8 @@ impl LanguageServer {
         mut f: F,
     ) -> Subscription
     where
-        F: 'static + Send + FnMut(Params, AsyncAppContext) -> Fut,
-        Fut: 'static + Future<Output = Result<Res>> + Send,
+        F: 'static + FnMut(Params, AsyncAppContext) -> Fut + Send,
+        Fut: 'static + Future<Output = Result<Res>>,
         Params: DeserializeOwned + Send + 'static,
         Res: Serialize,
     {

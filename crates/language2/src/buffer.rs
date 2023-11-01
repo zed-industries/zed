@@ -652,7 +652,7 @@ impl Buffer {
 
                     if !self.is_dirty() {
                         let reload = self.reload(cx).log_err().map(drop);
-                        task = cx.executor().spawn(reload);
+                        task = cx.background_executor().spawn(reload);
                     }
                 }
             }
@@ -684,7 +684,7 @@ impl Buffer {
         let snapshot = self.snapshot();
 
         let mut diff = self.git_diff.clone();
-        let diff = cx.executor().spawn(async move {
+        let diff = cx.background_executor().spawn(async move {
             diff.update(&diff_base, &snapshot).await;
             diff
         });
@@ -793,7 +793,7 @@ impl Buffer {
         let mut syntax_snapshot = syntax_map.snapshot();
         drop(syntax_map);
 
-        let parse_task = cx.executor().spawn({
+        let parse_task = cx.background_executor().spawn({
             let language = language.clone();
             let language_registry = language_registry.clone();
             async move {
@@ -803,7 +803,7 @@ impl Buffer {
         });
 
         match cx
-            .executor()
+            .background_executor()
             .block_with_timeout(self.sync_parse_timeout, parse_task)
         {
             Ok(new_syntax_snapshot) => {
@@ -866,9 +866,9 @@ impl Buffer {
 
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
         if let Some(indent_sizes) = self.compute_autoindents() {
-            let indent_sizes = cx.executor().spawn(indent_sizes);
+            let indent_sizes = cx.background_executor().spawn(indent_sizes);
             match cx
-                .executor()
+                .background_executor()
                 .block_with_timeout(Duration::from_micros(500), indent_sizes)
             {
                 Ok(indent_sizes) => self.apply_autoindents(indent_sizes, cx),
@@ -1117,7 +1117,7 @@ impl Buffer {
     pub fn diff(&self, mut new_text: String, cx: &AppContext) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let base_version = self.version();
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             let old_text = old_text.to_string();
             let line_ending = LineEnding::detect(&new_text);
             LineEnding::normalize(&mut new_text);
@@ -1155,7 +1155,7 @@ impl Buffer {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
         let base_version = self.version();
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             let ranges = trailing_whitespace_ranges(&old_text);
             let empty = Arc::<str>::from("");
             Diff {

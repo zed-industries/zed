@@ -234,12 +234,14 @@ struct ClientState {
     message_handlers: HashMap<
         TypeId,
         Arc<
-            dyn Fn(
-                AnyModel,
-                Box<dyn AnyTypedEnvelope>,
-                &Arc<Client>,
-                AsyncAppContext,
-            ) -> LocalBoxFuture<'static, Result<()>>,
+            dyn Send
+                + Sync
+                + Fn(
+                    AnyModel,
+                    Box<dyn AnyTypedEnvelope>,
+                    &Arc<Client>,
+                    AsyncAppContext,
+                ) -> LocalBoxFuture<'static, Result<()>>,
         >,
     >,
 }
@@ -551,7 +553,11 @@ impl Client {
     where
         M: EnvelopedMessage,
         E: 'static,
-        H: 'static + Sync + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        H: 'static
+            + Sync
+            + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F
+            + Send
+            + Sync,
         F: 'static + Future<Output = Result<()>>,
     {
         let message_type_id = TypeId::of::<M>();
@@ -593,7 +599,11 @@ impl Client {
     where
         M: RequestMessage,
         E: 'static,
-        H: 'static + Sync + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        H: 'static
+            + Sync
+            + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F
+            + Send
+            + Sync,
         F: 'static + Future<Output = Result<M::Response>>,
     {
         self.add_message_handler(model, move |handle, envelope, this, cx| {
@@ -609,7 +619,7 @@ impl Client {
     where
         M: EntityMessage,
         E: 'static,
-        H: 'static + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        H: 'static + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<()>>,
     {
         self.add_entity_message_handler::<M, E, _, _>(move |subscriber, message, client, cx| {
@@ -621,7 +631,7 @@ impl Client {
     where
         M: EntityMessage,
         E: 'static,
-        H: 'static + Fn(AnyModel, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        H: 'static + Fn(AnyModel, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<()>>,
     {
         let model_type_id = TypeId::of::<E>();
@@ -660,7 +670,7 @@ impl Client {
     where
         M: EntityMessage + RequestMessage,
         E: 'static,
-        H: 'static + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        H: 'static + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<M::Response>>,
     {
         self.add_model_message_handler(move |entity, envelope, client, cx| {

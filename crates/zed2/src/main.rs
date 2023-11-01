@@ -117,7 +117,7 @@ fn main() {
         let client = client2::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
-        languages.set_executor(cx.executor().clone());
+        languages.set_executor(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
@@ -514,7 +514,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
 fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
     let telemetry_settings = *client2::TelemetrySettings::get_global(cx);
 
-    cx.executor()
+    cx.background_executor()
         .spawn(async move {
             let panic_report_url = format!("{}/api/panic", &*client2::ZED_SERVER_URL);
             let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
@@ -644,7 +644,7 @@ fn load_embedded_fonts(cx: &AppContext) {
     let asset_source = cx.asset_source();
     let font_paths = asset_source.list("fonts").unwrap();
     let embedded_fonts = Mutex::new(Vec::new());
-    let executor = cx.executor();
+    let executor = cx.background_executor();
 
     executor.block(executor.scoped(|scope| {
         for font_path in &font_paths {

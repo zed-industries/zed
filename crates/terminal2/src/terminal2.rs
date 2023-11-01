@@ -984,7 +984,7 @@ impl Terminal {
             term.lock_unfair() //It's been too long, force block
         } else if let None = self.sync_task {
             //Skip this frame
-            let delay = cx.executor().timer(Duration::from_millis(16));
+            let delay = cx.background_executor().timer(Duration::from_millis(16));
             self.sync_task = Some(cx.spawn(|weak_handle, mut cx| async move {
                 delay.await;
                 if let Some(handle) = weak_handle.upgrade() {
@@ -1302,7 +1302,7 @@ impl Terminal {
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<RangeInclusive<AlacPoint>>> {
         let term = self.term.clone();
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             let term = term.lock();
 
             all_search_matches(&term, &searcher).collect()

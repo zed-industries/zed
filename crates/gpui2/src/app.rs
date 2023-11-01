@@ -21,7 +21,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
-use futures::{future::BoxFuture, Future};
+use futures::{future::LocalBoxFuture, Future};
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use std::{
@@ -101,6 +101,10 @@ impl App {
         self.0.borrow().background_executor.clone()
     }
 
+    pub fn foreground_executor(&self) -> ForegroundExecutor {
+        self.0.borrow().foreground_executor.clone()
+    }
+
     pub fn text_system(&self) -> Arc<TextSystem> {
         self.0.borrow().text_system.clone()
     }
@@ -110,7 +114,7 @@ type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<d
 type FrameCallback = Box<dyn FnOnce(&mut WindowContext)>;
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
-type QuitHandler = Box<dyn FnMut(&mut AppContext) -> BoxFuture<'static, ()> + 'static>;
+type QuitHandler = Box<dyn FnMut(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnMut(&mut dyn Any, &mut AppContext) + 'static>;
 
 pub struct AppContext {
@@ -535,8 +539,13 @@ impl AppContext {
     }
 
     /// Obtains a reference to the executor, which can be used to spawn futures.
-    pub fn executor(&self) -> &BackgroundExecutor {
+    pub fn background_executor(&self) -> &BackgroundExecutor {
         &self.background_executor
+    }
+
+    /// Obtains a reference to the executor, which can be used to spawn futures.
+    pub fn foreground_executor(&self) -> &ForegroundExecutor {
+        &self.foreground_executor
     }
 
     /// Spawns the future returned by the given function on the thread pool. The closure will be invoked

@@ -53,7 +53,7 @@ where
     E: 'static + Send + Debug,
 {
     pub fn detach_and_log_err(self, cx: &mut AppContext) {
-        cx.executor().spawn(self.log_err()).detach();
+        cx.background_executor().spawn(self.log_err()).detach();
     }
 }
 

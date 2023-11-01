@@ -1758,7 +1758,7 @@ impl Project {
             }
         };
 
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             wait_for_loading_buffer(loading_watch)
                 .await
                 .map_err(|error| anyhow!("{}", error))
@@ -5593,7 +5593,7 @@ impl Project {
             })
             .collect::<Vec<_>>();
 
-        let background = cx.executor().clone();
+        let background = cx.background_executor().clone();
         let path_count: usize = snapshots.iter().map(|s| s.visible_file_count()).sum();
         if path_count == 0 {
             let (_, rx) = smol::channel::bounded(1024);
@@ -5616,11 +5616,11 @@ impl Project {
                 }
             })
             .collect();
-        cx.executor()
+        cx.background_executor()
             .spawn(Self::background_search(
                 unnamed_files,
                 opened_buffers,
-                cx.executor().clone(),
+                cx.background_executor().clone(),
                 self.fs.clone(),
                 workers,
                 query.clone(),
@@ -5631,9 +5631,9 @@ impl Project {
             .detach();
 
         let (buffers, buffers_rx) = Self::sort_candidates_and_open_buffers(matching_paths_rx, cx);
-        let background = cx.executor().clone();
+        let background = cx.background_executor().clone();
         let (result_tx, result_rx) = smol::channel::bounded(1024);
-        cx.executor()
+        cx.background_executor()
             .spawn(async move {
                 let Ok(buffers) = buffers.await else {
                     return;
@@ -5993,7 +5993,7 @@ impl Project {
             Task::ready(Ok((tree, relative_path)))
         } else {
             let worktree = self.create_local_worktree(abs_path, visible, cx);
-            cx.executor()
+            cx.background_executor()
                 .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
         }
     }
@@ -6064,7 +6064,7 @@ impl Project {
                 .shared()
             })
             .clone();
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             match task.await {
                 Ok(worktree) => Ok(worktree),
                 Err(err) => Err(anyhow!("{}", err)),
@@ -6519,7 +6519,7 @@ impl Project {
                 })
                 .collect::<Vec<_>>();
 
-            cx.executor()
+            cx.background_executor()
                 .spawn(async move {
                     for task_result in future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_task)| {
                         async move {
@@ -7358,7 +7358,7 @@ impl Project {
                         })
                         .log_err();
 
-                    cx.executor()
+                    cx.background_executor()
                         .spawn(
                             async move {
                                 let operations = operations.await;
@@ -7960,7 +7960,7 @@ impl Project {
                         if let Some(buffer) = this.buffer_for_id(buffer_id) {
                             let operations =
                                 buffer.read(cx).serialize_ops(Some(remote_version), cx);
-                            cx.executor().spawn(async move {
+                            cx.background_executor().spawn(async move {
                                 let operations = operations.await;
                                 for chunk in split_operations(operations) {
                                     client
@@ -8198,7 +8198,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx);
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             let snapshot = snapshot?;
             let mut lsp_edits = lsp_edits
                 .into_iter()

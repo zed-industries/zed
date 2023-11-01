@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use gpui2::AppContext;
 
 #[derive(Clone, Debug)]

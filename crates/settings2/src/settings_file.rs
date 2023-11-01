@@ -63,7 +63,10 @@ pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,
 ) {
-    let user_settings_content = cx.executor().block(user_settings_file_rx.next()).unwrap();
+    let user_settings_content = cx
+        .background_executor()
+        .block(user_settings_file_rx.next())
+        .unwrap();
     cx.update_global(|store: &mut SettingsStore, cx| {
         store
             .set_user_settings(&user_settings_content, cx)

@@ -185,7 +185,7 @@ pub fn write_and_log<F>(cx: &mut AppContext, db_write: impl FnOnce() -> F + Send
 where
     F: Future<Output = anyhow::Result<()>> + Send,
 {
-    cx.executor()
+    cx.background_executor()
         .spawn(async move { db_write().await.log_err() })
         .detach()
 }

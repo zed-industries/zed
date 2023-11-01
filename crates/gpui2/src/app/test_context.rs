@@ -135,18 +135,20 @@ impl TestAppContext {
         }
     }
 
-    pub fn subscribe<T: 'static + EventEmitter + Send>(
+    pub fn subscribe<T: 'static + EventEmitter>(
         &mut self,
         entity: &Model<T>,
     ) -> futures::channel::mpsc::UnboundedReceiver<T::Event>
     where
-        T::Event: 'static + Send + Clone,
+        T::Event: 'static + Clone,
     {
         let (mut tx, rx) = futures::channel::mpsc::unbounded();
         entity
             .update(self, |_, cx: &mut ModelContext<T>| {
                 cx.subscribe(entity, move |_, _, event, cx| {
-                    cx.executor().block(tx.send(event.clone())).unwrap();
+                    cx.background_executor()
+                        .block(tx.send(event.clone()))
+                        .unwrap();
                 })
             })
             .detach();

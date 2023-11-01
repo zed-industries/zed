@@ -535,7 +535,7 @@ impl Copilot {
                 }
             };
 
-            cx.executor()
+            cx.background_executor()
                 .spawn(task.map_err(|err| anyhow!("{:?}", err)))
         } else {
             // If we're downloading, wait until download is finished
@@ -549,7 +549,7 @@ impl Copilot {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
         if let CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) = &self.server {
             let server = server.clone();
-            cx.executor().spawn(async move {
+            cx.background_executor().spawn(async move {
                 server
                     .request::<request::SignOut>(request::SignOutParams {})
                     .await?;
@@ -579,7 +579,7 @@ impl Copilot {
 
         cx.notify();
 
-        cx.executor().spawn(start_task)
+        cx.background_executor().spawn(start_task)
     }
 
     pub fn language_server(&self) -> Option<(&LanguageServerName, &Arc<LanguageServer>)> {
@@ -760,7 +760,7 @@ impl Copilot {
                 .request::<request::NotifyAccepted>(request::NotifyAcceptedParams {
                     uuid: completion.uuid.clone(),
                 });
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             request.await?;
             Ok(())
         })
@@ -784,7 +784,7 @@ impl Copilot {
                         .map(|completion| completion.uuid.clone())
                         .collect(),
                 });
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             request.await?;
             Ok(())
         })
@@ -827,7 +827,7 @@ impl Copilot {
             .map(|file| file.path().to_path_buf())
             .unwrap_or_default();
 
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             let (version, snapshot) = snapshot.await?;
             let result = lsp
                 .request::<R>(request::GetCompletionsParams {

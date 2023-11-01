@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use async_trait::async_trait;
 use futures::{
     future::BoxFuture, io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt,
     Stream, StreamExt,
@@ -258,8 +257,7 @@ impl CredentialProvider for OpenAICompletionProvider {
     }
 
     fn delete_credentials(&self, cx: &mut AppContext) {
-        cx.run_on_main(move |cx| cx.delete_credentials(OPENAI_API_URL).log_err())
-            .await;
+        cx.delete_credentials(OPENAI_API_URL).log_err();
         *self.credential.write() = ProviderCredential::NoCredentials;
     }
 }

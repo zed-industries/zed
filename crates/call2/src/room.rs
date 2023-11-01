@@ -322,7 +322,7 @@ impl Room {
     fn app_will_quit(&mut self, cx: &mut ModelContext<Self>) -> impl Future<Output = ()> {
         let task = if self.status.is_online() {
             let leave = self.leave_internal(cx);
-            Some(cx.executor().spawn(async move {
+            Some(cx.background_executor().spawn(async move {
                 leave.await.log_err();
             }))
         } else {
@@ -390,7 +390,7 @@ impl Room {
         self.clear_state(cx);
 
         let leave_room = self.client.request(proto::LeaveRoom {});
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             leave_room.await?;
             anyhow::Ok(())
         })
@@ -1202,7 +1202,7 @@ impl Room {
         };
 
         cx.notify();
-        cx.executor().spawn_on_main(move || async move {
+        cx.background_executor().spawn(async move {
             client
                 .request(proto::UpdateParticipantLocation {
                     room_id,
@@ -1569,7 +1569,8 @@ impl LiveKitRoom {
                 *muted = should_mute;
                 cx.notify();
                 Ok((
-                    cx.executor().spawn(track_publication.set_mute(*muted)),
+                    cx.background_executor()
+                        .spawn(track_publication.set_mute(*muted)),
                     old_muted,
                 ))
             }

@@ -8,7 +8,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 
-pub trait AssetSource: 'static + Sync {
+pub trait AssetSource: 'static + Send + Sync {
     fn load(&self, path: &str) -> Result<Cow<[u8]>>;
     fn list(&self, path: &str) -> Result<Vec<SharedString>>;
 }

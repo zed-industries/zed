@@ -123,7 +123,7 @@ impl Telemetry {
         // TODO: Replace all hardware stuff with nested SystemSpecs json
         let this = Arc::new(Self {
             http_client: client,
-            executor: cx.executor().clone(),
+            executor: cx.background_executor().clone(),
             state: Mutex::new(TelemetryState {
                 app_metadata: cx.app_metadata(),
                 architecture: env::consts::ARCH,
