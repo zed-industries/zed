@@ -1,10 +1,14 @@
-use gpui2::{hsla, Rgba};
+use gpui2::{hsla, Hsla, Rgba};
 
 use crate::{
     colors::{GitStatusColors, PlayerColor, PlayerColors, StatusColors, SystemColors, ThemeColors},
     scale::{ColorScaleSet, ColorScales},
     syntax::SyntaxTheme,
 };
+
+fn neutral() -> DefaultColorScaleSet {
+    slate()
+}
 
 impl Default for SystemColors {
     fn default() -> Self {
@@ -20,17 +24,17 @@ impl Default for SystemColors {
 impl Default for StatusColors {
     fn default() -> Self {
         Self {
-            conflict: gpui2::black(),
-            created: gpui2::black(),
-            deleted: gpui2::black(),
-            error: gpui2::black(),
-            hidden: gpui2::black(),
-            ignored: gpui2::black(),
-            info: gpui2::black(),
-            modified: gpui2::black(),
-            renamed: gpui2::black(),
-            success: gpui2::black(),
-            warning: gpui2::black(),
+            conflict: red().dark(11).into(),
+            created: green().dark(11).into(),
+            deleted: red().dark(11).into(),
+            error: red().dark(11).into(),
+            hidden: neutral().dark(11).into(),
+            ignored: neutral().dark(11).into(),
+            info: blue().dark(11).into(),
+            modified: yellow().dark(11).into(),
+            renamed: blue().dark(11).into(),
+            success: green().dark(11).into(),
+            warning: yellow().dark(11).into(),
         }
     }
 }
@@ -38,12 +42,12 @@ impl Default for StatusColors {
 impl Default for GitStatusColors {
     fn default() -> Self {
         Self {
-            conflict: gpui2::rgba(0xdec184ff).into(),
-            created: gpui2::rgba(0xa1c181ff).into(),
-            deleted: gpui2::rgba(0xd07277ff).into(),
-            ignored: gpui2::rgba(0x555a63ff).into(),
-            modified: gpui2::rgba(0x74ade8ff).into(),
-            renamed: gpui2::rgba(0xdec184ff).into(),
+            conflict: orange().dark(11),
+            created: green().dark(11),
+            deleted: red().dark(11),
+            ignored: green().dark(11),
+            modified: yellow().dark(11),
+            renamed: blue().dark(11),
         }
     }
 }
@@ -189,82 +193,86 @@ impl SyntaxTheme {
 
 impl ThemeColors {
     pub fn default_light() -> Self {
+        let system = SystemColors::default();
+
         Self {
-            border: gpui2::white(),
-            border_variant: gpui2::white(),
-            border_focused: gpui2::white(),
-            border_transparent: gpui2::white(),
-            elevated_surface: gpui2::white(),
-            surface: gpui2::white(),
-            background: gpui2::white(),
-            element: gpui2::white(),
-            element_hover: gpui2::white(),
-            element_active: gpui2::white(),
-            element_selected: gpui2::white(),
-            element_disabled: gpui2::white(),
-            element_placeholder: gpui2::white(),
-            ghost_element: gpui2::white(),
-            ghost_element_hover: gpui2::white(),
-            ghost_element_active: gpui2::white(),
-            ghost_element_selected: gpui2::white(),
-            ghost_element_disabled: gpui2::white(),
-            text: gpui2::white(),
-            text_muted: gpui2::white(),
-            text_placeholder: gpui2::white(),
-            text_disabled: gpui2::white(),
-            text_accent: gpui2::white(),
-            icon: gpui2::white(),
-            icon_muted: gpui2::white(),
-            icon_disabled: gpui2::white(),
-            icon_placeholder: gpui2::white(),
-            icon_accent: gpui2::white(),
-            status_bar: gpui2::white(),
-            title_bar: gpui2::white(),
-            toolbar: gpui2::white(),
-            tab_bar: gpui2::white(),
-            editor: gpui2::white(),
-            editor_subheader: gpui2::white(),
-            editor_active_line: gpui2::white(),
+            border: neutral().light(6).into(),
+            border_variant: neutral().light(5).into(),
+            border_focused: blue().light(5).into(),
+            border_transparent: system.transparent,
+            elevated_surface: neutral().light(2).into(),
+            surface: neutral().light(2).into(),
+            background: neutral().light(1).into(),
+            element: neutral().light(3).into(),
+            element_hover: neutral().light(4).into(),
+            element_active: neutral().light(5).into(),
+            element_selected: neutral().light(5).into(),
+            element_disabled: neutral().light_alpha(3).into(),
+            element_placeholder: neutral().light(11).into(),
+            ghost_element: system.transparent,
+            ghost_element_hover: neutral().light(4).into(),
+            ghost_element_active: neutral().light(5).into(),
+            ghost_element_selected: neutral().light(5).into(),
+            ghost_element_disabled: neutral().light_alpha(3).into(),
+            text: neutral().light(12).into(),
+            text_muted: neutral().light(11).into(),
+            text_placeholder: neutral().light(11).into(),
+            text_disabled: neutral().light(10).into(),
+            text_accent: blue().light(12).into(),
+            icon: neutral().light(12).into(),
+            icon_muted: neutral().light(11).into(),
+            icon_disabled: neutral().light(10).into(),
+            icon_placeholder: neutral().light(11).into(),
+            icon_accent: blue().light(12).into(),
+            status_bar: neutral().light(2).into(),
+            title_bar: neutral().light(2).into(),
+            toolbar: neutral().light(2).into(),
+            tab_bar: neutral().light(2).into(),
+            editor: neutral().light(1).into(),
+            editor_subheader: neutral().light(2).into(),
+            editor_active_line: neutral().light_alpha(3).into(),
         }
     }
 
     pub fn default_dark() -> Self {
+        let system = SystemColors::default();
+
         Self {
-            border: gpui2::rgba(0x464b57ff).into(),
-            border_variant: gpui2::rgba(0x464b57ff).into(),
-            border_focused: gpui2::rgba(0x293b5bff).into(),
-            border_transparent: gpui2::rgba(0x00000000).into(),
-            elevated_surface: gpui2::rgba(0x3b414dff).into(),
-            surface: gpui2::rgba(0x2f343eff).into(),
-            background: gpui2::rgba(0x3b414dff).into(),
-            element: gpui2::rgba(0x3b414dff).into(),
-            element_hover: gpui2::rgba(0xffffff1e).into(),
-            element_active: gpui2::rgba(0xffffff28).into(),
-            element_selected: gpui2::rgba(0x18243dff).into(),
-            element_disabled: gpui2::rgba(0x00000000).into(),
-            element_placeholder: gpui2::black(),
-            ghost_element: gpui2::rgba(0x00000000).into(),
-            ghost_element_hover: gpui2::rgba(0xffffff14).into(),
-            ghost_element_active: gpui2::rgba(0xffffff1e).into(),
-            ghost_element_selected: gpui2::rgba(0x18243dff).into(),
-            ghost_element_disabled: gpui2::rgba(0x00000000).into(),
-            text: gpui2::rgba(0xc8ccd4ff).into(),
-            text_muted: gpui2::rgba(0x838994ff).into(),
-            text_placeholder: gpui2::rgba(0xd07277ff).into(),
-            text_disabled: gpui2::rgba(0x555a63ff).into(),
-            text_accent: gpui2::rgba(0x74ade8ff).into(),
-            icon: gpui2::black(),
-            icon_muted: gpui2::rgba(0x838994ff).into(),
-            icon_disabled: gpui2::black(),
-            icon_placeholder: gpui2::black(),
-            icon_accent: gpui2::black(),
-            status_bar: gpui2::rgba(0x3b414dff).into(),
-            title_bar: gpui2::rgba(0x3b414dff).into(),
-            toolbar: gpui2::rgba(0x282c33ff).into(),
-            tab_bar: gpui2::rgba(0x2f343eff).into(),
-            editor: gpui2::rgba(0x282c33ff).into(),
-            editor_subheader: gpui2::rgba(0x2f343eff).into(),
-            editor_active_line: gpui2::rgba(0x2f343eff).into(),
+            border: neutral().dark(6).into(),
+            border_variant: neutral().dark(5).into(),
+            border_focused: blue().dark(5).into(),
+            border_transparent: system.transparent,
+            elevated_surface: neutral().dark(2).into(),
+            surface: neutral().dark(2).into(),
+            background: neutral().dark(1).into(),
+            element: neutral().dark(3).into(),
+            element_hover: neutral().dark(4).into(),
+            element_active: neutral().dark(5).into(),
+            element_selected: neutral().dark(5).into(),
+            element_disabled: neutral().dark_alpha(3).into(),
+            element_placeholder: neutral().dark(11).into(),
+            ghost_element: system.transparent,
+            ghost_element_hover: neutral().dark(4).into(),
+            ghost_element_active: neutral().dark(5).into(),
+            ghost_element_selected: neutral().dark(5).into(),
+            ghost_element_disabled: neutral().dark_alpha(3).into(),
+            text: neutral().dark(12).into(),
+            text_muted: neutral().dark(11).into(),
+            text_placeholder: neutral().dark(11).into(),
+            text_disabled: neutral().dark(10).into(),
+            text_accent: blue().dark(12).into(),
+            icon: neutral().dark(12).into(),
+            icon_muted: neutral().dark(11).into(),
+            icon_disabled: neutral().dark(10).into(),
+            icon_placeholder: neutral().dark(11).into(),
+            icon_accent: blue().dark(12).into(),
+            status_bar: neutral().dark(2).into(),
+            title_bar: neutral().dark(2).into(),
+            toolbar: neutral().dark(2).into(),
+            tab_bar: neutral().dark(2).into(),
+            editor: neutral().dark(1).into(),
+            editor_subheader: neutral().dark(2).into(),
+            editor_active_line: neutral().dark_alpha(3).into(),
         }
     }
 }
@@ -275,6 +283,25 @@ struct DefaultColorScaleSet {
     light_alpha: [&'static str; 12],
     dark: [&'static str; 12],
     dark_alpha: [&'static str; 12],
+}
+
+// See [ColorScaleSet] for why we use index-1.
+impl DefaultColorScaleSet {
+    pub fn light(&self, index: usize) -> Hsla {
+        self.light[index - 1].into()
+    }
+
+    pub fn light_alpha(&self, index: usize) -> Hsla {
+        self.light_alpha[index - 1].into()
+    }
+
+    pub fn dark(&self, index: usize) -> Hsla {
+        self.dark[index - 1].into()
+    }
+
+    pub fn dark_alpha(&self, index: usize) -> Hsla {
+        self.dark_alpha[index - 1].into()
+    }
 }
 
 impl From<DefaultColorScaleSet> for ColorScaleSet {
