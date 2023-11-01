@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result, Context};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{BTreeMap, HashMap};
 use futures::Stream;
@@ -364,7 +364,10 @@ impl Room {
         let token = token.to_string();
         async move {
             let server = TestServer::get(&url)?;
-            server.join_room(token.clone(), this.clone()).await.context("room join")?;
+            server
+                .join_room(token.clone(), this.clone())
+                .await
+                .context("room join")?;
             *this.0.lock().connection.0.borrow_mut() = ConnectionState::Connected { url, token };
             Ok(())
         }
@@ -547,6 +550,7 @@ impl LocalAudioTrack {
     }
 }
 
+#[derive(Debug)]
 pub struct RemoteVideoTrack {
     sid: Sid,
     publisher_id: Sid,

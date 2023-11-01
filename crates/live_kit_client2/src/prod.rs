@@ -499,6 +499,10 @@ impl Room {
             rx,
         )
     }
+
+    pub fn set_display_sources(&self, _: Vec<MacOSDisplay>) {
+        unreachable!("This is a test-only function")
+    }
 }
 
 impl Drop for Room {
