@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use gpui2::{div, DefiniteLength, Hsla, MouseButton, WindowContext};
+use gpui2::{div, rems, DefiniteLength, Hsla, MouseButton, WindowContext};
 
-use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor};
-use crate::{prelude::*, LineHeightStyle};
+use crate::prelude::*;
+use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor, LineHeightStyle};
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum IconPosition {
@@ -151,7 +151,7 @@ impl<V: 'static> Button<V> {
             .relative()
             .id(SharedString::from(format!("{}", self.label)))
             .p_1()
-            .text_size(ui_size(cx, 1.))
+            .text_size(rems(1.))
             .rounded_md()
             .bg(self.variant.bg_color(cx))
             .hover(|style| style.bg(self.variant.bg_color_hover(cx)))
@@ -198,7 +198,7 @@ impl<V: 'static> ButtonGroup<V> {
     }
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let mut el = h_stack().text_size(ui_size(cx, 1.));
+        let mut el = h_stack().text_size(rems(1.));
 
         for button in self.buttons {
             el = el.child(button.render(_view, cx));

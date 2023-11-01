@@ -1,4 +1,4 @@
-use gpui2::{svg, Hsla};
+use gpui2::{rems, svg, Hsla};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -175,8 +175,8 @@ impl IconElement {
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let fill = self.color.color(cx);
         let svg_size = match self.size {
-            IconSize::Small => ui_size(cx, 12. / 14.),
-            IconSize::Medium => ui_size(cx, 15. / 14.),
+            IconSize::Small => rems(0.75),
+            IconSize::Medium => rems(0.9375),
         };
 
         svg()

@@ -9666,6 +9666,7 @@ dependencies = [
  "itertools 0.11.0",
  "rand 0.8.5",
  "serde",
+ "settings2",
  "smallvec",
  "strum",
  "theme2",
