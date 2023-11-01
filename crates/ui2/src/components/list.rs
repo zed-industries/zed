@@ -1,4 +1,4 @@
-use gpui2::{div, relative, Div};
+use gpui2::{div, px, relative, Div};
 
 use crate::settings::user_settings;
 use crate::{
@@ -473,42 +473,63 @@ impl<V: 'static> ListDetailsEntry<V> {
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let settings = user_settings(cx);
 
-        let (item_bg, item_bg_hover, item_bg_active) = match self.seen {
-            true => (
-                cx.theme().colors().ghost_element,
-                cx.theme().colors().ghost_element_hover,
-                cx.theme().colors().ghost_element_active,
-            ),
-            false => (
-                cx.theme().colors().element,
-                cx.theme().colors().element_hover,
-                cx.theme().colors().element_active,
-            ),
-        };
+        let (item_bg, item_bg_hover, item_bg_active) = (
+            cx.theme().colors().ghost_element,
+            cx.theme().colors().ghost_element_hover,
+            cx.theme().colors().ghost_element_active,
+        );
 
         let label_color = match self.seen {
             true => LabelColor::Muted,
             false => LabelColor::Default,
         };
 
-        v_stack()
+        div()
             .relative()
             .group("")
             .bg(item_bg)
-            .px_1()
-            .py_1_5()
+            .px_2()
+            .py_1p5()
             .w_full()
-            .line_height(relative(1.2))
-            .child(Label::new(self.label.clone()).color(label_color))
-            .children(
-                self.meta
-                    .map(|meta| Label::new(meta).color(LabelColor::Muted)),
-            )
+            .z_index(1)
+            .when(!self.seen, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .left(px(3.0))
+                        .top_3()
+                        .rounded_full()
+                        .border_2()
+                        .border_color(cx.theme().colors().surface)
+                        .w(px(9.0))
+                        .h(px(9.0))
+                        .z_index(2)
+                        .bg(cx.theme().status().info),
+                )
+            })
             .child(
-                h_stack()
+                v_stack()
+                    .w_full()
+                    .line_height(relative(1.2))
                     .gap_1()
-                    .justify_end()
-                    .children(self.actions.unwrap_or_default()),
+                    .child(
+                        div()
+                            .w_5()
+                            .h_5()
+                            .rounded_full()
+                            .bg(cx.theme().colors().icon_accent),
+                    )
+                    .child(Label::new(self.label.clone()).color(label_color))
+                    .children(
+                        self.meta
+                            .map(|meta| Label::new(meta).color(LabelColor::Muted)),
+                    )
+                    .child(
+                        h_stack()
+                            .gap_1()
+                            .justify_end()
+                            .children(self.actions.unwrap_or_default()),
+                    ),
             )
     }
 }
