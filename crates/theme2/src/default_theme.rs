@@ -1,5 +1,5 @@
 use crate::{
-    colors::{GitStatusColors, PlayerColors, StatusColors, SystemColors, ThemeColors, ThemeStyle},
+    colors::{GitStatusColors, PlayerColors, StatusColors, SystemColors, ThemeColors, ThemeStyles},
     default_color_scales, Appearance, SyntaxTheme, ThemeFamily, ThemeVariant,
 };
 
@@ -8,7 +8,7 @@ fn zed_pro_daylight() -> ThemeVariant {
         id: "zed_pro_daylight".to_string(),
         name: "Zed Pro Daylight".into(),
         appearance: Appearance::Light,
-        styles: ThemeStyle {
+        styles: ThemeStyles {
             system: SystemColors::default(),
             colors: ThemeColors::default_light(),
             status: StatusColors::default(),
@@ -24,7 +24,7 @@ pub(crate) fn zed_pro_moonlight() -> ThemeVariant {
         id: "zed_pro_moonlight".to_string(),
         name: "Zed Pro Moonlight".into(),
         appearance: Appearance::Dark,
-        styles: ThemeStyle {
+        styles: ThemeStyles {
             system: SystemColors::default(),
             colors: ThemeColors::default_dark(),
             status: StatusColors::default(),

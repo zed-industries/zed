@@ -5,7 +5,6 @@ mod registry;
 mod scale;
 mod settings;
 mod syntax;
-mod utils;
 
 pub use colors::*;
 pub use default_colors::*;
@@ -55,7 +54,7 @@ pub struct ThemeVariant {
     pub(crate) id: String,
     pub name: SharedString,
     pub appearance: Appearance,
-    pub styles: ThemeStyle,
+    pub styles: ThemeStyles,
 }
 
 impl ThemeVariant {
