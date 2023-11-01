@@ -4,10 +4,10 @@ pub use gpui2::{
 };
 
 pub use crate::elevation::*;
-use crate::settings::user_settings;
 pub use crate::ButtonVariant;
 pub use theme2::ActiveTheme;
 
+use crate::settings::user_settings;
 use gpui2::{rems, Hsla, Rems};
 use strum::EnumIter;
 

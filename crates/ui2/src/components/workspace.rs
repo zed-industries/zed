@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
 use chrono::DateTime;
-use gpui2::{px, relative, rems, Div, Render, Size, View, VisualContext};
+use gpui2::{px, relative, Div, Render, Size, View, VisualContext};
+use settings2::Settings;
+use theme2::ThemeSettings;
 
-use crate::{prelude::*, NotificationsPanel};
+use crate::prelude::*;
 use crate::{
-    static_livestream, user_settings_mut, v_stack, AssistantPanel, Button, ChatMessage, ChatPanel,
-    CollabPanel, EditorPane, FakeSettings, Label, LanguageSelector, Pane, PaneGroup, Panel,
-    PanelAllowedSides, PanelSide, ProjectPanel, SettingValue, SplitDirection, StatusBar, Terminal,
-    TitleBar, Toast, ToastOrigin,
+    static_livestream, v_stack, AssistantPanel, Button, ChatMessage, ChatPanel, CollabPanel,
+    EditorPane, Label, LanguageSelector, NotificationsPanel, Pane, PaneGroup, Panel,
+    PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar,
+    Toast, ToastOrigin,
 };
 
 #[derive(Clone)]
@@ -150,6 +152,18 @@ impl Workspace {
     pub fn debug_toggle_user_settings(&mut self, cx: &mut ViewContext<Self>) {
         self.debug.enable_user_settings = !self.debug.enable_user_settings;
 
+        let mut theme_settings = ThemeSettings::get_global(cx).clone();
+
+        if self.debug.enable_user_settings {
+            theme_settings.ui_font_size = 18.0.into();
+        } else {
+            theme_settings.ui_font_size = 16.0.into();
+        }
+
+        ThemeSettings::override_global(theme_settings.clone(), cx);
+
+        cx.set_rem_size(theme_settings.ui_font_size);
+
         cx.notify();
     }
 
@@ -179,20 +193,6 @@ impl Render for Workspace {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
-        // HACK: This should happen inside of `debug_toggle_user_settings`, but
-        // we don't have `cx.global::<FakeSettings>()` in event handlers at the moment.
-        // Need to talk with Nathan/Antonio about this.
-        {
-            let settings = user_settings_mut(cx);
-
-            if self.debug.enable_user_settings {
-                settings.list_indent_depth = SettingValue::UserDefined(rems(0.5).into());
-                settings.ui_scale = SettingValue::UserDefined(1.25);
-            } else {
-                *settings = FakeSettings::default();
-            }
-        }
-
         let root_group = PaneGroup::new_panes(
             vec![Pane::new(
                 "pane-0",
@@ -321,7 +321,7 @@ impl Render for Workspace {
                 v_stack()
                     .z_index(9)
                     .absolute()
-                    .bottom_10()
+                    .top_20()
                     .left_1_4()
                     .w_40()
                     .gap_2()
