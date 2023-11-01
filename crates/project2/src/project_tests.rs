@@ -4,8 +4,8 @@ use futures::{future, StreamExt};
 use gpui2::AppContext;
 use language2::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
-    tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
-    LineEnding, OffsetRangeExt, Point, ToPoint,
+    tree_sitter_rust, Diagnostic, FakeLspAdapter, LanguageConfig, LineEnding, OffsetRangeExt,
+    Point, ToPoint,
 };
 use lsp2::Url;
 use parking_lot::Mutex;
