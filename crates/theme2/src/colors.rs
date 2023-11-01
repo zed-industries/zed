@@ -1,8 +1,9 @@
 use gpui2::Hsla;
 use refineable::Refineable;
 
-use crate::{generate_struct_with_overrides, SyntaxTheme};
+use crate::SyntaxTheme;
 
+#[derive(Clone)]
 pub struct SystemColors {
     pub transparent: Hsla,
     pub mac_os_traffic_light_red: Hsla,
@@ -17,6 +18,7 @@ pub struct PlayerColor {
     pub selection: Hsla,
 }
 
+#[derive(Clone)]
 pub struct PlayerColors(pub Vec<PlayerColor>);
 
 #[derive(Refineable, Clone, Debug)]
@@ -46,7 +48,7 @@ pub struct GitStatusColors {
     pub renamed: Hsla,
 }
 
-#[derive(Refineable, Clone, Debug)]
+#[derive(Refineable, Clone, Debug, Default)]
 #[refineable(debug)]
 pub struct ThemeColors {
     pub border: Hsla,
@@ -86,15 +88,14 @@ pub struct ThemeColors {
     pub editor_active_line: Hsla,
 }
 
-generate_struct_with_overrides! {
-    ThemeStyle,
-    ThemeStyleOverrides,
-    system: SystemColors,
-    colors: ThemeColors,
-    status: StatusColors,
-    git: GitStatusColors,
-    player: PlayerColors,
-    syntax: SyntaxTheme
+#[derive(Refineable, Clone)]
+pub struct ThemeStyles {
+    pub system: SystemColors,
+    pub colors: ThemeColors,
+    pub status: StatusColors,
+    pub git: GitStatusColors,
+    pub player: PlayerColors,
+    pub syntax: SyntaxTheme,
 }
 
 #[cfg(test)]

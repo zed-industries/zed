@@ -1,6 +1,6 @@
 use gpui2::{HighlightStyle, Hsla};
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SyntaxTheme {
     pub highlights: Vec<(String, HighlightStyle)>,
 }
