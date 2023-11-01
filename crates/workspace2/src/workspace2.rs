@@ -428,10 +428,10 @@ pub struct AppState {
     pub build_window_options:
         fn(Option<WindowBounds>, Option<Uuid>, &mut MainThread<AppContext>) -> WindowOptions,
     pub initialize_workspace: fn(
-        WeakView<Workspace>,
+        WindowHandle<Workspace>,
         bool,
         Arc<AppState>,
-        AsyncWindowContext,
+        AsyncAppContext,
     ) -> Task<anyhow::Result<()>>,
     pub node_runtime: Arc<dyn NodeRuntime>,
 }
@@ -874,12 +874,14 @@ impl Workspace {
                 let options =
                     cx.update(|cx| (app_state.build_window_options)(bounds, display, cx))?;
                 cx.open_window(options, |cx| {
-                    Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
+                    cx.build_view(|cx| {
+                        Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
+                    })
                 })?
             };
 
             (app_state.initialize_workspace)(
-                workspace.downgrade(),
+                window,
                 serialized_workspace.is_some(),
                 app_state.clone(),
                 cx.clone(),
@@ -887,10 +889,7 @@ impl Workspace {
             .await
             .log_err();
 
-            window.update_root(&mut cx, |_, cx| {
-                // todo!()
-                // cx.activate_window()
-            });
+            window.update(&mut cx, |_, cx| cx.activate_window());
 
             let workspace = workspace.downgrade();
             notify_if_database_failed(&workspace, &mut cx);
@@ -3976,7 +3975,7 @@ impl WorkspaceStore {
             let mut response = proto::FollowResponse::default();
             for workspace in &this.workspaces {
                 workspace
-                    .update_root(cx, |workspace, cx| {
+                    .update(cx, |workspace, cx| {
                         let handler_response = workspace.handle_follow(follower.project_id, cx);
                         if response.views.is_empty() {
                             response.views = handler_response.views;

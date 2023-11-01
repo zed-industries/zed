@@ -77,7 +77,7 @@ use taffy::TaffyLayoutEngine;
 type AnyBox = Box<dyn Any + Send>;
 
 pub trait Context {
-    type WindowContext<'a>: VisualContext;
+    type WindowContext<'a>: UpdateView;
     type ModelContext<'a, T>;
     type Result<T>;
 
@@ -123,6 +123,16 @@ pub trait VisualContext: Context {
     ) -> Self::Result<View<V>>
     where
         V: 'static + Send + Render;
+}
+
+pub trait UpdateView {
+    type ViewContext<'a, V: 'static>;
+
+    fn update_view<V: 'static, R>(
+        &mut self,
+        view: &View<V>,
+        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, V>) -> R,
+    ) -> R;
 }
 
 pub trait Entity<T>: Sealed {
@@ -264,6 +274,26 @@ impl<C: VisualContext> VisualContext for MainThread<C> {
                 >(cx)
             };
             build_view(cx)
+        })
+    }
+}
+
+impl<C: UpdateView> UpdateView for MainThread<C> {
+    type ViewContext<'a, V: 'static> = MainThread<C::ViewContext<'a, V>>;
+
+    fn update_view<V: 'static, R>(
+        &mut self,
+        view: &View<V>,
+        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, V>) -> R,
+    ) -> R {
+        self.0.update_view(view, |view_state, cx| {
+            let cx = unsafe {
+                mem::transmute::<
+                    &mut C::ViewContext<'_, V>,
+                    &mut MainThread<C::ViewContext<'_, V>>,
+                >(cx)
+            };
+            update(view_state, cx)
         })
     }
 }

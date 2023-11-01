@@ -333,8 +333,7 @@ impl AppContext {
             .collect::<SmallVec<[_; 8]>>();
 
         for dirty_window_handle in dirty_window_ids {
-            self.update_window(dirty_window_handle, |_, cx| cx.draw())
-                .unwrap();
+            dirty_window_handle.update(self, |_, cx| cx.draw()).unwrap();
         }
     }
 
@@ -363,25 +362,26 @@ impl AppContext {
     /// a window blur handler to restore focus to some logical element.
     fn release_dropped_focus_handles(&mut self) {
         for window_handle in self.windows() {
-            self.update_window(window_handle, |_, cx| {
-                let mut blur_window = false;
-                let focus = cx.window.focus;
-                cx.window.focus_handles.write().retain(|handle_id, count| {
-                    if count.load(SeqCst) == 0 {
-                        if focus == Some(handle_id) {
-                            blur_window = true;
+            window_handle
+                .update(self, |_, cx| {
+                    let mut blur_window = false;
+                    let focus = cx.window.focus;
+                    cx.window.focus_handles.write().retain(|handle_id, count| {
+                        if count.load(SeqCst) == 0 {
+                            if focus == Some(handle_id) {
+                                blur_window = true;
+                            }
+                            false
+                        } else {
+                            true
                         }
-                        false
-                    } else {
-                        true
-                    }
-                });
+                    });
 
-                if blur_window {
-                    cx.blur();
-                }
-            })
-            .unwrap();
+                    if blur_window {
+                        cx.blur();
+                    }
+                })
+                .unwrap();
         }
     }
 
@@ -403,29 +403,30 @@ impl AppContext {
         window_handle: AnyWindowHandle,
         focused: Option<FocusId>,
     ) {
-        self.update_window(window_handle, |_, cx| {
-            if cx.window.focus == focused {
-                let mut listeners = mem::take(&mut cx.window.focus_listeners);
-                let focused =
-                    focused.map(|id| FocusHandle::for_id(id, &cx.window.focus_handles).unwrap());
-                let blurred = cx
-                    .window
-                    .last_blur
-                    .take()
-                    .unwrap()
-                    .and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
-                if focused.is_some() || blurred.is_some() {
-                    let event = FocusEvent { focused, blurred };
-                    for listener in &listeners {
-                        listener(&event, cx);
+        window_handle
+            .update(self, |_, cx| {
+                if cx.window.focus == focused {
+                    let mut listeners = mem::take(&mut cx.window.focus_listeners);
+                    let focused = focused
+                        .map(|id| FocusHandle::for_id(id, &cx.window.focus_handles).unwrap());
+                    let blurred = cx
+                        .window
+                        .last_blur
+                        .take()
+                        .unwrap()
+                        .and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
+                    if focused.is_some() || blurred.is_some() {
+                        let event = FocusEvent { focused, blurred };
+                        for listener in &listeners {
+                            listener(&event, cx);
+                        }
                     }
-                }
 
-                listeners.extend(cx.window.focus_listeners.drain(..));
-                cx.window.focus_listeners = listeners;
-            }
-        })
-        .ok();
+                    listeners.extend(cx.window.focus_listeners.drain(..));
+                    cx.window.focus_listeners = listeners;
+                }
+            })
+            .ok();
     }
 
     fn apply_refresh_effect(&mut self) {
