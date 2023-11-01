@@ -102,7 +102,7 @@ impl BackgroundExecutor {
             match future.as_mut().poll(&mut cx) {
                 Poll::Ready(result) => return result,
                 Poll::Pending => {
-                    if !self.dispatcher.poll() {
+                    if !self.dispatcher.poll(true) {
                         if awoken.swap(false, SeqCst) {
                             continue;
                         }

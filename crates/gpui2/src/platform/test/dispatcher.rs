@@ -96,7 +96,7 @@ impl TestDispatcher {
     }
 
     pub fn run_until_parked(&self) {
-        while self.poll() {}
+        while self.poll(false) {}
     }
 
     pub fn parking_allowed(&self) -> bool {
@@ -160,7 +160,7 @@ impl PlatformDispatcher for TestDispatcher {
         state.delayed.insert(ix, (next_time, runnable));
     }
 
-    fn poll(&self) -> bool {
+    fn poll(&self, background_only: bool) -> bool {
         let mut state = self.state.lock();
 
         while let Some((deadline, _)) = state.delayed.first() {
@@ -171,11 +171,15 @@ impl PlatformDispatcher for TestDispatcher {
             state.background.push(runnable);
         }
 
-        let foreground_len: usize = state
-            .foreground
-            .values()
-            .map(|runnables| runnables.len())
-            .sum();
+        let foreground_len: usize = if background_only {
+            0
+        } else {
+            state
+                .foreground
+                .values()
+                .map(|runnables| runnables.len())
+                .sum()
+        };
         let background_len = state.background.len();
 
         if foreground_len == 0 && background_len == 0 {

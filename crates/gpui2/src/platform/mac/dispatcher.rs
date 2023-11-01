@@ -68,7 +68,7 @@ impl PlatformDispatcher for MacDispatcher {
         }
     }
 
-    fn poll(&self) -> bool {
+    fn poll(&self, _background_only: bool) -> bool {
         false
     }
 }
@@ -77,24 +77,3 @@ extern "C" fn trampoline(runnable: *mut c_void) {
     let task = unsafe { Runnable::from_raw(runnable as *mut ()) };
     task.run();
 }
-
-// #include <dispatch/dispatch.h>
-
-// int main(void) {
-
-//     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-//         // Do some lengthy background work here...
-//         printf("Background Work\n");
-
-//         dispatch_async(dispatch_get_main_queue(), ^{
-//             // Once done, update your UI on the main queue here.
-//             printf("UI Updated\n");
-
-//         });
-//     });
-
-//     sleep(3);  // prevent the program from terminating immediately
-
-//     return 0;
-// }
-// ```
