@@ -1,5 +1,5 @@
 use crate::{
-    AnyWindowHandle, AppContext, AsyncAppContext, Context, Executor, MainThread, Model,
+    AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Context, Executor, MainThread, Model,
     ModelContext, Result, Task, TestDispatcher, TestPlatform, WindowContext,
 };
 use parking_lot::Mutex;
@@ -38,7 +38,7 @@ impl Context for TestAppContext {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
-        F: FnOnce(&mut Self::WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T,
     {
         let mut lock = self.app.lock();
         lock.update_window(window, f)
@@ -74,15 +74,6 @@ impl TestAppContext {
     pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> R {
         let mut lock = self.app.lock();
         f(&mut *lock)
-    }
-
-    pub fn update_window<R>(
-        &self,
-        handle: AnyWindowHandle,
-        update: impl FnOnce(&mut WindowContext) -> R,
-    ) -> R {
-        let mut app = self.app.lock();
-        app.update_window(handle, update).unwrap()
     }
 
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static) -> Task<R>

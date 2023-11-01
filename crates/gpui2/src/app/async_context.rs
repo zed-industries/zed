@@ -42,7 +42,7 @@ impl Context for AsyncAppContext {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
-        F: FnOnce(&mut Self::WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T,
     {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.lock(); // Need this to compile
@@ -66,29 +66,6 @@ impl AsyncAppContext {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.lock();
         Ok(f(&mut *lock))
-    }
-
-    pub fn update_window<R>(
-        &self,
-        window: AnyWindowHandle,
-        update: impl FnOnce(&mut WindowContext) -> R,
-    ) -> Result<R> {
-        let app = self.app.upgrade().context("app was released")?;
-        let mut app_context = app.lock();
-        app_context.update_window(window, update)
-    }
-
-    pub fn update_window_root<V, R>(
-        &mut self,
-        handle: &WindowHandle<V>,
-        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
-    ) -> Result<R>
-    where
-        V: 'static + Send,
-    {
-        let app = self.app.upgrade().context("app was released")?;
-        let mut app_context = app.lock();
-        app_context.update_window_root(handle, update)
     }
 
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static) -> Task<R>
@@ -191,22 +168,25 @@ impl AsyncWindowContext {
         Self { app, window }
     }
 
-    pub fn update<R>(&self, update: impl FnOnce(&mut WindowContext) -> R) -> Result<R> {
+    pub fn update<R>(
+        &mut self,
+        update: impl FnOnce(AnyView, &mut WindowContext) -> R,
+    ) -> Result<R> {
         self.app.update_window(self.window, update)
     }
 
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + Send + 'static) {
         self.app
-            .update_window(self.window, |cx| cx.on_next_frame(f))
+            .update_window(self.window, |_root, cx| cx.on_next_frame(f))
             .ok();
     }
 
     pub fn read_global<G: 'static, R>(
-        &self,
+        &mut self,
         read: impl FnOnce(&G, &WindowContext) -> R,
     ) -> Result<R> {
         self.app
-            .update_window(self.window, |cx| read(cx.global(), cx))
+            .update_window(self.window, |_, cx| read(cx.global(), cx))
     }
 
     pub fn update_global<G, R>(
@@ -217,7 +197,7 @@ impl AsyncWindowContext {
         G: 'static,
     {
         self.app
-            .update_window(self.window, |cx| cx.update_global(update))
+            .update_window(self.window, |_, cx| cx.update_global(update))
     }
 
     pub fn spawn<Fut, R>(
@@ -245,13 +225,13 @@ impl AsyncWindowContext {
     }
 
     pub fn run_on_main<R>(
-        &self,
+        &mut self,
         f: impl FnOnce(&mut MainThread<WindowContext>) -> R + Send + 'static,
     ) -> Task<Result<R>>
     where
         R: Send + 'static,
     {
-        self.update(|cx| cx.run_on_main(f))
+        self.update(|_, cx| cx.run_on_main(f))
             .unwrap_or_else(|error| Task::ready(Err(error)))
     }
 }
@@ -270,7 +250,7 @@ impl Context for AsyncWindowContext {
         T: 'static + Send,
     {
         self.app
-            .update_window(self.window, |cx| cx.build_model(build_model))
+            .update_window(self.window, |_, cx| cx.build_model(build_model))
     }
 
     fn update_model<T: 'static, R>(
@@ -279,12 +259,12 @@ impl Context for AsyncWindowContext {
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Result<R> {
         self.app
-            .update_window(self.window, |cx| cx.update_model(handle, update))
+            .update_window(self.window, |_, cx| cx.update_model(handle, update))
     }
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(&mut Self::WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T,
     {
         self.app.update_window(window, update)
     }
@@ -292,10 +272,6 @@ impl Context for AsyncWindowContext {
 
 impl VisualContext for AsyncWindowContext {
     type ViewContext<'a, V: 'static> = ViewContext<'a, V>;
-
-    fn root_view(&self) -> Result<AnyView> {
-        self.app.update_window(self.window, |cx| cx.root_view())
-    }
 
     fn build_view<V>(
         &mut self,
@@ -305,7 +281,7 @@ impl VisualContext for AsyncWindowContext {
         V: 'static + Send,
     {
         self.app
-            .update_window(self.window, |cx| cx.build_view(build_view_state))
+            .update_window(self.window, |_, cx| cx.build_view(build_view_state))
     }
 
     fn update_view<V: 'static, R>(
@@ -314,7 +290,7 @@ impl VisualContext for AsyncWindowContext {
         update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, V>) -> R,
     ) -> Self::Result<R> {
         self.app
-            .update_window(self.window, |cx| cx.update_view(view, update))
+            .update_window(self.window, |_, cx| cx.update_view(view, update))
     }
 
     fn replace_root_view<V>(
@@ -325,7 +301,7 @@ impl VisualContext for AsyncWindowContext {
         V: 'static + Send + Render,
     {
         self.app
-            .update_window(self.window, |cx| cx.replace_root_view(build_view))
+            .update_window(self.window, |_, cx| cx.replace_root_view(build_view))
     }
 }
 

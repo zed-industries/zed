@@ -18,8 +18,8 @@ use crate::{
     AppMetadata, AssetSource, ClipboardItem, Context, DispatchPhase, DisplayId, Entity, Executor,
     FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly,
     Pixels, Platform, PlatformDisplay, Point, Render, SharedString, SubscriberSet, Subscription,
-    SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window,
-    WindowContext, WindowHandle, WindowId,
+    SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window, WindowContext,
+    WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -267,27 +267,6 @@ impl AppContext {
             .collect()
     }
 
-    pub fn update_window_root<V, R>(
-        &mut self,
-        handle: &WindowHandle<V>,
-        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
-    ) -> Result<R>
-    where
-        V: 'static + Send,
-    {
-        self.update_window(handle.any_handle, |cx| {
-            let root_view = cx
-                .window
-                .root_view
-                .as_ref()
-                .unwrap()
-                .clone()
-                .downcast()
-                .unwrap();
-            root_view.update(cx, update)
-        })
-    }
-
     pub(crate) fn push_effect(&mut self, effect: Effect) {
         match &effect {
             Effect::Notify { emitter } => {
@@ -354,7 +333,7 @@ impl AppContext {
             .collect::<SmallVec<[_; 8]>>();
 
         for dirty_window_handle in dirty_window_ids {
-            self.update_window(dirty_window_handle, |cx| cx.draw())
+            self.update_window(dirty_window_handle, |_, cx| cx.draw())
                 .unwrap();
         }
     }
@@ -384,7 +363,7 @@ impl AppContext {
     /// a window blur handler to restore focus to some logical element.
     fn release_dropped_focus_handles(&mut self) {
         for window_handle in self.windows() {
-            self.update_window(window_handle, |cx| {
+            self.update_window(window_handle, |_, cx| {
                 let mut blur_window = false;
                 let focus = cx.window.focus;
                 cx.window.focus_handles.write().retain(|handle_id, count| {
@@ -424,7 +403,7 @@ impl AppContext {
         window_handle: AnyWindowHandle,
         focused: Option<FocusId>,
     ) {
-        self.update_window(window_handle, |cx| {
+        self.update_window(window_handle, |_, cx| {
             if cx.window.focus == focused {
                 let mut listeners = mem::take(&mut cx.window.focus_listeners);
                 let focused =
@@ -764,7 +743,7 @@ impl Context for AppContext {
 
     fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(&mut Self::WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T,
     {
         self.update(|cx| {
             let mut window = cx
@@ -774,8 +753,8 @@ impl Context for AppContext {
                 .take()
                 .unwrap();
 
-            let result = update(&mut WindowContext::new(cx, &mut window));
-
+            let root_view = window.root_view.clone().unwrap();
+            let result = update(root_view, &mut WindowContext::new(cx, &mut window));
             cx.windows
                 .get_mut(handle.id)
                 .ok_or_else(|| anyhow!("window not found"))?
@@ -851,39 +830,6 @@ impl MainThread<AppContext> {
             update(unsafe {
                 std::mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx)
             })
-        })
-    }
-
-    pub fn update_window<R>(
-        &mut self,
-        handle: AnyWindowHandle,
-        update: impl FnOnce(&mut MainThread<WindowContext>) -> R,
-    ) -> Result<R> {
-        self.0.update_window(handle, |cx| {
-            update(unsafe {
-                std::mem::transmute::<&mut WindowContext, &mut MainThread<WindowContext>>(cx)
-            })
-        })
-    }
-
-    pub fn update_window_root<V, R>(
-        &mut self,
-        handle: &WindowHandle<V>,
-        update: impl FnOnce(&mut V, &mut MainThread<ViewContext<'_, V>>) -> R,
-    ) -> Result<R>
-    where
-        V: 'static + Send,
-    {
-        self.update_window(handle.any_handle, |cx| {
-            let root_view = cx
-                .window
-                .root_view
-                .as_ref()
-                .unwrap()
-                .clone()
-                .downcast()
-                .unwrap();
-            root_view.update(cx, update)
         })
     }
 

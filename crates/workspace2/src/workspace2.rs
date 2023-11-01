@@ -14,7 +14,7 @@ use crate::persistence::model::{
     DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup,
     SerializedWorkspace,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use call2::ActiveCall;
 use client2::{
     proto::{self, PeerId},
@@ -29,7 +29,7 @@ use futures::{
 };
 use gpui2::{
     div, point, size, AnyModel, AnyView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds,
-    Div, EventEmitter, GlobalPixels, MainThread, Model, ModelContext, Point, Render, Size,
+    Context, Div, EventEmitter, GlobalPixels, MainThread, Model, ModelContext, Point, Render, Size,
     Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
     WindowHandle, WindowOptions,
 };
@@ -837,7 +837,7 @@ impl Workspace {
             };
 
             let window = if let Some(window) = requesting_window {
-                cx.update_window(window.into(), |cx| {
+                cx.update_window(window.into(), |old_workspace, cx| {
                     cx.replace_root_view(|cx| {
                         Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
                     });

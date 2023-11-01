@@ -98,7 +98,7 @@ pub trait Context {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
-        F: FnOnce(&mut Self::WindowContext<'_>) -> T;
+        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T;
 }
 
 pub trait VisualContext: Context {
@@ -199,25 +199,21 @@ impl<C: Context> Context for MainThread<C> {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(&mut Self::WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T,
     {
-        self.0.update_window(window, |cx| {
+        self.0.update_window(window, |root, cx| {
             let cx = unsafe {
                 mem::transmute::<&mut C::WindowContext<'_>, &mut MainThread<C::WindowContext<'_>>>(
                     cx,
                 )
             };
-            update(cx)
+            update(root, cx)
         })
     }
 }
 
 impl<C: VisualContext> VisualContext for MainThread<C> {
     type ViewContext<'a, V: 'static> = MainThread<C::ViewContext<'a, V>>;
-
-    fn root_view(&self) -> AnyView {
-        self.0.root_view()
-    }
 
     fn build_view<V>(
         &mut self,
