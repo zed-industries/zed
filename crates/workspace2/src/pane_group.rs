@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use project2::Project;
 use serde::Deserialize;
 use std::sync::Arc;
-use theme2::Theme;
+use theme2::ThemeVariant;
 
 const HANDLE_HITBOX_SIZE: f32 = 4.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
@@ -124,7 +124,7 @@ impl PaneGroup {
     pub(crate) fn render(
         &self,
         project: &Model<Project>,
-        theme: &Theme,
+        theme: &ThemeVariant,
         follower_states: &HashMap<View<Pane>, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
@@ -187,7 +187,7 @@ impl Member {
         &self,
         project: &Model<Project>,
         basis: usize,
-        theme: &Theme,
+        theme: &ThemeVariant,
         follower_states: &HashMap<View<Pane>, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
@@ -510,7 +510,7 @@ impl PaneAxis {
         &self,
         project: &Model<Project>,
         basis: usize,
-        theme: &Theme,
+        theme: &ThemeVariant,
         follower_states: &HashMap<View<Pane>, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,

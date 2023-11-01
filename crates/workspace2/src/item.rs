@@ -21,6 +21,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings2::Settings;
 use smallvec::SmallVec;
+use theme2::ThemeVariant;
 use std::{
     any::{Any, TypeId},
     ops::Range,
@@ -31,7 +32,6 @@ use std::{
     },
     time::Duration,
 };
-use theme2::Theme;
 
 #[derive(Deserialize)]
 pub struct ItemSettings {
@@ -178,7 +178,7 @@ pub trait Item: Render + EventEmitter + Send {
         ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, _theme: &ThemeVariant, _cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         None
     }
 
@@ -259,7 +259,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui2::Subscription;
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
+    fn breadcrumbs(&self, theme: &ThemeVariant, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
     fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
@@ -585,7 +585,7 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).breadcrumb_location()
     }
 
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, theme: &ThemeVariant, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         self.read(cx).breadcrumbs(theme, cx)
     }
 
