@@ -3370,9 +3370,9 @@ impl Workspace {
         workspace: WeakView<Workspace>,
         serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             let (project, old_center_pane) = workspace.update(&mut cx, |workspace, _| {
                 (
                     workspace.project().clone(),
@@ -3564,7 +3564,7 @@ async fn open_items(
     workspace: &WeakView<Workspace>,
     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
     app_state: Arc<AppState>,
-    mut cx: AsyncAppContext,
+    mut cx: MainThread<AsyncAppContext>,
 ) -> Result<Vec<Option<Result<Box<dyn ItemHandle>>>>> {
     let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
 

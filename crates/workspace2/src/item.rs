@@ -401,7 +401,7 @@ impl<T: Item> ItemHandle for View<T> {
             let pending_update = Arc::new(Mutex::new(None));
             let pending_update_scheduled = Arc::new(AtomicBool::new(false));
 
-            let mut _event_subscription =
+            let mut event_subscription =
                 Some(cx.subscribe(self, move |workspace, item, event, cx| {
                     let pane = if let Some(pane) = workspace
                         .panes_by_item

@@ -313,9 +313,9 @@ async fn installation_id() -> Result<String> {
     }
 }
 
-async fn restore_or_create_workspace(_app_state: &Arc<AppState>, mut _cx: AsyncAppContext) {
+async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
     if let Some(location) = workspace2::last_opened_workspace_paths().await {
-        cx.update(|cx| workspace2::open_paths(location.paths().as_ref(), app_state, None, cx))
+        cx.update(|cx| workspace2::open_paths(location.paths().as_ref(), app_state, None, cx))?
             .await
             .log_err();
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
