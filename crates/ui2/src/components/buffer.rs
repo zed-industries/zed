@@ -256,14 +256,14 @@ mod stories {
                     div()
                         .w(rems(64.))
                         .h_96()
-                        .child(hello_world_rust_buffer_example(&old_theme(cx))),
+                        .child(hello_world_rust_buffer_example(cx)),
                 )
                 .child(Story::label(cx, "Hello World (Rust) with Status"))
                 .child(
                     div()
                         .w(rems(64.))
                         .h_96()
-                        .child(hello_world_rust_buffer_with_status_example(&old_theme(cx))),
+                        .child(hello_world_rust_buffer_with_status_example(cx)),
                 )
         }
     }

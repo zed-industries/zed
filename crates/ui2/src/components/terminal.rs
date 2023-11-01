@@ -71,7 +71,7 @@ impl Terminal {
                         height: rems(36.).into(),
                     },
                 )
-                .child(crate::static_data::terminal_buffer(&old_theme(cx))),
+                .child(crate::static_data::terminal_buffer(cx)),
             )
     }
 }

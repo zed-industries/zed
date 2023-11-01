@@ -52,11 +52,11 @@ mod stories {
                 .child(Story::title_for::<_, MultiBuffer>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(MultiBuffer::new(vec![
-                    hello_world_rust_buffer_example(&old_theme(cx)),
-                    hello_world_rust_buffer_example(&old_theme(cx)),
-                    hello_world_rust_buffer_example(&old_theme(cx)),
-                    hello_world_rust_buffer_example(&old_theme(cx)),
-                    hello_world_rust_buffer_example(&old_theme(cx)),
+                    hello_world_rust_buffer_example(cx),
+                    hello_world_rust_buffer_example(cx),
+                    hello_world_rust_buffer_example(cx),
+                    hello_world_rust_buffer_example(cx),
+                    hello_world_rust_buffer_example(cx),
                 ]))
         }
     }
