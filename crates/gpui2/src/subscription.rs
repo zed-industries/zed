@@ -47,8 +47,8 @@ where
                     subscribers.remove(&subscriber_id);
                     if subscribers.is_empty() {
                         lock.subscribers.remove(&emitter_key);
-                        return;
                     }
+                    return;
                 }
 
                 // We didn't manage to remove the subscription, which means it was dropped

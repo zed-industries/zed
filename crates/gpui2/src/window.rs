@@ -571,6 +571,12 @@ impl<'a> WindowContext<'a> {
         self.window.rem_size
     }
 
+    /// Sets the size of an em for the base font of the application. Adjusting this value allows the
+    /// UI to scale, just like zooming a web page.
+    pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
+        self.window.rem_size = rem_size.into();
+    }
+
     /// The line height associated with the current text style.
     pub fn line_height(&self) -> Pixels {
         let rem_size = self.rem_size();

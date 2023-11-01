@@ -6,8 +6,6 @@ pub struct Story {}
 
 impl Story {
     pub fn container<V: 'static>(cx: &mut ViewContext<V>) -> Div<V> {
-        let theme = theme(cx);
-
         div()
             .size_full()
             .flex()
@@ -15,15 +13,13 @@ impl Story {
             .pt_2()
             .px_4()
             .font("Zed Mono")
-            .bg(theme.background)
+            .bg(cx.theme().colors().background)
     }
 
     pub fn title<V: 'static>(cx: &mut ViewContext<V>, title: &str) -> impl Component<V> {
-        let theme = theme(cx);
-
         div()
             .text_xl()
-            .text_color(theme.text)
+            .text_color(cx.theme().colors().text)
             .child(title.to_owned())
     }
 
@@ -32,13 +28,11 @@ impl Story {
     }
 
     pub fn label<V: 'static>(cx: &mut ViewContext<V>, label: &str) -> impl Component<V> {
-        let theme = theme(cx);
-
         div()
             .mt_4()
             .mb_2()
             .text_xs()
-            .text_color(theme.text)
+            .text_color(cx.theme().colors().text)
             .child(label.to_owned())
     }
 }

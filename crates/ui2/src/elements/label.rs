@@ -1,4 +1,4 @@
-use gpui2::{relative, Hsla, WindowContext};
+use gpui2::{relative, rems, Hsla, WindowContext};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -18,18 +18,16 @@ pub enum LabelColor {
 
 impl LabelColor {
     pub fn hsla(&self, cx: &WindowContext) -> Hsla {
-        let theme = theme(cx);
-
         match self {
-            Self::Default => theme.text,
-            Self::Muted => theme.text_muted,
+            Self::Default => cx.theme().colors().text,
+            Self::Muted => cx.theme().colors().text_muted,
             Self::Created => gpui2::red(),
             Self::Modified => gpui2::red(),
             Self::Deleted => gpui2::red(),
-            Self::Disabled => theme.text_disabled,
+            Self::Disabled => cx.theme().colors().text_disabled,
             Self::Hidden => gpui2::red(),
-            Self::Placeholder => theme.text_placeholder,
-            Self::Accent => gpui2::red(),
+            Self::Placeholder => cx.theme().colors().text_placeholder,
+            Self::Accent => cx.theme().colors().text_accent,
         }
     }
 }
@@ -88,7 +86,7 @@ impl Label {
                         .bg(LabelColor::Hidden.hsla(cx)),
                 )
             })
-            .text_size(ui_size(cx, 1.))
+            .text_size(rems(1.))
             .when(self.line_height_style == LineHeightStyle::UILabel, |this| {
                 this.line_height(relative(1.))
             })
@@ -126,9 +124,7 @@ impl HighlightedLabel {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
-
-        let highlight_color = theme.text_accent;
+        let highlight_color = cx.theme().colors().text_accent;
 
         let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
 

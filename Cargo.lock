@@ -1169,7 +1169,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui2",
  "language2",
- "live_kit_client",
+ "live_kit_client2",
  "log",
  "media",
  "postage",
@@ -4590,6 +4590,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "live_kit_client2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-broadcast",
+ "async-trait",
+ "block",
+ "byteorder",
+ "bytes 1.5.0",
+ "cocoa",
+ "collections",
+ "core-foundation",
+ "core-graphics",
+ "foreign-types",
+ "futures 0.3.28",
+ "gpui2",
+ "hmac 0.12.1",
+ "jwt",
+ "live_kit_server",
+ "log",
+ "media",
+ "nanoid",
+ "objc",
+ "parking_lot 0.11.2",
+ "postage",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "sha2 0.10.7",
+ "simplelog",
+]
+
+[[package]]
 name = "live_kit_server"
 version = "0.1.0"
 dependencies = [
@@ -5033,6 +5066,53 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "multi_buffer2"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "anyhow",
+ "client2",
+ "clock",
+ "collections",
+ "convert_case 0.6.0",
+ "copilot2",
+ "ctor",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "git",
+ "gpui2",
+ "indoc",
+ "itertools 0.10.5",
+ "language2",
+ "lazy_static",
+ "log",
+ "lsp2",
+ "ordered-float 2.10.0",
+ "parking_lot 0.11.2",
+ "postage",
+ "project2",
+ "pulldown-cmark",
+ "rand 0.8.5",
+ "rich_text",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "settings2",
+ "smallvec",
+ "smol",
+ "snippet",
+ "sum_tree",
+ "text",
+ "theme2",
+ "tree-sitter",
+ "tree-sitter-html",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "unindent",
+ "util",
 ]
 
 [[package]]
@@ -8759,6 +8839,7 @@ dependencies = [
  "gpui2",
  "indexmap 1.9.3",
  "parking_lot 0.11.2",
+ "refineable",
  "schemars",
  "serde",
  "serde_derive",
@@ -8766,21 +8847,6 @@ dependencies = [
  "settings2",
  "toml 0.5.11",
  "util",
-]
-
-[[package]]
-name = "theme_converter"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap 4.4.4",
- "convert_case 0.6.0",
- "gpui2",
- "log",
- "rust-embed",
- "serde",
- "simplelog",
- "theme2",
 ]
 
 [[package]]
@@ -9600,6 +9666,7 @@ dependencies = [
  "itertools 0.11.0",
  "rand 0.8.5",
  "serde",
+ "settings2",
  "smallvec",
  "strum",
  "theme2",
@@ -10825,7 +10892,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.111.0"
+version = "0.112.0"
 dependencies = [
  "activity_indicator",
  "ai",

@@ -44,13 +44,11 @@ impl ContextMenu {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
-
         v_stack()
             .flex()
-            .bg(theme.elevated_surface)
+            .bg(cx.theme().colors().elevated_surface)
             .border()
-            .border_color(theme.border)
+            .border_color(cx.theme().colors().border)
             .child(
                 List::new(
                     self.items
