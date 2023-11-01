@@ -1,10 +1,9 @@
-use gpui2::{hsla, Hsla, Rgba};
+use gpui2::{hsla, Rgba};
 
 use crate::{
     colors::{GitStatusColors, PlayerColor, PlayerColors, StatusColors, SystemColors, ThemeColors},
     scale::{ColorScaleSet, ColorScales},
     syntax::SyntaxTheme,
-    ColorScaleStep,
 };
 
 fn neutral() -> ColorScaleSet {
@@ -290,24 +289,6 @@ struct DefaultColorScaleSet {
     light_alpha: [&'static str; 12],
     dark: [&'static str; 12],
     dark_alpha: [&'static str; 12],
-}
-
-impl DefaultColorScaleSet {
-    pub fn light(&self, index: ColorScaleStep) -> Hsla {
-        Rgba::try_from(self.light[index - 1]).unwrap().into()
-    }
-
-    pub fn light_alpha(&self, index: ColorScaleStep) -> Hsla {
-        Rgba::try_from(self.light_alpha[index - 1]).unwrap().into()
-    }
-
-    pub fn dark(&self, index: ColorScaleStep) -> Hsla {
-        Rgba::try_from(self.dark[index - 1]).unwrap().into()
-    }
-
-    pub fn dark_alpha(&self, index: ColorScaleStep) -> Hsla {
-        Rgba::try_from(self.dark_alpha[index - 1]).unwrap().into()
-    }
 }
 
 impl From<DefaultColorScaleSet> for ColorScaleSet {
