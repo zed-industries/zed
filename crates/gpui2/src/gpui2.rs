@@ -215,6 +215,10 @@ impl<C: Context> Context for MainThread<C> {
 impl<C: VisualContext> VisualContext for MainThread<C> {
     type ViewContext<'a, V: 'static> = MainThread<C::ViewContext<'a, V>>;
 
+    fn root_view(&self) -> AnyView {
+        self.0.root_view()
+    }
+
     fn build_view<V>(
         &mut self,
         build_view_state: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,

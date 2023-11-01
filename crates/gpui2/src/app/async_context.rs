@@ -1,6 +1,6 @@
 use crate::{
-    AnyWindowHandle, AppContext, Context, Executor, MainThread, Model, ModelContext, Render,
-    Result, Task, View, ViewContext, VisualContext, WindowContext, WindowHandle,
+    AnyView, AnyWindowHandle, AppContext, Context, Executor, MainThread, Model, ModelContext,
+    Render, Result, Task, View, ViewContext, VisualContext, WindowContext, WindowHandle,
 };
 use anyhow::Context as _;
 use derive_more::{Deref, DerefMut};
@@ -292,6 +292,10 @@ impl Context for AsyncWindowContext {
 
 impl VisualContext for AsyncWindowContext {
     type ViewContext<'a, V: 'static> = ViewContext<'a, V>;
+
+    fn root_view(&self) -> Result<AnyView> {
+        self.app.update_window(self.window, |cx| cx.root_view())
+    }
 
     fn build_view<V>(
         &mut self,

@@ -887,11 +887,9 @@ impl Workspace {
             .await
             .log_err();
 
-            cx.update_global(|_, cx| {
-                window.update_root(&mut cx, |_, cx| {
-                    // todo!()
-                    // cx.activate_window()
-                });
+            window.update_root(&mut cx, |_, cx| {
+                // todo!()
+                // cx.activate_window()
             });
 
             let workspace = workspace.downgrade();

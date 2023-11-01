@@ -1,14 +1,14 @@
 use crate::{
     px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect,
-    Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId,
-    Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
-    MainThread, MainThreadOnly, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow,
-    Point, PolychromeSprite, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams,
-    ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine,
-    Task, Underline, UnderlineStyle, View, VisualContext, WeakView, WindowOptions,
-    SUBPIXEL_VARIANTS,
+    Entity, EntityId, EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId, GlobalElementId,
+    GlyphId, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke,
+    LayoutId, MainThread, MainThreadOnly, Model, ModelContext, Modifiers, MonochromeSprite,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformWindow, Point, PolychromeSprite, Quad, Render, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -315,8 +315,6 @@ impl<'a> WindowContext<'a> {
     pub(crate) fn new(app: &'a mut AppContext, window: &'a mut Window) -> Self {
         Self { app, window }
     }
-
-    // fn replace_root(&mut )
 
     /// Obtain a handle to the window that belongs to this context.
     pub fn window_handle(&self) -> AnyWindowHandle {
@@ -1312,6 +1310,13 @@ impl Context for WindowContext<'_> {
 impl VisualContext for WindowContext<'_> {
     type ViewContext<'a, V: 'static> = ViewContext<'a, V>;
 
+    fn root_view(&self) -> Self::Result<AnyView> {
+        self.window
+            .root_view
+            .clone()
+            .expect("we only take the root_view value when we draw")
+    }
+
     fn build_view<V>(
         &mut self,
         build_view_state: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
@@ -1966,6 +1971,10 @@ impl<V> Context for ViewContext<'_, V> {
 impl<V: 'static> VisualContext for ViewContext<'_, V> {
     type ViewContext<'a, W: 'static> = ViewContext<'a, W>;
 
+    fn root_view(&self) -> Self::Result<AnyView> {
+        self.window_cx.root_view()
+    }
+
     fn build_view<W: 'static + Send>(
         &mut self,
         build_view: impl FnOnce(&mut Self::ViewContext<'_, W>) -> W,
@@ -2034,20 +2043,20 @@ impl<V: 'static + Render> WindowHandle<V> {
         }
     }
 
-    pub fn update_root<R>(
+    pub fn update_root<C, R>(
         &self,
-        cx: &mut AppContext,
+        cx: &mut C,
         update: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
-    ) -> Result<R> {
+    ) -> Result<R>
+    where
+        C: Context,
+    {
         cx.update_window(self.any_handle, |cx| {
-            let root_view = cx
-                .window
-                .root_view
-                .clone()
-                .unwrap()
-                .downcast::<V>()
-                .unwrap();
-            root_view.update(cx, update)
+            let x = Ok(cx.root_view()).flatten();
+
+            // let root_view = x.unwrap().downcast::<V>().unwrap();
+            // root_view.update(cx, update)
+            todo!()
         })
     }
 }
