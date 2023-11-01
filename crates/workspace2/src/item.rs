@@ -401,7 +401,7 @@ impl<T: Item> ItemHandle for View<T> {
             let pending_update = Arc::new(Mutex::new(None));
             let pending_update_scheduled = Arc::new(AtomicBool::new(false));
 
-            let mut event_subscription =
+            let mut _event_subscription =
                 Some(cx.subscribe(self, move |workspace, item, event, cx| {
                     let pane = if let Some(pane) = workspace
                         .panes_by_item
@@ -415,7 +415,7 @@ impl<T: Item> ItemHandle for View<T> {
                     };
 
                     if let Some(item) = item.to_followable_item_handle(cx) {
-                        let is_project_item = item.is_project_item(cx);
+                        let _is_project_item = item.is_project_item(cx);
                         let leader_id = workspace.leader_for_pane(&pane);
 
                         if leader_id.is_some() && item.should_unfollow_on_event(event, cx) {

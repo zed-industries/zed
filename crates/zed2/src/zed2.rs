@@ -219,7 +219,7 @@ pub async fn handle_cli_connection(
 pub fn build_window_options(
     bounds: Option<WindowBounds>,
     display_uuid: Option<Uuid>,
-    cx: MainThread<AppContext>,
+    cx: &mut MainThread<AppContext>,
 ) -> WindowOptions {
     let bounds = bounds.unwrap_or(WindowBounds::Maximized);
     let display = display_uuid.and_then(|uuid| cx.display_for_uuid(uuid));

@@ -1968,7 +1968,7 @@ impl Pane {
 // }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
+    pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
         self.history.push(data, self.item.clone(), cx);
     }
 
@@ -2039,7 +2039,7 @@ impl NavHistory {
         entry
     }
 
-    pub fn push<D: 'static + Any>(
+    pub fn push<D: 'static + Send + Any>(
         &mut self,
         data: Option<D>,
         item: Arc<dyn WeakItemHandle>,
@@ -2054,7 +2054,7 @@ impl NavHistory {
                 }
                 state.backward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
                 state.forward_stack.clear();
@@ -2065,7 +2065,7 @@ impl NavHistory {
                 }
                 state.forward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
             }
@@ -2075,7 +2075,7 @@ impl NavHistory {
                 }
                 state.backward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
             }
@@ -2085,7 +2085,7 @@ impl NavHistory {
                 }
                 state.closed_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
             }

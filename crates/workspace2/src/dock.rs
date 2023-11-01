@@ -1,7 +1,7 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui2::{
-    Action, AnyView, Div, Entity, EntityId, EventEmitter, Render, Subscription, View, ViewContext,
-    WeakView, WindowContext,
+    Action, AnyView, AppContext, Div, Entity, EntityId, EventEmitter, Render, Subscription, View,
+    ViewContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -212,28 +212,28 @@ impl Dock {
     //             .position(|entry| entry.panel.as_any().is::<T>())
     //     }
 
-    //     pub fn panel_index_for_ui_name(&self, ui_name: &str, cx: &AppContext) -> Option<usize> {
-    //         todo!()
-    //         // self.panel_entries.iter().position(|entry| {
-    //         //     let panel = entry.panel.as_any();
-    //         //     cx.view_ui_name(panel.window(), panel.id()) == Some(ui_name)
-    //         // })
-    //     }
+    pub fn panel_index_for_ui_name(&self, _ui_name: &str, _cx: &AppContext) -> Option<usize> {
+        todo!()
+        // self.panel_entries.iter().position(|entry| {
+        //     let panel = entry.panel.as_any();
+        //     cx.view_ui_name(panel.window(), panel.id()) == Some(ui_name)
+        // })
+    }
 
     //     pub fn active_panel_index(&self) -> usize {
     //         self.active_panel_index
     //     }
 
-    //     pub(crate) fn set_open(&mut self, open: bool, cx: &mut ViewContext<Self>) {
-    //         if open != self.is_open {
-    //             self.is_open = open;
-    //             if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
-    //                 active_panel.panel.set_active(open, cx);
-    //             }
+    pub(crate) fn set_open(&mut self, open: bool, cx: &mut ViewContext<Self>) {
+        if open != self.is_open {
+            self.is_open = open;
+            if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
+                active_panel.panel.set_active(open, cx);
+            }
 
-    //             cx.notify();
-    //         }
-    //     }
+            cx.notify();
+        }
+    }
 
     //     pub fn set_panel_zoomed(&mut self, panel: &AnyView, zoomed: bool, cx: &mut ViewContext<Self>) {
     //         for entry in &mut self.panel_entries {
@@ -314,29 +314,29 @@ impl Dock {
     //         self.panel_entries.len()
     //     }
 
-    //     pub fn activate_panel(&mut self, panel_ix: usize, cx: &mut ViewContext<Self>) {
-    //         if panel_ix != self.active_panel_index {
-    //             if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
-    //                 active_panel.panel.set_active(false, cx);
-    //             }
+    pub fn activate_panel(&mut self, panel_ix: usize, cx: &mut ViewContext<Self>) {
+        if panel_ix != self.active_panel_index {
+            if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
+                active_panel.panel.set_active(false, cx);
+            }
 
-    //             self.active_panel_index = panel_ix;
-    //             if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
-    //                 active_panel.panel.set_active(true, cx);
-    //             }
+            self.active_panel_index = panel_ix;
+            if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
+                active_panel.panel.set_active(true, cx);
+            }
 
-    //             cx.notify();
-    //         }
-    //     }
+            cx.notify();
+        }
+    }
 
     pub fn visible_panel(&self) -> Option<&Arc<dyn PanelHandle>> {
         let entry = self.visible_entry()?;
         Some(&entry.panel)
     }
 
-    //     pub fn active_panel(&self) -> Option<&Arc<dyn PanelHandle>> {
-    //         Some(&self.panel_entries.get(self.active_panel_index)?.panel)
-    //     }
+    pub fn active_panel(&self) -> Option<&Arc<dyn PanelHandle>> {
+        Some(&self.panel_entries.get(self.active_panel_index)?.panel)
+    }
 
     fn visible_entry(&self) -> Option<&PanelEntry> {
         if self.is_open {
@@ -599,7 +599,7 @@ impl EventEmitter for PanelButtons {
 impl Render for PanelButtons {
     type Element = Div<Self>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         todo!()
     }
 }
@@ -607,8 +607,8 @@ impl Render for PanelButtons {
 impl StatusItemView for PanelButtons {
     fn set_active_pane_item(
         &mut self,
-        active_pane_item: Option<&dyn crate::ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        _active_pane_item: Option<&dyn crate::ItemHandle>,
+        _cx: &mut ViewContext<Self>,
     ) {
         todo!()
     }
@@ -656,7 +656,7 @@ pub mod test {
     impl Render for TestPanel {
         type Element = Div<Self>;
 
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
             div()
         }
     }
