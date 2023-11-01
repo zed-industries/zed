@@ -80,12 +80,12 @@ fn summarize(buffer: &BufferSnapshot, selected_range: Range<impl ToOffset>) -> S
             if !flushed_selection {
                 // The collapsed node ends after the selection starts, so we'll flush the selection first.
                 summary.extend(buffer.text_for_range(offset..selected_range.start));
-                summary.push_str("<|START|");
+                summary.push_str("<|S|");
                 if selected_range.end == selected_range.start {
                     summary.push_str(">");
                 } else {
                     summary.extend(buffer.text_for_range(selected_range.clone()));
-                    summary.push_str("|END|>");
+                    summary.push_str("|E|>");
                 }
                 offset = selected_range.end;
                 flushed_selection = true;
@@ -107,12 +107,12 @@ fn summarize(buffer: &BufferSnapshot, selected_range: Range<impl ToOffset>) -> S
     // Flush selection if we haven't already done so.
     if !flushed_selection && offset <= selected_range.start {
         summary.extend(buffer.text_for_range(offset..selected_range.start));
-        summary.push_str("<|START|");
+        summary.push_str("<|S|");
         if selected_range.end == selected_range.start {
             summary.push_str(">");
         } else {
             summary.extend(buffer.text_for_range(selected_range.clone()));
-            summary.push_str("|END|>");
+            summary.push_str("|E|>");
         }
         offset = selected_range.end;
     }
@@ -260,7 +260,7 @@ pub(crate) mod tests {
             summarize(&snapshot, Point::new(1, 4)..Point::new(1, 4)),
             indoc! {"
                 struct X {
-                    <|START|>a: usize,
+                    <|S|>a: usize,
                     b: usize,
                 }
 
@@ -286,7 +286,7 @@ pub(crate) mod tests {
                 impl X {
 
                     fn new() -> Self {
-                        let <|START|a |END|>= 1;
+                        let <|S|a |E|>= 1;
                         let b = 2;
                         Self { a, b }
                     }
@@ -307,7 +307,7 @@ pub(crate) mod tests {
                 }
 
                 impl X {
-                <|START|>
+                <|S|>
                     fn new() -> Self {}
 
                     pub fn a(&self, param: bool) -> usize {}
@@ -333,7 +333,7 @@ pub(crate) mod tests {
 
                     pub fn b(&self) -> usize {}
                 }
-                <|START|>"}
+                <|S|>"}
         );
 
         // Ensure nested functions get collapsed properly.
@@ -369,7 +369,7 @@ pub(crate) mod tests {
         assert_eq!(
             summarize(&snapshot, Point::new(0, 0)..Point::new(0, 0)),
             indoc! {"
-                <|START|>struct X {
+                <|S|>struct X {
                     a: usize,
                     b: usize,
                 }
