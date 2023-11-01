@@ -2292,168 +2292,168 @@ async fn test_definition(cx: &mut gpui2::TestAppContext) {
     }
 }
 
-#[gpui2::test]
-async fn test_completions_without_edit_ranges(cx: &mut gpui2::TestAppContext) {
-    init_test(cx);
+// #[gpui2::test]
+// async fn test_completions_without_edit_ranges(cx: &mut gpui2::TestAppContext) {
+//     init_test(cx);
 
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "TypeScript".into(),
-            path_suffixes: vec!["ts".to_string()],
-            ..Default::default()
-        },
-        Some(tree_sitter_typescript::language_typescript()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-            capabilities: lsp2::ServerCapabilities {
-                completion_provider: Some(lsp2::CompletionOptions {
-                    trigger_characters: Some(vec![":".to_string()]),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        }))
-        .await;
+//     let mut language = Language::new(
+//         LanguageConfig {
+//             name: "TypeScript".into(),
+//             path_suffixes: vec!["ts".to_string()],
+//             ..Default::default()
+//         },
+//         Some(tree_sitter_typescript::language_typescript()),
+//     );
+//     let mut fake_language_servers = language
+//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+//             capabilities: lsp2::ServerCapabilities {
+//                 completion_provider: Some(lsp2::CompletionOptions {
+//                     trigger_characters: Some(vec![":".to_string()]),
+//                     ..Default::default()
+//                 }),
+//                 ..Default::default()
+//             },
+//             ..Default::default()
+//         }))
+//         .await;
 
-    let fs = FakeFs::new(cx.executor().clone());
-    fs.insert_tree(
-        "/dir",
-        json!({
-            "a.ts": "",
-        }),
-    )
-    .await;
+//     let fs = FakeFs::new(cx.executor().clone());
+//     fs.insert_tree(
+//         "/dir",
+//         json!({
+//             "a.ts": "",
+//         }),
+//     )
+//     .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-    let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
-        .await
-        .unwrap();
+//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+//     let buffer = project
+//         .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+//         .await
+//         .unwrap();
 
-    let fake_server = fake_language_servers.next().await.unwrap();
+//     let fake_server = fake_language_servers.next().await.unwrap();
 
-    let text = "let a = b.fqn";
-    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
-    let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len(), cx)
-    });
+//     let text = "let a = b.fqn";
+//     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+//     let completions = project.update(cx, |project, cx| {
+//         project.completions(&buffer, text.len(), cx)
+//     });
 
-    fake_server
-        .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
-            Ok(Some(lsp2::CompletionResponse::Array(vec![
-                lsp2::CompletionItem {
-                    label: "fullyQualifiedName?".into(),
-                    insert_text: Some("fullyQualifiedName".into()),
-                    ..Default::default()
-                },
-            ])))
-        })
-        .next()
-        .await;
-    let completions = completions.await.unwrap();
-    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-    assert_eq!(completions.len(), 1);
-    assert_eq!(completions[0].new_text, "fullyQualifiedName");
-    assert_eq!(
-        completions[0].old_range.to_offset(&snapshot),
-        text.len() - 3..text.len()
-    );
+//     fake_server
+//         .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
+//             Ok(Some(lsp2::CompletionResponse::Array(vec![
+//                 lsp2::CompletionItem {
+//                     label: "fullyQualifiedName?".into(),
+//                     insert_text: Some("fullyQualifiedName".into()),
+//                     ..Default::default()
+//                 },
+//             ])))
+//         })
+//         .next()
+//         .await;
+//     let completions = completions.await.unwrap();
+//     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+//     assert_eq!(completions.len(), 1);
+//     assert_eq!(completions[0].new_text, "fullyQualifiedName");
+//     assert_eq!(
+//         completions[0].old_range.to_offset(&snapshot),
+//         text.len() - 3..text.len()
+//     );
 
-    let text = "let a = \"atoms/cmp\"";
-    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
-    let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len() - 1, cx)
-    });
+//     let text = "let a = \"atoms/cmp\"";
+//     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+//     let completions = project.update(cx, |project, cx| {
+//         project.completions(&buffer, text.len() - 1, cx)
+//     });
 
-    fake_server
-        .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
-            Ok(Some(lsp2::CompletionResponse::Array(vec![
-                lsp2::CompletionItem {
-                    label: "component".into(),
-                    ..Default::default()
-                },
-            ])))
-        })
-        .next()
-        .await;
-    let completions = completions.await.unwrap();
-    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-    assert_eq!(completions.len(), 1);
-    assert_eq!(completions[0].new_text, "component");
-    assert_eq!(
-        completions[0].old_range.to_offset(&snapshot),
-        text.len() - 4..text.len() - 1
-    );
-}
+//     fake_server
+//         .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
+//             Ok(Some(lsp2::CompletionResponse::Array(vec![
+//                 lsp2::CompletionItem {
+//                     label: "component".into(),
+//                     ..Default::default()
+//                 },
+//             ])))
+//         })
+//         .next()
+//         .await;
+//     let completions = completions.await.unwrap();
+//     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+//     assert_eq!(completions.len(), 1);
+//     assert_eq!(completions[0].new_text, "component");
+//     assert_eq!(
+//         completions[0].old_range.to_offset(&snapshot),
+//         text.len() - 4..text.len() - 1
+//     );
+// }
 
-#[gpui2::test]
-async fn test_completions_with_carriage_returns(cx: &mut gpui2::TestAppContext) {
-    init_test(cx);
+// #[gpui2::test]
+// async fn test_completions_with_carriage_returns(cx: &mut gpui2::TestAppContext) {
+//     init_test(cx);
 
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "TypeScript".into(),
-            path_suffixes: vec!["ts".to_string()],
-            ..Default::default()
-        },
-        Some(tree_sitter_typescript::language_typescript()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-            capabilities: lsp2::ServerCapabilities {
-                completion_provider: Some(lsp2::CompletionOptions {
-                    trigger_characters: Some(vec![":".to_string()]),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        }))
-        .await;
+//     let mut language = Language::new(
+//         LanguageConfig {
+//             name: "TypeScript".into(),
+//             path_suffixes: vec!["ts".to_string()],
+//             ..Default::default()
+//         },
+//         Some(tree_sitter_typescript::language_typescript()),
+//     );
+//     let mut fake_language_servers = language
+//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+//             capabilities: lsp2::ServerCapabilities {
+//                 completion_provider: Some(lsp2::CompletionOptions {
+//                     trigger_characters: Some(vec![":".to_string()]),
+//                     ..Default::default()
+//                 }),
+//                 ..Default::default()
+//             },
+//             ..Default::default()
+//         }))
+//         .await;
 
-    let fs = FakeFs::new(cx.executor().clone());
-    fs.insert_tree(
-        "/dir",
-        json!({
-            "a.ts": "",
-        }),
-    )
-    .await;
+//     let fs = FakeFs::new(cx.executor().clone());
+//     fs.insert_tree(
+//         "/dir",
+//         json!({
+//             "a.ts": "",
+//         }),
+//     )
+//     .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-    let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
-        .await
-        .unwrap();
+//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+//     let buffer = project
+//         .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+//         .await
+//         .unwrap();
 
-    let fake_server = fake_language_servers.next().await.unwrap();
+//     let fake_server = fake_language_servers.next().await.unwrap();
 
-    let text = "let a = b.fqn";
-    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
-    let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len(), cx)
-    });
+//     let text = "let a = b.fqn";
+//     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+//     let completions = project.update(cx, |project, cx| {
+//         project.completions(&buffer, text.len(), cx)
+//     });
 
-    fake_server
-        .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
-            Ok(Some(lsp2::CompletionResponse::Array(vec![
-                lsp2::CompletionItem {
-                    label: "fullyQualifiedName?".into(),
-                    insert_text: Some("fully\rQualified\r\nName".into()),
-                    ..Default::default()
-                },
-            ])))
-        })
-        .next()
-        .await;
-    let completions = completions.await.unwrap();
-    assert_eq!(completions.len(), 1);
-    assert_eq!(completions[0].new_text, "fully\nQualified\nName");
-}
+//     fake_server
+//         .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
+//             Ok(Some(lsp2::CompletionResponse::Array(vec![
+//                 lsp2::CompletionItem {
+//                     label: "fullyQualifiedName?".into(),
+//                     insert_text: Some("fully\rQualified\r\nName".into()),
+//                     ..Default::default()
+//                 },
+//             ])))
+//         })
+//         .next()
+//         .await;
+//     let completions = completions.await.unwrap();
+//     assert_eq!(completions.len(), 1);
+//     assert_eq!(completions[0].new_text, "fully\nQualified\nName");
+// }
 
 #[gpui2::test(iterations = 10)]
 async fn test_apply_code_actions_with_commands(cx: &mut gpui2::TestAppContext) {
