@@ -1,4 +1,4 @@
-use gpui2::{relative, Hsla, WindowContext};
+use gpui2::{relative, rems, Hsla, WindowContext};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -86,7 +86,7 @@ impl Label {
                         .bg(LabelColor::Hidden.hsla(cx)),
                 )
             })
-            .text_size(ui_size(cx, 1.))
+            .text_size(rems(1.))
             .when(self.line_height_style == LineHeightStyle::UILabel, |this| {
                 this.line_height(relative(1.))
             })

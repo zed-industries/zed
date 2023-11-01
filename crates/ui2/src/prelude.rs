@@ -7,17 +7,8 @@ pub use crate::elevation::*;
 pub use crate::ButtonVariant;
 pub use theme2::ActiveTheme;
 
-use crate::settings::user_settings;
-use gpui2::{rems, Hsla, Rems};
+use gpui2::Hsla;
 use strum::EnumIter;
-
-pub fn ui_size(cx: &mut WindowContext, size: f32) -> Rems {
-    const UI_SCALE_RATIO: f32 = 0.875;
-
-    let settings = user_settings(cx);
-
-    rems(*settings.ui_scale * UI_SCALE_RATIO * size)
-}
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum FileSystemStatus {

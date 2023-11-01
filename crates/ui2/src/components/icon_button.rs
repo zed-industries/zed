@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui2::MouseButton;
+use gpui2::{rems, MouseButton};
 
 use crate::{h_stack, prelude::*};
 use crate::{ClickHandler, Icon, IconColor, IconElement};
@@ -88,8 +88,8 @@ impl<V: 'static> IconButton<V> {
             .id(self.id.clone())
             .justify_center()
             .rounded_md()
-            .py(ui_size(cx, 0.25))
-            .px(ui_size(cx, 6. / 14.))
+            .py(rems(0.21875))
+            .px(rems(0.375))
             .bg(bg_color)
             .hover(|style| style.bg(bg_hover_color))
             .active(|style| style.bg(bg_active_color))
