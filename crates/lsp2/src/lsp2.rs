@@ -1047,8 +1047,9 @@ impl FakeLanguageServer {
             .on_request::<T, _, _>(move |params, cx| {
                 let result = handler(params, cx.clone());
                 let responded_tx = responded_tx.clone();
+                let executor = cx.background_executor().clone();
                 async move {
-                    cx.background_executor().simulate_random_delay().await;
+                    executor.simulate_random_delay().await;
                     let result = result.await;
                     responded_tx.unbounded_send(()).ok();
                     result

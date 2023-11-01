@@ -1,5 +1,5 @@
 use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
-use gpui2::{serde_json, AppContext, AppMetadata, Executor, Task};
+use gpui2::{serde_json, AppContext, AppMetadata, BackgroundExecutor, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -14,7 +14,7 @@ use util::{channel::ReleaseChannel, TryFutureExt};
 
 pub struct Telemetry {
     http_client: Arc<dyn HttpClient>,
-    executor: Executor,
+    executor: BackgroundExecutor,
     state: Mutex<TelemetryState>,
 }
 

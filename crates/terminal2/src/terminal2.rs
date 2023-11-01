@@ -51,8 +51,8 @@ use thiserror::Error;
 
 use gpui2::{
     px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla, Keystroke,
-    MainThread, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, ScrollWheelEvent, Size, Task, TouchPhase,
+    ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, ScrollWheelEvent, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -403,7 +403,7 @@ impl TerminalBuilder {
 
     pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         //Event loop
-        cx.spawn_on_main(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             use futures::StreamExt;
 
             while let Some(event) = self.events_rx.next().await {
@@ -414,7 +414,10 @@ impl TerminalBuilder {
 
                 'outer: loop {
                     let mut events = vec![];
-                    let mut timer = cx.executor().timer(Duration::from_millis(4)).fuse();
+                    let mut timer = cx
+                        .background_executor()
+                        .timer(Duration::from_millis(4))
+                        .fuse();
                     let mut wakeup = false;
                     loop {
                         futures::select_biased! {
@@ -551,7 +554,7 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    fn process_event(&mut self, event: &AlacTermEvent, cx: &mut MainThread<ModelContext<Self>>) {
+    fn process_event(&mut self, event: &AlacTermEvent, cx: &mut ModelContext<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
                 self.breadcrumb_text = title.to_string();
@@ -708,8 +711,7 @@ impl Terminal {
 
             InternalEvent::Copy => {
                 if let Some(txt) = term.selection_to_string() {
-                    cx.run_on_main(|cx| cx.write_to_clipboard(ClipboardItem::new(txt)))
-                        .detach();
+                    cx.write_to_clipboard(ClipboardItem::new(txt))
                 }
             }
             InternalEvent::ScrollToAlacPoint(point) => {
@@ -1189,7 +1191,7 @@ impl Terminal {
         &mut self,
         e: &MouseUpEvent,
         origin: Point<Pixels>,
-        cx: &mut MainThread<ModelContext<Self>>,
+        cx: &mut ModelContext<Self>,
     ) {
         let setting = TerminalSettings::get_global(cx);
 

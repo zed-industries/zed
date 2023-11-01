@@ -1,14 +1,13 @@
 use assets::SoundRegistry;
-use futures::{channel::mpsc, StreamExt};
-use gpui2::{AppContext, AssetSource, BackgroundExecutor};
+use gpui2::{AppContext, AssetSource};
 use rodio::{OutputStream, OutputStreamHandle};
 use util::ResultExt;
 
 mod assets;
 
 pub fn init(source: impl AssetSource, cx: &mut AppContext) {
-    cx.set_global(Audio::new(cx.executor()));
     cx.set_global(SoundRegistry::new(source));
+    cx.set_global(Audio::new());
 }
 
 pub enum Sound {
@@ -34,15 +33,18 @@ impl Sound {
 }
 
 pub struct Audio {
-    tx: mpsc::UnboundedSender<Box<dyn FnOnce(&mut AudioState)>>,
-}
-
-struct AudioState {
     _output_stream: Option<OutputStream>,
     output_handle: Option<OutputStreamHandle>,
 }
 
-impl AudioState {
+impl Audio {
+    pub fn new() -> Self {
+        Self {
+            _output_stream: None,
+            output_handle: None,
+        }
+    }
+
     fn ensure_output_exists(&mut self) -> Option<&OutputStreamHandle> {
         if self.output_handle.is_none() {
             let (_output_stream, output_handle) = OutputStream::try_default().log_err().unzip();
@@ -53,59 +55,27 @@ impl AudioState {
         self.output_handle.as_ref()
     }
 
-    fn take(&mut self) {
-        self._output_stream.take();
-        self.output_handle.take();
-    }
-}
-
-impl Audio {
-    pub fn new(executor: &BackgroundExecutor) -> Self {
-        let (tx, mut rx) = mpsc::unbounded::<Box<dyn FnOnce(&mut AudioState)>>();
-        executor
-            .spawn_on_main(|| async move {
-                let mut audio = AudioState {
-                    _output_stream: None,
-                    output_handle: None,
-                };
-
-                while let Some(f) = rx.next().await {
-                    (f)(&mut audio);
-                }
-            })
-            .detach();
-
-        Self { tx }
-    }
-
     pub fn play_sound(sound: Sound, cx: &mut AppContext) {
         if !cx.has_global::<Self>() {
             return;
         }
 
-        let Some(source) = SoundRegistry::global(cx).get(sound.file()).log_err() else {
-            return;
-        };
-
-        let this = cx.global::<Self>();
-        this.tx
-            .unbounded_send(Box::new(move |state| {
-                if let Some(output_handle) = state.ensure_output_exists() {
-                    output_handle.play_raw(source).log_err();
-                }
-            }))
-            .ok();
+        cx.update_global::<Self, _>(|this, cx| {
+            let output_handle = this.ensure_output_exists()?;
+            let source = SoundRegistry::global(cx).get(sound.file()).log_err()?;
+            output_handle.play_raw(source).log_err()?;
+            Some(())
+        });
     }
 
-    pub fn end_call(cx: &AppContext) {
+    pub fn end_call(cx: &mut AppContext) {
         if !cx.has_global::<Self>() {
             return;
         }
 
-        let this = cx.global::<Self>();
-
-        this.tx
-            .unbounded_send(Box::new(move |state| state.take()))
-            .ok();
+        cx.update_global::<Self, _>(|this, _| {
+            this._output_stream.take();
+            this.output_handle.take();
+        });
     }
 }

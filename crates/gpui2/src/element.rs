@@ -218,8 +218,8 @@ impl<V> Component<V> for AnyElement<V> {
 impl<V, E, F> Element<V> for Option<F>
 where
     V: 'static,
-    E: 'static + Component<V> + Send,
-    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    E: 'static + Component<V>,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static,
 {
     type ElementState = AnyElement<V>;
 
@@ -262,8 +262,8 @@ where
 impl<V, E, F> Component<V> for Option<F>
 where
     V: 'static,
-    E: 'static + Component<V> + Send,
-    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    E: 'static + Component<V>,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static,
 {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
@@ -273,8 +273,8 @@ where
 impl<V, E, F> Component<V> for F
 where
     V: 'static,
-    E: 'static + Component<V> + Send,
-    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    E: 'static + Component<V>,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static,
 {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(Some(self))

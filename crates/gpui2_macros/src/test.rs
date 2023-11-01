@@ -89,8 +89,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                             inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
                             continue;
                         }
-                        Some("Executor") => {
-                            inner_fn_args.extend(quote!(gpui2::Executor::new(
+                        Some("BackgroundExecutor") => {
+                            inner_fn_args.extend(quote!(gpui2::BackgroundExecutor::new(
                                 std::sync::Arc::new(dispatcher.clone())
                             ),));
                             continue;
@@ -134,7 +134,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     #num_iterations as u64,
                     #max_retries,
                     &mut |dispatcher, _seed| {
-                        let executor = gpui2::Executor::new(std::sync::Arc::new(dispatcher.clone()));
+                        let executor = gpui2::BackgroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
                         #cx_vars
                         executor.block(#inner_fn_name(#inner_fn_args));
                         #cx_teardowns
@@ -170,7 +170,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                     let mut #cx_varname = gpui2::TestAppContext::new(
                                        dispatcher.clone()
                                     );
-                                    let mut #cx_varname_lock = #cx_varname.app.lock();
+                                    let mut #cx_varname_lock = #cx_varname.app.borrow_mut();
                                 ));
                                 inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
                                 cx_teardowns.extend(quote!(
