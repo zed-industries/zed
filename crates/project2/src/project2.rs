@@ -855,39 +855,39 @@ impl Project {
         }
     }
 
-    // #[cfg(any(test, feature = "test-support"))]
-    // pub async fn test(
-    //     fs: Arc<dyn Fs>,
-    //     root_paths: impl IntoIterator<Item = &Path>,
-    //     cx: &mut gpui::TestAppContext,
-    // ) -> Handle<Project> {
-    //     let mut languages = LanguageRegistry::test();
-    //     languages.set_executor(cx.background());
-    //     let http_client = util::http::FakeHttpClient::with_404_response();
-    //     let client = cx.update(|cx| client2::Client::new(http_client.clone(), cx));
-    //     let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-    //     let project = cx.update(|cx| {
-    //         Project::local(
-    //             client,
-    //             node_runtime::FakeNodeRuntime::new(),
-    //             user_store,
-    //             Arc::new(languages),
-    //             fs,
-    //             cx,
-    //         )
-    //     });
-    //     for path in root_paths {
-    //         let (tree, _) = project
-    //             .update(cx, |project, cx| {
-    //                 project.find_or_create_local_worktree(path, true, cx)
-    //             })
-    //             .await
-    //             .unwrap();
-    //         tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
-    //             .await;
-    //     }
-    //     project
-    // }
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn test(
+        fs: Arc<dyn Fs>,
+        root_paths: impl IntoIterator<Item = &Path>,
+        cx: &mut gpui2::TestAppContext,
+    ) -> Model<Project> {
+        let mut languages = LanguageRegistry::test();
+        languages.set_executor(cx.executor().clone());
+        let http_client = util::http::FakeHttpClient::with_404_response();
+        let client = cx.update(|cx| client2::Client::new(http_client.clone(), cx));
+        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let project = cx.update(|cx| {
+            Project::local(
+                client,
+                node_runtime::FakeNodeRuntime::new(),
+                user_store,
+                Arc::new(languages),
+                fs,
+                cx,
+            )
+        });
+        for path in root_paths {
+            let (tree, _) = project
+                .update(cx, |project, cx| {
+                    project.find_or_create_local_worktree(path, true, cx)
+                })
+                .await
+                .unwrap();
+            tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+                .await;
+        }
+        project
+    }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
         let mut language_servers_to_start = Vec::new();

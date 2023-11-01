@@ -17,6 +17,7 @@ const MIN_LINE_HEIGHT: f32 = 1.0;
 
 #[derive(Clone)]
 pub struct ThemeSettings {
+    pub ui_font_size: Pixels,
     pub buffer_font: Font,
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
@@ -28,6 +29,8 @@ pub struct AdjustedBufferFontSize(Option<Pixels>);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
+    #[serde(default)]
+    pub ui_font_size: Option<f32>,
     #[serde(default)]
     pub buffer_font_family: Option<String>,
     #[serde(default)]
@@ -115,6 +118,7 @@ impl settings2::Settings for ThemeSettings {
         let themes = cx.default_global::<Arc<ThemeRegistry>>();
 
         let mut this = Self {
+            ui_font_size: defaults.ui_font_size.unwrap_or(16.).into(),
             buffer_font: Font {
                 family: defaults.buffer_font_family.clone().unwrap().into(),
                 features: defaults.buffer_font_features.clone().unwrap(),
@@ -123,9 +127,10 @@ impl settings2::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
-            active_theme: themes.get("Zed Pro Moonlight").unwrap(),
-            // todo!(Read the theme name from the settings)
-            // active_theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
+            active_theme: themes
+                .get(defaults.theme.as_ref().unwrap())
+                .or(themes.get("Zed Pro Moonlight"))
+                .unwrap(),
         };
 
         for value in user_values.into_iter().copied().cloned() {
@@ -142,6 +147,7 @@ impl settings2::Settings for ThemeSettings {
                 }
             }
 
+            merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));
             merge(
                 &mut this.buffer_font_size,
                 value.buffer_font_size.map(Into::into),

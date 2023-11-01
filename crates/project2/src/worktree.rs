@@ -4030,53 +4030,52 @@ struct UpdateIgnoreStatusJob {
     scan_queue: Sender<ScanJob>,
 }
 
-// todo!("re-enable when we have tests")
-// pub trait WorktreeModelHandle {
-// #[cfg(any(test, feature = "test-support"))]
-// fn flush_fs_events<'a>(
-//     &self,
-//     cx: &'a gpui::TestAppContext,
-// ) -> futures::future::LocalBoxFuture<'a, ()>;
-// }
+pub trait WorktreeModelHandle {
+    #[cfg(any(test, feature = "test-support"))]
+    fn flush_fs_events<'a>(
+        &self,
+        cx: &'a mut gpui2::TestAppContext,
+    ) -> futures::future::LocalBoxFuture<'a, ()>;
+}
 
-// impl WorktreeModelHandle for Handle<Worktree> {
-//     // When the worktree's FS event stream sometimes delivers "redundant" events for FS changes that
-//     // occurred before the worktree was constructed. These events can cause the worktree to perform
-//     // extra directory scans, and emit extra scan-state notifications.
-//     //
-//     // This function mutates the worktree's directory and waits for those mutations to be picked up,
-//     // to ensure that all redundant FS events have already been processed.
-//     #[cfg(any(test, feature = "test-support"))]
-//     fn flush_fs_events<'a>(
-//         &self,
-//         cx: &'a gpui::TestAppContext,
-//     ) -> futures::future::LocalBoxFuture<'a, ()> {
-//         let filename = "fs-event-sentinel";
-//         let tree = self.clone();
-//         let (fs, root_path) = self.read_with(cx, |tree, _| {
-//             let tree = tree.as_local().unwrap();
-//             (tree.fs.clone(), tree.abs_path().clone())
-//         });
+impl WorktreeModelHandle for Model<Worktree> {
+    // When the worktree's FS event stream sometimes delivers "redundant" events for FS changes that
+    // occurred before the worktree was constructed. These events can cause the worktree to perform
+    // extra directory scans, and emit extra scan-state notifications.
+    //
+    // This function mutates the worktree's directory and waits for those mutations to be picked up,
+    // to ensure that all redundant FS events have already been processed.
+    #[cfg(any(test, feature = "test-support"))]
+    fn flush_fs_events<'a>(
+        &self,
+        cx: &'a mut gpui2::TestAppContext,
+    ) -> futures::future::LocalBoxFuture<'a, ()> {
+        let filename = "fs-event-sentinel";
+        let tree = self.clone();
+        let (fs, root_path) = self.update(cx, |tree, _| {
+            let tree = tree.as_local().unwrap();
+            (tree.fs.clone(), tree.abs_path().clone())
+        });
 
-//         async move {
-//             fs.create_file(&root_path.join(filename), Default::default())
-//                 .await
-//                 .unwrap();
-//             tree.condition(cx, |tree, _| tree.entry_for_path(filename).is_some())
-//                 .await;
+        async move {
+            fs.create_file(&root_path.join(filename), Default::default())
+                .await
+                .unwrap();
+            cx.executor().run_until_parked();
+            assert!(tree.update(cx, |tree, _| tree.entry_for_path(filename).is_some()));
 
-//             fs.remove_file(&root_path.join(filename), Default::default())
-//                 .await
-//                 .unwrap();
-//             tree.condition(cx, |tree, _| tree.entry_for_path(filename).is_none())
-//                 .await;
+            fs.remove_file(&root_path.join(filename), Default::default())
+                .await
+                .unwrap();
+            cx.executor().run_until_parked();
+            assert!(tree.update(cx, |tree, _| tree.entry_for_path(filename).is_none()));
 
-//             cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-//                 .await;
-//         }
-//         .boxed_local()
-//     }
-// }
+            cx.update(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+                .await;
+        }
+        .boxed_local()
+    }
+}
 
 #[derive(Clone, Debug)]
 struct TraversalProgress<'a> {

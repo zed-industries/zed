@@ -6,7 +6,10 @@ use std::{
     marker::PhantomData,
     mem,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
     task::{Context, Poll},
     time::Duration,
 };
@@ -136,7 +139,11 @@ impl Executor {
     pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
         pin_mut!(future);
         let (parker, unparker) = parking::pair();
+        let awoken = Arc::new(AtomicBool::new(false));
+        let awoken2 = awoken.clone();
+
         let waker = waker_fn(move || {
+            awoken2.store(true, SeqCst);
             unparker.unpark();
         });
         let mut cx = std::task::Context::from_waker(&waker);
@@ -146,9 +153,20 @@ impl Executor {
                 Poll::Ready(result) => return result,
                 Poll::Pending => {
                     if !self.dispatcher.poll() {
+                        if awoken.swap(false, SeqCst) {
+                            continue;
+                        }
+
                         #[cfg(any(test, feature = "test-support"))]
-                        if let Some(_) = self.dispatcher.as_test() {
-                            panic!("blocked with nothing left to run")
+                        if let Some(test) = self.dispatcher.as_test() {
+                            if !test.parking_allowed() {
+                                let mut backtrace_message = String::new();
+                                if let Some(backtrace) = test.waiting_backtrace() {
+                                    backtrace_message =
+                                        format!("\nbacktrace of waiting future:\n{:?}", backtrace);
+                                }
+                                panic!("parked with nothing left to run\n{:?}", backtrace_message)
+                            }
                         }
                         parker.park();
                     }
@@ -206,12 +224,12 @@ impl Executor {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn start_waiting(&self) {
-        todo!("start_waiting")
+        self.dispatcher.as_test().unwrap().start_waiting();
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn finish_waiting(&self) {
-        todo!("finish_waiting")
+        self.dispatcher.as_test().unwrap().finish_waiting();
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -227,6 +245,11 @@ impl Executor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
         self.dispatcher.as_test().unwrap().run_until_parked()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn allow_parking(&self) {
+        self.dispatcher.as_test().unwrap().allow_parking();
     }
 
     pub fn num_cpus(&self) -> usize {

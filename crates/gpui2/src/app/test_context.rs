@@ -1,7 +1,8 @@
 use crate::{
-    AnyWindowHandle, AppContext, AsyncAppContext, Context, Executor, MainThread, Model,
-    ModelContext, Result, Task, TestDispatcher, TestPlatform, WindowContext,
+    AnyWindowHandle, AppContext, AsyncAppContext, Context, EventEmitter, Executor, MainThread,
+    Model, ModelContext, Result, Task, TestDispatcher, TestPlatform, WindowContext,
 };
+use futures::SinkExt;
 use parking_lot::Mutex;
 use std::{future::Future, sync::Arc};
 
@@ -63,8 +64,8 @@ impl TestAppContext {
     }
 
     pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> R {
-        let mut lock = self.app.lock();
-        f(&mut *lock)
+        let mut cx = self.app.lock();
+        cx.update(f)
     }
 
     pub fn read_window<R>(
@@ -148,5 +149,23 @@ impl TestAppContext {
             app: Arc::downgrade(&self.app),
             executor: self.executor.clone(),
         }
+    }
+
+    pub fn subscribe<T: 'static + EventEmitter + Send>(
+        &mut self,
+        entity: &Model<T>,
+    ) -> futures::channel::mpsc::UnboundedReceiver<T::Event>
+    where
+        T::Event: 'static + Send + Clone,
+    {
+        let (mut tx, rx) = futures::channel::mpsc::unbounded();
+        entity
+            .update(self, |_, cx: &mut ModelContext<T>| {
+                cx.subscribe(entity, move |_, _, event, cx| {
+                    cx.executor().block(tx.send(event.clone())).unwrap();
+                })
+            })
+            .detach();
+        rx
     }
 }
