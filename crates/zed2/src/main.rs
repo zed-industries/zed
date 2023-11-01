@@ -12,7 +12,7 @@ use client2::UserStore;
 use db2::kvp::KEY_VALUE_STORE;
 use fs2::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui2::{Action, App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
+use gpui2::{Action, App, AppContext, AsyncAppContext, Context, MainThread, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
 use language2::LanguageRegistry;
 use log::LevelFilter;
@@ -24,7 +24,7 @@ use settings2::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
-use smol::process::Command;
+use smol::{future::FutureExt, process::Command};
 use std::{
     env,
     ffi::OsStr,
@@ -40,6 +40,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use util::{
+    async_maybe,
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     http::{self, HttpClient},
     paths, ResultExt,
@@ -242,7 +243,7 @@ fn main() {
                 // .detach_and_log_err(cx)
             }
             Ok(None) | Err(_) => cx
-                .spawn({
+                .spawn_on_main({
                     let app_state = app_state.clone();
                     |cx| async move { restore_or_create_workspace(&app_state, cx).await }
                 })
@@ -313,21 +314,33 @@ async fn installation_id() -> Result<String> {
     }
 }
 
-async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
-    if let Some(location) = workspace2::last_opened_workspace_paths().await {
-        cx.update(|cx| workspace2::open_paths(location.paths().as_ref(), app_state, None, cx))?
-            .await
-            .log_err();
-    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-        cx.update(|cx| show_welcome_experience(app_state, cx));
-    } else {
-        cx.update(|cx| {
-            workspace2::open_new(app_state, cx, |workspace, cx| {
-                Editor::new_file(workspace, &Default::default(), cx)
-            })
-            .detach();
-        });
-    }
+async fn restore_or_create_workspace(
+    app_state: &Arc<AppState>,
+    mut cx: MainThread<AsyncAppContext>,
+) {
+    async_maybe!({
+        if let Some(location) = workspace2::last_opened_workspace_paths().await {
+            cx.update(|cx| workspace2::open_paths(location.paths().as_ref(), app_state, None, cx))?
+                .await
+                .log_err();
+        } else if matches!(KEY_VALUE_STORE.read_kvp("******* THIS IS A BAD KEY PLEASE UNCOMMENT BELOW TO FIX THIS VERY LONG LINE *******"), Ok(None)) {
+            // todo!(welcome)
+            //} else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+            //todo!()
+            // cx.update(|cx| show_welcome_experience(app_state, cx));
+        } else {
+            cx.update(|cx| {
+                workspace2::open_new(app_state, cx, |workspace, cx| {
+                    // todo!(editor)
+                    // Editor::new_file(workspace, &Default::default(), cx)
+                })
+                .detach();
+            })?;
+        }
+        anyhow::Ok(())
+    })
+    .await
+    .log_err();
 }
 
 fn init_paths() {

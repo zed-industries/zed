@@ -7,7 +7,7 @@ pub use assets::*;
 use collections::HashMap;
 use gpui2::{
     point, px, AppContext, AsyncAppContext, AsyncWindowContext, MainThread, Point, Task,
-    TitlebarOptions, WeakView, WindowBounds, WindowKind, WindowOptions,
+    TitlebarOptions, WeakView, WindowBounds, WindowHandle, WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -165,7 +165,7 @@ pub async fn handle_cli_connection(
                                     if paths.is_empty() {
                                         let (done_tx, done_rx) = oneshot::channel();
                                         let _subscription =
-                                            cx.update_window_root(&workspace, move |_, cx| {
+                                            workspace.update(&mut cx, move |_, cx| {
                                                 cx.on_release(|_, _| {
                                                     let _ = done_tx.send(());
                                                 })
