@@ -86,8 +86,6 @@ impl StatusBar {
         view: &mut Workspace,
         cx: &mut ViewContext<Workspace>,
     ) -> impl Component<Workspace> {
-        let theme = old_theme(cx);
-
         div()
             .py_0p5()
             .px_1()
@@ -95,7 +93,7 @@ impl StatusBar {
             .items_center()
             .justify_between()
             .w_full()
-            .bg(theme.status_bar)
+            .bg(cx.theme().colors().status_bar)
             .child(self.left_tools(view, cx))
             .child(self.right_tools(view, cx))
     }

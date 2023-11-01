@@ -1,6 +1,6 @@
 use gpui2::{AppContext, Hsla, SharedString};
 
-use crate::{old_theme, Appearance};
+use crate::{theme, Appearance};
 
 pub type ColorScale = [Hsla; 12];
 
@@ -133,27 +133,15 @@ impl ColorScaleSet {
         self.dark_alpha[step - 1]
     }
 
-    fn current_appearance(cx: &AppContext) -> Appearance {
-        let theme = old_theme(cx);
-        if theme.metadata.is_light {
-            Appearance::Light
-        } else {
-            Appearance::Dark
-        }
-    }
-
     pub fn step(&self, cx: &AppContext, step: ColorScaleStep) -> Hsla {
-        let appearance = Self::current_appearance(cx);
-
-        match appearance {
+        match theme(cx).appearance {
             Appearance::Light => self.light(step),
             Appearance::Dark => self.dark(step),
         }
     }
 
     pub fn step_alpha(&self, cx: &AppContext, step: ColorScaleStep) -> Hsla {
-        let appearance = Self::current_appearance(cx);
-        match appearance {
+        match theme(cx).appearance {
             Appearance::Light => self.light_alpha(step),
             Appearance::Dark => self.dark_alpha(step),
         }

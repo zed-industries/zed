@@ -26,13 +26,14 @@ pub enum IconColor {
 
 impl IconColor {
     pub fn color(self, cx: &WindowContext) -> Hsla {
-        let theme = old_theme(cx);
+        let theme_colors = cx.theme().colors();
+
         match self {
-            IconColor::Default => gpui2::red(),
-            IconColor::Muted => gpui2::red(),
-            IconColor::Disabled => gpui2::red(),
-            IconColor::Placeholder => gpui2::red(),
-            IconColor::Accent => gpui2::red(),
+            IconColor::Default => theme_colors.icon,
+            IconColor::Muted => theme_colors.icon_muted,
+            IconColor::Disabled => theme_colors.icon_disabled,
+            IconColor::Placeholder => theme_colors.icon_placeholder,
+            IconColor::Accent => theme_colors.icon_accent,
             IconColor::Error => gpui2::red(),
             IconColor::Warning => gpui2::red(),
             IconColor::Success => gpui2::red(),

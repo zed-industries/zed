@@ -32,6 +32,16 @@ pub fn init(cx: &mut AppContext) {
     ThemeSettings::register(cx);
 }
 
+pub trait ActiveTheme {
+    fn theme(&self) -> &ThemeVariant;
+}
+
+impl ActiveTheme for AppContext {
+    fn theme(&self) -> &ThemeVariant {
+        &ThemeSettings::get_global(self).active_theme
+    }
+}
+
 pub fn active_theme<'a>(cx: &'a AppContext) -> &'a Arc<ThemeVariant> {
     &ThemeSettings::get_global(cx).active_theme
 }
@@ -63,6 +73,13 @@ pub struct ThemeVariant {
     pub name: String,
     pub appearance: Appearance,
     pub styles: ThemeStyle,
+}
+
+impl ThemeVariant {
+    #[inline(always)]
+    pub fn colors(&self) -> &ThemeColors {
+        &self.styles.colors
+    }
 }
 
 pub struct Theme {

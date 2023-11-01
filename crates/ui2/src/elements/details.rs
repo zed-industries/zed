@@ -1,4 +1,5 @@
-use crate::{prelude::*, v_stack, ButtonGroup};
+use crate::prelude::*;
+use crate::{v_stack, ButtonGroup};
 
 #[derive(Component)]
 pub struct Details<V: 'static> {
@@ -27,13 +28,11 @@ impl<V: 'static> Details<V> {
     }
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = old_theme(cx);
-
         v_stack()
             .p_1()
             .gap_0p5()
             .text_xs()
-            .text_color(theme.text)
+            .text_color(cx.theme().colors().text)
             .size_full()
             .child(self.text)
             .children(self.meta.map(|m| m))

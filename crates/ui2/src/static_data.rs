@@ -643,8 +643,6 @@ pub fn empty_buffer_example() -> Buffer {
 }
 
 pub fn hello_world_rust_editor_example(cx: &mut ViewContext<EditorPane>) -> EditorPane {
-    let theme = old_theme(cx);
-
     EditorPane::new(
         cx,
         static_tabs_example(),
@@ -652,14 +650,14 @@ pub fn hello_world_rust_editor_example(cx: &mut ViewContext<EditorPane>) -> Edit
         vec![Symbol(vec![
             HighlightedText {
                 text: "fn ".to_string(),
-                color: theme.syntax.color("keyword"),
+                color: old_theme(cx).syntax.color("keyword"),
             },
             HighlightedText {
                 text: "main".to_string(),
-                color: theme.syntax.color("function"),
+                color: old_theme(cx).syntax.color("function"),
             },
         ])],
-        hello_world_rust_buffer_example(&theme),
+        hello_world_rust_buffer_example(&old_theme(cx)),
     )
 }
 
@@ -782,8 +780,6 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
 }
 
 pub fn hello_world_rust_editor_with_status_example(cx: &mut ViewContext<EditorPane>) -> EditorPane {
-    let theme = old_theme(cx);
-
     EditorPane::new(
         cx,
         static_tabs_example(),
@@ -791,14 +787,14 @@ pub fn hello_world_rust_editor_with_status_example(cx: &mut ViewContext<EditorPa
         vec![Symbol(vec![
             HighlightedText {
                 text: "fn ".to_string(),
-                color: theme.syntax.color("keyword"),
+                color: old_theme(cx).syntax.color("keyword"),
             },
             HighlightedText {
                 text: "main".to_string(),
-                color: theme.syntax.color("function"),
+                color: old_theme(cx).syntax.color("function"),
             },
         ])],
-        hello_world_rust_buffer_with_status_example(&theme),
+        hello_world_rust_buffer_with_status_example(&old_theme(cx)),
     )
 }
 

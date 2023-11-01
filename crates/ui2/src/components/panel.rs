@@ -93,8 +93,6 @@ impl<V: 'static> Panel<V> {
     }
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = old_theme(cx);
-
         let current_size = self.width.unwrap_or(self.initial_width);
 
         v_stack()
@@ -111,8 +109,8 @@ impl<V: 'static> Panel<V> {
             .when(self.current_side == PanelSide::Bottom, |this| {
                 this.border_b().w_full().h(current_size)
             })
-            .bg(theme.surface)
-            .border_color(theme.border)
+            .bg(cx.theme().colors().surface)
+            .border_color(cx.theme().colors().border)
             .children(self.children)
     }
 }

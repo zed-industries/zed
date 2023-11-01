@@ -1,6 +1,6 @@
 use gpui2::{Hsla, ViewContext};
 
-use crate::old_theme;
+use crate::prelude::*;
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub enum PlayerStatus {
@@ -139,13 +139,11 @@ impl Player {
     }
 
     pub fn cursor_color<V: 'static>(&self, cx: &mut ViewContext<V>) -> Hsla {
-        let theme = old_theme(cx);
-        theme.players[self.index].cursor
+        cx.theme().styles.player.0[self.index].cursor
     }
 
     pub fn selection_color<V: 'static>(&self, cx: &mut ViewContext<V>) -> Hsla {
-        let theme = old_theme(cx);
-        theme.players[self.index].selection
+        cx.theme().styles.player.0[self.index].selection
     }
 
     pub fn avatar_src(&self) -> &str {

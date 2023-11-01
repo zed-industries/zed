@@ -43,22 +43,20 @@ impl Palette {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = old_theme(cx);
-
         v_stack()
             .id(self.id.clone())
             .w_96()
             .rounded_lg()
-            .bg(theme.elevated_surface)
+            .bg(cx.theme().colors().elevated_surface)
             .border()
-            .border_color(theme.border)
+            .border_color(cx.theme().colors().border)
             .child(
                 v_stack()
                     .gap_px()
                     .child(v_stack().py_0p5().px_1().child(div().px_2().py_0p5().child(
                         Label::new(self.input_placeholder.clone()).color(LabelColor::Placeholder),
                     )))
-                    .child(div().h_px().w_full().bg(theme.filled_element))
+                    .child(div().h_px().w_full().bg(cx.theme().colors().element))
                     .child(
                         v_stack()
                             .id("items")
@@ -88,8 +86,12 @@ impl Palette {
                                     .px_2()
                                     .py_0p5()
                                     .rounded_lg()
-                                    .hover(|style| style.bg(theme.ghost_element_hover))
-                                    .active(|style| style.bg(theme.ghost_element_active))
+                                    .hover(|style| {
+                                        style.bg(cx.theme().colors().ghost_element_hover)
+                                    })
+                                    .active(|style| {
+                                        style.bg(cx.theme().colors().ghost_element_active)
+                                    })
                                     .child(item)
                             })),
                     ),

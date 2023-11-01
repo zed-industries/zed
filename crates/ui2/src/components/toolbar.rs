@@ -55,10 +55,8 @@ impl<V: 'static> Toolbar<V> {
     }
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = old_theme(cx);
-
         div()
-            .bg(theme.toolbar)
+            .bg(cx.theme().colors().toolbar)
             .p_2()
             .flex()
             .justify_between()
@@ -87,8 +85,6 @@ mod stories {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            let theme = old_theme(cx);
-
             Story::container(cx)
                 .child(Story::title_for::<_, Toolbar<Self>>(cx))
                 .child(Story::label(cx, "Default"))
@@ -100,21 +96,21 @@ mod stories {
                                 Symbol(vec![
                                     HighlightedText {
                                         text: "impl ".to_string(),
-                                        color: theme.syntax.color("keyword"),
+                                        color: old_theme(cx).syntax.color("keyword"),
                                     },
                                     HighlightedText {
                                         text: "ToolbarStory".to_string(),
-                                        color: theme.syntax.color("function"),
+                                        color: old_theme(cx).syntax.color("function"),
                                     },
                                 ]),
                                 Symbol(vec![
                                     HighlightedText {
                                         text: "fn ".to_string(),
-                                        color: theme.syntax.color("keyword"),
+                                        color: old_theme(cx).syntax.color("keyword"),
                                     },
                                     HighlightedText {
                                         text: "render".to_string(),
-                                        color: theme.syntax.color("function"),
+                                        color: old_theme(cx).syntax.color("function"),
                                     },
                                 ]),
                             ],

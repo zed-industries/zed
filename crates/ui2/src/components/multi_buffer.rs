@@ -12,8 +12,6 @@ impl MultiBuffer {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = old_theme(cx);
-
         v_stack()
             .w_full()
             .h_full()
@@ -26,7 +24,7 @@ impl MultiBuffer {
                             .items_center()
                             .justify_between()
                             .p_4()
-                            .bg(theme.editor_subheader)
+                            .bg(cx.theme().colors().editor_subheader)
                             .child(Label::new("main.rs"))
                             .child(IconButton::new("arrow_up_right", Icon::ArrowUpRight)),
                     )
@@ -50,17 +48,15 @@ mod stories {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            let theme = old_theme(cx);
-
             Story::container(cx)
                 .child(Story::title_for::<_, MultiBuffer>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(MultiBuffer::new(vec![
-                    hello_world_rust_buffer_example(&theme),
-                    hello_world_rust_buffer_example(&theme),
-                    hello_world_rust_buffer_example(&theme),
-                    hello_world_rust_buffer_example(&theme),
-                    hello_world_rust_buffer_example(&theme),
+                    hello_world_rust_buffer_example(&old_theme(cx)),
+                    hello_world_rust_buffer_example(&old_theme(cx)),
+                    hello_world_rust_buffer_example(&old_theme(cx)),
+                    hello_world_rust_buffer_example(&old_theme(cx)),
+                    hello_world_rust_buffer_example(&old_theme(cx)),
                 ]))
         }
     }

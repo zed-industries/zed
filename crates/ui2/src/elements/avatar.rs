@@ -22,8 +22,6 @@ impl Avatar {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = old_theme(cx);
-
         let mut img = img();
 
         if self.shape == Shape::Circle {
@@ -34,7 +32,7 @@ impl Avatar {
 
         img.uri(self.src.clone())
             .size_4()
-            .bg(theme.image_fallback_background)
+            .bg(old_theme(cx).image_fallback_background)
     }
 }
 

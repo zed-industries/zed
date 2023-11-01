@@ -90,8 +90,6 @@ impl<V: 'static> PaneGroup<V> {
     }
 
     fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = old_theme(cx);
-
         if !self.panes.is_empty() {
             let el = div()
                 .flex()
@@ -115,7 +113,7 @@ impl<V: 'static> PaneGroup<V> {
                 .gap_px()
                 .w_full()
                 .h_full()
-                .bg(theme.editor)
+                .bg(cx.theme().colors().editor)
                 .children(self.groups.into_iter().map(|group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {

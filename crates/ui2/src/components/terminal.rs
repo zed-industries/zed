@@ -12,8 +12,6 @@ impl Terminal {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = old_theme(cx);
-
         let can_navigate_back = true;
         let can_navigate_forward = false;
 
@@ -26,7 +24,7 @@ impl Terminal {
                 div()
                     .w_full()
                     .flex()
-                    .bg(theme.surface)
+                    .bg(cx.theme().colors().surface)
                     .child(
                         div().px_1().flex().flex_none().gap_2().child(
                             div()
@@ -73,7 +71,7 @@ impl Terminal {
                         height: rems(36.).into(),
                     },
                 )
-                .child(crate::static_data::terminal_buffer(&theme)),
+                .child(crate::static_data::terminal_buffer(&old_theme(cx))),
             )
     }
 }

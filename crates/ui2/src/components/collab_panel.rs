@@ -15,27 +15,29 @@ impl CollabPanel {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = old_theme(cx);
-
         v_stack()
             .id(self.id.clone())
             .h_full()
-            .bg(theme.surface)
+            .bg(cx.theme().colors().surface)
             .child(
                 v_stack()
                     .id("crdb")
                     .w_full()
                     .overflow_y_scroll()
                     .child(
-                        div().pb_1().border_color(theme.border).border_b().child(
-                            List::new(static_collab_panel_current_call())
-                                .header(
-                                    ListHeader::new("CRDB")
-                                        .left_icon(Icon::Hash.into())
-                                        .toggle(ToggleState::Toggled),
-                                )
-                                .toggle(ToggleState::Toggled),
-                        ),
+                        div()
+                            .pb_1()
+                            .border_color(cx.theme().colors().border)
+                            .border_b()
+                            .child(
+                                List::new(static_collab_panel_current_call())
+                                    .header(
+                                        ListHeader::new("CRDB")
+                                            .left_icon(Icon::Hash.into())
+                                            .toggle(ToggleState::Toggled),
+                                    )
+                                    .toggle(ToggleState::Toggled),
+                            ),
                     )
                     .child(
                         v_stack().id("channels").py_1().child(
@@ -71,13 +73,13 @@ impl CollabPanel {
                     .h_7()
                     .px_2()
                     .border_t()
-                    .border_color(theme.border)
+                    .border_color(cx.theme().colors().border)
                     .flex()
                     .items_center()
                     .child(
                         div()
                             .text_sm()
-                            .text_color(theme.text_placeholder)
+                            .text_color(cx.theme().colors().text_placeholder)
                             .child("Find..."),
                     ),
             )

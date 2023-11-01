@@ -14,9 +14,7 @@ impl PlayerStack {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = old_theme(cx);
         let player = self.player_with_call_status.get_player();
-        self.player_with_call_status.get_call_status();
 
         let followers = self
             .player_with_call_status
@@ -50,7 +48,7 @@ impl PlayerStack {
                     .pl_1()
                     .rounded_lg()
                     .bg(if followers.is_none() {
-                        theme.transparent
+                        cx.theme().styles.system.transparent
                     } else {
                         player.selection_color(cx)
                     })

@@ -1,6 +1,7 @@
 use gpui2::rems;
 
-use crate::{h_stack, prelude::*, Icon};
+use crate::prelude::*;
+use crate::{h_stack, Icon};
 
 #[derive(Component)]
 pub struct NotificationToast {
@@ -22,8 +23,6 @@ impl NotificationToast {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = old_theme(cx);
-
         h_stack()
             .z_index(5)
             .absolute()
@@ -35,7 +34,7 @@ impl NotificationToast {
             .px_1p5()
             .rounded_lg()
             .shadow_md()
-            .bg(theme.elevated_surface)
+            .bg(cx.theme().colors().elevated_surface)
             .child(div().size_full().child(self.label.clone()))
     }
 }

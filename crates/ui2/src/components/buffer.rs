@@ -155,18 +155,20 @@ impl Buffer {
     }
 
     fn render_row<V: 'static>(row: BufferRow, cx: &WindowContext) -> impl Component<V> {
-        let theme = old_theme(cx);
-
         let line_background = if row.current {
-            theme.editor_active_line
+            cx.theme().colors().editor_active_line
         } else {
-            theme.transparent
+            cx.theme().styles.system.transparent
         };
 
         let line_number_color = if row.current {
-            theme.text
+            cx.theme().colors().text
         } else {
-            theme.syntax.get("comment").color.unwrap_or_default()
+            old_theme(cx)
+                .syntax
+                .get("comment")
+                .color
+                .unwrap_or_default()
         };
 
         h_stack()
@@ -216,14 +218,13 @@ impl Buffer {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = old_theme(cx);
         let rows = self.render_rows(cx);
 
         v_stack()
             .flex_1()
             .w_full()
             .h_full()
-            .bg(theme.editor)
+            .bg(cx.theme().colors().editor)
             .children(rows)
     }
 }
@@ -246,8 +247,6 @@ mod stories {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            let theme = old_theme(cx);
-
             Story::container(cx)
                 .child(Story::title_for::<_, Buffer>(cx))
                 .child(Story::label(cx, "Default"))
@@ -257,14 +256,14 @@ mod stories {
                     div()
                         .w(rems(64.))
                         .h_96()
-                        .child(hello_world_rust_buffer_example(&theme)),
+                        .child(hello_world_rust_buffer_example(&old_theme(cx))),
                 )
                 .child(Story::label(cx, "Hello World (Rust) with Status"))
                 .child(
                     div()
                         .w(rems(64.))
                         .h_96()
-                        .child(hello_world_rust_buffer_with_status_example(&theme)),
+                        .child(hello_world_rust_buffer_with_status_example(&old_theme(cx))),
                 )
         }
     }
