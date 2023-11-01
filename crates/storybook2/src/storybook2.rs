@@ -68,10 +68,9 @@ fn main() {
         let theme_registry = cx.global::<ThemeRegistry>();
 
         let mut theme_settings = ThemeSettings::get_global(cx).clone();
-        theme_settings.active_theme = theme_registry.get(&theme_name).unwrap();
+        theme_settings.old_active_theme = theme_registry.get(&theme_name).unwrap();
         ThemeSettings::override_global(theme_settings, cx);
 
-        cx.set_global(theme.clone());
         ui::settings::init(cx);
 
         let window = cx.open_window(

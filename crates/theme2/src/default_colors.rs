@@ -1,10 +1,704 @@
-use gpui2::Rgba;
+use gpui2::{hsla, FontWeight, Rgba};
 use indexmap::IndexMap;
 
-use crate::scale::{ColorScaleName, ColorScaleSet, ColorScales};
+use crate::{
+    colors::{GitStatusColors, PlayerColor, PlayerColors, StatusColors, SystemColors, ThemeColors},
+    scale::{ColorScaleSet, ColorScales},
+    syntax::{SyntaxStyleName, SyntaxStyles},
+    SyntaxStyle,
+};
+
+impl Default for SystemColors {
+    fn default() -> Self {
+        Self {
+            transparent: hsla(0.0, 0.0, 0.0, 0.0),
+            mac_os_traffic_light_red: hsla(0.0139, 0.79, 0.65, 1.0),
+            mac_os_traffic_light_yellow: hsla(0.114, 0.88, 0.63, 1.0),
+            mac_os_traffic_light_green: hsla(0.313, 0.49, 0.55, 1.0),
+        }
+    }
+}
+
+impl Default for StatusColors {
+    fn default() -> Self {
+        Self {
+            conflict: gpui2::black(),
+            created: gpui2::black(),
+            deleted: gpui2::black(),
+            error: gpui2::black(),
+            hidden: gpui2::black(),
+            ignored: gpui2::black(),
+            info: gpui2::black(),
+            modified: gpui2::black(),
+            renamed: gpui2::black(),
+            success: gpui2::black(),
+            warning: gpui2::black(),
+        }
+    }
+}
+
+impl Default for GitStatusColors {
+    fn default() -> Self {
+        Self {
+            conflict: gpui2::rgba(0xdec184ff).into(),
+            created: gpui2::rgba(0xa1c181ff).into(),
+            deleted: gpui2::rgba(0xd07277ff).into(),
+            ignored: gpui2::rgba(0x555a63ff).into(),
+            modified: gpui2::rgba(0x74ade8ff).into(),
+            renamed: gpui2::rgba(0xdec184ff).into(),
+        }
+    }
+}
+
+impl Default for PlayerColors {
+    fn default() -> Self {
+        Self(vec![
+            PlayerColor {
+                cursor: hsla(0.0, 0.0, 0.0, 0.0),
+                background: hsla(0.0, 0.0, 0.0, 0.0),
+                selection: hsla(0.0, 0.0, 0.0, 0.0),
+            },
+            PlayerColor {
+                cursor: hsla(0.0, 0.0, 0.0, 0.0),
+                background: hsla(0.0, 0.0, 0.0, 0.0),
+                selection: hsla(0.0, 0.0, 0.0, 0.0),
+            },
+            PlayerColor {
+                cursor: hsla(0.0, 0.0, 0.0, 0.0),
+                background: hsla(0.0, 0.0, 0.0, 0.0),
+                selection: hsla(0.0, 0.0, 0.0, 0.0),
+            },
+            PlayerColor {
+                cursor: hsla(0.0, 0.0, 0.0, 0.0),
+                background: hsla(0.0, 0.0, 0.0, 0.0),
+                selection: hsla(0.0, 0.0, 0.0, 0.0),
+            },
+        ])
+    }
+}
+
+impl SyntaxStyles {
+    pub fn default_light() -> Self {
+        use SyntaxStyleName::*;
+
+        let neutral: ColorScaleSet = slate().into();
+
+        Self(IndexMap::from_iter([
+            (
+                Comment,
+                SyntaxStyle::builder().color(neutral.light(11)).build(),
+            ),
+            (
+                CommentDoc,
+                SyntaxStyle::builder().color(neutral.light(11)).build(),
+            ),
+            (
+                Primary,
+                SyntaxStyle::builder().color(neutral.light(12)).build(),
+            ),
+            (
+                Predictive,
+                SyntaxStyle::builder().color(neutral.light(10)).build(),
+            ),
+            (
+                Hint,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(cyan()).light(10))
+                    .build(),
+            ),
+            (
+                Emphasis,
+                SyntaxStyle::builder().weight(FontWeight(600.0)).build(),
+            ),
+            (
+                EmphasisStrong,
+                SyntaxStyle::builder().weight(FontWeight(800.0)).build(),
+            ),
+            (
+                Title,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                LinkUri,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(blue()).light(12))
+                    .build(),
+            ),
+            (
+                LinkText,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(orange()).light(12))
+                    .build(),
+            ),
+            (
+                TextLiteral,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(purple()).light(12))
+                    .build(),
+            ),
+            (
+                Punctuation,
+                SyntaxStyle::builder().color(neutral.light(10)).build(),
+            ),
+            (
+                PunctuationBracket,
+                SyntaxStyle::builder().color(neutral.light(10)).build(),
+            ),
+            (
+                PunctuationDelimiter,
+                SyntaxStyle::builder().color(neutral.light(10)).build(),
+            ),
+            (
+                PunctuationSpecial,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                PunctuationListMarker,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(blue()).light(12))
+                    .build(),
+            ),
+            (
+                String,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(green()).light(12))
+                    .build(),
+            ),
+            (
+                StringSpecial,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                StringSpecialSymbol,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                StringEscape,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(blue()).light(12))
+                    .build(),
+            ),
+            (
+                StringRegex,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(orange()).light(12))
+                    .build(),
+            ),
+            (
+                Constructor,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(purple()).light(12))
+                    .build(),
+            ),
+            // TODO: Continue assigning syntax colors from here
+            (
+                Variant,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Type,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                TypeBuiltin,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Variable,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                VariableSpecial,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Label,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Tag,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Attribute,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Property,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Constant,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Keyword,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Enum,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Operator,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Number,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Boolean,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                ConstantBuiltin,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Function,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                FunctionBuiltin,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                FunctionDefinition,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                FunctionSpecialDefinition,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                FunctionMethod,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                FunctionMethodBuiltin,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Preproc,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+            (
+                Embedded,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).light(12))
+                    .build(),
+            ),
+        ]))
+    }
+
+    pub fn default_dark() -> Self {
+        use SyntaxStyleName::*;
+
+        let neutral: ColorScaleSet = slate().into();
+
+        Self(IndexMap::from_iter([
+            (
+                Comment,
+                SyntaxStyle::builder().color(neutral.dark(11)).build(),
+            ),
+            (
+                CommentDoc,
+                SyntaxStyle::builder().color(neutral.dark(11)).build(),
+            ),
+            (
+                Primary,
+                SyntaxStyle::builder().color(neutral.dark(12)).build(),
+            ),
+            (
+                Predictive,
+                SyntaxStyle::builder().color(neutral.dark(10)).build(),
+            ),
+            (
+                Hint,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(cyan()).dark(10))
+                    .build(),
+            ),
+            (
+                Emphasis,
+                SyntaxStyle::builder().weight(FontWeight(600.0)).build(),
+            ),
+            (
+                EmphasisStrong,
+                SyntaxStyle::builder().weight(FontWeight(800.0)).build(),
+            ),
+            (
+                Title,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                LinkUri,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(blue()).dark(12))
+                    .build(),
+            ),
+            (
+                LinkText,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(orange()).dark(12))
+                    .build(),
+            ),
+            (
+                TextLiteral,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(purple()).dark(12))
+                    .build(),
+            ),
+            (
+                Punctuation,
+                SyntaxStyle::builder().color(neutral.dark(10)).build(),
+            ),
+            (
+                PunctuationBracket,
+                SyntaxStyle::builder().color(neutral.dark(10)).build(),
+            ),
+            (
+                PunctuationDelimiter,
+                SyntaxStyle::builder().color(neutral.dark(10)).build(),
+            ),
+            (
+                PunctuationSpecial,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                PunctuationListMarker,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(blue()).dark(12))
+                    .build(),
+            ),
+            (
+                String,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(green()).dark(12))
+                    .build(),
+            ),
+            (
+                StringSpecial,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                StringSpecialSymbol,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                StringEscape,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(blue()).dark(12))
+                    .build(),
+            ),
+            (
+                StringRegex,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(orange()).dark(12))
+                    .build(),
+            ),
+            (
+                Constructor,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(purple()).dark(12))
+                    .build(),
+            ),
+            // TODO: Continue assigning syntax colors from here
+            (
+                Variant,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Type,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                TypeBuiltin,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Variable,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                VariableSpecial,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Label,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Tag,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Attribute,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Property,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Constant,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Keyword,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Enum,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Operator,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Number,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Boolean,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                ConstantBuiltin,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Function,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                FunctionBuiltin,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                FunctionDefinition,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                FunctionSpecialDefinition,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                FunctionMethod,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                FunctionMethodBuiltin,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Preproc,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+            (
+                Embedded,
+                SyntaxStyle::builder()
+                    .color(ColorScaleSet::from(red()).dark(12))
+                    .build(),
+            ),
+        ]))
+    }
+}
+
+impl ThemeColors {
+    pub fn default_light() -> Self {
+        Self {
+            border: gpui2::white(),
+            border_variant: gpui2::white(),
+            border_focused: gpui2::white(),
+            border_transparent: gpui2::white(),
+            elevated_surface: gpui2::white(),
+            surface: gpui2::white(),
+            background: gpui2::white(),
+            element: gpui2::white(),
+            element_hover: gpui2::white(),
+            element_active: gpui2::white(),
+            element_selected: gpui2::white(),
+            element_disabled: gpui2::white(),
+            element_placeholder: gpui2::white(),
+            ghost_element: gpui2::white(),
+            ghost_element_hover: gpui2::white(),
+            ghost_element_active: gpui2::white(),
+            ghost_element_selected: gpui2::white(),
+            ghost_element_disabled: gpui2::white(),
+            text: gpui2::white(),
+            text_muted: gpui2::white(),
+            text_placeholder: gpui2::white(),
+            text_disabled: gpui2::white(),
+            text_accent: gpui2::white(),
+            icon: gpui2::white(),
+            icon_muted: gpui2::white(),
+            icon_disabled: gpui2::white(),
+            icon_placeholder: gpui2::white(),
+            icon_accent: gpui2::white(),
+            status_bar: gpui2::white(),
+            title_bar: gpui2::white(),
+            toolbar: gpui2::white(),
+            tab_bar: gpui2::white(),
+            editor: gpui2::white(),
+            editor_subheader: gpui2::white(),
+            editor_active_line: gpui2::white(),
+        }
+    }
+
+    pub fn default_dark() -> Self {
+        Self {
+            border: gpui2::rgba(0x464b57ff).into(),
+            border_variant: gpui2::rgba(0x464b57ff).into(),
+            border_focused: gpui2::rgba(0x293b5bff).into(),
+            border_transparent: gpui2::rgba(0x00000000).into(),
+            elevated_surface: gpui2::rgba(0x3b414dff).into(),
+            surface: gpui2::rgba(0x2f343eff).into(),
+            background: gpui2::rgba(0x3b414dff).into(),
+            element: gpui2::rgba(0x3b414dff).into(),
+            element_hover: gpui2::rgba(0xffffff1e).into(),
+            element_active: gpui2::rgba(0xffffff28).into(),
+            element_selected: gpui2::rgba(0x18243dff).into(),
+            element_disabled: gpui2::rgba(0x00000000).into(),
+            element_placeholder: gpui2::black(),
+            ghost_element: gpui2::rgba(0x00000000).into(),
+            ghost_element_hover: gpui2::rgba(0xffffff14).into(),
+            ghost_element_active: gpui2::rgba(0xffffff1e).into(),
+            ghost_element_selected: gpui2::rgba(0x18243dff).into(),
+            ghost_element_disabled: gpui2::rgba(0x00000000).into(),
+            text: gpui2::rgba(0xc8ccd4ff).into(),
+            text_muted: gpui2::rgba(0x838994ff).into(),
+            text_placeholder: gpui2::rgba(0xd07277ff).into(),
+            text_disabled: gpui2::rgba(0x555a63ff).into(),
+            text_accent: gpui2::rgba(0x74ade8ff).into(),
+            icon: gpui2::black(),
+            icon_muted: gpui2::rgba(0x838994ff).into(),
+            icon_disabled: gpui2::black(),
+            icon_placeholder: gpui2::black(),
+            icon_accent: gpui2::black(),
+            status_bar: gpui2::rgba(0x3b414dff).into(),
+            title_bar: gpui2::rgba(0x3b414dff).into(),
+            toolbar: gpui2::rgba(0x282c33ff).into(),
+            tab_bar: gpui2::rgba(0x2f343eff).into(),
+            editor: gpui2::rgba(0x282c33ff).into(),
+            editor_subheader: gpui2::rgba(0x2f343eff).into(),
+            editor_active_line: gpui2::rgba(0x2f343eff).into(),
+        }
+    }
+}
 
 struct DefaultColorScaleSet {
-    scale: ColorScaleName,
+    scale: &'static str,
     light: [&'static str; 12],
     light_alpha: [&'static str; 12],
     dark: [&'static str; 12],
@@ -32,48 +726,46 @@ impl From<DefaultColorScaleSet> for ColorScaleSet {
 }
 
 pub fn default_color_scales() -> ColorScales {
-    use ColorScaleName::*;
-
-    IndexMap::from_iter([
-        (Gray, gray().into()),
-        (Mauve, mauve().into()),
-        (Slate, slate().into()),
-        (Sage, sage().into()),
-        (Olive, olive().into()),
-        (Sand, sand().into()),
-        (Gold, gold().into()),
-        (Bronze, bronze().into()),
-        (Brown, brown().into()),
-        (Yellow, yellow().into()),
-        (Amber, amber().into()),
-        (Orange, orange().into()),
-        (Tomato, tomato().into()),
-        (Red, red().into()),
-        (Ruby, ruby().into()),
-        (Crimson, crimson().into()),
-        (Pink, pink().into()),
-        (Plum, plum().into()),
-        (Purple, purple().into()),
-        (Violet, violet().into()),
-        (Iris, iris().into()),
-        (Indigo, indigo().into()),
-        (Blue, blue().into()),
-        (Cyan, cyan().into()),
-        (Teal, teal().into()),
-        (Jade, jade().into()),
-        (Green, green().into()),
-        (Grass, grass().into()),
-        (Lime, lime().into()),
-        (Mint, mint().into()),
-        (Sky, sky().into()),
-        (Black, black().into()),
-        (White, white().into()),
-    ])
+    ColorScales {
+        gray: gray().into(),
+        mauve: mauve().into(),
+        slate: slate().into(),
+        sage: sage().into(),
+        olive: olive().into(),
+        sand: sand().into(),
+        gold: gold().into(),
+        bronze: bronze().into(),
+        brown: brown().into(),
+        yellow: yellow().into(),
+        amber: amber().into(),
+        orange: orange().into(),
+        tomato: tomato().into(),
+        red: red().into(),
+        ruby: ruby().into(),
+        crimson: crimson().into(),
+        pink: pink().into(),
+        plum: plum().into(),
+        purple: purple().into(),
+        violet: violet().into(),
+        iris: iris().into(),
+        indigo: indigo().into(),
+        blue: blue().into(),
+        cyan: cyan().into(),
+        teal: teal().into(),
+        jade: jade().into(),
+        green: green().into(),
+        grass: grass().into(),
+        lime: lime().into(),
+        mint: mint().into(),
+        sky: sky().into(),
+        black: black().into(),
+        white: white().into(),
+    }
 }
 
 fn gray() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Gray,
+        scale: "Gray",
         light: [
             "#fcfcfcff",
             "#f9f9f9ff",
@@ -135,7 +827,7 @@ fn gray() -> DefaultColorScaleSet {
 
 fn mauve() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Mauve,
+        scale: "Mauve",
         light: [
             "#fdfcfdff",
             "#faf9fbff",
@@ -197,7 +889,7 @@ fn mauve() -> DefaultColorScaleSet {
 
 fn slate() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Slate,
+        scale: "Slate",
         light: [
             "#fcfcfdff",
             "#f9f9fbff",
@@ -259,7 +951,7 @@ fn slate() -> DefaultColorScaleSet {
 
 fn sage() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Sage,
+        scale: "Sage",
         light: [
             "#fbfdfcff",
             "#f7f9f8ff",
@@ -321,7 +1013,7 @@ fn sage() -> DefaultColorScaleSet {
 
 fn olive() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Olive,
+        scale: "Olive",
         light: [
             "#fcfdfcff",
             "#f8faf8ff",
@@ -383,7 +1075,7 @@ fn olive() -> DefaultColorScaleSet {
 
 fn sand() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Sand,
+        scale: "Sand",
         light: [
             "#fdfdfcff",
             "#f9f9f8ff",
@@ -445,7 +1137,7 @@ fn sand() -> DefaultColorScaleSet {
 
 fn gold() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Gold,
+        scale: "Gold",
         light: [
             "#fdfdfcff",
             "#faf9f2ff",
@@ -507,7 +1199,7 @@ fn gold() -> DefaultColorScaleSet {
 
 fn bronze() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Bronze,
+        scale: "Bronze",
         light: [
             "#fdfcfcff",
             "#fdf7f5ff",
@@ -569,7 +1261,7 @@ fn bronze() -> DefaultColorScaleSet {
 
 fn brown() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Brown,
+        scale: "Brown",
         light: [
             "#fefdfcff",
             "#fcf9f6ff",
@@ -631,7 +1323,7 @@ fn brown() -> DefaultColorScaleSet {
 
 fn yellow() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Yellow,
+        scale: "Yellow",
         light: [
             "#fdfdf9ff",
             "#fefce9ff",
@@ -693,7 +1385,7 @@ fn yellow() -> DefaultColorScaleSet {
 
 fn amber() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Amber,
+        scale: "Amber",
         light: [
             "#fefdfbff",
             "#fefbe9ff",
@@ -755,7 +1447,7 @@ fn amber() -> DefaultColorScaleSet {
 
 fn orange() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Orange,
+        scale: "Orange",
         light: [
             "#fefcfbff",
             "#fff7edff",
@@ -817,7 +1509,7 @@ fn orange() -> DefaultColorScaleSet {
 
 fn tomato() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Tomato,
+        scale: "Tomato",
         light: [
             "#fffcfcff",
             "#fff8f7ff",
@@ -879,7 +1571,7 @@ fn tomato() -> DefaultColorScaleSet {
 
 fn red() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Red,
+        scale: "Red",
         light: [
             "#fffcfcff",
             "#fff7f7ff",
@@ -941,7 +1633,7 @@ fn red() -> DefaultColorScaleSet {
 
 fn ruby() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Ruby,
+        scale: "Ruby",
         light: [
             "#fffcfdff",
             "#fff7f8ff",
@@ -1003,7 +1695,7 @@ fn ruby() -> DefaultColorScaleSet {
 
 fn crimson() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Crimson,
+        scale: "Crimson",
         light: [
             "#fffcfdff",
             "#fef7f9ff",
@@ -1065,7 +1757,7 @@ fn crimson() -> DefaultColorScaleSet {
 
 fn pink() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Pink,
+        scale: "Pink",
         light: [
             "#fffcfeff",
             "#fef7fbff",
@@ -1127,7 +1819,7 @@ fn pink() -> DefaultColorScaleSet {
 
 fn plum() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Plum,
+        scale: "Plum",
         light: [
             "#fefcffff",
             "#fdf7fdff",
@@ -1189,7 +1881,7 @@ fn plum() -> DefaultColorScaleSet {
 
 fn purple() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Purple,
+        scale: "Purple",
         light: [
             "#fefcfeff",
             "#fbf7feff",
@@ -1251,7 +1943,7 @@ fn purple() -> DefaultColorScaleSet {
 
 fn violet() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Violet,
+        scale: "Violet",
         light: [
             "#fdfcfeff",
             "#faf8ffff",
@@ -1313,7 +2005,7 @@ fn violet() -> DefaultColorScaleSet {
 
 fn iris() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Iris,
+        scale: "Iris",
         light: [
             "#fdfdffff",
             "#f8f8ffff",
@@ -1375,7 +2067,7 @@ fn iris() -> DefaultColorScaleSet {
 
 fn indigo() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Indigo,
+        scale: "Indigo",
         light: [
             "#fdfdfeff",
             "#f7f9ffff",
@@ -1437,7 +2129,7 @@ fn indigo() -> DefaultColorScaleSet {
 
 fn blue() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Blue,
+        scale: "Blue",
         light: [
             "#fbfdffff",
             "#f4faffff",
@@ -1499,7 +2191,7 @@ fn blue() -> DefaultColorScaleSet {
 
 fn cyan() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Cyan,
+        scale: "Cyan",
         light: [
             "#fafdfeff",
             "#f2fafbff",
@@ -1561,7 +2253,7 @@ fn cyan() -> DefaultColorScaleSet {
 
 fn teal() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Teal,
+        scale: "Teal",
         light: [
             "#fafefdff",
             "#f3fbf9ff",
@@ -1623,7 +2315,7 @@ fn teal() -> DefaultColorScaleSet {
 
 fn jade() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Jade,
+        scale: "Jade",
         light: [
             "#fbfefdff",
             "#f4fbf7ff",
@@ -1685,7 +2377,7 @@ fn jade() -> DefaultColorScaleSet {
 
 fn green() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Green,
+        scale: "Green",
         light: [
             "#fbfefcff",
             "#f4fbf6ff",
@@ -1747,7 +2439,7 @@ fn green() -> DefaultColorScaleSet {
 
 fn grass() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Grass,
+        scale: "Grass",
         light: [
             "#fbfefbff",
             "#f5fbf5ff",
@@ -1809,7 +2501,7 @@ fn grass() -> DefaultColorScaleSet {
 
 fn lime() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Lime,
+        scale: "Lime",
         light: [
             "#fcfdfaff",
             "#f8faf3ff",
@@ -1871,7 +2563,7 @@ fn lime() -> DefaultColorScaleSet {
 
 fn mint() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Mint,
+        scale: "Mint",
         light: [
             "#f9fefdff",
             "#f2fbf9ff",
@@ -1933,7 +2625,7 @@ fn mint() -> DefaultColorScaleSet {
 
 fn sky() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Sky,
+        scale: "Sky",
         light: [
             "#f9feffff",
             "#f1fafdff",
@@ -1995,7 +2687,7 @@ fn sky() -> DefaultColorScaleSet {
 
 fn black() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::Black,
+        scale: "Black",
         light: [
             "#0000000d",
             "#0000001a",
@@ -2057,7 +2749,7 @@ fn black() -> DefaultColorScaleSet {
 
 fn white() -> DefaultColorScaleSet {
     DefaultColorScaleSet {
-        scale: ColorScaleName::White,
+        scale: "White",
         light: [
             "#ffffff0d",
             "#ffffff1a",

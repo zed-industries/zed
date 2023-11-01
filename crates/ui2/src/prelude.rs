@@ -6,7 +6,7 @@ pub use gpui2::{
 pub use crate::elevation::*;
 use crate::settings::user_settings;
 pub use crate::ButtonVariant;
-pub use theme2::theme;
+pub use theme2::ActiveTheme;
 
 use gpui2::{rems, Hsla, Rems};
 use strum::EnumIter;
@@ -54,15 +54,13 @@ pub enum GitStatus {
 
 impl GitStatus {
     pub fn hsla(&self, cx: &WindowContext) -> Hsla {
-        let theme = theme(cx);
-
         match self {
-            Self::None => theme.transparent,
-            Self::Created => theme.git_created,
-            Self::Modified => theme.git_modified,
-            Self::Deleted => theme.git_deleted,
-            Self::Conflict => theme.git_conflict,
-            Self::Renamed => theme.git_renamed,
+            Self::None => cx.theme().styles.system.transparent,
+            Self::Created => cx.theme().styles.git.created,
+            Self::Modified => cx.theme().styles.git.modified,
+            Self::Deleted => cx.theme().styles.git.deleted,
+            Self::Conflict => cx.theme().styles.git.conflict,
+            Self::Renamed => cx.theme().styles.git.renamed,
         }
     }
 }

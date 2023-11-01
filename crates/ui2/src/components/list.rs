@@ -89,8 +89,6 @@ impl ListHeader {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
-
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = self.toggleable.is_toggled();
 
@@ -99,9 +97,10 @@ impl ListHeader {
         h_stack()
             .flex_1()
             .w_full()
-            .bg(theme.surface)
+            .bg(cx.theme().colors().surface)
             .when(self.state == InteractionState::Focused, |this| {
-                this.border().border_color(theme.border_focused)
+                this.border()
+                    .border_color(cx.theme().colors().border_focused)
             })
             .relative()
             .child(
@@ -363,7 +362,6 @@ impl ListEntry {
 
     fn render<V: 'static>(mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let settings = user_settings(cx);
-        let theme = theme(cx);
 
         let left_content = match self.left_content.clone() {
             Some(LeftContent::Icon(i)) => Some(
@@ -385,9 +383,10 @@ impl ListEntry {
         div()
             .relative()
             .group("")
-            .bg(theme.surface)
+            .bg(cx.theme().colors().surface)
             .when(self.state == InteractionState::Focused, |this| {
-                this.border().border_color(theme.border_focused)
+                this.border()
+                    .border_color(cx.theme().colors().border_focused)
             })
             .child(
                 sized_item
@@ -399,11 +398,11 @@ impl ListEntry {
                             .h_full()
                             .flex()
                             .justify_center()
-                            .group_hover("", |style| style.bg(theme.border_focused))
+                            .group_hover("", |style| style.bg(cx.theme().colors().border_focused))
                             .child(
                                 h_stack()
                                     .child(div().w_px().h_full())
-                                    .child(div().w_px().h_full().bg(theme.border)),
+                                    .child(div().w_px().h_full().bg(cx.theme().colors().border)),
                             )
                     }))
                     .flex()
@@ -472,19 +471,18 @@ impl<V: 'static> ListDetailsEntry<V> {
     }
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
         let settings = user_settings(cx);
 
         let (item_bg, item_bg_hover, item_bg_active) = match self.seen {
             true => (
-                theme.ghost_element,
-                theme.ghost_element_hover,
-                theme.ghost_element_active,
+                cx.theme().colors().ghost_element,
+                cx.theme().colors().ghost_element_hover,
+                cx.theme().colors().ghost_element_active,
             ),
             false => (
-                theme.filled_element,
-                theme.filled_element_hover,
-                theme.filled_element_active,
+                cx.theme().colors().element,
+                cx.theme().colors().element_hover,
+                cx.theme().colors().element_active,
             ),
         };
 
@@ -524,9 +522,7 @@ impl ListSeparator {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
-
-        div().h_px().w_full().bg(theme.border)
+        div().h_px().w_full().bg(cx.theme().colors().border)
     }
 }
 

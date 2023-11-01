@@ -1,17 +1,25 @@
-mod default;
+mod colors;
+mod default_colors;
+mod default_theme;
 mod registry;
 mod scale;
 mod settings;
+mod syntax;
 mod themes;
+mod utils;
 
-pub use default::*;
+pub use colors::*;
+pub use default_colors::*;
+pub use default_theme::*;
 pub use registry::*;
 pub use scale::*;
 pub use settings::*;
+pub use syntax::*;
+
+use std::sync::Arc;
 
 use gpui2::{AppContext, HighlightStyle, Hsla, SharedString};
 use settings2::Settings;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Appearance {
@@ -24,12 +32,53 @@ pub fn init(cx: &mut AppContext) {
     ThemeSettings::register(cx);
 }
 
-pub fn active_theme<'a>(cx: &'a AppContext) -> &'a Arc<Theme> {
-    &ThemeSettings::get_global(cx).active_theme
+pub trait ActiveTheme {
+    fn theme(&self) -> &ThemeVariant;
 }
 
-pub fn theme(cx: &AppContext) -> Arc<Theme> {
-    active_theme(cx).clone()
+impl ActiveTheme for AppContext {
+    fn theme(&self) -> &ThemeVariant {
+        &ThemeSettings::get_global(self).active_theme
+    }
+}
+
+pub struct ThemeFamily {
+    #[allow(dead_code)]
+    pub(crate) id: String,
+    pub name: String,
+    pub author: String,
+    pub themes: Vec<ThemeVariant>,
+    pub scales: ColorScales,
+}
+
+impl ThemeFamily {}
+
+pub struct ThemeVariant {
+    #[allow(dead_code)]
+    pub(crate) id: String,
+    pub name: String,
+    pub appearance: Appearance,
+    pub styles: ThemeStyle,
+}
+
+impl ThemeVariant {
+    /// Returns the [`ThemeColors`] for the theme.
+    #[inline(always)]
+    pub fn colors(&self) -> &ThemeColors {
+        &self.styles.colors
+    }
+
+    /// Returns the [`SyntaxStyles`] for the theme.
+    #[inline(always)]
+    pub fn syntax(&self) -> &SyntaxStyles {
+        &self.styles.syntax
+    }
+
+    /// Returns the color for the syntax node with the given name.
+    #[inline(always)]
+    pub fn syntax_color(&self, name: &str) -> Hsla {
+        self.syntax().color(name)
+    }
 }
 
 pub struct Theme {

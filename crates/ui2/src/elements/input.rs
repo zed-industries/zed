@@ -57,18 +57,16 @@ impl Input {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
-
         let (input_bg, input_hover_bg, input_active_bg) = match self.variant {
             InputVariant::Ghost => (
-                theme.ghost_element,
-                theme.ghost_element_hover,
-                theme.ghost_element_active,
+                cx.theme().colors().ghost_element,
+                cx.theme().colors().ghost_element_hover,
+                cx.theme().colors().ghost_element_active,
             ),
             InputVariant::Filled => (
-                theme.filled_element,
-                theme.filled_element_hover,
-                theme.filled_element_active,
+                cx.theme().colors().element,
+                cx.theme().colors().element_hover,
+                cx.theme().colors().element_active,
             ),
         };
 
@@ -90,7 +88,7 @@ impl Input {
             .w_full()
             .px_2()
             .border()
-            .border_color(theme.transparent)
+            .border_color(cx.theme().styles.system.transparent)
             .bg(input_bg)
             .hover(|style| style.bg(input_hover_bg))
             .active(|style| style.bg(input_active_bg))

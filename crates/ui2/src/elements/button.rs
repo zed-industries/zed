@@ -21,29 +21,23 @@ pub enum ButtonVariant {
 
 impl ButtonVariant {
     pub fn bg_color(&self, cx: &mut WindowContext) -> Hsla {
-        let theme = theme(cx);
-
         match self {
-            ButtonVariant::Ghost => theme.ghost_element,
-            ButtonVariant::Filled => theme.filled_element,
+            ButtonVariant::Ghost => cx.theme().colors().ghost_element,
+            ButtonVariant::Filled => cx.theme().colors().element,
         }
     }
 
     pub fn bg_color_hover(&self, cx: &mut WindowContext) -> Hsla {
-        let theme = theme(cx);
-
         match self {
-            ButtonVariant::Ghost => theme.ghost_element_hover,
-            ButtonVariant::Filled => theme.filled_element_hover,
+            ButtonVariant::Ghost => cx.theme().colors().ghost_element_hover,
+            ButtonVariant::Filled => cx.theme().colors().element_hover,
         }
     }
 
     pub fn bg_color_active(&self, cx: &mut WindowContext) -> Hsla {
-        let theme = theme(cx);
-
         match self {
-            ButtonVariant::Ghost => theme.ghost_element_active,
-            ButtonVariant::Filled => theme.filled_element_active,
+            ButtonVariant::Ghost => cx.theme().colors().ghost_element_active,
+            ButtonVariant::Filled => cx.theme().colors().element_active,
         }
     }
 }

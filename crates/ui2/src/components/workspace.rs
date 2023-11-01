@@ -179,8 +179,6 @@ impl Render for Workspace {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
-        let theme = theme(cx);
-
         // HACK: This should happen inside of `debug_toggle_user_settings`, but
         // we don't have `cx.global::<FakeSettings>()` in event handlers at the moment.
         // Need to talk with Nathan/Antonio about this.
@@ -216,8 +214,8 @@ impl Render for Workspace {
             .gap_0()
             .justify_start()
             .items_start()
-            .text_color(theme.text)
-            .bg(theme.background)
+            .text_color(cx.theme().colors().text)
+            .bg(cx.theme().colors().background)
             .child(self.title_bar.clone())
             .child(
                 div()
@@ -228,7 +226,7 @@ impl Render for Workspace {
                     .overflow_hidden()
                     .border_t()
                     .border_b()
-                    .border_color(theme.border)
+                    .border_color(cx.theme().colors().border)
                     .children(
                         Some(
                             Panel::new("project-panel-outer", cx)
