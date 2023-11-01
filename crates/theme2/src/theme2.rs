@@ -5,7 +5,6 @@ mod registry;
 mod scale;
 mod settings;
 mod syntax;
-mod themes;
 mod utils;
 
 pub use colors::*;
