@@ -1,6 +1,6 @@
 pub mod dock;
 pub mod item;
-// pub mod notifications;
+pub mod notifications;
 pub mod pane;
 pub mod pane_group;
 mod persistence;
@@ -10,6 +10,10 @@ mod status_bar;
 mod toolbar;
 mod workspace_settings;
 
+use crate::persistence::model::{
+    DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup,
+    SerializedWorkspace,
+};
 use anyhow::{anyhow, Result};
 use call2::ActiveCall;
 use client2::{
@@ -17,19 +21,22 @@ use client2::{
     Client, TypedEnvelope, UserStore,
 };
 use collections::{HashMap, HashSet};
-use dock::Dock;
+use dock::{Dock, DockPosition, PanelButtons};
 use futures::{
     channel::{mpsc, oneshot},
-    FutureExt,
+    FutureExt, Stream, StreamExt,
 };
 use gpui2::{
-    div, AnyModel, AnyView, AppContext, AsyncAppContext, AsyncWindowContext, Div, Entity,
-    EventEmitter, MainThread, Model, ModelContext, Render, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    div, point, size, AnyModel, AnyView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds,
+    Div, EventEmitter, GlobalPixels, MainThread, Model, ModelContext, Point, Render, Size,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language2::LanguageRegistry;
+use lazy_static::lazy_static;
 use node_runtime::NodeRuntime;
+use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
 use persistence::{
@@ -37,8 +44,12 @@ use persistence::{
     DB,
 };
 use project2::{Project, ProjectEntryId, ProjectPath, Worktree};
+use serde::Deserialize;
+use status_bar::StatusBar;
 use std::{
     any::TypeId,
+    borrow::Cow,
+    env,
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
@@ -47,21 +58,16 @@ pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
 use uuid::Uuid;
 
-use crate::persistence::model::{
-    DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup,
-    SerializedWorkspace,
-};
-
-// lazy_static! {
-//     static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
-//         .ok()
-//         .as_deref()
-//         .and_then(parse_pixel_position_env_var);
-//     static ref ZED_WINDOW_POSITION: Option<Vector2F> = env::var("ZED_WINDOW_POSITION")
-//         .ok()
-//         .as_deref()
-//         .and_then(parse_pixel_position_env_var);
-// }
+lazy_static! {
+    static ref ZED_WINDOW_SIZE: Option<Size<GlobalPixels>> = env::var("ZED_WINDOW_SIZE")
+        .ok()
+        .as_deref()
+        .and_then(parse_pixel_size_env_var);
+    static ref ZED_WINDOW_POSITION: Option<Point<GlobalPixels>> = env::var("ZED_WINDOW_POSITION")
+        .ok()
+        .as_deref()
+        .and_then(parse_pixel_position_env_var);
+}
 
 // pub trait Modal: View {
 //     fn has_focus(&self) -> bool;
@@ -151,13 +157,13 @@ use crate::persistence::model::{
 //     pub save_intent: Option<SaveIntent>,
 // }
 
-// #[derive(Deserialize)]
-// pub struct Toast {
-//     id: usize,
-//     msg: Cow<'static, str>,
-//     #[serde(skip)]
-//     on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut WindowContext)>)>,
-// }
+#[derive(Deserialize)]
+pub struct Toast {
+    id: usize,
+    msg: Cow<'static, str>,
+    #[serde(skip)]
+    on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut WindowContext)>)>,
+}
 
 // impl Toast {
 //     pub fn new<I: Into<Cow<'static, str>>>(id: usize, msg: I) -> Self {
@@ -336,7 +342,7 @@ pub type WorkspaceId = i64;
 //                     err.notify_err(workspace, cx);
 //                 } else {
 //                     workspace.show_notification(1, cx, |cx| {
-//                         cx.add_view(|_| {
+//                         cx.build_view(|_| {
 //                             MessageNotification::new("Successfully installed the `zed` binary")
 //                         })
 //                     });
@@ -418,7 +424,7 @@ pub struct AppState {
     pub workspace_store: Model<WorkspaceStore>,
     pub fs: Arc<dyn fs2::Fs>,
     pub build_window_options:
-        fn(Option<WindowBounds>, Option<Uuid>, MainThread<AppContext>) -> WindowOptions,
+        fn(Option<WindowBounds>, Option<Uuid>, &mut MainThread<AppContext>) -> WindowOptions,
     pub initialize_workspace: fn(
         WeakView<Workspace>,
         bool,
@@ -539,24 +545,24 @@ pub struct Workspace {
     right_dock: View<Dock>,
     panes: Vec<View<Pane>>,
     panes_by_item: HashMap<usize, WeakView<Pane>>,
-    //     active_pane: View<Pane>,
+    active_pane: View<Pane>,
     last_active_center_pane: Option<WeakView<Pane>>,
     //     last_active_view_id: Option<proto::ViewId>,
     //     status_bar: View<StatusBar>,
     //     titlebar_item: Option<AnyViewHandle>,
-    //     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
+    notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
     follower_states: HashMap<View<Pane>, FollowerState>,
     last_leaders_by_pane: HashMap<WeakView<Pane>, PeerId>,
-    //     window_edited: bool,
+    window_edited: bool,
     active_call: Option<(Model<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: WorkspaceId,
     app_state: Arc<AppState>,
-    //     subscriptions: Vec<Subscription>,
-    //     _apply_leader_updates: Task<Result<()>>,
-    //     _observe_current_user: Task<Result<()>>,
-    //     _schedule_serialize: Option<Task<()>>,
+    subscriptions: Vec<Subscription>,
+    _apply_leader_updates: Task<Result<()>>,
+    _observe_current_user: Task<Result<()>>,
+    _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
 }
 
@@ -581,200 +587,205 @@ struct FollowerState {
 enum WorkspaceBounds {}
 
 impl Workspace {
-    //     pub fn new(
-    //         workspace_id: WorkspaceId,
-    //         project: ModelHandle<Project>,
-    //         app_state: Arc<AppState>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Self {
-    //         cx.observe(&project, |_, _, cx| cx.notify()).detach();
-    //         cx.subscribe(&project, move |this, _, event, cx| {
-    //             match event {
-    //                 project::Event::RemoteIdChanged(_) => {
-    //                     this.update_window_title(cx);
-    //                 }
+    pub fn new(
+        workspace_id: WorkspaceId,
+        project: Model<Project>,
+        app_state: Arc<AppState>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        cx.observe(&project, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&project, move |this, _, event, cx| {
+            match event {
+                project2::Event::RemoteIdChanged(_) => {
+                    this.update_window_title(cx);
+                }
 
-    //                 project::Event::CollaboratorLeft(peer_id) => {
-    //                     this.collaborator_left(*peer_id, cx);
-    //                 }
+                project2::Event::CollaboratorLeft(peer_id) => {
+                    this.collaborator_left(*peer_id, cx);
+                }
 
-    //                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
-    //                     this.update_window_title(cx);
-    //                     this.serialize_workspace(cx);
-    //                 }
+                project2::Event::WorktreeRemoved(_) | project2::Event::WorktreeAdded => {
+                    this.update_window_title(cx);
+                    this.serialize_workspace(cx);
+                }
 
-    //                 project::Event::DisconnectedFromHost => {
-    //                     this.update_window_edited(cx);
-    //                     cx.blur();
-    //                 }
+                project2::Event::DisconnectedFromHost => {
+                    this.update_window_edited(cx);
+                    cx.blur();
+                }
 
-    //                 project::Event::Closed => {
-    //                     cx.remove_window();
-    //                 }
+                project2::Event::Closed => {
+                    // todo!()
+                    // cx.remove_window();
+                }
 
-    //                 project::Event::DeletedEntry(entry_id) => {
-    //                     for pane in this.panes.iter() {
-    //                         pane.update(cx, |pane, cx| {
-    //                             pane.handle_deleted_project_item(*entry_id, cx)
-    //                         });
-    //                     }
-    //                 }
+                project2::Event::DeletedEntry(entry_id) => {
+                    for pane in this.panes.iter() {
+                        pane.update(cx, |pane, cx| {
+                            pane.handle_deleted_project_item(*entry_id, cx)
+                        });
+                    }
+                }
 
-    //                 project::Event::Notification(message) => this.show_notification(0, cx, |cx| {
-    //                     cx.add_view(|_| MessageNotification::new(message.clone()))
-    //                 }),
+                project2::Event::Notification(message) => this.show_notification(0, cx, |cx| {
+                    cx.build_view(|_| MessageNotification::new(message.clone()))
+                }),
 
-    //                 _ => {}
-    //             }
-    //             cx.notify()
-    //         })
-    //         .detach();
+                _ => {}
+            }
+            cx.notify()
+        })
+        .detach();
 
-    //         let weak_handle = cx.weak_handle();
-    //         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
+        let weak_handle = cx.view().downgrade();
+        let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
 
-    //         let center_pane = cx.add_view(|cx| {
-    //             Pane::new(
-    //                 weak_handle.clone(),
-    //                 project.clone(),
-    //                 pane_history_timestamp.clone(),
-    //                 cx,
-    //             )
-    //         });
-    //         cx.subscribe(&center_pane, Self::handle_pane_event).detach();
-    //         cx.focus(&center_pane);
-    //         cx.emit(Event::PaneAdded(center_pane.clone()));
+        let center_pane = cx.build_view(|cx| {
+            Pane::new(
+                weak_handle.clone(),
+                project.clone(),
+                pane_history_timestamp.clone(),
+                cx,
+            )
+        });
+        cx.subscribe(&center_pane, Self::handle_pane_event).detach();
+        // todo!()
+        // cx.focus(&center_pane);
+        cx.emit(Event::PaneAdded(center_pane.clone()));
 
-    //         app_state.workspace_store.update(cx, |store, _| {
-    //             store.workspaces.insert(weak_handle.clone());
-    //         });
+        let window_handle = cx.window_handle().downcast::<Workspace>().unwrap();
+        app_state.workspace_store.update(cx, |store, _| {
+            store.workspaces.insert(window_handle);
+        });
 
-    //         let mut current_user = app_state.user_store.read(cx).watch_current_user();
-    //         let mut connection_status = app_state.client.status();
-    //         let _observe_current_user = cx.spawn(|this, mut cx| async move {
-    //             current_user.recv().await;
-    //             connection_status.recv().await;
-    //             let mut stream =
-    //                 Stream::map(current_user, drop).merge(Stream::map(connection_status, drop));
+        let mut current_user = app_state.user_store.read(cx).watch_current_user();
+        let mut connection_status = app_state.client.status();
+        let _observe_current_user = cx.spawn(|this, mut cx| async move {
+            current_user.next().await;
+            connection_status.next().await;
+            let mut stream =
+                Stream::map(current_user, drop).merge(Stream::map(connection_status, drop));
 
-    //             while stream.recv().await.is_some() {
-    //                 this.update(&mut cx, |_, cx| cx.notify())?;
-    //             }
-    //             anyhow::Ok(())
-    //         });
+            while stream.recv().await.is_some() {
+                this.update(&mut cx, |_, cx| cx.notify())?;
+            }
+            anyhow::Ok(())
+        });
 
-    //         // All leader updates are enqueued and then processed in a single task, so
-    //         // that each asynchronous operation can be run in order.
-    //         let (leader_updates_tx, mut leader_updates_rx) =
-    //             mpsc::unbounded::<(PeerId, proto::UpdateFollowers)>();
-    //         let _apply_leader_updates = cx.spawn(|this, mut cx| async move {
-    //             while let Some((leader_id, update)) = leader_updates_rx.next().await {
-    //                 Self::process_leader_update(&this, leader_id, update, &mut cx)
-    //                     .await
-    //                     .log_err();
-    //             }
+        // All leader updates are enqueued and then processed in a single task, so
+        // that each asynchronous operation can be run in order.
+        let (leader_updates_tx, mut leader_updates_rx) =
+            mpsc::unbounded::<(PeerId, proto::UpdateFollowers)>();
+        let _apply_leader_updates = cx.spawn(|this, mut cx| async move {
+            while let Some((leader_id, update)) = leader_updates_rx.next().await {
+                Self::process_leader_update(&this, leader_id, update, &mut cx)
+                    .await
+                    .log_err();
+            }
 
-    //             Ok(())
-    //         });
+            Ok(())
+        });
 
-    //         cx.emit_global(WorkspaceCreated(weak_handle.clone()));
+        // todo!("replace with a different mechanism")
+        // cx.emit_global(WorkspaceCreated(weak_handle.clone()));
 
-    //         let left_dock = cx.add_view(|_| Dock::new(DockPosition::Left));
-    //         let bottom_dock = cx.add_view(|_| Dock::new(DockPosition::Bottom));
-    //         let right_dock = cx.add_view(|_| Dock::new(DockPosition::Right));
-    //         let left_dock_buttons =
-    //             cx.add_view(|cx| PanelButtons::new(left_dock.clone(), weak_handle.clone(), cx));
-    //         let bottom_dock_buttons =
-    //             cx.add_view(|cx| PanelButtons::new(bottom_dock.clone(), weak_handle.clone(), cx));
-    //         let right_dock_buttons =
-    //             cx.add_view(|cx| PanelButtons::new(right_dock.clone(), weak_handle.clone(), cx));
-    //         let status_bar = cx.add_view(|cx| {
-    //             let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
-    //             status_bar.add_left_item(left_dock_buttons, cx);
-    //             status_bar.add_right_item(right_dock_buttons, cx);
-    //             status_bar.add_right_item(bottom_dock_buttons, cx);
-    //             status_bar
-    //         });
+        let left_dock = cx.build_view(|_| Dock::new(DockPosition::Left));
+        let bottom_dock = cx.build_view(|_| Dock::new(DockPosition::Bottom));
+        let right_dock = cx.build_view(|_| Dock::new(DockPosition::Right));
+        let left_dock_buttons =
+            cx.build_view(|cx| PanelButtons::new(left_dock.clone(), weak_handle.clone(), cx));
+        let bottom_dock_buttons =
+            cx.build_view(|cx| PanelButtons::new(bottom_dock.clone(), weak_handle.clone(), cx));
+        let right_dock_buttons =
+            cx.build_view(|cx| PanelButtons::new(right_dock.clone(), weak_handle.clone(), cx));
+        let status_bar = cx.build_view(|cx| {
+            let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
+            status_bar.add_left_item(left_dock_buttons, cx);
+            status_bar.add_right_item(right_dock_buttons, cx);
+            status_bar.add_right_item(bottom_dock_buttons, cx);
+            status_bar
+        });
 
-    //         cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
-    //             drag_and_drop.register_container(weak_handle.clone());
-    //         });
+        // todo!()
+        // cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
+        //     drag_and_drop.register_container(weak_handle.clone());
+        // });
 
-    //         let mut active_call = None;
-    //         if cx.has_global::<ModelHandle<ActiveCall>>() {
-    //             let call = cx.global::<ModelHandle<ActiveCall>>().clone();
-    //             let mut subscriptions = Vec::new();
-    //             subscriptions.push(cx.subscribe(&call, Self::on_active_call_event));
-    //             active_call = Some((call, subscriptions));
-    //         }
+        let mut active_call = None;
+        if cx.has_global::<Model<ActiveCall>>() {
+            let call = cx.global::<Model<ActiveCall>>().clone();
+            let mut subscriptions = Vec::new();
+            subscriptions.push(cx.subscribe(&call, Self::on_active_call_event));
+            active_call = Some((call, subscriptions));
+        }
 
-    //         let subscriptions = vec![
-    //             cx.observe_fullscreen(|_, _, cx| cx.notify()),
-    //             cx.observe_window_activation(Self::on_window_activation_changed),
-    //             cx.observe_window_bounds(move |_, mut bounds, display, cx| {
-    //                 // Transform fixed bounds to be stored in terms of the containing display
-    //                 if let WindowBounds::Fixed(mut window_bounds) = bounds {
-    //                     if let Some(screen) = cx.platform().screen_by_id(display) {
-    //                         let screen_bounds = screen.bounds();
-    //                         window_bounds
-    //                             .set_origin_x(window_bounds.origin_x() - screen_bounds.origin_x());
-    //                         window_bounds
-    //                             .set_origin_y(window_bounds.origin_y() - screen_bounds.origin_y());
-    //                         bounds = WindowBounds::Fixed(window_bounds);
-    //                     }
-    //                 }
+        let subscriptions = vec![
+            cx.observe_fullscreen(|_, _, cx| cx.notify()),
+            cx.observe_window_activation(Self::on_window_activation_changed),
+            cx.observe_window_bounds(move |_, mut bounds, display, cx| {
+                // Transform fixed bounds to be stored in terms of the containing display
+                if let WindowBounds::Fixed(mut window_bounds) = bounds {
+                    if let Some(screen) = cx.platform().screen_by_id(display) {
+                        let screen_bounds = screen.bounds();
+                        window_bounds
+                            .set_origin_x(window_bounds.origin_x() - screen_bounds.origin_x());
+                        window_bounds
+                            .set_origin_y(window_bounds.origin_y() - screen_bounds.origin_y());
+                        bounds = WindowBounds::Fixed(window_bounds);
+                    }
+                }
 
-    //                 cx.background()
-    //                     .spawn(DB.set_window_bounds(workspace_id, bounds, display))
-    //                     .detach_and_log_err(cx);
-    //             }),
-    //             cx.observe(&left_dock, |this, _, cx| {
-    //                 this.serialize_workspace(cx);
-    //                 cx.notify();
-    //             }),
-    //             cx.observe(&bottom_dock, |this, _, cx| {
-    //                 this.serialize_workspace(cx);
-    //                 cx.notify();
-    //             }),
-    //             cx.observe(&right_dock, |this, _, cx| {
-    //                 this.serialize_workspace(cx);
-    //                 cx.notify();
-    //             }),
-    //         ];
+                cx.background()
+                    .spawn(DB.set_window_bounds(workspace_id, bounds, display))
+                    .detach_and_log_err(cx);
+            }),
+            cx.observe(&left_dock, |this, _, cx| {
+                this.serialize_workspace(cx);
+                cx.notify();
+            }),
+            cx.observe(&bottom_dock, |this, _, cx| {
+                this.serialize_workspace(cx);
+                cx.notify();
+            }),
+            cx.observe(&right_dock, |this, _, cx| {
+                this.serialize_workspace(cx);
+                cx.notify();
+            }),
+        ];
 
-    //         cx.defer(|this, cx| this.update_window_title(cx));
-    //         Workspace {
-    //             weak_self: weak_handle.clone(),
-    //             modal: None,
-    //             zoomed: None,
-    //             zoomed_position: None,
-    //             center: PaneGroup::new(center_pane.clone()),
-    //             panes: vec![center_pane.clone()],
-    //             panes_by_item: Default::default(),
-    //             active_pane: center_pane.clone(),
-    //             last_active_center_pane: Some(center_pane.downgrade()),
-    //             last_active_view_id: None,
-    //             status_bar,
-    //             titlebar_item: None,
-    //             notifications: Default::default(),
-    //             left_dock,
-    //             bottom_dock,
-    //             right_dock,
-    //             project: project.clone(),
-    //             follower_states: Default::default(),
-    //             last_leaders_by_pane: Default::default(),
-    //             window_edited: false,
-    //             active_call,
-    //             database_id: workspace_id,
-    //             app_state,
-    //             _observe_current_user,
-    //             _apply_leader_updates,
-    //             _schedule_serialize: None,
-    //             leader_updates_tx,
-    //             subscriptions,
-    //             pane_history_timestamp,
-    //         }
-    //     }
+        cx.defer(|this, cx| this.update_window_title(cx));
+        Workspace {
+            weak_self: weak_handle.clone(),
+            // modal: None,
+            // zoomed: None,
+            // zoomed_position: None,
+            center: PaneGroup::new(center_pane.clone()),
+            panes: vec![center_pane.clone()],
+            panes_by_item: Default::default(),
+            active_pane: center_pane.clone(),
+            last_active_center_pane: Some(center_pane.downgrade()),
+            // last_active_view_id: None,
+            // status_bar,
+            // titlebar_item: None,
+            notifications: Default::default(),
+            left_dock,
+            bottom_dock,
+            right_dock,
+            project: project.clone(),
+            follower_states: Default::default(),
+            last_leaders_by_pane: Default::default(),
+            window_edited: false,
+            active_call,
+            database_id: workspace_id,
+            app_state,
+            _observe_current_user,
+            _apply_leader_updates,
+            _schedule_serialize: None,
+            leader_updates_tx,
+            subscriptions,
+            pane_history_timestamp,
+        }
+    }
 
     fn new_local(
         abs_paths: Vec<PathBuf>,
@@ -832,54 +843,39 @@ impl Workspace {
                 });
                 window
             } else {
-                {
-                    let window_bounds_override = window_bounds_env_override(&cx);
-                    let (bounds, display) = if let Some(bounds) = window_bounds_override {
-                        (Some(bounds), None)
-                    } else {
-                        serialized_workspace
-                            .as_ref()
-                            .and_then(|serialized_workspace| {
-                                let display = serialized_workspace.display?;
-                                let mut bounds = serialized_workspace.bounds?;
+                let window_bounds_override = window_bounds_env_override(&cx);
+                let (bounds, display) = if let Some(bounds) = window_bounds_override {
+                    (Some(bounds), None)
+                } else {
+                    serialized_workspace
+                        .as_ref()
+                        .and_then(|serialized_workspace| {
+                            let display = serialized_workspace.display?;
+                            let mut bounds = serialized_workspace.bounds?;
 
-                                // Stored bounds are relative to the containing display.
-                                // So convert back to global coordinates if that screen still exists
-                                if let WindowBounds::Fixed(mut window_bounds) = bounds {
-                                    if let Some(screen) = cx.platform().screen_by_id(display) {
-                                        let screen_bounds = screen.bounds();
-                                        window_bounds.origin.x += screen_bounds.origin.x;
-                                        window_bounds.origin.y += screen_bounds.origin.y;
-                                        bounds = WindowBounds::Fixed(window_bounds);
-                                    } else {
-                                        // Screen no longer exists. Return none here.
-                                        return None;
-                                    }
-                                }
+                            // Stored bounds are relative to the containing display.
+                            // So convert back to global coordinates if that screen still exists
+                            if let WindowBounds::Fixed(mut window_bounds) = bounds {
+                                let screen =
+                                    cx.update(|cx| cx.display_for_uuid(display)).ok()??;
+                                let screen_bounds = screen.bounds();
+                                window_bounds.origin.x += screen_bounds.origin.x;
+                                window_bounds.origin.y += screen_bounds.origin.y;
+                                bounds = WindowBounds::Fixed(window_bounds);
+                            }
 
-                                Some((bounds, display))
-                            })
-                            .unzip()
-                    };
+                            Some((bounds, display))
+                        })
+                        .unzip()
+                };
 
-                    // Use the serialized workspace to construct the new window
-                    cx.open_window(
-                        (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
-                        |cx| {
-                            Workspace::new(
-                                workspace_id,
-                                project_handle.clone(),
-                                app_state.clone(),
-                                cx,
-                            )
-                        },
-                    )
-                }
+                // Use the serialized workspace to construct the new window
+                let options =
+                    cx.update(|cx| (app_state.build_window_options)(bounds, display, cx))?;
+                cx.open_window(options, |cx| {
+                    Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
+                })?
             };
-
-            // We haven't yielded the main thread since obtaining the window handle,
-            // so the window exists.
-            let workspace = window.root(&cx).unwrap();
 
             (app_state.initialize_workspace)(
                 workspace.downgrade(),
@@ -1594,7 +1590,7 @@ impl Workspace {
     //     pub fn toggle_modal<V, F>(
     //         &mut self,
     //         cx: &mut ViewContext<Self>,
-    //         add_view: F,
+    //         build_view: F,
     //     ) -> Option<View<V>>
     //     where
     //         V: 'static + Modal,
@@ -1610,7 +1606,7 @@ impl Workspace {
     //             cx.focus_self();
     //             Some(already_open_modal)
     //         } else {
-    //             let modal = add_view(self, cx);
+    //             let modal = build_view(self, cx);
     //             cx.subscribe(&modal, |this, _, event, cx| {
     //                 if V::dismiss_on_event(event) {
     //                     this.dismiss_modal(cx);
@@ -1647,12 +1643,12 @@ impl Workspace {
     //         }
     //     }
 
-    //     pub fn items<'a>(
-    //         &'a self,
-    //         cx: &'a AppContext,
-    //     ) -> impl 'a + Iterator<Item = &Box<dyn ItemHandle>> {
-    //         self.panes.iter().flat_map(|pane| pane.read(cx).items())
-    //     }
+    pub fn items<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = &Box<dyn ItemHandle>> {
+        self.panes.iter().flat_map(|pane| pane.read(cx).items())
+    }
 
     //     pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<View<T>> {
     //         self.items_of_type(cx).max_by_key(|item| item.id())
@@ -1667,9 +1663,9 @@ impl Workspace {
     //             .flat_map(|pane| pane.read(cx).items_of_type())
     //     }
 
-    //     pub fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
-    //         self.active_pane().read(cx).active_item()
-    //     }
+    pub fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
+        self.active_pane().read(cx).active_item()
+    }
 
     //     fn active_project_path(&self, cx: &ViewContext<Self>) -> Option<ProjectPath> {
     //         self.active_item(cx).and_then(|item| item.project_path(cx))
@@ -2133,7 +2129,7 @@ impl Workspace {
     //             return item;
     //         }
 
-    //         let item = cx.add_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+    //         let item = cx.build_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
     //         self.add_item(Box::new(item.clone()), cx);
     //         item
     //     }
@@ -2157,7 +2153,7 @@ impl Workspace {
     //             return item;
     //         }
 
-    //         let item = cx.add_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+    //         let item = cx.build_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
     //         self.split_item(SplitDirection::Right, Box::new(item.clone()), cx);
     //         item
     //     }
@@ -2282,64 +2278,65 @@ impl Workspace {
     //         cx.notify();
     //     }
 
-    //     fn handle_pane_event(
-    //         &mut self,
-    //         pane: View<Pane>,
-    //         event: &pane::Event,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         match event {
-    //             pane::Event::AddItem { item } => item.added_to_pane(self, pane, cx),
-    //             pane::Event::Split(direction) => {
-    //                 self.split_and_clone(pane, *direction, cx);
-    //             }
-    //             pane::Event::Remove => self.remove_pane(pane, cx),
-    //             pane::Event::ActivateItem { local } => {
-    //                 if *local {
-    //                     self.unfollow(&pane, cx);
-    //                 }
-    //                 if &pane == self.active_pane() {
-    //                     self.active_item_path_changed(cx);
-    //                 }
-    //             }
-    //             pane::Event::ChangeItemTitle => {
-    //                 if pane == self.active_pane {
-    //                     self.active_item_path_changed(cx);
-    //                 }
-    //                 self.update_window_edited(cx);
-    //             }
-    //             pane::Event::RemoveItem { item_id } => {
-    //                 self.update_window_edited(cx);
-    //                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
-    //                     if entry.get().id() == pane.id() {
-    //                         entry.remove();
-    //                     }
-    //                 }
-    //             }
-    //             pane::Event::Focus => {
-    //                 self.handle_pane_focused(pane.clone(), cx);
-    //             }
-    //             pane::Event::ZoomIn => {
-    //                 if pane == self.active_pane {
-    //                     pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
-    //                     if pane.read(cx).has_focus() {
-    //                         self.zoomed = Some(pane.downgrade().into_any());
-    //                         self.zoomed_position = None;
-    //                     }
-    //                     cx.notify();
-    //                 }
-    //             }
-    //             pane::Event::ZoomOut => {
-    //                 pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
-    //                 if self.zoomed_position.is_none() {
-    //                     self.zoomed = None;
-    //                 }
-    //                 cx.notify();
-    //             }
-    //         }
+    fn handle_pane_event(
+        &mut self,
+        pane: View<Pane>,
+        event: &pane::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        todo!()
+        // match event {
+        //     pane::Event::AddItem { item } => item.added_to_pane(self, pane, cx),
+        //     pane::Event::Split(direction) => {
+        //         self.split_and_clone(pane, *direction, cx);
+        //     }
+        //     pane::Event::Remove => self.remove_pane(pane, cx),
+        //     pane::Event::ActivateItem { local } => {
+        //         if *local {
+        //             self.unfollow(&pane, cx);
+        //         }
+        //         if &pane == self.active_pane() {
+        //             self.active_item_path_changed(cx);
+        //         }
+        //     }
+        //     pane::Event::ChangeItemTitle => {
+        //         if pane == self.active_pane {
+        //             self.active_item_path_changed(cx);
+        //         }
+        //         self.update_window_edited(cx);
+        //     }
+        //     pane::Event::RemoveItem { item_id } => {
+        //         self.update_window_edited(cx);
+        //         if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
+        //             if entry.get().id() == pane.id() {
+        //                 entry.remove();
+        //             }
+        //         }
+        //     }
+        //     pane::Event::Focus => {
+        //         self.handle_pane_focused(pane.clone(), cx);
+        //     }
+        //     pane::Event::ZoomIn => {
+        //         if pane == self.active_pane {
+        //             pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
+        //             if pane.read(cx).has_focus() {
+        //                 self.zoomed = Some(pane.downgrade().into_any());
+        //                 self.zoomed_position = None;
+        //             }
+        //             cx.notify();
+        //         }
+        //     }
+        //     pane::Event::ZoomOut => {
+        //         pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+        //         if self.zoomed_position.is_none() {
+        //             self.zoomed = None;
+        //         }
+        //         cx.notify();
+        //     }
+        // }
 
-    //         self.serialize_workspace(cx);
-    //     }
+        // self.serialize_workspace(cx);
+    }
 
     //     pub fn split_pane(
     //         &mut self,
@@ -2468,27 +2465,27 @@ impl Workspace {
     //         }
     //     }
 
-    //     pub fn panes(&self) -> &[View<Pane>] {
-    //         &self.panes
-    //     }
+    pub fn panes(&self) -> &[View<Pane>] {
+        &self.panes
+    }
 
-    //     pub fn active_pane(&self) -> &View<Pane> {
-    //         &self.active_pane
-    //     }
+    pub fn active_pane(&self) -> &View<Pane> {
+        &self.active_pane
+    }
 
-    //     fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
-    //         self.follower_states.retain(|_, state| {
-    //             if state.leader_id == peer_id {
-    //                 for item in state.items_by_leader_view_id.values() {
-    //                     item.set_leader_peer_id(None, cx);
-    //                 }
-    //                 false
-    //             } else {
-    //                 true
-    //             }
-    //         });
-    //         cx.notify();
-    //     }
+    fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
+        self.follower_states.retain(|_, state| {
+            if state.leader_id == peer_id {
+                for item in state.items_by_leader_view_id.values() {
+                    item.set_leader_peer_id(None, cx);
+                }
+                false
+            } else {
+                true
+            }
+        });
+        cx.notify();
+    }
 
     //     fn start_following(
     //         &mut self,
@@ -2703,60 +2700,62 @@ impl Workspace {
     //         self.update_window_title(cx);
     //     }
 
-    //     fn update_window_title(&mut self, cx: &mut ViewContext<Self>) {
-    //         let project = self.project().read(cx);
-    //         let mut title = String::new();
+    fn update_window_title(&mut self, cx: &mut ViewContext<Self>) {
+        let project = self.project().read(cx);
+        let mut title = String::new();
 
-    //         if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
-    //             let filename = path
-    //                 .path
-    //                 .file_name()
-    //                 .map(|s| s.to_string_lossy())
-    //                 .or_else(|| {
-    //                     Some(Cow::Borrowed(
-    //                         project
-    //                             .worktree_for_id(path.worktree_id, cx)?
-    //                             .read(cx)
-    //                             .root_name(),
-    //                     ))
-    //                 });
+        if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
+            let filename = path
+                .path
+                .file_name()
+                .map(|s| s.to_string_lossy())
+                .or_else(|| {
+                    Some(Cow::Borrowed(
+                        project
+                            .worktree_for_id(path.worktree_id, cx)?
+                            .read(cx)
+                            .root_name(),
+                    ))
+                });
 
-    //             if let Some(filename) = filename {
-    //                 title.push_str(filename.as_ref());
-    //                 title.push_str(" — ");
-    //             }
-    //         }
+            if let Some(filename) = filename {
+                title.push_str(filename.as_ref());
+                title.push_str(" — ");
+            }
+        }
 
-    //         for (i, name) in project.worktree_root_names(cx).enumerate() {
-    //             if i > 0 {
-    //                 title.push_str(", ");
-    //             }
-    //             title.push_str(name);
-    //         }
+        for (i, name) in project.worktree_root_names(cx).enumerate() {
+            if i > 0 {
+                title.push_str(", ");
+            }
+            title.push_str(name);
+        }
 
-    //         if title.is_empty() {
-    //             title = "empty project".to_string();
-    //         }
+        if title.is_empty() {
+            title = "empty project".to_string();
+        }
 
-    //         if project.is_remote() {
-    //             title.push_str(" ↙");
-    //         } else if project.is_shared() {
-    //             title.push_str(" ↗");
-    //         }
+        if project.is_remote() {
+            title.push_str(" ↙");
+        } else if project.is_shared() {
+            title.push_str(" ↗");
+        }
 
-    //         cx.set_window_title(&title);
-    //     }
+        todo!()
+        // cx.set_window_title(&title);
+    }
 
-    //     fn update_window_edited(&mut self, cx: &mut ViewContext<Self>) {
-    //         let is_edited = !self.project.read(cx).is_read_only()
-    //             && self
-    //                 .items(cx)
-    //                 .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
-    //         if is_edited != self.window_edited {
-    //             self.window_edited = is_edited;
-    //             cx.set_window_edited(self.window_edited)
-    //         }
-    //     }
+    fn update_window_edited(&mut self, cx: &mut ViewContext<Self>) {
+        let is_edited = !self.project.read(cx).is_read_only()
+            && self
+                .items(cx)
+                .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
+        if is_edited != self.window_edited {
+            self.window_edited = is_edited;
+            todo!()
+            // cx.set_window_edited(self.window_edited)
+        }
+    }
 
     //     fn render_disconnected_overlay(
     //         &self,
@@ -2875,64 +2874,64 @@ impl Workspace {
             .ok();
     }
 
-    //     async fn process_leader_update(
-    //         this: &WeakView<Self>,
-    //         leader_id: PeerId,
-    //         update: proto::UpdateFollowers,
-    //         cx: &mut AsyncAppContext,
-    //     ) -> Result<()> {
-    //         match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
-    //             proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
-    //                 this.update(cx, |this, _| {
-    //                     for (_, state) in &mut this.follower_states {
-    //                         if state.leader_id == leader_id {
-    //                             state.active_view_id =
-    //                                 if let Some(active_view_id) = update_active_view.id.clone() {
-    //                                     Some(ViewId::from_proto(active_view_id)?)
-    //                                 } else {
-    //                                     None
-    //                                 };
-    //                         }
-    //                     }
-    //                     anyhow::Ok(())
-    //                 })??;
-    //             }
-    //             proto::update_followers::Variant::UpdateView(update_view) => {
-    //                 let variant = update_view
-    //                     .variant
-    //                     .ok_or_else(|| anyhow!("missing update view variant"))?;
-    //                 let id = update_view
-    //                     .id
-    //                     .ok_or_else(|| anyhow!("missing update view id"))?;
-    //                 let mut tasks = Vec::new();
-    //                 this.update(cx, |this, cx| {
-    //                     let project = this.project.clone();
-    //                     for (_, state) in &mut this.follower_states {
-    //                         if state.leader_id == leader_id {
-    //                             let view_id = ViewId::from_proto(id.clone())?;
-    //                             if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
-    //                                 tasks.push(item.apply_update_proto(&project, variant.clone(), cx));
-    //                             }
-    //                         }
-    //                     }
-    //                     anyhow::Ok(())
-    //                 })??;
-    //                 try_join_all(tasks).await.log_err();
-    //             }
-    //             proto::update_followers::Variant::CreateView(view) => {
-    //                 let panes = this.read_with(cx, |this, _| {
-    //                     this.follower_states
-    //                         .iter()
-    //                         .filter_map(|(pane, state)| (state.leader_id == leader_id).then_some(pane))
-    //                         .cloned()
-    //                         .collect()
-    //                 })?;
-    //                 Self::add_views_from_leader(this.clone(), leader_id, panes, vec![view], cx).await?;
-    //             }
-    //         }
-    //         this.update(cx, |this, cx| this.leader_updated(leader_id, cx))?;
-    //         Ok(())
-    //     }
+    async fn process_leader_update(
+        this: &WeakView<Self>,
+        leader_id: PeerId,
+        update: proto::UpdateFollowers,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
+        match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
+            proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
+                this.update(cx, |this, _| {
+                    for (_, state) in &mut this.follower_states {
+                        if state.leader_id == leader_id {
+                            state.active_view_id =
+                                if let Some(active_view_id) = update_active_view.id.clone() {
+                                    Some(ViewId::from_proto(active_view_id)?)
+                                } else {
+                                    None
+                                };
+                        }
+                    }
+                    anyhow::Ok(())
+                })??;
+            }
+            proto::update_followers::Variant::UpdateView(update_view) => {
+                let variant = update_view
+                    .variant
+                    .ok_or_else(|| anyhow!("missing update view variant"))?;
+                let id = update_view
+                    .id
+                    .ok_or_else(|| anyhow!("missing update view id"))?;
+                let mut tasks = Vec::new();
+                this.update(cx, |this, cx| {
+                    let project = this.project.clone();
+                    for (_, state) in &mut this.follower_states {
+                        if state.leader_id == leader_id {
+                            let view_id = ViewId::from_proto(id.clone())?;
+                            if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
+                                tasks.push(item.apply_update_proto(&project, variant.clone(), cx));
+                            }
+                        }
+                    }
+                    anyhow::Ok(())
+                })??;
+                try_join_all(tasks).await.log_err();
+            }
+            proto::update_followers::Variant::CreateView(view) => {
+                let panes = this.read_with(cx, |this, _| {
+                    this.follower_states
+                        .iter()
+                        .filter_map(|(pane, state)| (state.leader_id == leader_id).then_some(pane))
+                        .cloned()
+                        .collect()
+                })?;
+                Self::add_views_from_leader(this.clone(), leader_id, panes, vec![view], cx).await?;
+            }
+        }
+        this.update(cx, |this, cx| this.leader_updated(leader_id, cx))?;
+        Ok(())
+    }
 
     //     async fn add_views_from_leader(
     //         this: WeakView<Self>,
@@ -3042,71 +3041,72 @@ impl Workspace {
         self.follower_states.get(pane).map(|state| state.leader_id)
     }
 
-    //     fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
-    //         cx.notify();
+    fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
+        cx.notify();
 
-    //         let call = self.active_call()?;
-    //         let room = call.read(cx).room()?.read(cx);
-    //         let participant = room.remote_participant_for_peer_id(leader_id)?;
-    //         let mut items_to_activate = Vec::new();
+        let call = self.active_call()?;
+        let room = call.read(cx).room()?.read(cx);
+        let participant = room.remote_participant_for_peer_id(leader_id)?;
+        let mut items_to_activate = Vec::new();
 
-    //         let leader_in_this_app;
-    //         let leader_in_this_project;
-    //         match participant.location {
-    //             call::ParticipantLocation::SharedProject { project_id } => {
-    //                 leader_in_this_app = true;
-    //                 leader_in_this_project = Some(project_id) == self.project.read(cx).remote_id();
-    //             }
-    //             call::ParticipantLocation::UnsharedProject => {
-    //                 leader_in_this_app = true;
-    //                 leader_in_this_project = false;
-    //             }
-    //             call::ParticipantLocation::External => {
-    //                 leader_in_this_app = false;
-    //                 leader_in_this_project = false;
-    //             }
-    //         };
+        let leader_in_this_app;
+        let leader_in_this_project;
+        match participant.location {
+            call2::ParticipantLocation::SharedProject { project_id } => {
+                leader_in_this_app = true;
+                leader_in_this_project = Some(project_id) == self.project.read(cx).remote_id();
+            }
+            call2::ParticipantLocation::UnsharedProject => {
+                leader_in_this_app = true;
+                leader_in_this_project = false;
+            }
+            call2::ParticipantLocation::External => {
+                leader_in_this_app = false;
+                leader_in_this_project = false;
+            }
+        };
 
-    //         for (pane, state) in &self.follower_states {
-    //             if state.leader_id != leader_id {
-    //                 continue;
-    //             }
-    //             if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
-    //                 if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
-    //                     if leader_in_this_project || !item.is_project_item(cx) {
-    //                         items_to_activate.push((pane.clone(), item.boxed_clone()));
-    //                     }
-    //                 } else {
-    //                     log::warn!(
-    //                         "unknown view id {:?} for leader {:?}",
-    //                         active_view_id,
-    //                         leader_id
-    //                     );
-    //                 }
-    //                 continue;
-    //             }
-    //             if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
-    //                 items_to_activate.push((pane.clone(), Box::new(shared_screen)));
-    //             }
-    //         }
+        for (pane, state) in &self.follower_states {
+            if state.leader_id != leader_id {
+                continue;
+            }
+            if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
+                if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
+                    if leader_in_this_project || !item.is_project_item(cx) {
+                        items_to_activate.push((pane.clone(), item.boxed_clone()));
+                    }
+                } else {
+                    log::warn!(
+                        "unknown view id {:?} for leader {:?}",
+                        active_view_id,
+                        leader_id
+                    );
+                }
+                continue;
+            }
+            // todo!()
+            // if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
+            //     items_to_activate.push((pane.clone(), Box::new(shared_screen)));
+            // }
+        }
 
-    //         for (pane, item) in items_to_activate {
-    //             let pane_was_focused = pane.read(cx).has_focus();
-    //             if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
-    //                 pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
-    //             } else {
-    //                 pane.update(cx, |pane, cx| {
-    //                     pane.add_item(item.boxed_clone(), false, false, None, cx)
-    //                 });
-    //             }
+        for (pane, item) in items_to_activate {
+            let pane_was_focused = pane.read(cx).has_focus();
+            if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
+                pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
+            } else {
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(item.boxed_clone(), false, false, None, cx)
+                });
+            }
 
-    //             if pane_was_focused {
-    //                 pane.update(cx, |pane, cx| pane.focus_active_item(cx));
-    //             }
-    //         }
+            if pane_was_focused {
+                pane.update(cx, |pane, cx| pane.focus_active_item(cx));
+            }
+        }
 
-    //         None
-    //     }
+        None
+    }
 
     //     fn shared_screen_for_peer(
     //         &self,
@@ -3126,7 +3126,7 @@ impl Workspace {
     //             }
     //         }
 
-    //         Some(cx.add_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
+    //         Some(cx.build_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
     //     }
 
     //     pub fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
@@ -3159,24 +3159,24 @@ impl Workspace {
         self.active_call.as_ref().map(|(call, _)| call)
     }
 
-    //     fn on_active_call_event(
-    //         &mut self,
-    //         _: ModelHandle<ActiveCall>,
-    //         event: &call::room::Event,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         match event {
-    //             call::room::Event::ParticipantLocationChanged { participant_id }
-    //             | call::room::Event::RemoteVideoTracksChanged { participant_id } => {
-    //                 self.leader_updated(*participant_id, cx);
-    //             }
-    //             _ => {}
-    //         }
-    //     }
+    fn on_active_call_event(
+        &mut self,
+        _: Model<ActiveCall>,
+        event: &call2::room::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            call2::room::Event::ParticipantLocationChanged { participant_id }
+            | call2::room::Event::RemoteVideoTracksChanged { participant_id } => {
+                self.leader_updated(*participant_id, cx);
+            }
+            _ => {}
+        }
+    }
 
-    //     pub fn database_id(&self) -> WorkspaceId {
-    //         self.database_id
-    //     }
+    pub fn database_id(&self) -> WorkspaceId {
+        self.database_id
+    }
 
     fn location(&self, cx: &AppContext) -> Option<WorkspaceLocation> {
         let project = self.project().read(cx);
@@ -3538,190 +3538,193 @@ impl Workspace {
     //         )
     //     }
     // }
-
-    // fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<WindowBounds> {
-    //     ZED_WINDOW_POSITION
-    //         .zip(*ZED_WINDOW_SIZE)
-    //         .map(|(position, size)| {
-    //             WindowBounds::Fixed(RectF::new(
-    //                 cx.platform().screens()[0].bounds().origin() + position,
-    //                 size,
-    //             ))
-    //         })
-    // }
-
-    // async fn open_items(
-    //     serialized_workspace: Option<SerializedWorkspace>,
-    //     workspace: &WeakView<Workspace>,
-    //     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
-    //     app_state: Arc<AppState>,
-    //     mut cx: AsyncAppContext,
-    // ) -> Result<Vec<Option<Result<Box<dyn ItemHandle>>>>> {
-    //     let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
-
-    //     if let Some(serialized_workspace) = serialized_workspace {
-    //         let workspace = workspace.clone();
-    //         let restored_items = cx
-    //             .update(|cx| {
-    //                 Workspace::load_workspace(
-    //                     workspace,
-    //                     serialized_workspace,
-    //                     project_paths_to_open
-    //                         .iter()
-    //                         .map(|(_, project_path)| project_path)
-    //                         .cloned()
-    //                         .collect(),
-    //                     cx,
-    //                 )
-    //             })
-    //             .await?;
-
-    //         let restored_project_paths = cx.read(|cx| {
-    //             restored_items
-    //                 .iter()
-    //                 .filter_map(|item| item.as_ref()?.project_path(cx))
-    //                 .collect::<HashSet<_>>()
-    //         });
-
-    //         for restored_item in restored_items {
-    //             opened_items.push(restored_item.map(Ok));
-    //         }
-
-    //         project_paths_to_open
-    //             .iter_mut()
-    //             .for_each(|(_, project_path)| {
-    //                 if let Some(project_path_to_open) = project_path {
-    //                     if restored_project_paths.contains(project_path_to_open) {
-    //                         *project_path = None;
-    //                     }
-    //                 }
-    //             });
-    //     } else {
-    //         for _ in 0..project_paths_to_open.len() {
-    //             opened_items.push(None);
-    //         }
-    //     }
-    //     assert!(opened_items.len() == project_paths_to_open.len());
-
-    //     let tasks =
-    //         project_paths_to_open
-    //             .into_iter()
-    //             .enumerate()
-    //             .map(|(i, (abs_path, project_path))| {
-    //                 let workspace = workspace.clone();
-    //                 cx.spawn(|mut cx| {
-    //                     let fs = app_state.fs.clone();
-    //                     async move {
-    //                         let file_project_path = project_path?;
-    //                         if fs.is_file(&abs_path).await {
-    //                             Some((
-    //                                 i,
-    //                                 workspace
-    //                                     .update(&mut cx, |workspace, cx| {
-    //                                         workspace.open_path(file_project_path, None, true, cx)
-    //                                     })
-    //                                     .log_err()?
-    //                                     .await,
-    //                             ))
-    //                         } else {
-    //                             None
-    //                         }
-    //                     }
-    //                 })
-    //             });
-
-    //     for maybe_opened_path in futures::future::join_all(tasks.into_iter())
-    //         .await
-    //         .into_iter()
-    //     {
-    //         if let Some((i, path_open_result)) = maybe_opened_path {
-    //             opened_items[i] = Some(path_open_result);
-    //         }
-    //     }
-
-    //     Ok(opened_items)
-    // }
-
-    // fn notify_of_new_dock(workspace: &WeakView<Workspace>, cx: &mut AsyncAppContext) {
-    //     const NEW_PANEL_BLOG_POST: &str = "https://zed.dev/blog/new-panel-system";
-    //     const NEW_DOCK_HINT_KEY: &str = "show_new_dock_key";
-    //     const MESSAGE_ID: usize = 2;
-
-    //     if workspace
-    //         .read_with(cx, |workspace, cx| {
-    //             workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
-    //         })
-    //         .unwrap_or(false)
-    //     {
-    //         return;
-    //     }
-
-    //     if db::kvp::KEY_VALUE_STORE
-    //         .read_kvp(NEW_DOCK_HINT_KEY)
-    //         .ok()
-    //         .flatten()
-    //         .is_some()
-    //     {
-    //         if !workspace
-    //             .read_with(cx, |workspace, cx| {
-    //                 workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
-    //             })
-    //             .unwrap_or(false)
-    //         {
-    //             cx.update(|cx| {
-    //                 cx.update_global::<NotificationTracker, _, _>(|tracker, _| {
-    //                     let entry = tracker
-    //                         .entry(TypeId::of::<MessageNotification>())
-    //                         .or_default();
-    //                     if !entry.contains(&MESSAGE_ID) {
-    //                         entry.push(MESSAGE_ID);
-    //                     }
-    //                 });
-    //             });
-    //         }
-
-    //         return;
-    //     }
-
-    //     cx.spawn(|_| async move {
-    //         db::kvp::KEY_VALUE_STORE
-    //             .write_kvp(NEW_DOCK_HINT_KEY.to_string(), "seen".to_string())
-    //             .await
-    //             .ok();
-    //     })
-    //     .detach();
-
-    //     workspace
-    //         .update(cx, |workspace, cx| {
-    //             workspace.show_notification_once(2, cx, |cx| {
-    //                 cx.add_view(|_| {
-    //                     MessageNotification::new_element(|text, _| {
-    //                         Text::new(
-    //                             "Looking for the dock? Try ctrl-`!\nshift-escape now zooms your pane.",
-    //                             text,
-    //                         )
-    //                         .with_custom_runs(vec![26..32, 34..46], |_, bounds, cx| {
-    //                             let code_span_background_color = settings::get::<ThemeSettings>(cx)
-    //                                 .theme
-    //                                 .editor
-    //                                 .document_highlight_read_background;
-
-    //                             cx.scene().push_quad(gpui::Quad {
-    //                                 bounds,
-    //                                 background: Some(code_span_background_color),
-    //                                 border: Default::default(),
-    //                                 corner_radii: (2.0).into(),
-    //                             })
-    //                         })
-    //                         .into_any()
-    //                     })
-    //                     .with_click_message("Read more about the new panel system")
-    //                     .on_click(|cx| cx.platform().open_url(NEW_PANEL_BLOG_POST))
-    //                 })
-    //             })
-    //         })
-    //         .ok();
 }
+
+fn window_bounds_env_override(cx: &MainThread<AsyncAppContext>) -> Option<WindowBounds> {
+    let display_origin = cx
+        .update(|cx| Some(cx.displays().first()?.bounds().origin))
+        .ok()??;
+    ZED_WINDOW_POSITION
+        .zip(*ZED_WINDOW_SIZE)
+        .map(|(position, size)| {
+            WindowBounds::Fixed(Bounds {
+                origin: display_origin + position,
+                size,
+            })
+        })
+}
+
+// async fn open_items(
+//     serialized_workspace: Option<SerializedWorkspace>,
+//     workspace: &WeakView<Workspace>,
+//     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
+//     app_state: Arc<AppState>,
+//     mut cx: AsyncAppContext,
+// ) -> Result<Vec<Option<Result<Box<dyn ItemHandle>>>>> {
+//     let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
+
+//     if let Some(serialized_workspace) = serialized_workspace {
+//         let workspace = workspace.clone();
+//         let restored_items = cx
+//             .update(|cx| {
+//                 Workspace::load_workspace(
+//                     workspace,
+//                     serialized_workspace,
+//                     project_paths_to_open
+//                         .iter()
+//                         .map(|(_, project_path)| project_path)
+//                         .cloned()
+//                         .collect(),
+//                     cx,
+//                 )
+//             })
+//             .await?;
+
+//         let restored_project_paths = cx.read(|cx| {
+//             restored_items
+//                 .iter()
+//                 .filter_map(|item| item.as_ref()?.project_path(cx))
+//                 .collect::<HashSet<_>>()
+//         });
+
+//         for restored_item in restored_items {
+//             opened_items.push(restored_item.map(Ok));
+//         }
+
+//         project_paths_to_open
+//             .iter_mut()
+//             .for_each(|(_, project_path)| {
+//                 if let Some(project_path_to_open) = project_path {
+//                     if restored_project_paths.contains(project_path_to_open) {
+//                         *project_path = None;
+//                     }
+//                 }
+//             });
+//     } else {
+//         for _ in 0..project_paths_to_open.len() {
+//             opened_items.push(None);
+//         }
+//     }
+//     assert!(opened_items.len() == project_paths_to_open.len());
+
+//     let tasks =
+//         project_paths_to_open
+//             .into_iter()
+//             .enumerate()
+//             .map(|(i, (abs_path, project_path))| {
+//                 let workspace = workspace.clone();
+//                 cx.spawn(|mut cx| {
+//                     let fs = app_state.fs.clone();
+//                     async move {
+//                         let file_project_path = project_path?;
+//                         if fs.is_file(&abs_path).await {
+//                             Some((
+//                                 i,
+//                                 workspace
+//                                     .update(&mut cx, |workspace, cx| {
+//                                         workspace.open_path(file_project_path, None, true, cx)
+//                                     })
+//                                     .log_err()?
+//                                     .await,
+//                             ))
+//                         } else {
+//                             None
+//                         }
+//                     }
+//                 })
+//             });
+
+//     for maybe_opened_path in futures::future::join_all(tasks.into_iter())
+//         .await
+//         .into_iter()
+//     {
+//         if let Some((i, path_open_result)) = maybe_opened_path {
+//             opened_items[i] = Some(path_open_result);
+//         }
+//     }
+
+//     Ok(opened_items)
+// }
+
+// fn notify_of_new_dock(workspace: &WeakView<Workspace>, cx: &mut AsyncAppContext) {
+//     const NEW_PANEL_BLOG_POST: &str = "https://zed.dev/blog/new-panel-system";
+//     const NEW_DOCK_HINT_KEY: &str = "show_new_dock_key";
+//     const MESSAGE_ID: usize = 2;
+
+//     if workspace
+//         .read_with(cx, |workspace, cx| {
+//             workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
+//         })
+//         .unwrap_or(false)
+//     {
+//         return;
+//     }
+
+//     if db::kvp::KEY_VALUE_STORE
+//         .read_kvp(NEW_DOCK_HINT_KEY)
+//         .ok()
+//         .flatten()
+//         .is_some()
+//     {
+//         if !workspace
+//             .read_with(cx, |workspace, cx| {
+//                 workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
+//             })
+//             .unwrap_or(false)
+//         {
+//             cx.update(|cx| {
+//                 cx.update_global::<NotificationTracker, _, _>(|tracker, _| {
+//                     let entry = tracker
+//                         .entry(TypeId::of::<MessageNotification>())
+//                         .or_default();
+//                     if !entry.contains(&MESSAGE_ID) {
+//                         entry.push(MESSAGE_ID);
+//                     }
+//                 });
+//             });
+//         }
+
+//         return;
+//     }
+
+//     cx.spawn(|_| async move {
+//         db::kvp::KEY_VALUE_STORE
+//             .write_kvp(NEW_DOCK_HINT_KEY.to_string(), "seen".to_string())
+//             .await
+//             .ok();
+//     })
+//     .detach();
+
+//     workspace
+//         .update(cx, |workspace, cx| {
+//             workspace.show_notification_once(2, cx, |cx| {
+//                 cx.build_view(|_| {
+//                     MessageNotification::new_element(|text, _| {
+//                         Text::new(
+//                             "Looking for the dock? Try ctrl-`!\nshift-escape now zooms your pane.",
+//                             text,
+//                         )
+//                         .with_custom_runs(vec![26..32, 34..46], |_, bounds, cx| {
+//                             let code_span_background_color = settings::get::<ThemeSettings>(cx)
+//                                 .theme
+//                                 .editor
+//                                 .document_highlight_read_background;
+
+//                             cx.scene().push_quad(gpui::Quad {
+//                                 bounds,
+//                                 background: Some(code_span_background_color),
+//                                 border: Default::default(),
+//                                 corner_radii: (2.0).into(),
+//                             })
+//                         })
+//                         .into_any()
+//                     })
+//                     .with_click_message("Read more about the new panel system")
+//                     .on_click(|cx| cx.platform().open_url(NEW_PANEL_BLOG_POST))
+//                 })
+//             })
+//         })
+//         .ok();
 
 // fn notify_if_database_failed(workspace: &WeakView<Workspace>, cx: &mut AsyncAppContext) {
 //     const REPORT_ISSUE_URL: &str ="https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml";
@@ -3730,7 +3733,7 @@ impl Workspace {
 //         .update(cx, |workspace, cx| {
 //             if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
 //                 workspace.show_notification_once(0, cx, |cx| {
-//                     cx.add_view(|_| {
+//                     cx.build_view(|_| {
 //                         MessageNotification::new("Failed to load the database file.")
 //                             .with_click_message("Click to let us know about this error")
 //                             .on_click(|cx| cx.platform().open_url(REPORT_ISSUE_URL))
@@ -4541,12 +4544,19 @@ pub fn open_new(
 //     .detach_and_log_err(cx);
 // }
 
-// fn parse_pixel_position_env_var(value: &str) -> Option<Vector2F> {
-//     let mut parts = value.split(',');
-//     let width: usize = parts.next()?.parse().ok()?;
-//     let height: usize = parts.next()?.parse().ok()?;
-//     Some(vec2f(width as f32, height as f32))
-// }
+fn parse_pixel_position_env_var(value: &str) -> Option<Point<GlobalPixels>> {
+    let mut parts = value.split(',');
+    let x: usize = parts.next()?.parse().ok()?;
+    let y: usize = parts.next()?.parse().ok()?;
+    Some(point((x as f64).into(), (y as f64).into()))
+}
+
+fn parse_pixel_size_env_var(value: &str) -> Option<Size<GlobalPixels>> {
+    let mut parts = value.split(',');
+    let width: usize = parts.next()?.parse().ok()?;
+    let height: usize = parts.next()?.parse().ok()?;
+    Some(size((width as f64).into(), (height as f64).into()))
+}
 
 // #[cfg(test)]
 // mod tests {
@@ -4572,7 +4582,7 @@ pub fn open_new(
 //         let workspace = window.root(cx);
 
 //         // Adding an item with no ambiguity renders the tab without detail.
-//         let item1 = window.add_view(cx, |_| {
+//         let item1 = window.build_view(cx, |_| {
 //             let mut item = TestItem::new();
 //             item.tab_descriptions = Some(vec!["c", "b1/c", "a/b1/c"]);
 //             item
@@ -4584,7 +4594,7 @@ pub fn open_new(
 
 //         // Adding an item that creates ambiguity increases the level of detail on
 //         // both tabs.
-//         let item2 = window.add_view(cx, |_| {
+//         let item2 = window.build_view(cx, |_| {
 //             let mut item = TestItem::new();
 //             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
 //             item
@@ -4598,7 +4608,7 @@ pub fn open_new(
 //         // Adding an item that creates ambiguity increases the level of detail only
 //         // on the ambiguous tabs. In this case, the ambiguity can't be resolved so
 //         // we stop at the highest detail available.
-//         let item3 = window.add_view(cx, |_| {
+//         let item3 = window.build_view(cx, |_| {
 //             let mut item = TestItem::new();
 //             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
 //             item
@@ -4640,10 +4650,10 @@ pub fn open_new(
 //             project.worktrees(cx).next().unwrap().read(cx).id()
 //         });
 
-//         let item1 = window.add_view(cx, |cx| {
+//         let item1 = window.build_view(cx, |cx| {
 //             TestItem::new().with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
 //         });
-//         let item2 = window.add_view(cx, |cx| {
+//         let item2 = window.build_view(cx, |cx| {
 //             TestItem::new().with_project_items(&[TestProjectItem::new(2, "two.txt", cx)])
 //         });
 
@@ -4716,15 +4726,15 @@ pub fn open_new(
 //         let workspace = window.root(cx);
 
 //         // When there are no dirty items, there's nothing to do.
-//         let item1 = window.add_view(cx, |_| TestItem::new());
+//         let item1 = window.build_view(cx, |_| TestItem::new());
 //         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
 //         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
 //         assert!(task.await.unwrap());
 
 //         // When there are dirty untitled items, prompt to save each one. If the user
 //         // cancels any prompt, then abort.
-//         let item2 = window.add_view(cx, |_| TestItem::new().with_dirty(true));
-//         let item3 = window.add_view(cx, |cx| {
+//         let item2 = window.build_view(cx, |_| TestItem::new().with_dirty(true));
+//         let item3 = window.build_view(cx, |cx| {
 //             TestItem::new()
 //                 .with_dirty(true)
 //                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -4753,24 +4763,24 @@ pub fn open_new(
 //         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
 //         let workspace = window.root(cx);
 
-//         let item1 = window.add_view(cx, |cx| {
+//         let item1 = window.build_view(cx, |cx| {
 //             TestItem::new()
 //                 .with_dirty(true)
 //                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
 //         });
-//         let item2 = window.add_view(cx, |cx| {
+//         let item2 = window.build_view(cx, |cx| {
 //             TestItem::new()
 //                 .with_dirty(true)
 //                 .with_conflict(true)
 //                 .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
 //         });
-//         let item3 = window.add_view(cx, |cx| {
+//         let item3 = window.build_view(cx, |cx| {
 //             TestItem::new()
 //                 .with_dirty(true)
 //                 .with_conflict(true)
 //                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
 //         });
-//         let item4 = window.add_view(cx, |cx| {
+//         let item4 = window.build_view(cx, |cx| {
 //             TestItem::new()
 //                 .with_dirty(true)
 //                 .with_project_items(&[TestProjectItem::new_untitled(cx)])
@@ -4864,7 +4874,7 @@ pub fn open_new(
 //         // workspace items with multiple project entries.
 //         let single_entry_items = (0..=4)
 //             .map(|project_entry_id| {
-//                 window.add_view(cx, |cx| {
+//                 window.build_view(cx, |cx| {
 //                     TestItem::new()
 //                         .with_dirty(true)
 //                         .with_project_items(&[TestProjectItem::new(
@@ -4875,7 +4885,7 @@ pub fn open_new(
 //                 })
 //             })
 //             .collect::<Vec<_>>();
-//         let item_2_3 = window.add_view(cx, |cx| {
+//         let item_2_3 = window.build_view(cx, |cx| {
 //             TestItem::new()
 //                 .with_dirty(true)
 //                 .with_singleton(false)
@@ -4884,7 +4894,7 @@ pub fn open_new(
 //                     single_entry_items[3].read(cx).project_items[0].clone(),
 //                 ])
 //         });
-//         let item_3_4 = window.add_view(cx, |cx| {
+//         let item_3_4 = window.build_view(cx, |cx| {
 //             TestItem::new()
 //                 .with_dirty(true)
 //                 .with_singleton(false)
@@ -4971,7 +4981,7 @@ pub fn open_new(
 //         let workspace = window.root(cx);
 //         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-//         let item = window.add_view(cx, |cx| {
+//         let item = window.build_view(cx, |cx| {
 //             TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
 //         });
 //         let item_id = item.id();
@@ -5091,7 +5101,7 @@ pub fn open_new(
 //         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
 //         let workspace = window.root(cx);
 
-//         let item = window.add_view(cx, |cx| {
+//         let item = window.build_view(cx, |cx| {
 //             TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
 //         });
 //         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
@@ -5146,7 +5156,7 @@ pub fn open_new(
 //         let workspace = window.root(cx);
 
 //         let panel = workspace.update(cx, |workspace, cx| {
-//             let panel = cx.add_view(|_| TestPanel::new(DockPosition::Right));
+//             let panel = cx.build_view(|_| TestPanel::new(DockPosition::Right));
 //             workspace.add_panel(panel.clone(), cx);
 
 //             workspace
@@ -5158,7 +5168,7 @@ pub fn open_new(
 
 //         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 //         pane.update(cx, |pane, cx| {
-//             let item = cx.add_view(|_| TestItem::new());
+//             let item = cx.build_view(|_| TestItem::new());
 //             pane.add_item(Box::new(item), true, true, None, cx);
 //         });
 
@@ -5295,12 +5305,12 @@ pub fn open_new(
 
 //         let (panel_1, panel_2) = workspace.update(cx, |workspace, cx| {
 //             // Add panel_1 on the left, panel_2 on the right.
-//             let panel_1 = cx.add_view(|_| TestPanel::new(DockPosition::Left));
+//             let panel_1 = cx.build_view(|_| TestPanel::new(DockPosition::Left));
 //             workspace.add_panel(panel_1.clone(), cx);
 //             workspace
 //                 .left_dock()
 //                 .update(cx, |left_dock, cx| left_dock.set_open(true, cx));
-//             let panel_2 = cx.add_view(|_| TestPanel::new(DockPosition::Right));
+//             let panel_2 = cx.build_view(|_| TestPanel::new(DockPosition::Right));
 //             workspace.add_panel(panel_2.clone(), cx);
 //             workspace
 //                 .right_dock()
@@ -5448,7 +5458,7 @@ pub fn open_new(
 
 //         // If focus is transferred to another view that's not a panel or another pane, we still show
 //         // the panel as zoomed.
-//         let focus_receiver = window.add_view(cx, |_| EmptyView);
+//         let focus_receiver = window.build_view(cx, |_| EmptyView);
 //         focus_receiver.update(cx, |_, cx| cx.focus_self());
 //         workspace.read_with(cx, |workspace, _| {
 //             assert_eq!(workspace.zoomed, Some(panel_1.downgrade().into_any()));

@@ -397,18 +397,17 @@ impl Bind for WindowBounds {
             }
         };
 
-        // statement.bind(
-        //     &region.map(|region| {
-        //         (
-        //             region.origin.x,
-        //             region.origin.y,
-        //             region.size.width,
-        //             region.size.height,
-        //         )
-        //     }),
-        //     next_index,
-        // )
-        todo!()
+        statement.bind(
+            &region.map(|region| {
+                (
+                    region.origin.x,
+                    region.origin.y,
+                    region.size.width,
+                    region.size.height,
+                )
+            }),
+            next_index,
+        )
     }
 }
 

@@ -833,6 +833,10 @@ where
         self.platform().path_for_auxiliary_executable(name)
     }
 
+    pub fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
+        self.platform().displays()
+    }
+
     pub fn display_for_uuid(&self, uuid: Uuid) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform()
             .displays()
@@ -889,13 +893,14 @@ impl MainThread<AppContext> {
     pub fn open_window<V: Render>(
         &mut self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut WindowContext) -> View<V> + Send + 'static,
+        build_root_view: impl FnOnce(&mut MainThread<WindowContext>) -> View<V> + Send + 'static,
     ) -> WindowHandle<V> {
         self.update(|cx| {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
             let mut window = Window::new(handle.into(), options, cx);
-            let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
+            let mut window_context = MainThread(WindowContext::new(cx, &mut window));
+            let root_view = build_root_view(&mut window_context);
             window.root_view.replace(root_view.into());
             cx.windows.get_mut(id).unwrap().replace(window);
             handle

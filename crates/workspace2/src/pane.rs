@@ -168,7 +168,7 @@ impl fmt::Debug for Event {
 pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
     activation_history: Vec<usize>,
-    //     zoomed: bool,
+    zoomed: bool,
     active_item_index: usize,
     //     last_focused_view_by_item: HashMap<usize, AnyWeakViewHandle>,
     autoscroll: bool,
@@ -220,7 +220,7 @@ impl Default for NavigationMode {
 
 pub struct NavigationEntry {
     pub item: Arc<dyn WeakItemHandle>,
-    pub data: Option<Box<dyn Any>>,
+    pub data: Option<Box<dyn Any + Send>>,
     pub timestamp: usize,
 }
 
@@ -327,7 +327,7 @@ impl Pane {
         Self {
             items: Vec::new(),
             activation_history: Vec::new(),
-            // zoomed: false,
+            zoomed: false,
             active_item_index: 0,
             // last_focused_view_by_item: Default::default(),
             autoscroll: false,
@@ -648,9 +648,9 @@ impl Pane {
     //         })
     //     }
 
-    //     pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
-    //         self.items.iter().position(|i| i.id() == item.id())
-    //     }
+    pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
+        self.items.iter().position(|i| i.id() == item.id())
+    }
 
     //     pub fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
     //         // Potentially warn the user of the new keybinding
@@ -994,77 +994,73 @@ impl Pane {
     //         })
     //     }
 
-    //     pub fn remove_item(
-    //         &mut self,
-    //         item_index: usize,
-    //         activate_pane: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.activation_history
-    //             .retain(|&history_entry| history_entry != self.items[item_index].id());
+    pub fn remove_item(
+        &mut self,
+        item_index: usize,
+        activate_pane: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.activation_history
+            .retain(|&history_entry| history_entry != self.items[item_index].id());
 
-    //         if item_index == self.active_item_index {
-    //             let index_to_activate = self
-    //                 .activation_history
-    //                 .pop()
-    //                 .and_then(|last_activated_item| {
-    //                     self.items.iter().enumerate().find_map(|(index, item)| {
-    //                         (item.id() == last_activated_item).then_some(index)
-    //                     })
-    //                 })
-    //                 // We didn't have a valid activation history entry, so fallback
-    //                 // to activating the item to the left
-    //                 .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1));
+        if item_index == self.active_item_index {
+            let index_to_activate = self
+                .activation_history
+                .pop()
+                .and_then(|last_activated_item| {
+                    self.items.iter().enumerate().find_map(|(index, item)| {
+                        (item.id() == last_activated_item).then_some(index)
+                    })
+                })
+                // We didn't have a valid activation history entry, so fallback
+                // to activating the item to the left
+                .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1));
 
-    //             let should_activate = activate_pane || self.has_focus;
-    //             self.activate_item(index_to_activate, should_activate, should_activate, cx);
-    //         }
+            let should_activate = activate_pane || self.has_focus;
+            self.activate_item(index_to_activate, should_activate, should_activate, cx);
+        }
 
-    //         let item = self.items.remove(item_index);
+        let item = self.items.remove(item_index);
 
-    //         cx.emit(Event::RemoveItem { item_id: item.id() });
-    //         if self.items.is_empty() {
-    //             item.deactivated(cx);
-    //             self.update_toolbar(cx);
-    //             cx.emit(Event::Remove);
-    //         }
+        cx.emit(Event::RemoveItem { item_id: item.id() });
+        if self.items.is_empty() {
+            item.deactivated(cx);
+            self.update_toolbar(cx);
+            cx.emit(Event::Remove);
+        }
 
-    //         if item_index < self.active_item_index {
-    //             self.active_item_index -= 1;
-    //         }
+        if item_index < self.active_item_index {
+            self.active_item_index -= 1;
+        }
 
-    //         self.nav_history.set_mode(NavigationMode::ClosingItem);
-    //         item.deactivated(cx);
-    //         self.nav_history.set_mode(NavigationMode::Normal);
+        self.nav_history.set_mode(NavigationMode::ClosingItem);
+        item.deactivated(cx);
+        self.nav_history.set_mode(NavigationMode::Normal);
 
-    //         if let Some(path) = item.project_path(cx) {
-    //             let abs_path = self
-    //                 .nav_history
-    //                 .0
-    //                 .borrow()
-    //                 .paths_by_item
-    //                 .get(&item.id())
-    //                 .and_then(|(_, abs_path)| abs_path.clone());
+        if let Some(path) = item.project_path(cx) {
+            let abs_path = self
+                .nav_history
+                .0
+                .lock()
+                .paths_by_item
+                .get(&item.id())
+                .and_then(|(_, abs_path)| abs_path.clone());
 
-    //             self.nav_history
-    //                 .0
-    //                 .borrow_mut()
-    //                 .paths_by_item
-    //                 .insert(item.id(), (path, abs_path));
-    //         } else {
-    //             self.nav_history
-    //                 .0
-    //                 .borrow_mut()
-    //                 .paths_by_item
-    //                 .remove(&item.id());
-    //         }
+            self.nav_history
+                .0
+                .lock()
+                .paths_by_item
+                .insert(item.id(), (path, abs_path));
+        } else {
+            self.nav_history.0.lock().paths_by_item.remove(&item.id());
+        }
 
-    //         if self.items.is_empty() && self.zoomed {
-    //             cx.emit(Event::ZoomOut);
-    //         }
+        if self.items.is_empty() && self.zoomed {
+            cx.emit(Event::ZoomOut);
+        }
 
-    //         cx.notify();
-    //     }
+        cx.notify();
+    }
 
     //     pub async fn save_item(
     //         project: Model<Project>,
@@ -1314,28 +1310,28 @@ impl Pane {
     //         });
     //     }
 
-    //     pub fn toolbar(&self) -> &ViewHandle<Toolbar> {
-    //         &self.toolbar
-    //     }
+    pub fn toolbar(&self) -> &View<Toolbar> {
+        &self.toolbar
+    }
 
-    //     pub fn handle_deleted_project_item(
-    //         &mut self,
-    //         entry_id: ProjectEntryId,
-    //         cx: &mut ViewContext<Pane>,
-    //     ) -> Option<()> {
-    //         let (item_index_to_delete, item_id) = self.items().enumerate().find_map(|(i, item)| {
-    //             if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
-    //                 Some((i, item.id()))
-    //             } else {
-    //                 None
-    //             }
-    //         })?;
+    pub fn handle_deleted_project_item(
+        &mut self,
+        entry_id: ProjectEntryId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Option<()> {
+        let (item_index_to_delete, item_id) = self.items().enumerate().find_map(|(i, item)| {
+            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
+                Some((i, item.id()))
+            } else {
+                None
+            }
+        })?;
 
-    //         self.remove_item(item_index_to_delete, false, cx);
-    //         self.nav_history.remove_item(item_id);
+        self.remove_item(item_index_to_delete, false, cx);
+        self.nav_history.remove_item(item_id);
 
-    //         Some(())
-    //     }
+        Some(())
+    }
 
     fn update_toolbar(&mut self, cx: &mut ViewContext<Self>) {
         let active_item = self

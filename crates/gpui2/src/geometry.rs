@@ -931,6 +931,18 @@ impl From<f64> for GlobalPixels {
     }
 }
 
+impl sqlez::bindable::StaticColumnCount for GlobalPixels {}
+
+impl sqlez::bindable::Bind for GlobalPixels {
+    fn bind(
+        &self,
+        statement: &sqlez::statement::Statement,
+        start_index: i32,
+    ) -> anyhow::Result<i32> {
+        self.0.bind(statement, start_index)
+    }
+}
+
 #[derive(Clone, Copy, Default, Add, Sub, Mul, Div, Neg)]
 pub struct Rems(f32);
 

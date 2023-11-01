@@ -5,7 +5,7 @@ use crate::{
 use anyhow::Context as _;
 use derive_more::{Deref, DerefMut};
 use parking_lot::Mutex;
-use std::{future::Future, sync::Weak};
+use std::{future::Future, mem, sync::Weak};
 
 #[derive(Clone)]
 pub struct AsyncAppContext {
@@ -44,7 +44,9 @@ impl Context for AsyncAppContext {
     where
         F: FnOnce(&mut Self::WindowContext<'_>) -> T,
     {
-        todo!()
+        let app = self.app.upgrade().context("app was released")?;
+        let mut lock = app.lock(); // Need this to compile
+        lock.update_window(window, f)
     }
 }
 
@@ -100,14 +102,14 @@ impl AsyncAppContext {
 
     pub fn spawn_on_main<Fut, R>(
         &self,
-        f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static,
+        f: impl FnOnce(MainThread<AsyncAppContext>) -> Fut + Send + 'static,
     ) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
         R: Send + 'static,
     {
         let this = self.clone();
-        self.executor.spawn_on_main(|| f(this))
+        self.executor.spawn_on_main(|| f(MainThread(this)))
     }
 
     pub fn run_on_main<R>(
@@ -150,6 +152,29 @@ impl AsyncAppContext {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.lock(); // Need this to compile
         Ok(lock.update_global(update))
+    }
+}
+
+impl MainThread<AsyncAppContext> {
+    pub fn update<R>(&self, f: impl FnOnce(&mut MainThread<AppContext>) -> R) -> Result<R> {
+        let app = self.app.upgrade().context("app was released")?;
+        let cx = &mut *app.lock();
+        let cx = unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) };
+        Ok(f(cx))
+    }
+
+    /// Opens a new window with the given option and the root view returned by the given function.
+    /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
+    /// functionality.
+    pub fn open_window<V: Render>(
+        &mut self,
+        options: crate::WindowOptions,
+        build_root_view: impl FnOnce(&mut MainThread<WindowContext>) -> View<V> + Send + 'static,
+    ) -> Result<WindowHandle<V>> {
+        let app = self.app.upgrade().context("app was released")?;
+        let cx = &mut *app.lock();
+        let cx = unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) };
+        Ok(cx.open_window(options, build_root_view))
     }
 }
 

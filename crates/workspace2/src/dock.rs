@@ -1,7 +1,7 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui2::{
-    Action, AnyView, Div, EventEmitter, Render, Subscription, View, ViewContext, WeakView,
-    WindowContext,
+    Action, AnyView, Div, Entity, EntityId, EventEmitter, Render, Subscription, View, ViewContext,
+    WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -40,8 +40,8 @@ pub trait Panel: Render + EventEmitter {
     fn is_focus_event(_: &Self::Event) -> bool;
 }
 
-pub trait PanelHandle {
-    fn id(&self) -> usize;
+pub trait PanelHandle: Send + Sync {
+    fn id(&self) -> EntityId;
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool;
     fn set_position(&self, position: DockPosition, cx: &mut WindowContext);
@@ -61,8 +61,8 @@ impl<T> PanelHandle for View<T>
 where
     T: Panel,
 {
-    fn id(&self) -> usize {
-        self.id()
+    fn id(&self) -> EntityId {
+        self.entity_id()
     }
 
     fn position(&self, cx: &WindowContext) -> DockPosition {
@@ -178,18 +178,18 @@ pub struct PanelButtons {
 }
 
 impl Dock {
-    //     pub fn new(position: DockPosition) -> Self {
-    //         Self {
-    //             position,
-    //             panel_entries: Default::default(),
-    //             active_panel_index: 0,
-    //             is_open: false,
-    //         }
-    //     }
+    pub fn new(position: DockPosition) -> Self {
+        Self {
+            position,
+            panel_entries: Default::default(),
+            active_panel_index: 0,
+            is_open: false,
+        }
+    }
 
-    //     pub fn position(&self) -> DockPosition {
-    //         self.position
-    //     }
+    pub fn position(&self) -> DockPosition {
+        self.position
+    }
 
     pub fn is_open(&self) -> bool {
         self.is_open
@@ -432,17 +432,16 @@ impl Dock {
 //     }
 // }
 
-// todo!()
-// impl PanelButtons {
-//     pub fn new(
-//         dock: View<Dock>,
-//         workspace: WeakViewHandle<Workspace>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Self {
-//         cx.observe(&dock, |_, _, cx| cx.notify()).detach();
-//         Self { dock, workspace }
-//     }
-// }
+impl PanelButtons {
+    pub fn new(
+        dock: View<Dock>,
+        workspace: WeakView<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        cx.observe(&dock, |_, _, cx| cx.notify()).detach();
+        Self { dock, workspace }
+    }
+}
 
 impl EventEmitter for PanelButtons {
     type Event = ();

@@ -21,6 +21,7 @@ use std::{
     borrow::{Borrow, BorrowMut, Cow},
     fmt::Debug,
     future::Future,
+    hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
     sync::{
@@ -2014,7 +2015,7 @@ impl WindowId {
     }
 }
 
-#[derive(PartialEq, Eq, Deref, DerefMut)]
+#[derive(Deref, DerefMut)]
 pub struct WindowHandle<V> {
     #[deref]
     #[deref_mut]
@@ -2062,13 +2063,27 @@ impl<V> Clone for WindowHandle<V> {
     }
 }
 
+impl<V> PartialEq for WindowHandle<V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.any_handle == other.any_handle
+    }
+}
+
+impl<V> Eq for WindowHandle<V> {}
+
+impl<V> Hash for WindowHandle<V> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.any_handle.hash(state);
+    }
+}
+
 impl<V: 'static> Into<AnyWindowHandle> for WindowHandle<V> {
     fn into(self) -> AnyWindowHandle {
         self.any_handle
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,
