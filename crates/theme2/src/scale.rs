@@ -113,8 +113,8 @@ impl ColorScaleSet {
         }
     }
 
-    pub fn name(&self) -> SharedString {
-        self.name.clone()
+    pub fn name(&self) -> &SharedString {
+        &self.name
     }
 
     pub fn light(&self, step: ColorScaleStep) -> Hsla {
