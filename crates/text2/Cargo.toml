@@ -1,0 +1,37 @@
+[package]
+name = "text2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/text2.rs"
+doctest = false
+
+[features]
+test-support = ["rand"]
+
+[dependencies]
+clock = { path = "../clock" }
+collections = { path = "../collections" }
+rope = { path = "../rope" }
+sum_tree = { path = "../sum_tree" }
+util = { path = "../util" }
+
+anyhow.workspace = true
+digest = { version = "0.9", features = ["std"] }
+lazy_static.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+postage.workspace = true
+rand = { workspace = true, optional = true }
+smallvec.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+collections = { path = "../collections", features = ["test-support"] }
+gpui2 = { path = "../gpui2", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
+ctor.workspace = true
+env_logger.workspace = true
+rand.workspace = true
