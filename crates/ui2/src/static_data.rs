@@ -6,7 +6,7 @@ use rand::Rng;
 use theme2::ActiveTheme;
 
 use crate::{
-    old_theme, Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
+    Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
     HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListItem,
     Livestream, MicStatus, ModifierKeys, PaletteItem, Player, PlayerCallStatus,
     PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, ToggleState, VideoStatus,
@@ -650,11 +650,11 @@ pub fn hello_world_rust_editor_example(cx: &mut ViewContext<EditorPane>) -> Edit
         vec![Symbol(vec![
             HighlightedText {
                 text: "fn ".to_string(),
-                color: old_theme(cx).syntax.color("keyword"),
+                color: cx.theme().syntax_color("keyword"),
             },
             HighlightedText {
                 text: "main".to_string(),
-                color: old_theme(cx).syntax.color("function"),
+                color: cx.theme().syntax_color("function"),
             },
         ])],
         hello_world_rust_buffer_example(cx),
@@ -684,11 +684,11 @@ pub fn hello_world_rust_buffer_rows(cx: &AppContext) -> Vec<BufferRow> {
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "fn ".to_string(),
-                        color: old_theme(cx).syntax.color("keyword"),
+                        color: cx.theme().syntax_color("keyword"),
                     },
                     HighlightedText {
                         text: "main".to_string(),
-                        color: old_theme(cx).syntax.color("function"),
+                        color: cx.theme().syntax_color("function"),
                     },
                     HighlightedText {
                         text: "() {".to_string(),
@@ -708,7 +708,7 @@ pub fn hello_world_rust_buffer_rows(cx: &AppContext) -> Vec<BufferRow> {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Statements here are executed when the compiled binary is called."
                         .to_string(),
-                    color: old_theme(cx).syntax.color("comment"),
+                    color: cx.theme().syntax_color("comment"),
                 }],
             }),
             cursors: None,
@@ -731,7 +731,7 @@ pub fn hello_world_rust_buffer_rows(cx: &AppContext) -> Vec<BufferRow> {
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Print text to the console.".to_string(),
-                    color: old_theme(cx).syntax.color("comment"),
+                    color: cx.theme().syntax_color("comment"),
                 }],
             }),
             cursors: None,
@@ -750,7 +750,7 @@ pub fn hello_world_rust_buffer_rows(cx: &AppContext) -> Vec<BufferRow> {
                     },
                     HighlightedText {
                         text: "\"Hello, world!\"".to_string(),
-                        color: old_theme(cx).syntax.color("string"),
+                        color: cx.theme().syntax_color("string"),
                     },
                     HighlightedText {
                         text: ");".to_string(),
@@ -787,11 +787,11 @@ pub fn hello_world_rust_editor_with_status_example(cx: &mut ViewContext<EditorPa
         vec![Symbol(vec![
             HighlightedText {
                 text: "fn ".to_string(),
-                color: old_theme(cx).syntax.color("keyword"),
+                color: cx.theme().syntax_color("keyword"),
             },
             HighlightedText {
                 text: "main".to_string(),
-                color: old_theme(cx).syntax.color("function"),
+                color: cx.theme().syntax_color("function"),
             },
         ])],
         hello_world_rust_buffer_with_status_example(cx),
@@ -821,11 +821,11 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &AppContext) -> Vec<BufferRo
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "fn ".to_string(),
-                        color: old_theme(cx).syntax.color("keyword"),
+                        color: cx.theme().syntax_color("keyword"),
                     },
                     HighlightedText {
                         text: "main".to_string(),
-                        color: old_theme(cx).syntax.color("function"),
+                        color: cx.theme().syntax_color("function"),
                     },
                     HighlightedText {
                         text: "() {".to_string(),
@@ -845,7 +845,7 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &AppContext) -> Vec<BufferRo
                 highlighted_texts: vec![HighlightedText {
                     text: "// Statements here are executed when the compiled binary is called."
                         .to_string(),
-                    color: old_theme(cx).syntax.color("comment"),
+                    color: cx.theme().syntax_color("comment"),
                 }],
             }),
             cursors: None,
@@ -868,7 +868,7 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &AppContext) -> Vec<BufferRo
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Print text to the console.".to_string(),
-                    color: old_theme(cx).syntax.color("comment"),
+                    color: cx.theme().syntax_color("comment"),
                 }],
             }),
             cursors: None,
@@ -887,7 +887,7 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &AppContext) -> Vec<BufferRo
                     },
                     HighlightedText {
                         text: "\"Hello, world!\"".to_string(),
-                        color: old_theme(cx).syntax.color("string"),
+                        color: cx.theme().syntax_color("string"),
                     },
                     HighlightedText {
                         text: ");".to_string(),
@@ -934,7 +934,7 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &AppContext) -> Vec<BufferRo
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "// Marshall and Nate were here".to_string(),
-                    color: old_theme(cx).syntax.color("comment"),
+                    color: cx.theme().syntax_color("comment"),
                 }],
             }),
             cursors: None,
@@ -965,7 +965,7 @@ pub fn terminal_buffer_rows(cx: &AppContext) -> Vec<BufferRow> {
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "maxdeviant ".to_string(),
-                        color: old_theme(cx).syntax.color("keyword"),
+                        color: cx.theme().syntax_color("keyword"),
                     },
                     HighlightedText {
                         text: "in ".to_string(),
@@ -973,7 +973,7 @@ pub fn terminal_buffer_rows(cx: &AppContext) -> Vec<BufferRow> {
                     },
                     HighlightedText {
                         text: "profaned-capital ".to_string(),
-                        color: old_theme(cx).syntax.color("function"),
+                        color: cx.theme().syntax_color("function"),
                     },
                     HighlightedText {
                         text: "in ".to_string(),
@@ -981,7 +981,7 @@ pub fn terminal_buffer_rows(cx: &AppContext) -> Vec<BufferRow> {
                     },
                     HighlightedText {
                         text: "~/p/zed ".to_string(),
-                        color: old_theme(cx).syntax.color("function"),
+                        color: cx.theme().syntax_color("function"),
                     },
                     HighlightedText {
                         text: "on ".to_string(),
@@ -989,7 +989,7 @@ pub fn terminal_buffer_rows(cx: &AppContext) -> Vec<BufferRow> {
                     },
                     HighlightedText {
                         text: " gpui2-ui ".to_string(),
-                        color: old_theme(cx).syntax.color("keyword"),
+                        color: cx.theme().syntax_color("keyword"),
                     },
                 ],
             }),
@@ -1004,7 +1004,7 @@ pub fn terminal_buffer_rows(cx: &AppContext) -> Vec<BufferRow> {
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "λ ".to_string(),
-                    color: old_theme(cx).syntax.color("string"),
+                    color: cx.theme().syntax_color("string"),
                 }],
             }),
             cursors: None,

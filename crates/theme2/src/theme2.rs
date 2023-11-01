@@ -76,9 +76,22 @@ pub struct ThemeVariant {
 }
 
 impl ThemeVariant {
+    /// Returns the [`ThemeColors`] for the theme.
     #[inline(always)]
     pub fn colors(&self) -> &ThemeColors {
         &self.styles.colors
+    }
+
+    /// Returns the [`SyntaxStyles`] for the theme.
+    #[inline(always)]
+    pub fn syntax(&self) -> &SyntaxStyles {
+        &self.styles.syntax
+    }
+
+    /// Returns the color for the syntax node with the given name.
+    #[inline(always)]
+    pub fn syntax_color(&self, name: &str) -> Hsla {
+        self.syntax().color(name)
     }
 }
 

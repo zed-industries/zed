@@ -32,7 +32,8 @@ impl Avatar {
 
         img.uri(self.src.clone())
             .size_4()
-            .bg(old_theme(cx).image_fallback_background)
+            // todo!(Pull the avatar fallback background from the theme.)
+            .bg(gpui2::red())
     }
 }
 

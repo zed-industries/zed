@@ -96,21 +96,21 @@ mod stories {
                                 Symbol(vec![
                                     HighlightedText {
                                         text: "impl ".to_string(),
-                                        color: old_theme(cx).syntax.color("keyword"),
+                                        color: cx.theme().syntax_color("keyword"),
                                     },
                                     HighlightedText {
                                         text: "ToolbarStory".to_string(),
-                                        color: old_theme(cx).syntax.color("function"),
+                                        color: cx.theme().syntax_color("function"),
                                     },
                                 ]),
                                 Symbol(vec![
                                     HighlightedText {
                                         text: "fn ".to_string(),
-                                        color: old_theme(cx).syntax.color("keyword"),
+                                        color: cx.theme().syntax_color("keyword"),
                                     },
                                     HighlightedText {
                                         text: "render".to_string(),
-                                        color: old_theme(cx).syntax.color("function"),
+                                        color: cx.theme().syntax_color("function"),
                                     },
                                 ]),
                             ],
