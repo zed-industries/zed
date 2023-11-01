@@ -79,8 +79,7 @@ impl Label {
                 this.relative().child(
                     div()
                         .absolute()
-                        .top_px()
-                        .my_auto()
+                        .top_1_2()
                         .w_full()
                         .h_px()
                         .bg(LabelColor::Hidden.hsla(cx)),
