@@ -1,6 +1,6 @@
 use crate::{
-    h_stack, prelude::*, static_new_notification_items, v_stack, Avatar, Button, Icon, IconButton,
-    IconElement, Label, LabelColor, LineHeightStyle, ListHeaderMeta, ListSeparator,
+    h_stack, prelude::*, static_new_notification_items_2, v_stack, Avatar, Button, Icon,
+    IconButton, IconElement, Label, LabelColor, LineHeightStyle, ListHeaderMeta, ListSeparator,
     UnreadIndicator,
 };
 use crate::{ClickHandler, ListHeader};
@@ -51,15 +51,9 @@ impl NotificationsPanel {
                                     .line_height_style(LineHeightStyle::UILabel),
                             ),
                     )
-                    .children(static_new_notification_items()),
+                    .child(v_stack().px_1().children(static_new_notification_items_2())),
             )
     }
-}
-
-pub enum NotificationItem<V: 'static> {
-    Message(Notification<V>),
-    // WithEdgeHeader(Notification<V>),
-    WithRequiredActions(NotificationWithActions<V>),
 }
 
 pub enum ButtonOrIconButton<V: 'static> {
@@ -104,11 +98,6 @@ impl<V: 'static> NotificationAction<V> {
             taken_message: (icon, taken_message.into()),
         }
     }
-}
-
-pub struct NotificationWithActions<V: 'static> {
-    notification: Notification<V>,
-    actions: [NotificationAction<V>; 2],
 }
 
 pub enum ActorOrIcon {
@@ -280,21 +269,29 @@ impl<V> Notification<V> {
         div()
             .relative()
             .id(self.id.clone())
+            .p_1()
+            .flex()
+            .flex_col()
+            .w_full()
             .children(
                 Some(
                     div()
                         .absolute()
                         .left(px(3.0))
                         .top_3()
+                        .z_index(2)
                         .child(UnreadIndicator::new()),
                 )
                 .filter(|_| self.unread),
             )
             .child(
                 v_stack()
+                    .z_index(1)
                     .gap_1()
+                    .w_full()
                     .child(
                         h_stack()
+                            .w_full()
                             .gap_2()
                             .child(self.render_slot(cx))
                             .child(div().flex_1().child(Label::new(self.message.clone()))),

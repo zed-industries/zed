@@ -9,9 +9,8 @@ use theme2::ActiveTheme;
 use crate::{
     Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
     HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListSubHeader,
-    Livestream, MicStatus, ModifierKeys, Notification, NotificationItem, PaletteItem, Player,
-    PlayerCallStatus, PlayerWithCallStatus, PublicActor, ScreenShareStatus, Symbol, Tab,
-    ToggleState, VideoStatus,
+    Livestream, MicStatus, ModifierKeys, Notification, PaletteItem, Player, PlayerCallStatus,
+    PlayerWithCallStatus, PublicActor, ScreenShareStatus, Symbol, Tab, ToggleState, VideoStatus,
 };
 use crate::{HighlightedText, ListDetailsEntry};
 use crate::{ListItem, NotificationAction};
@@ -328,15 +327,15 @@ pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
     ]
 }
 
-pub fn static_new_notification_items_2<V: 'static>() -> Vec<NotificationItem<V>> {
+pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
     vec![
-        NotificationItem::Message(Notification::new_icon_message(
+        Notification::new_icon_message(
             "notif-1",
             "You were mentioned in a note.",
             Icon::AtSign,
             Arc::new(|_, _| {}),
-        )),
-        NotificationItem::Message(Notification::new_actor_with_actions(
+        ),
+        Notification::new_actor_with_actions(
             "notif-2",
             "as-cii sent you a contact request.",
             PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
@@ -352,7 +351,99 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<NotificationItem<V>>
                     (Some(Icon::Check), "Accepted"),
                 ),
             ],
-        )),
+        ),
+        Notification::new_icon_message(
+            "notif-3",
+            "You were mentioned #design.",
+            Icon::MessageBubbles,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-4",
+            "as-cii sent you a contact request.",
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
+        Notification::new_icon_message(
+            "notif-5",
+            "You were mentioned in a note.",
+            Icon::AtSign,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-6",
+            "as-cii sent you a contact request.",
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
+        Notification::new_icon_message(
+            "notif-7",
+            "You were mentioned in a note.",
+            Icon::AtSign,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-8",
+            "as-cii sent you a contact request.",
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
+        Notification::new_icon_message(
+            "notif-9",
+            "You were mentioned in a note.",
+            Icon::AtSign,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-10",
+            "as-cii sent you a contact request.",
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
     ]
 }
 

@@ -12,6 +12,7 @@ impl UnreadIndicator {
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div()
+            .rounded_full()
             .border_2()
             .border_color(cx.theme().colors().surface)
             .w(px(9.0))
