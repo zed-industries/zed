@@ -1,6 +1,6 @@
 use crate::{
     h_stack, prelude::*, static_new_notification_items, v_stack, Avatar, Button, Icon, IconButton,
-    IconElement, Label, LabelColor, LineHeightStyle, ListHeaderMeta, ListSeparator, Stack,
+    IconElement, Label, LabelColor, LineHeightStyle, ListHeaderMeta, ListSeparator,
     UnreadIndicator,
 };
 use crate::{ClickHandler, ListHeader};
@@ -67,6 +67,18 @@ pub enum ButtonOrIconButton<V: 'static> {
     IconButton(IconButton<V>),
 }
 
+impl<V: 'static> From<Button<V>> for ButtonOrIconButton<V> {
+    fn from(value: Button<V>) -> Self {
+        Self::Button(value)
+    }
+}
+
+impl<V: 'static> From<IconButton<V>> for ButtonOrIconButton<V> {
+    fn from(value: IconButton<V>) -> Self {
+        Self::IconButton(value)
+    }
+}
+
 pub struct NotificationAction<V: 'static> {
     button: ButtonOrIconButton<V>,
     tooltip: SharedString,
@@ -80,17 +92,23 @@ pub struct NotificationAction<V: 'static> {
     taken_message: (Option<Icon>, SharedString),
 }
 
+impl<V: 'static> NotificationAction<V> {
+    pub fn new(
+        button: impl Into<ButtonOrIconButton<V>>,
+        tooltip: impl Into<SharedString>,
+        (icon, taken_message): (Option<Icon>, impl Into<SharedString>),
+    ) -> Self {
+        Self {
+            button: button.into(),
+            tooltip: tooltip.into(),
+            taken_message: (icon, taken_message.into()),
+        }
+    }
+}
+
 pub struct NotificationWithActions<V: 'static> {
     notification: Notification<V>,
     actions: [NotificationAction<V>; 2],
-}
-
-/// Represents a person with a Zed account's public profile.
-/// All data in this struct should be considered public.
-pub struct PublicActor {
-    username: SharedString,
-    avatar: SharedString,
-    is_contact: bool,
 }
 
 pub enum ActorOrIcon {
@@ -162,13 +180,13 @@ impl<V> Notification<V> {
     /// Requires a click action.
     pub fn new_actor_message(
         id: impl Into<ElementId>,
-        message: SharedString,
+        message: impl Into<SharedString>,
         actor: PublicActor,
         click_action: ClickHandler<V>,
     ) -> Self {
         Self::new(
             id.into(),
-            message,
+            message.into(),
             ActorOrIcon::Actor(actor),
             Some(click_action),
         )
@@ -179,13 +197,13 @@ impl<V> Notification<V> {
     /// Requires a click action.
     pub fn new_icon_message(
         id: impl Into<ElementId>,
-        message: SharedString,
+        message: impl Into<SharedString>,
         icon: Icon,
         click_action: ClickHandler<V>,
     ) -> Self {
         Self::new(
             id.into(),
-            message,
+            message.into(),
             ActorOrIcon::Icon(icon),
             Some(click_action),
         )
@@ -197,12 +215,11 @@ impl<V> Notification<V> {
     /// Cannot take a click action due to required actions.
     pub fn new_actor_with_actions(
         id: impl Into<ElementId>,
-        message: SharedString,
+        message: impl Into<SharedString>,
         actor: PublicActor,
-        click_action: ClickHandler<V>,
         actions: [NotificationAction<V>; 2],
     ) -> Self {
-        Self::new(id.into(), message, ActorOrIcon::Actor(actor), None).actions(actions)
+        Self::new(id.into(), message.into(), ActorOrIcon::Actor(actor), None).actions(actions)
     }
 
     /// Creates a new notification with an icon slot
@@ -211,12 +228,11 @@ impl<V> Notification<V> {
     /// Cannot take a click action due to required actions.
     pub fn new_icon_with_actions(
         id: impl Into<ElementId>,
-        message: SharedString,
+        message: impl Into<SharedString>,
         icon: Icon,
-        click_action: ClickHandler<V>,
         actions: [NotificationAction<V>; 2],
     ) -> Self {
-        Self::new(id.into(), message, ActorOrIcon::Icon(icon), None).actions(actions)
+        Self::new(id.into(), message.into(), ActorOrIcon::Icon(icon), None).actions(actions)
     }
 
     fn on_click(mut self, handler: ClickHandler<V>) -> Self {
@@ -251,45 +267,6 @@ impl<V> Notification<V> {
         } else {
             div()
         }
-    }
-
-    fn render_actions(&self, cx: &mut ViewContext<V>) -> impl Component<V> {
-        // match (&self.actions, &self.action_taken) {
-        //     // Show nothing
-        //     (None, _) => div(),
-        //     // Show the taken_message
-        //     (Some(_), Some(action_taken)) => h_stack()
-        //         .children(
-        //             action_taken
-        //                 .taken_message
-        //                 .0
-        //                 .map(|icon| IconElement::new(icon).color(crate::IconColor::Muted)),
-        //         )
-        //         .child(Label::new(action_taken.taken_message.1.clone()).color(LabelColor::Muted)),
-        //     // Show the actions
-        //     (Some(actions), None) => h_stack()
-        //         .children(actions.iter().map(actiona.ction.tton     Component::render(button),Component::render(icon_button))),
-        //         }))
-        //         .collect::<Vec<_>>(),
-        }
-
-        // if let Some(actions) = &self.actions {
-        //     let action_children = actions
-        //         .iter()
-        //         .map(|action| match &action.button {
-        //             ButtonOrIconButton::Button(button) => {
-        //                 div().class("action_button").child(button.label.clone())
-        //             }
-        //             ButtonOrIconButton::IconButton(icon_button) => div()
-        //                 .class("action_icon_button")
-        //                 .child(icon_button.icon.to_string()),
-        //         })
-        //         .collect::<Vec<_>>();
-
-        //     el = el.child(h_stack().children(action_children));
-        // } else {
-        //     el = el.child(h_stack().child(div()));
-        // }
     }
 
     fn render_slot(&self, cx: &mut ViewContext<V>) -> impl Component<V> {
@@ -336,44 +313,30 @@ impl<V> Notification<V> {
                                     )
                                     .child(self.render_meta_items(cx)),
                             )
-                            .child(
-
-                                match (self.actions, self.action_taken) {
-                                    // Show nothing
-                                        (None, _) => div(),
-                                        // Show the taken_message
-                                            (Some(_), Some(action_taken)) => h_stack()
-                                                .children(
-                                                    action_taken
-                                                        .taken_message
-                                                        .0
-                                                        .map(|icon| IconElement::new(icon).color(crate::IconColor::Muted)),
-                                                )
-                                                .child(Label::new(action_taken.taken_message.1.clone()).color(LabelColor::Muted)),
-                                            // Show the actions
-                                            (Some(actions), None) => h_stack()
-
+                            .child(match (self.actions, self.action_taken) {
+                                // Show nothing
+                                (None, _) => div(),
+                                // Show the taken_message
+                                (Some(_), Some(action_taken)) => h_stack()
+                                    .children(action_taken.taken_message.0.map(|icon| {
+                                        IconElement::new(icon).color(crate::IconColor::Muted)
+                                    }))
+                                    .child(
+                                        Label::new(action_taken.taken_message.1.clone())
+                                            .color(LabelColor::Muted),
+                                    ),
+                                // Show the actions
+                                (Some(actions), None) => {
+                                    h_stack().children(actions.map(|action| match action.button {
+                                        ButtonOrIconButton::Button(button) => {
+                                            Component::render(button)
+                                        }
+                                        ButtonOrIconButton::IconButton(icon_button) => {
+                                            Component::render(icon_button)
+                                        }
+                                    }))
                                 }
-
-                                // match (&self.actions, &self.action_taken) {
-                                //     // Show nothing
-                                //     (None, _) => div(),
-                                //     // Show the taken_message
-                                //     (Some(_), Some(action_taken)) => h_stack()
-                                //         .children(
-                                //             action_taken
-                                //                 .taken_message
-                                //                 .0
-                                //                 .map(|icon| IconElement::new(icon).color(crate::IconColor::Muted)),
-                                //         )
-                                //         .child(Label::new(action_taken.taken_message.1.clone()).color(LabelColor::Muted)),
-                                //     // Show the actions
-                                //     (Some(actions), None) => h_stack()
-                                //         .children(actions.iter().map(actiona.ction.tton     Component::render(button),Component::render(icon_button))),
-                                //         }))
-                                //         .collect::<Vec<_>>(),
-
-                            ),
+                            }),
                     ),
             )
     }
