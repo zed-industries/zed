@@ -84,7 +84,7 @@ struct DeterministicState {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ExecutorEvent {
     PollRunnable { id: usize },
-    EnqueuRunnable { id: usize },
+    EnqueueRunnable { id: usize },
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -199,7 +199,7 @@ impl Deterministic {
         let unparker = self.parker.lock().unparker();
         let (runnable, task) = async_task::spawn_local(future, move |runnable| {
             let mut state = state.lock();
-            state.push_to_history(ExecutorEvent::EnqueuRunnable { id });
+            state.push_to_history(ExecutorEvent::EnqueueRunnable { id });
             state
                 .scheduled_from_foreground
                 .entry(cx_id)
@@ -229,7 +229,7 @@ impl Deterministic {
             let mut state = state.lock();
             state
                 .poll_history
-                .push(ExecutorEvent::EnqueuRunnable { id });
+                .push(ExecutorEvent::EnqueueRunnable { id });
             state
                 .scheduled_from_background
                 .push(BackgroundRunnable { id, runnable });
@@ -616,7 +616,7 @@ impl ExecutorEvent {
     pub fn id(&self) -> usize {
         match self {
             ExecutorEvent::PollRunnable { id } => *id,
-            ExecutorEvent::EnqueuRunnable { id } => *id,
+            ExecutorEvent::EnqueueRunnable { id } => *id,
         }
     }
 }

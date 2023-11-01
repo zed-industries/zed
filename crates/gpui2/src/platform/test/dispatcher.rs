@@ -1,5 +1,6 @@
 use crate::PlatformDispatcher;
 use async_task::Runnable;
+use backtrace::Backtrace;
 use collections::{HashMap, VecDeque};
 use parking_lot::Mutex;
 use rand::prelude::*;
@@ -28,6 +29,8 @@ struct TestDispatcherState {
     time: Duration,
     is_main_thread: bool,
     next_id: TestDispatcherId,
+    allow_parking: bool,
+    waiting_backtrace: Option<Backtrace>,
 }
 
 impl TestDispatcher {
@@ -40,6 +43,8 @@ impl TestDispatcher {
             time: Duration::ZERO,
             is_main_thread: true,
             next_id: TestDispatcherId(1),
+            allow_parking: false,
+            waiting_backtrace: None,
         };
 
         TestDispatcher {
@@ -66,7 +71,7 @@ impl TestDispatcher {
         self.state.lock().time = new_now;
     }
 
-    pub fn simulate_random_delay(&self) -> impl Future<Output = ()> {
+    pub fn simulate_random_delay(&self) -> impl 'static + Send + Future<Output = ()> {
         pub struct YieldNow {
             count: usize,
         }
@@ -92,6 +97,29 @@ impl TestDispatcher {
 
     pub fn run_until_parked(&self) {
         while self.poll() {}
+    }
+
+    pub fn parking_allowed(&self) -> bool {
+        self.state.lock().allow_parking
+    }
+
+    pub fn allow_parking(&self) {
+        self.state.lock().allow_parking = true
+    }
+
+    pub fn start_waiting(&self) {
+        self.state.lock().waiting_backtrace = Some(Backtrace::new_unresolved());
+    }
+
+    pub fn finish_waiting(&self) {
+        self.state.lock().waiting_backtrace.take();
+    }
+
+    pub fn waiting_backtrace(&self) -> Option<Backtrace> {
+        self.state.lock().waiting_backtrace.take().map(|mut b| {
+            b.resolve();
+            b
+        })
     }
 }
 
