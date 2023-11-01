@@ -7,7 +7,7 @@ use crate::{
     ColorScaleStep,
 };
 
-fn neutral() -> DefaultColorScaleSet {
+fn neutral() -> ColorScaleSet {
     slate()
 }
 
