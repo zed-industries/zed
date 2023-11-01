@@ -5,7 +5,7 @@ use std::{
     process::Command,
 };
 
-const SWIFT_PACKAGE_NAME: &str = "LiveKitBridge";
+const SWIFT_PACKAGE_NAME: &str = "LiveKitBridge2";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
