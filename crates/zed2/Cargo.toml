@@ -63,7 +63,7 @@ settings2 = { path = "../settings2" }
 feature_flags2 = { path = "../feature_flags2" }
 sum_tree = { path = "../sum_tree" }
 shellexpand = "2.1.0"
-text = { path = "../text" }
+text2 = { path = "../text2" }
 # terminal_view = { path = "../terminal_view" }
 theme2 = { path = "../theme2" }
 # theme_selector = { path = "../theme_selector" }
@@ -152,7 +152,7 @@ language2 = { path = "../language2", features = ["test-support"] }
 project2 = { path = "../project2", features = ["test-support"] }
 # rpc = { path = "../rpc", features = ["test-support"] }
 # settings = { path = "../settings", features = ["test-support"] }
-# text = { path = "../text", features = ["test-support"] }
+text2 = { path = "../text2", features = ["test-support"] }
 # util = { path = "../util", features = ["test-support"] }
 # workspace = { path = "../workspace", features = ["test-support"] }
 unindent.workspace = true
