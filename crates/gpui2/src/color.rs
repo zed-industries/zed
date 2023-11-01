@@ -233,6 +233,12 @@ impl Hsla {
     }
 }
 
+impl From<&str> for Hsla {
+    fn from(s: &str) -> Self {
+        Rgba::try_from(s).unwrap().into()
+    }
+}
+
 // impl From<Hsla> for Rgba {
 //     fn from(value: Hsla) -> Self {
 //         let h = value.h;
