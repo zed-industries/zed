@@ -15,12 +15,20 @@ pub enum ListItemVariant {
     Inset,
 }
 
+pub enum ListHeaderMeta {
+    // TODO: These should be IconButtons
+    Tools(Vec<Icon>),
+    // TODO: This should be a button
+    Button(Label),
+    Text(Label),
+}
+
 #[derive(Component)]
 pub struct ListHeader {
     label: SharedString,
     left_icon: Option<Icon>,
+    meta: Option<ListHeaderMeta>,
     variant: ListItemVariant,
-    state: InteractionState,
     toggleable: Toggleable,
 }
 
@@ -29,8 +37,8 @@ impl ListHeader {
         Self {
             label: label.into(),
             left_icon: None,
+            meta: None,
             variant: ListItemVariant::default(),
-            state: InteractionState::default(),
             toggleable: Toggleable::Toggleable(ToggleState::Toggled),
         }
     }
@@ -50,8 +58,8 @@ impl ListHeader {
         self
     }
 
-    pub fn state(mut self, state: InteractionState) -> Self {
-        self.state = state;
+    pub fn meta(mut self, meta: Option<ListHeaderMeta>) -> Self {
+        self.meta = meta;
         self
     }
 
@@ -74,34 +82,37 @@ impl ListHeader {
         }
     }
 
-    fn label_color(&self) -> LabelColor {
-        match self.state {
-            InteractionState::Disabled => LabelColor::Disabled,
-            _ => Default::default(),
-        }
-    }
-
-    fn icon_color(&self) -> IconColor {
-        match self.state {
-            InteractionState::Disabled => IconColor::Disabled,
-            _ => Default::default(),
-        }
-    }
-
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = self.toggleable.is_toggled();
 
         let disclosure_control = self.disclosure_control();
 
+        let meta = match self.meta {
+            Some(ListHeaderMeta::Tools(icons)) => div().child(
+                h_stack()
+                    .gap_2()
+                    .items_center()
+                    .children(icons.into_iter().map(|i| {
+                        IconElement::new(i)
+                            .color(IconColor::Muted)
+                            .size(IconSize::Small)
+                    })),
+            ),
+            Some(ListHeaderMeta::Button(label)) => div().child(label),
+            Some(ListHeaderMeta::Text(label)) => div().child(label),
+            None => div(),
+        };
+
         h_stack()
             .flex_1()
             .w_full()
             .bg(cx.theme().colors().surface)
-            .when(self.state == InteractionState::Focused, |this| {
-                this.border()
-                    .border_color(cx.theme().colors().border_focused)
-            })
+            // TODO: Add focus state
+            // .when(self.state == InteractionState::Focused, |this| {
+            //     this.border()
+            //         .border_color(cx.theme().colors().border_focused)
+            // })
             .relative()
             .child(
                 div()
@@ -109,22 +120,28 @@ impl ListHeader {
                     .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
                     .flex()
                     .flex_1()
+                    .items_center()
+                    .justify_between()
                     .w_full()
                     .gap_1()
-                    .items_center()
                     .child(
-                        div()
-                            .flex()
+                        h_stack()
                             .gap_1()
-                            .items_center()
-                            .children(self.left_icon.map(|i| {
-                                IconElement::new(i)
-                                    .color(IconColor::Muted)
-                                    .size(IconSize::Small)
-                            }))
-                            .child(Label::new(self.label.clone()).color(LabelColor::Muted)),
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1()
+                                    .items_center()
+                                    .children(self.left_icon.map(|i| {
+                                        IconElement::new(i)
+                                            .color(IconColor::Muted)
+                                            .size(IconSize::Small)
+                                    }))
+                                    .child(Label::new(self.label.clone()).color(LabelColor::Muted)),
+                            )
+                            .child(disclosure_control),
                     )
-                    .child(disclosure_control),
+                    .child(meta),
             )
     }
 }
@@ -593,6 +610,7 @@ impl<V: 'static> List<V> {
         };
 
         v_stack()
+            .w_full()
             .py_1()
             .children(self.header.map(|header| header.toggleable(self.toggleable)))
             .child(list_content)

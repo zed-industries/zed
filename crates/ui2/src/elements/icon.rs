@@ -40,7 +40,7 @@ impl IconColor {
     }
 }
 
-#[derive(Debug, Default, PartialEq, Copy, Clone, EnumIter)]
+#[derive(Debug, PartialEq, Copy, Clone, EnumIter)]
 pub enum Icon {
     Ai,
     ArrowLeft,
@@ -67,7 +67,6 @@ pub enum Icon {
     Folder,
     FolderOpen,
     FolderX,
-    #[default]
     Hash,
     InlayHint,
     MagicWand,
@@ -89,6 +88,11 @@ pub enum Icon {
     XCircle,
     Copilot,
     Envelope,
+    Bell,
+    BellOff,
+    BellRing,
+    MailOpen,
+    AtSign,
 }
 
 impl Icon {
@@ -140,6 +144,11 @@ impl Icon {
             Icon::XCircle => "icons/error.svg",
             Icon::Copilot => "icons/copilot.svg",
             Icon::Envelope => "icons/feedback.svg",
+            Icon::Bell => "icons/bell.svg",
+            Icon::BellOff => "icons/bell-off.svg",
+            Icon::BellRing => "icons/bell-ring.svg",
+            Icon::MailOpen => "icons/mail-open.svg",
+            Icon::AtSign => "icons/at-sign.svg",
         }
     }
 }

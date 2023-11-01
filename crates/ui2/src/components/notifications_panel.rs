@@ -1,4 +1,4 @@
-use crate::{prelude::*, static_new_notification_items, static_read_notification_items};
+use crate::{prelude::*, static_new_notification_items, Icon, ListHeaderMeta};
 use crate::{List, ListHeader};
 
 #[derive(Component)]
@@ -28,14 +28,16 @@ impl NotificationsPanel {
                     .overflow_y_scroll()
                     .child(
                         List::new(static_new_notification_items())
-                            .header(ListHeader::new("NEW").toggle(ToggleState::Toggled))
-                            .toggle(ToggleState::Toggled),
-                    )
-                    .child(
-                        List::new(static_read_notification_items())
-                            .header(ListHeader::new("EARLIER").toggle(ToggleState::Toggled))
-                            .empty_message("No new notifications")
-                            .toggle(ToggleState::Toggled),
+                            .toggle(ToggleState::Toggled)
+                            .header(
+                                ListHeader::new("Notifications")
+                                    .toggle(ToggleState::Toggled)
+                                    .meta(Some(ListHeaderMeta::Tools(vec![
+                                        Icon::AtSign,
+                                        Icon::BellOff,
+                                        Icon::MailOpen,
+                                    ]))),
+                            ),
                     ),
             )
     }

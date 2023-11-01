@@ -7,9 +7,10 @@ use theme2::ActiveTheme;
 
 use crate::{
     Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
-    HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListItem,
-    Livestream, MicStatus, ModifierKeys, PaletteItem, Player, PlayerCallStatus,
-    PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, ToggleState, VideoStatus,
+    HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListHeaderMeta,
+    ListItem, ListSubHeader, Livestream, MicStatus, ModifierKeys, PaletteItem, Player,
+    PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, ToggleState,
+    VideoStatus,
 };
 use crate::{HighlightedText, ListDetailsEntry};
 
@@ -327,25 +328,29 @@ pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
 
 pub fn static_new_notification_items<V: 'static>() -> Vec<ListItem<V>> {
     vec![
-        ListDetailsEntry::new("maxdeviant invited you to join a stream in #design.")
-            .meta("4 people in stream."),
-        ListDetailsEntry::new("nathansobo accepted your contact request."),
-    ]
-    .into_iter()
-    .map(From::from)
-    .collect()
-}
-
-pub fn static_read_notification_items<V: 'static>() -> Vec<ListItem<V>> {
-    vec![
-        ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
-            Button::new("Decline"),
-            Button::new("Accept").variant(crate::ButtonVariant::Filled),
-        ]),
-        ListDetailsEntry::new("maxdeviant invited you to a stream in #design.")
-            .seen(true)
-            .meta("This stream has ended."),
-        ListDetailsEntry::new("as-cii accepted your contact request."),
+        ListItem::Header(ListSubHeader::new("New")),
+        ListItem::Details(
+            ListDetailsEntry::new("maxdeviant invited you to join a stream in #design.")
+                .meta("4 people in stream."),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "nathansobo accepted your contact request.",
+        )),
+        ListItem::Header(ListSubHeader::new("Earlier")),
+        ListItem::Details(
+            ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
+                Button::new("Decline"),
+                Button::new("Accept").variant(crate::ButtonVariant::Filled),
+            ]),
+        ),
+        ListItem::Details(
+            ListDetailsEntry::new("maxdeviant invited you to a stream in #design.")
+                .seen(true)
+                .meta("This stream has ended."),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "as-cii accepted your contact request.",
+        )),
     ]
     .into_iter()
     .map(From::from)
