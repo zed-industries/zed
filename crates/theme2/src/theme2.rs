@@ -43,6 +43,7 @@ impl ActiveTheme for AppContext {
 }
 
 pub struct ThemeFamily {
+    #[allow(dead_code)]
     pub(crate) id: String,
     pub name: String,
     pub author: String,
@@ -53,6 +54,7 @@ pub struct ThemeFamily {
 impl ThemeFamily {}
 
 pub struct ThemeVariant {
+    #[allow(dead_code)]
     pub(crate) id: String,
     pub name: String,
     pub appearance: Appearance,
