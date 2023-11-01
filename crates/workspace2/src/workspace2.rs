@@ -29,9 +29,9 @@ use futures::{
 };
 use gpui2::{
     div, point, size, AnyModel, AnyView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds,
-    Context, Div, EventEmitter, GlobalPixels, MainThread, Model, ModelContext, Point, Render, Size,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
-    WindowHandle, WindowOptions,
+    Context, Div, Entity, EventEmitter, GlobalPixels, MainThread, Model, ModelContext, Point,
+    Render, Size, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds,
+    WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language2::LanguageRegistry;
@@ -399,7 +399,7 @@ type ItemDeserializers = HashMap<
     Arc<str>,
     fn(
         Model<Project>,
-        WeakView<Workspace>,
+        WindowHandle<Workspace>,
         WorkspaceId,
         ItemId,
         &mut ViewContext<Pane>,
@@ -891,19 +891,22 @@ impl Workspace {
 
             window.update(&mut cx, |_, cx| cx.activate_window());
 
-            let workspace = workspace.downgrade();
-            notify_if_database_failed(&workspace, &mut cx);
-            let opened_items = open_items(
-                serialized_workspace,
-                &workspace,
-                project_paths,
-                app_state,
-                cx,
-            )
-            .await
-            .unwrap_or_default();
+            notify_if_database_failed(window, &mut cx);
+            let opened_items = window
+                .update(&mut cx, |_workspace, cx| {
+                    let workspace = cx.view().downgrade();
+                    open_items(
+                        serialized_workspace,
+                        &workspace,
+                        project_paths,
+                        app_state,
+                        cx,
+                    )
+                })
+                .await
+                .unwrap_or_default();
 
-            (workspace, opened_items)
+            (window, opened_items)
         })
     }
 
@@ -2945,7 +2948,7 @@ impl Workspace {
     ) -> Result<()> {
         let this = this.upgrade().context("workspace dropped")?;
 
-        let item_builders = cx.update(|cx| {
+        let item_builders = cx.update(|_, cx| {
             cx.default_global::<FollowableItemBuilders>()
                 .values()
                 .map(|b| b.0)
@@ -2964,7 +2967,7 @@ impl Workspace {
                     Err(anyhow!("missing view variant"))?;
                 }
                 for build_item in &item_builders {
-                    let task = cx.update(|cx| {
+                    let task = cx.update(|_, cx| {
                         build_item(pane.clone(), this.clone(), id, &mut variant, cx)
                     })?;
                     if let Some(task) = task {
@@ -3364,12 +3367,11 @@ impl Workspace {
     }
 
     pub(crate) fn load_workspace(
-        workspace: WeakView<Workspace>,
         serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
-        cx: &mut WindowContext,
+        cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|workspace, mut cx| async move {
             let (project, old_center_pane) = workspace.update(&mut cx, |workspace, _| {
                 (
                     workspace.project().clone(),
@@ -3382,7 +3384,7 @@ impl Workspace {
             // Traverse the splits tree and add to things
             if let Some((group, active_pane, items)) = serialized_workspace
                 .center_group
-                .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
+                .deserialize(&project, serialized_workspace.id, workspace, &mut cx)
                 .await
             {
                 center_items = Some(items);
@@ -3558,36 +3560,28 @@ fn window_bounds_env_override(cx: &MainThread<AsyncAppContext>) -> Option<Window
 
 async fn open_items(
     serialized_workspace: Option<SerializedWorkspace>,
-    workspace: &WeakView<Workspace>,
     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
     app_state: Arc<AppState>,
-    mut cx: MainThread<AsyncAppContext>,
+    mut cx: &mut MainThread<ViewContext<'_, Workspace>>,
 ) -> Result<Vec<Option<Result<Box<dyn ItemHandle>>>>> {
     let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
 
     if let Some(serialized_workspace) = serialized_workspace {
-        let workspace = workspace.clone();
-        let restored_items = cx
-            .update(|cx| {
-                Workspace::load_workspace(
-                    workspace,
-                    serialized_workspace,
-                    project_paths_to_open
-                        .iter()
-                        .map(|(_, project_path)| project_path)
-                        .cloned()
-                        .collect(),
-                    cx,
-                )
-            })?
-            .await?;
-
-        let restored_project_paths = cx.update(|cx| {
-            restored_items
+        let restored_items = Workspace::load_workspace(
+            serialized_workspace,
+            project_paths_to_open
                 .iter()
-                .filter_map(|item| item.as_ref()?.project_path(cx))
-                .collect::<HashSet<_>>()
-        })?;
+                .map(|(_, project_path)| project_path)
+                .cloned()
+                .collect(),
+            cx,
+        )
+        .await?;
+
+        let restored_project_paths = restored_items
+            .iter()
+            .filter_map(|item| item.as_ref()?.project_path(cx))
+            .collect::<HashSet<_>>();
 
         for restored_item in restored_items {
             opened_items.push(restored_item.map(Ok));
@@ -3614,8 +3608,7 @@ async fn open_items(
             .into_iter()
             .enumerate()
             .map(|(i, (abs_path, project_path))| {
-                let workspace = workspace.clone();
-                cx.spawn(|mut cx| {
+                cx.spawn(|workspace, mut cx| {
                     let fs = app_state.fs.clone();
                     async move {
                         let file_project_path = project_path?;
@@ -3728,7 +3721,7 @@ async fn open_items(
 //         })
 //         .ok();
 
-fn notify_if_database_failed(_workspace: &WeakView<Workspace>, _cx: &mut AsyncAppContext) {
+fn notify_if_database_failed(_workspace: WindowHandle<Workspace>, _cx: &mut AsyncAppContext) {
     const REPORT_ISSUE_URL: &str ="https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml";
 
     // todo!()

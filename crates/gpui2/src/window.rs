@@ -484,7 +484,7 @@ impl<'a> WindowContext<'a> {
     /// use within your future.
     pub fn spawn<Fut, R>(
         &mut self,
-        f: impl FnOnce(AnyWindowHandle, AsyncWindowContext) -> Fut + Send + 'static,
+        f: impl FnOnce(AnyWindowHandle, AsyncWindowContext) -> Fut,
     ) -> Task<R>
     where
         R: Send + 'static,
@@ -493,8 +493,7 @@ impl<'a> WindowContext<'a> {
         let window = self.window.handle;
         self.app.spawn(move |app| {
             let cx = AsyncWindowContext::new(app, window);
-            let future = f(window, cx);
-            async move { future.await }
+            f(window, cx)
         })
     }
 
@@ -1872,17 +1871,14 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     pub fn spawn<Fut, R>(
         &mut self,
-        f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut + Send + 'static,
+        f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut,
     ) -> Task<R>
     where
         R: Send + 'static,
         Fut: Future<Output = R> + Send + 'static,
     {
         let view = self.view().downgrade();
-        self.window_cx.spawn(move |_, cx| {
-            let result = f(view, cx);
-            async move { result.await }
-        })
+        self.window_cx.spawn(move |_, cx| f(view, cx))
     }
 
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R

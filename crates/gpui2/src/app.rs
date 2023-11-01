@@ -504,16 +504,12 @@ impl AppContext {
 
     /// Spawns the future returned by the given function on the thread pool. The closure will be invoked
     /// with AsyncAppContext, which allows the application state to be accessed across await points.
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + Send + 'static,
         R: Send + 'static,
     {
-        let cx = self.to_async();
-        self.executor.spawn(async move {
-            let future = f(cx);
-            future.await
-        })
+        self.executor.spawn(f(self.to_async()))
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities

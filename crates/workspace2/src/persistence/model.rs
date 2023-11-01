@@ -7,7 +7,9 @@ use db2::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui2::{AsyncWindowContext, Model, Task, View, WeakView, WindowBounds};
+use gpui2::{
+    AsyncAppContext, AsyncWindowContext, Model, Task, View, WeakView, WindowBounds, WindowHandle,
+};
 use project2::Project;
 use std::{
     path::{Path, PathBuf},
@@ -153,8 +155,8 @@ impl SerializedPaneGroup {
         self,
         project: &Model<Project>,
         workspace_id: WorkspaceId,
-        workspace: &WeakView<Workspace>,
-        cx: &mut AsyncWindowContext,
+        workspace: WindowHandle<Workspace>,
+        cx: &mut AsyncAppContext,
     ) -> Option<(Member, Option<View<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
         match self {
             SerializedPaneGroup::Group {
@@ -231,8 +233,8 @@ impl SerializedPane {
         project: &Model<Project>,
         pane: &WeakView<Pane>,
         workspace_id: WorkspaceId,
-        workspace: &WeakView<Workspace>,
-        cx: &mut AsyncWindowContext,
+        workspace: WindowHandle<Workspace>,
+        cx: &mut AsyncAppContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
         let mut items = Vec::new();
         let mut active_item_index = None;
@@ -241,7 +243,7 @@ impl SerializedPane {
             let item_handle = pane
                 .update(cx, |_, cx| {
                     if let Some(deserializer) = cx.global::<ItemDeserializers>().get(&item.kind) {
-                        deserializer(project, workspace.clone(), workspace_id, item.item_id, cx)
+                        deserializer(project, workspace, workspace_id, item.item_id, cx)
                     } else {
                         Task::ready(Err(anyhow::anyhow!(
                             "Deserializer does not exist for item kind: {}",

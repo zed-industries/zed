@@ -189,10 +189,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         result
     }
 
-    pub fn spawn<Fut, R>(
-        &self,
-        f: impl FnOnce(WeakModel<T>, AsyncAppContext) -> Fut + Send + 'static,
-    ) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakModel<T>, AsyncAppContext) -> Fut) -> Task<R>
     where
         T: 'static,
         Fut: Future<Output = R> + Send + 'static,
