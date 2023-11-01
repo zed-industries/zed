@@ -332,43 +332,43 @@ impl From<DefaultColorScaleSet> for ColorScaleSet {
 
 pub fn default_color_scales() -> ColorScales {
     ColorScales {
-        gray: gray().into(),
-        mauve: mauve().into(),
-        slate: slate().into(),
-        sage: sage().into(),
-        olive: olive().into(),
-        sand: sand().into(),
-        gold: gold().into(),
-        bronze: bronze().into(),
-        brown: brown().into(),
-        yellow: yellow().into(),
-        amber: amber().into(),
-        orange: orange().into(),
-        tomato: tomato().into(),
-        red: red().into(),
-        ruby: ruby().into(),
-        crimson: crimson().into(),
-        pink: pink().into(),
-        plum: plum().into(),
-        purple: purple().into(),
-        violet: violet().into(),
-        iris: iris().into(),
-        indigo: indigo().into(),
-        blue: blue().into(),
-        cyan: cyan().into(),
-        teal: teal().into(),
-        jade: jade().into(),
-        green: green().into(),
-        grass: grass().into(),
-        lime: lime().into(),
-        mint: mint().into(),
-        sky: sky().into(),
-        black: black().into(),
-        white: white().into(),
+        gray: gray(),
+        mauve: mauve(),
+        slate: slate(),
+        sage: sage(),
+        olive: olive(),
+        sand: sand(),
+        gold: gold(),
+        bronze: bronze(),
+        brown: brown(),
+        yellow: yellow(),
+        amber: amber(),
+        orange: orange(),
+        tomato: tomato(),
+        red: red(),
+        ruby: ruby(),
+        crimson: crimson(),
+        pink: pink(),
+        plum: plum(),
+        purple: purple(),
+        violet: violet(),
+        iris: iris(),
+        indigo: indigo(),
+        blue: blue(),
+        cyan: cyan(),
+        teal: teal(),
+        jade: jade(),
+        green: green(),
+        grass: grass(),
+        lime: lime(),
+        mint: mint(),
+        sky: sky(),
+        black: black(),
+        white: white(),
     }
 }
 
-fn gray() -> DefaultColorScaleSet {
+fn gray() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Gray",
         light: [
@@ -428,9 +428,10 @@ fn gray() -> DefaultColorScaleSet {
             "#ffffffed",
         ],
     }
+    .into()
 }
 
-fn mauve() -> DefaultColorScaleSet {
+fn mauve() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Mauve",
         light: [
@@ -490,9 +491,10 @@ fn mauve() -> DefaultColorScaleSet {
             "#fdfdffef",
         ],
     }
+    .into()
 }
 
-fn slate() -> DefaultColorScaleSet {
+fn slate() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Slate",
         light: [
@@ -552,9 +554,10 @@ fn slate() -> DefaultColorScaleSet {
             "#fcfdffef",
         ],
     }
+    .into()
 }
 
-fn sage() -> DefaultColorScaleSet {
+fn sage() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Sage",
         light: [
@@ -614,9 +617,10 @@ fn sage() -> DefaultColorScaleSet {
             "#fdfffeed",
         ],
     }
+    .into()
 }
 
-fn olive() -> DefaultColorScaleSet {
+fn olive() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Olive",
         light: [
@@ -676,9 +680,10 @@ fn olive() -> DefaultColorScaleSet {
             "#fdfffded",
         ],
     }
+    .into()
 }
 
-fn sand() -> DefaultColorScaleSet {
+fn sand() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Sand",
         light: [
@@ -738,9 +743,10 @@ fn sand() -> DefaultColorScaleSet {
             "#fffffded",
         ],
     }
+    .into()
 }
 
-fn gold() -> DefaultColorScaleSet {
+fn gold() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Gold",
         light: [
@@ -800,9 +806,10 @@ fn gold() -> DefaultColorScaleSet {
             "#fef7ede7",
         ],
     }
+    .into()
 }
 
-fn bronze() -> DefaultColorScaleSet {
+fn bronze() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Bronze",
         light: [
@@ -862,9 +869,10 @@ fn bronze() -> DefaultColorScaleSet {
             "#fff1e9ec",
         ],
     }
+    .into()
 }
 
-fn brown() -> DefaultColorScaleSet {
+fn brown() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Brown",
         light: [
@@ -924,9 +932,10 @@ fn brown() -> DefaultColorScaleSet {
             "#feecd4f2",
         ],
     }
+    .into()
 }
 
-fn yellow() -> DefaultColorScaleSet {
+fn yellow() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Yellow",
         light: [
@@ -986,9 +995,10 @@ fn yellow() -> DefaultColorScaleSet {
             "#fef6baf6",
         ],
     }
+    .into()
 }
 
-fn amber() -> DefaultColorScaleSet {
+fn amber() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Amber",
         light: [
@@ -1048,9 +1058,10 @@ fn amber() -> DefaultColorScaleSet {
             "#ffe7b3ff",
         ],
     }
+    .into()
 }
 
-fn orange() -> DefaultColorScaleSet {
+fn orange() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Orange",
         light: [
@@ -1110,9 +1121,10 @@ fn orange() -> DefaultColorScaleSet {
             "#ffe0c2ff",
         ],
     }
+    .into()
 }
 
-fn tomato() -> DefaultColorScaleSet {
+fn tomato() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Tomato",
         light: [
@@ -1172,9 +1184,10 @@ fn tomato() -> DefaultColorScaleSet {
             "#ffd6cefb",
         ],
     }
+    .into()
 }
 
-fn red() -> DefaultColorScaleSet {
+fn red() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Red",
         light: [
@@ -1234,9 +1247,10 @@ fn red() -> DefaultColorScaleSet {
             "#ffd1d9ff",
         ],
     }
+    .into()
 }
 
-fn ruby() -> DefaultColorScaleSet {
+fn ruby() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Ruby",
         light: [
@@ -1296,9 +1310,10 @@ fn ruby() -> DefaultColorScaleSet {
             "#ffd3e2fe",
         ],
     }
+    .into()
 }
 
-fn crimson() -> DefaultColorScaleSet {
+fn crimson() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Crimson",
         light: [
@@ -1358,9 +1373,10 @@ fn crimson() -> DefaultColorScaleSet {
             "#ffd5eafd",
         ],
     }
+    .into()
 }
 
-fn pink() -> DefaultColorScaleSet {
+fn pink() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Pink",
         light: [
@@ -1420,9 +1436,10 @@ fn pink() -> DefaultColorScaleSet {
             "#ffd3ecfd",
         ],
     }
+    .into()
 }
 
-fn plum() -> DefaultColorScaleSet {
+fn plum() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Plum",
         light: [
@@ -1482,9 +1499,10 @@ fn plum() -> DefaultColorScaleSet {
             "#feddfef4",
         ],
     }
+    .into()
 }
 
-fn purple() -> DefaultColorScaleSet {
+fn purple() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Purple",
         light: [
@@ -1544,9 +1562,10 @@ fn purple() -> DefaultColorScaleSet {
             "#f1ddfffa",
         ],
     }
+    .into()
 }
 
-fn violet() -> DefaultColorScaleSet {
+fn violet() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Violet",
         light: [
@@ -1606,9 +1625,10 @@ fn violet() -> DefaultColorScaleSet {
             "#e3defffe",
         ],
     }
+    .into()
 }
 
-fn iris() -> DefaultColorScaleSet {
+fn iris() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Iris",
         light: [
@@ -1668,9 +1688,10 @@ fn iris() -> DefaultColorScaleSet {
             "#e1e0fffe",
         ],
     }
+    .into()
 }
 
-fn indigo() -> DefaultColorScaleSet {
+fn indigo() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Indigo",
         light: [
@@ -1730,9 +1751,10 @@ fn indigo() -> DefaultColorScaleSet {
             "#d6e1ffff",
         ],
     }
+    .into()
 }
 
-fn blue() -> DefaultColorScaleSet {
+fn blue() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Blue",
         light: [
@@ -1792,9 +1814,10 @@ fn blue() -> DefaultColorScaleSet {
             "#c2e6ffff",
         ],
     }
+    .into()
 }
 
-fn cyan() -> DefaultColorScaleSet {
+fn cyan() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Cyan",
         light: [
@@ -1854,9 +1877,10 @@ fn cyan() -> DefaultColorScaleSet {
             "#bbf3fef7",
         ],
     }
+    .into()
 }
 
-fn teal() -> DefaultColorScaleSet {
+fn teal() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Teal",
         light: [
@@ -1916,9 +1940,10 @@ fn teal() -> DefaultColorScaleSet {
             "#b8ffebef",
         ],
     }
+    .into()
 }
 
-fn jade() -> DefaultColorScaleSet {
+fn jade() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Jade",
         light: [
@@ -1978,9 +2003,10 @@ fn jade() -> DefaultColorScaleSet {
             "#b8ffe1ef",
         ],
     }
+    .into()
 }
 
-fn green() -> DefaultColorScaleSet {
+fn green() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Green",
         light: [
@@ -2040,9 +2066,10 @@ fn green() -> DefaultColorScaleSet {
             "#bbffd7f0",
         ],
     }
+    .into()
 }
 
-fn grass() -> DefaultColorScaleSet {
+fn grass() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Grass",
         light: [
@@ -2102,9 +2129,10 @@ fn grass() -> DefaultColorScaleSet {
             "#ceffceef",
         ],
     }
+    .into()
 }
 
-fn lime() -> DefaultColorScaleSet {
+fn lime() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Lime",
         light: [
@@ -2164,9 +2192,10 @@ fn lime() -> DefaultColorScaleSet {
             "#e9febff7",
         ],
     }
+    .into()
 }
 
-fn mint() -> DefaultColorScaleSet {
+fn mint() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Mint",
         light: [
@@ -2226,9 +2255,10 @@ fn mint() -> DefaultColorScaleSet {
             "#cbfee9f5",
         ],
     }
+    .into()
 }
 
-fn sky() -> DefaultColorScaleSet {
+fn sky() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Sky",
         light: [
@@ -2288,9 +2318,10 @@ fn sky() -> DefaultColorScaleSet {
             "#c2f3ffff",
         ],
     }
+    .into()
 }
 
-fn black() -> DefaultColorScaleSet {
+fn black() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "Black",
         light: [
@@ -2350,9 +2381,10 @@ fn black() -> DefaultColorScaleSet {
             "#000000f2",
         ],
     }
+    .into()
 }
 
-fn white() -> DefaultColorScaleSet {
+fn white() -> ColorScaleSet {
     DefaultColorScaleSet {
         scale: "White",
         light: [
@@ -2412,4 +2444,5 @@ fn white() -> DefaultColorScaleSet {
             "#fffffff2",
         ],
     }
+    .into()
 }
