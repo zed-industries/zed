@@ -25,7 +25,7 @@ use futures::{
 use gpui2::{
     AnyModel, AnyView, AppContext, AsyncAppContext, AsyncWindowContext, DisplayId, Entity,
     EventEmitter, MainThread, Model, ModelContext, Subscription, Task, View, ViewContext,
-    VisualContext, WeakModel, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language2::LanguageRegistry;
@@ -2812,54 +2812,56 @@ impl Workspace {
 
     //     // RPC handlers
 
-    //     fn handle_follow(
-    //         &mut self,
-    //         follower_project_id: Option<u64>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> proto::FollowResponse {
-    //         let client = &self.app_state.client;
-    //         let project_id = self.project.read(cx).remote_id();
+    fn handle_follow(
+        &mut self,
+        follower_project_id: Option<u64>,
+        cx: &mut ViewContext<Self>,
+    ) -> proto::FollowResponse {
+        todo!()
 
-    //         let active_view_id = self.active_item(cx).and_then(|i| {
-    //             Some(
-    //                 i.to_followable_item_handle(cx)?
-    //                     .remote_id(client, cx)?
-    //                     .to_proto(),
-    //             )
-    //         });
+        //     let client = &self.app_state.client;
+        //     let project_id = self.project.read(cx).remote_id();
 
-    //         cx.notify();
+        //     let active_view_id = self.active_item(cx).and_then(|i| {
+        //         Some(
+        //             i.to_followable_item_handle(cx)?
+        //                 .remote_id(client, cx)?
+        //                 .to_proto(),
+        //         )
+        //     });
 
-    //         self.last_active_view_id = active_view_id.clone();
-    //         proto::FollowResponse {
-    //             active_view_id,
-    //             views: self
-    //                 .panes()
-    //                 .iter()
-    //                 .flat_map(|pane| {
-    //                     let leader_id = self.leader_for_pane(pane);
-    //                     pane.read(cx).items().filter_map({
-    //                         let cx = &cx;
-    //                         move |item| {
-    //                             let item = item.to_followable_item_handle(cx)?;
-    //                             if (project_id.is_none() || project_id != follower_project_id)
-    //                                 && item.is_project_item(cx)
-    //                             {
-    //                                 return None;
-    //                             }
-    //                             let id = item.remote_id(client, cx)?.to_proto();
-    //                             let variant = item.to_state_proto(cx)?;
-    //                             Some(proto::View {
-    //                                 id: Some(id),
-    //                                 leader_id,
-    //                                 variant: Some(variant),
-    //                             })
-    //                         }
-    //                     })
-    //                 })
-    //                 .collect(),
-    //         }
-    //     }
+        //     cx.notify();
+
+        //     self.last_active_view_id = active_view_id.clone();
+        //     proto::FollowResponse {
+        //         active_view_id,
+        //         views: self
+        //             .panes()
+        //             .iter()
+        //             .flat_map(|pane| {
+        //                 let leader_id = self.leader_for_pane(pane);
+        //                 pane.read(cx).items().filter_map({
+        //                     let cx = &cx;
+        //                     move |item| {
+        //                         let item = item.to_followable_item_handle(cx)?;
+        //                         if (project_id.is_none() || project_id != follower_project_id)
+        //                             && item.is_project_item(cx)
+        //                         {
+        //                             return None;
+        //                         }
+        //                         let id = item.remote_id(client, cx)?.to_proto();
+        //                         let variant = item.to_state_proto(cx)?;
+        //                         Some(proto::View {
+        //                             id: Some(id),
+        //                             leader_id,
+        //                             variant: Some(variant),
+        //                         })
+        //                     }
+        //                 })
+        //             })
+        //             .collect(),
+        //     }
+    }
 
     fn handle_update_followers(
         &mut self,
@@ -3942,7 +3944,7 @@ impl WorkspaceStore {
             .log_err()
     }
 
-    async fn handle_follow(
+    pub async fn handle_follow(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::Follow>,
         _: Arc<Client>,
@@ -3953,30 +3955,28 @@ impl WorkspaceStore {
                 project_id: envelope.payload.project_id,
                 peer_id: envelope.original_sender_id()?,
             };
-            let active_project = ActiveCall::global(cx).read(cx).location();
+            let active_project = ActiveCall::global(cx).read(cx).location().cloned();
 
             let mut response = proto::FollowResponse::default();
             for workspace in &this.workspaces {
-                let Some(workspace) = workspace.upgrade(cx) else {
-                    continue;
-                };
-
-                workspace.update(cx, |workspace, cx| {
-                    let handler_response = workspace.handle_follow(follower.project_id, cx);
-                    if response.views.is_empty() {
-                        response.views = handler_response.views;
-                    } else {
-                        response.views.extend_from_slice(&handler_response.views);
-                    }
-
-                    if let Some(active_view_id) = handler_response.active_view_id.clone() {
-                        if response.active_view_id.is_none()
-                            || Some(workspace.project.downgrade()) == active_project
-                        {
-                            response.active_view_id = Some(active_view_id);
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let handler_response = workspace.handle_follow(follower.project_id, cx);
+                        if response.views.is_empty() {
+                            response.views = handler_response.views;
+                        } else {
+                            response.views.extend_from_slice(&handler_response.views);
                         }
-                    }
-                });
+
+                        if let Some(active_view_id) = handler_response.active_view_id.clone() {
+                            if response.active_view_id.is_none()
+                                || Some(workspace.project.downgrade()) == active_project
+                            {
+                                response.active_view_id = Some(active_view_id);
+                            }
+                        }
+                    })
+                    .ok();
             }
 
             if let Err(ix) = this.followers.binary_search(&follower) {

@@ -1993,6 +1993,23 @@ impl<V: 'static> WindowHandle<V> {
             state_type: PhantomData,
         }
     }
+
+    pub fn update<R>(
+        &self,
+        cx: &mut AppContext,
+        update: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
+    ) -> Result<R> {
+        cx.update_window(self.any_handle, |cx| {
+            let root_view = cx
+                .window
+                .root_view
+                .clone()
+                .unwrap()
+                .downcast::<V>()
+                .unwrap();
+            root_view.update(cx, update)
+        })
+    }
 }
 
 impl<V: 'static> Into<AnyWindowHandle> for WindowHandle<V> {
