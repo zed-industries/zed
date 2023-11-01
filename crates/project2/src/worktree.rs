@@ -297,10 +297,14 @@ impl Worktree {
         // After determining whether the root entry is a file or a directory, populate the
         // snapshot's "root name", which will be used for the purpose of fuzzy matching.
         let abs_path = path.into();
+        eprintln!("get root metadata");
+
         let metadata = fs
             .metadata(&abs_path)
             .await
             .context("failed to stat worktree path")?;
+
+        eprintln!("got root metadata");
 
         cx.build_model(move |cx: &mut ModelContext<Worktree>| {
             let root_name = abs_path

@@ -88,7 +88,16 @@ impl BackgroundExecutor {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
-        self.block_internal(false, future)
+        let (runnable, task) = unsafe {
+            async_task::spawn_unchecked(future, {
+                let dispatcher = self.dispatcher.clone();
+                move |runnable| dispatcher.dispatch_on_main_thread(runnable)
+            })
+        };
+
+        runnable.schedule();
+
+        self.block_internal(false, task)
     }
 
     pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
@@ -100,17 +109,20 @@ impl BackgroundExecutor {
         background_only: bool,
         future: impl Future<Output = R>,
     ) -> R {
+        dbg!("block_internal");
         pin_mut!(future);
         let (parker, unparker) = parking::pair();
         let awoken = Arc::new(AtomicBool::new(false));
         let awoken2 = awoken.clone();
 
         let waker = waker_fn(move || {
+            dbg!("WAKING UP.");
             awoken2.store(true, SeqCst);
             unparker.unpark();
         });
         let mut cx = std::task::Context::from_waker(&waker);
 
+        dbg!("BOOOP");
         loop {
             match future.as_mut().poll(&mut cx) {
                 Poll::Ready(result) => return result,
@@ -131,7 +143,9 @@ impl BackgroundExecutor {
                                 panic!("parked with nothing left to run\n{:?}", backtrace_message)
                             }
                         }
+                        dbg!("PARKING!");
                         parker.park();
+                        dbg!("CONTINUING!");
                     }
                 }
             }
