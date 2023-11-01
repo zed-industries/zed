@@ -41,10 +41,10 @@ impl Default for GitStatusColors {
     fn default() -> Self {
         Self {
             conflict: gpui2::black(),
-            created: gpui2::black(),
-            deleted: gpui2::black(),
+            created: gpui2::rgb::<gpui2::Hsla>(0x00ff00),
+            deleted: gpui2::red(),
             ignored: gpui2::black(),
-            modified: gpui2::black(),
+            modified: gpui2::rgb::<gpui2::Hsla>(0x0000ff),
             renamed: gpui2::black(),
         }
     }

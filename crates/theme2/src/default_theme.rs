@@ -19,7 +19,7 @@ fn zed_pro_daylight() -> ThemeVariant {
     }
 }
 
-fn zed_pro_moonlight() -> ThemeVariant {
+pub(crate) fn zed_pro_moonlight() -> ThemeVariant {
     ThemeVariant {
         id: "zed_pro_moonlight".to_string(),
         name: "Zed Pro Moonlight".to_string(),

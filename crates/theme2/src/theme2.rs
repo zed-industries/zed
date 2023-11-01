@@ -21,8 +21,6 @@ use std::sync::Arc;
 use gpui2::{AppContext, HighlightStyle, Hsla, SharedString};
 use settings2::Settings;
 
-use crate::colors::ThemeStyle;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Appearance {
     Light,
@@ -35,8 +33,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub fn active_theme<'a>(cx: &'a AppContext) -> &'a Arc<ThemeVariant> {
-    // &ThemeSettings::get_global(cx).active_theme
-    todo!()
+    &ThemeSettings::get_global(cx).active_theme
 }
 
 pub fn theme(cx: &AppContext) -> Arc<ThemeVariant> {
@@ -44,7 +41,7 @@ pub fn theme(cx: &AppContext) -> Arc<ThemeVariant> {
 }
 
 pub fn old_active_theme<'a>(cx: &'a AppContext) -> &'a Arc<Theme> {
-    &ThemeSettings::get_global(cx).active_theme
+    &ThemeSettings::get_global(cx).old_active_theme
 }
 
 pub fn old_theme(cx: &AppContext) -> Arc<Theme> {

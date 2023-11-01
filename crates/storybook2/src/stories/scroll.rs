@@ -2,7 +2,7 @@ use gpui2::{
     div, px, Component, Div, ParentElement, Render, SharedString, StatefulInteraction, Styled,
     View, VisualContext, WindowContext,
 };
-use theme2::old_theme;
+use theme2::theme;
 
 pub struct ScrollStory;
 
@@ -16,13 +16,13 @@ impl Render for ScrollStory {
     type Element = Div<Self, StatefulInteraction<Self>>;
 
     fn render(&mut self, cx: &mut gpui2::ViewContext<Self>) -> Self::Element {
-        let theme = old_theme(cx);
-        let color_1 = theme.git_created;
-        let color_2 = theme.git_modified;
+        let theme = theme(cx);
+        let color_1 = theme.styles.git.created;
+        let color_2 = theme.styles.git.modified;
 
         div()
             .id("parent")
-            .bg(theme.background)
+            .bg(theme.styles.colors.background)
             .size_full()
             .overflow_scroll()
             .children((0..10).map(|row| {
