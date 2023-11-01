@@ -1,6 +1,6 @@
 use crate::{
     colors::{GitStatusColors, PlayerColors, StatusColors, SystemColors, ThemeColors, ThemeStyle},
-    Appearance, ColorScales, SyntaxStyles, ThemeFamily, ThemeVariant,
+    default_color_scales, Appearance, SyntaxStyles, ThemeFamily, ThemeVariant,
 };
 
 fn zed_pro_daylight() -> ThemeVariant {
@@ -41,7 +41,7 @@ pub fn zed_pro_family() -> ThemeFamily {
         name: "Zed Pro".to_string(),
         author: "Zed Team".to_string(),
         themes: vec![zed_pro_daylight(), zed_pro_moonlight()],
-        scales: ColorScales::default(),
+        scales: default_color_scales(),
     }
 }
 

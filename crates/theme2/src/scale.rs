@@ -1,98 +1,95 @@
-use gpui2::{AppContext, Hsla};
-use indexmap::IndexMap;
+use gpui2::{AppContext, Hsla, SharedString};
 
 use crate::{old_theme, Appearance};
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ColorScaleName {
-    Gray,
-    Mauve,
-    Slate,
-    Sage,
-    Olive,
-    Sand,
-    Gold,
-    Bronze,
-    Brown,
-    Yellow,
-    Amber,
-    Orange,
-    Tomato,
-    Red,
-    Ruby,
-    Crimson,
-    Pink,
-    Plum,
-    Purple,
-    Violet,
-    Iris,
-    Indigo,
-    Blue,
-    Cyan,
-    Teal,
-    Jade,
-    Green,
-    Grass,
-    Lime,
-    Mint,
-    Sky,
-    Black,
-    White,
-}
-
-impl std::fmt::Display for ColorScaleName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Gray => "Gray",
-                Self::Mauve => "Mauve",
-                Self::Slate => "Slate",
-                Self::Sage => "Sage",
-                Self::Olive => "Olive",
-                Self::Sand => "Sand",
-                Self::Gold => "Gold",
-                Self::Bronze => "Bronze",
-                Self::Brown => "Brown",
-                Self::Yellow => "Yellow",
-                Self::Amber => "Amber",
-                Self::Orange => "Orange",
-                Self::Tomato => "Tomato",
-                Self::Red => "Red",
-                Self::Ruby => "Ruby",
-                Self::Crimson => "Crimson",
-                Self::Pink => "Pink",
-                Self::Plum => "Plum",
-                Self::Purple => "Purple",
-                Self::Violet => "Violet",
-                Self::Iris => "Iris",
-                Self::Indigo => "Indigo",
-                Self::Blue => "Blue",
-                Self::Cyan => "Cyan",
-                Self::Teal => "Teal",
-                Self::Jade => "Jade",
-                Self::Green => "Green",
-                Self::Grass => "Grass",
-                Self::Lime => "Lime",
-                Self::Mint => "Mint",
-                Self::Sky => "Sky",
-                Self::Black => "Black",
-                Self::White => "White",
-            }
-        )
-    }
-}
-
 pub type ColorScale = [Hsla; 12];
 
-pub type ColorScales = IndexMap<ColorScaleName, ColorScaleSet>;
+pub struct ColorScales {
+    pub gray: ColorScaleSet,
+    pub mauve: ColorScaleSet,
+    pub slate: ColorScaleSet,
+    pub sage: ColorScaleSet,
+    pub olive: ColorScaleSet,
+    pub sand: ColorScaleSet,
+    pub gold: ColorScaleSet,
+    pub bronze: ColorScaleSet,
+    pub brown: ColorScaleSet,
+    pub yellow: ColorScaleSet,
+    pub amber: ColorScaleSet,
+    pub orange: ColorScaleSet,
+    pub tomato: ColorScaleSet,
+    pub red: ColorScaleSet,
+    pub ruby: ColorScaleSet,
+    pub crimson: ColorScaleSet,
+    pub pink: ColorScaleSet,
+    pub plum: ColorScaleSet,
+    pub purple: ColorScaleSet,
+    pub violet: ColorScaleSet,
+    pub iris: ColorScaleSet,
+    pub indigo: ColorScaleSet,
+    pub blue: ColorScaleSet,
+    pub cyan: ColorScaleSet,
+    pub teal: ColorScaleSet,
+    pub jade: ColorScaleSet,
+    pub green: ColorScaleSet,
+    pub grass: ColorScaleSet,
+    pub lime: ColorScaleSet,
+    pub mint: ColorScaleSet,
+    pub sky: ColorScaleSet,
+    pub black: ColorScaleSet,
+    pub white: ColorScaleSet,
+}
+
+impl IntoIterator for ColorScales {
+    type Item = ColorScaleSet;
+
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        vec![
+            self.gray,
+            self.mauve,
+            self.slate,
+            self.sage,
+            self.olive,
+            self.sand,
+            self.gold,
+            self.bronze,
+            self.brown,
+            self.yellow,
+            self.amber,
+            self.orange,
+            self.tomato,
+            self.red,
+            self.ruby,
+            self.crimson,
+            self.pink,
+            self.plum,
+            self.purple,
+            self.violet,
+            self.iris,
+            self.indigo,
+            self.blue,
+            self.cyan,
+            self.teal,
+            self.jade,
+            self.green,
+            self.grass,
+            self.lime,
+            self.mint,
+            self.sky,
+            self.black,
+            self.white,
+        ]
+        .into_iter()
+    }
+}
 
 /// A one-based step in a [`ColorScale`].
 pub type ColorScaleStep = usize;
 
 pub struct ColorScaleSet {
-    name: ColorScaleName,
+    name: SharedString,
     light: ColorScale,
     dark: ColorScale,
     light_alpha: ColorScale,
@@ -101,14 +98,14 @@ pub struct ColorScaleSet {
 
 impl ColorScaleSet {
     pub fn new(
-        name: ColorScaleName,
+        name: impl Into<SharedString>,
         light: ColorScale,
         light_alpha: ColorScale,
         dark: ColorScale,
         dark_alpha: ColorScale,
     ) -> Self {
         Self {
-            name,
+            name: name.into(),
             light,
             light_alpha,
             dark,
@@ -116,8 +113,8 @@ impl ColorScaleSet {
         }
     }
 
-    pub fn name(&self) -> String {
-        self.name.to_string()
+    pub fn name(&self) -> SharedString {
+        self.name.clone()
     }
 
     pub fn light(&self, step: ColorScaleStep) -> Hsla {

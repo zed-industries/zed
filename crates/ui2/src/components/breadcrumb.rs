@@ -72,7 +72,6 @@ impl Breadcrumb {
 
 #[cfg(feature = "stories")]
 pub use stories::*;
-use theme2::ThemeStyleName;
 
 #[cfg(feature = "stories")]
 mod stories {
