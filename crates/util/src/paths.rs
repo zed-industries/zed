@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use globset::{Glob, GlobMatcher};
 use serde::{Deserialize, Serialize};
 
 lazy_static::lazy_static! {
@@ -186,6 +187,31 @@ impl<P> PathLikeWithPosition<P> {
         } else {
             path_like_string
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PathMatcher {
+    maybe_path: PathBuf,
+    glob: GlobMatcher,
+}
+
+impl std::fmt::Display for PathMatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.maybe_path.to_string_lossy().fmt(f)
+    }
+}
+
+impl PathMatcher {
+    pub fn new(maybe_glob: &str) -> Result<Self, globset::Error> {
+        Ok(PathMatcher {
+            glob: Glob::new(&maybe_glob)?.compile_matcher(),
+            maybe_path: PathBuf::from(maybe_glob),
+        })
+    }
+
+    pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
+        other.as_ref().starts_with(&self.maybe_path) || self.glob.is_match(other)
     }
 }
 

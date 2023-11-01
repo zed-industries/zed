@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncAppContext, ModelHandle};
 use language::language_settings::language_settings;
@@ -11,7 +11,7 @@ use language::{Buffer, Diff};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
-use util::paths::DEFAULT_PRETTIER_DIR;
+use util::paths::{PathMatcher, DEFAULT_PRETTIER_DIR};
 
 pub enum Prettier {
     Real(RealPrettier),
@@ -63,14 +63,77 @@ impl Prettier {
         ".editorconfig",
     ];
 
+    pub async fn locate_prettier_installation(
+        fs: &dyn Fs,
+        installed_prettiers: &HashSet<PathBuf>,
+        locate_from: &Path,
+    ) -> anyhow::Result<Option<PathBuf>> {
+        let mut path_to_check = locate_from
+            .components()
+            .take_while(|component| !is_node_modules(component))
+            .collect::<PathBuf>();
+        let mut project_path_with_prettier_dependency = None;
+        loop {
+            if installed_prettiers.contains(&path_to_check) {
+                return Ok(Some(path_to_check));
+            } else if let Some(package_json_contents) =
+                read_package_json(fs, &path_to_check).await?
+            {
+                if has_prettier_in_package_json(&package_json_contents) {
+                    if has_prettier_in_node_modules(fs, &path_to_check).await? {
+                        return Ok(Some(path_to_check));
+                    } else if project_path_with_prettier_dependency.is_none() {
+                        project_path_with_prettier_dependency = Some(path_to_check.clone());
+                    }
+                } else {
+                    match package_json_contents.get("workspaces") {
+                        Some(serde_json::Value::Array(workspaces)) => {
+                            match &project_path_with_prettier_dependency {
+                                Some(project_path_with_prettier_dependency) => {
+                                    let subproject_path = project_path_with_prettier_dependency.strip_prefix(&path_to_check).expect("traversing path parents, should be able to strip prefix");
+                                    if workspaces.iter().filter_map(|value| {
+                                        if let serde_json::Value::String(s) = value {
+                                            Some(s.clone())
+                                        } else {
+                                            log::warn!("Skipping non-string 'workspaces' value: {value:?}");
+                                            None
+                                        }
+                                    }).any(|workspace_definition| {
+                                        if let Some(path_matcher) = PathMatcher::new(&workspace_definition).ok() {
+                                            path_matcher.is_match(subproject_path)
+                                        } else {
+                                            workspace_definition == subproject_path.to_string_lossy()
+                                        }
+                                    }) {
+                                        return Ok(Some(path_to_check));
+                                    } else {
+                                        log::warn!("Skipping path {path_to_check:?} that has prettier in its 'node_modules' subdirectory, but is not included in its package.json workspaces {workspaces:?}");
+                                    }
+                                }
+                                None => {
+                                    log::warn!("Skipping path {path_to_check:?} that has prettier in its 'node_modules' subdirectory, but has no prettier in its package.json");
+                                }
+                            }
+                        },
+                        Some(unknown) => log::error!("Failed to parse workspaces for {path_to_check:?} from package.json, got {unknown:?}. Skipping."),
+                        None => log::warn!("Skipping path {path_to_check:?} that has no prettier dependency and no workspaces section in its package.json"),
+                    }
+                }
+            }
+
+            if !path_to_check.pop() {
+                match project_path_with_prettier_dependency {
+                    Some(closest_prettier_discovered) => anyhow::bail!("No prettier found in ancestors of {locate_from:?}, but discovered prettier package.json dependency in {closest_prettier_discovered:?}"),
+                    None => return Ok(None),
+                }
+            }
+        }
+    }
+
     pub async fn locate(
         starting_path: Option<LocateStart>,
         fs: Arc<dyn Fs>,
     ) -> anyhow::Result<PathBuf> {
-        fn is_node_modules(path_component: &std::path::Component<'_>) -> bool {
-            path_component.as_os_str().to_string_lossy() == "node_modules"
-        }
-
         let paths_to_check = match starting_path.as_ref() {
             Some(starting_path) => {
                 let worktree_root = starting_path
@@ -106,7 +169,7 @@ impl Prettier {
             None => Vec::new(),
         };
 
-        match find_closest_prettier_dir(paths_to_check, fs.as_ref())
+        match find_closest_prettier_dir(fs.as_ref(), paths_to_check)
             .await
             .with_context(|| format!("finding prettier starting with {starting_path:?}"))?
         {
@@ -350,9 +413,62 @@ impl Prettier {
     }
 }
 
-async fn find_closest_prettier_dir(
-    paths_to_check: Vec<PathBuf>,
+async fn has_prettier_in_node_modules(fs: &dyn Fs, path: &Path) -> anyhow::Result<bool> {
+    let possible_node_modules_location = path.join("node_modules").join(PRETTIER_PACKAGE_NAME);
+    if let Some(node_modules_location_metadata) = fs
+        .metadata(&possible_node_modules_location)
+        .await
+        .with_context(|| format!("fetching metadata for {possible_node_modules_location:?}"))?
+    {
+        return Ok(node_modules_location_metadata.is_dir);
+    }
+    Ok(false)
+}
+
+async fn read_package_json(
     fs: &dyn Fs,
+    path: &Path,
+) -> anyhow::Result<Option<HashMap<String, serde_json::Value>>> {
+    let possible_package_json = path.join("package.json");
+    if let Some(package_json_metadata) = fs
+        .metadata(&possible_package_json)
+        .await
+        .with_context(|| format!("Fetching metadata for {possible_package_json:?}"))?
+    {
+        if !package_json_metadata.is_dir && !package_json_metadata.is_symlink {
+            let package_json_contents = fs
+                .load(&possible_package_json)
+                .await
+                .with_context(|| format!("reading {possible_package_json:?} file contents"))?;
+            return serde_json::from_str::<HashMap<String, serde_json::Value>>(
+                &package_json_contents,
+            )
+            .map(Some)
+            .with_context(|| format!("parsing {possible_package_json:?} file contents"));
+        }
+    }
+    Ok(None)
+}
+
+fn has_prettier_in_package_json(
+    package_json_contents: &HashMap<String, serde_json::Value>,
+) -> bool {
+    if let Some(serde_json::Value::Object(o)) = package_json_contents.get("dependencies") {
+        if o.contains_key(PRETTIER_PACKAGE_NAME) {
+            return true;
+        }
+    }
+    if let Some(serde_json::Value::Object(o)) = package_json_contents.get("devDependencies") {
+        if o.contains_key(PRETTIER_PACKAGE_NAME) {
+            return true;
+        }
+    }
+    false
+}
+
+async fn find_closest_prettier_dir(
+    fs: &dyn Fs,
+    paths_to_check: Vec<PathBuf>,
 ) -> anyhow::Result<Option<PathBuf>> {
     for path in paths_to_check {
         let possible_package_json = path.join("package.json");
@@ -435,4 +551,266 @@ impl lsp::request::Request for ClearCache {
     type Params = ();
     type Result = ();
     const METHOD: &'static str = "prettier/clear_cache";
+}
+
+#[cfg(test)]
+mod tests {
+    use fs::FakeFs;
+    use serde_json::json;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_prettier_lookup_finds_nothing(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root",
+            json!({
+                ".config": {
+                    "zed": {
+                        "settings.json": r#"{ "formatter": "auto" }"#,
+                    },
+                },
+                "work": {
+                    "project": {
+                        "src": {
+                            "index.js": "// index.js file contents",
+                        },
+                        "node_modules": {
+                            "expect": {
+                                "build": {
+                                    "print.js": "// print.js file contents",
+                                },
+                                "package.json": r#"{
+                                    "devDependencies": {
+                                        "prettier": "2.5.1"
+                                    }
+                                }"#,
+                            },
+                            "prettier": {
+                                "index.js": "// Dummy prettier package file",
+                            },
+                        },
+                        "package.json": r#"{}"#
+                    },
+                }
+            }),
+        )
+        .await;
+
+        assert!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/.config/zed/settings.json"),
+            )
+            .await
+            .unwrap()
+            .is_none(),
+            "Should successfully find no prettier for path hierarchy without it"
+        );
+        assert!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/work/project/src/index.js")
+            )
+            .await
+            .unwrap()
+            .is_none(),
+            "Should successfully find no prettier for path hierarchy that has node_modules with prettier, but no package.json mentions of it"
+        );
+        assert!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/work/project/node_modules/expect/build/print.js")
+            )
+            .await
+            .unwrap()
+            .is_none(),
+            "Even though it has package.json with prettier in it and no prettier on node_modules along the path, nothing should fail since declared inside node_modules"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_prettier_lookup_in_simple_npm_projects(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "web_blog": {
+                    "node_modules": {
+                        "prettier": {
+                            "index.js": "// Dummy prettier package file",
+                        },
+                        "expect": {
+                            "build": {
+                                "print.js": "// print.js file contents",
+                            },
+                            "package.json": r#"{
+                                "devDependencies": {
+                                    "prettier": "2.5.1"
+                                }
+                            }"#,
+                        },
+                    },
+                    "pages": {
+                        "[slug].tsx": "// [slug].tsx file contents",
+                    },
+                    "package.json": r#"{
+                        "devDependencies": {
+                            "prettier": "2.3.0"
+                        },
+                        "prettier": {
+                            "semi": false,
+                            "printWidth": 80,
+                            "htmlWhitespaceSensitivity": "strict",
+                            "tabWidth": 4
+                        }
+                    }"#
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/web_blog/pages/[slug].tsx")
+            )
+            .await
+            .unwrap(),
+            Some(PathBuf::from("/root/web_blog")),
+            "Should find a preinstalled prettier in the project root"
+        );
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/web_blog/node_modules/expect/build/print.js")
+            )
+            .await
+            .unwrap(),
+            Some(PathBuf::from("/root/web_blog")),
+            "Should find a preinstalled prettier in the project root even for node_modules files"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_prettier_lookup_for_not_installed(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "work": {
+                    "web_blog": {
+                        "pages": {
+                            "[slug].tsx": "// [slug].tsx file contents",
+                        },
+                        "package.json": r#"{
+                            "devDependencies": {
+                                "prettier": "2.3.0"
+                            },
+                            "prettier": {
+                                "semi": false,
+                                "printWidth": 80,
+                                "htmlWhitespaceSensitivity": "strict",
+                                "tabWidth": 4
+                            }
+                        }"#
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let path = "/root/work/web_blog/node_modules/pages/[slug].tsx";
+        match Prettier::locate_prettier_installation(
+            fs.as_ref(),
+            &HashSet::default(),
+            Path::new(path)
+        )
+        .await {
+            Ok(path) => panic!("Expected to fail for prettier in package.json but not in node_modules found, but got path {path:?}"),
+            Err(e) => {
+                let message = e.to_string();
+                assert!(message.contains(path), "Error message should mention which start file was used for location");
+                assert!(message.contains("/root/work/web_blog"), "Error message should mention potential candidates without prettier node_modules contents");
+            },
+        };
+
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::from_iter(
+                    [PathBuf::from("/root"), PathBuf::from("/root/work")].into_iter()
+                ),
+                Path::new("/root/work/web_blog/node_modules/pages/[slug].tsx")
+            )
+            .await
+            .unwrap(),
+            Some(PathBuf::from("/root/work")),
+            "Should return first cached value found without path checks"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_prettier_lookup_in_npm_workspaces(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "work": {
+                    "full-stack-foundations": {
+                        "exercises": {
+                            "03.loading": {
+                                "01.problem.loader": {
+                                    "app": {
+                                        "routes": {
+                                            "users+": {
+                                                "$username_+": {
+                                                    "notes.tsx": "// notes.tsx file contents",
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "node_modules": {},
+                                    "package.json": r#"{
+                                        "devDependencies": {
+                                            "prettier": "^3.0.3"
+                                        }
+                                    }"#
+                                },
+                            },
+                        },
+                        "package.json": r#"{
+                            "workspaces": ["exercises/*/*", "examples/*"]
+                        }"#,
+                        "node_modules": {
+                            "prettier": {
+                                "index.js": "// Dummy prettier package file",
+                            },
+                        },
+                    },
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/work/full-stack-foundations/exercises/03.loading/01.problem.loader/app/routes/users+/$username_+/notes.tsx"),
+            ).await.unwrap(),
+            Some(PathBuf::from("/root/work/full-stack-foundations")),
+            "Should ascend to the multi-workspace root and find the prettier there",
+        );
+    }
+}
+
+fn is_node_modules(path_component: &std::path::Component<'_>) -> bool {
+    path_component.as_os_str().to_string_lossy() == "node_modules"
 }

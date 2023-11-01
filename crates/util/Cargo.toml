@@ -14,6 +14,7 @@ test-support = ["tempdir", "git2"]
 [dependencies]
 anyhow.workspace = true
 backtrace = "0.3"
+globset.workspace = true
 log.workspace = true
 lazy_static.workspace = true
 futures.workspace = true
