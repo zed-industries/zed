@@ -98,6 +98,10 @@ pub struct WeakView<V> {
 }
 
 impl<V: 'static> WeakView<V> {
+    pub fn entity_id(&self) -> EntityId {
+        self.model.entity_id
+    }
+
     pub fn upgrade(&self) -> Option<View<V>> {
         Entity::upgrade_from(self)
     }

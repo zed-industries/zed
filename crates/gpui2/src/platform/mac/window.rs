@@ -3,8 +3,8 @@ use crate::{
     display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, ExternalPaths,
     FileDropEvent, ForegroundExecutor, GlobalPixels, InputEvent, KeyDownEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, Scene,
-    Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions, WindowPromptLevel,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    PromptLevel, Scene, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -742,12 +742,7 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().input_handler = Some(input_handler);
     }
 
-    fn prompt(
-        &self,
-        level: WindowPromptLevel,
-        msg: &str,
-        answers: &[&str],
-    ) -> oneshot::Receiver<usize> {
+    fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize> {
         // macOs applies overrides to modal window buttons after they are added.
         // Two most important for this logic are:
         // * Buttons with "Cancel" title will be displayed as the last buttons in the modal
@@ -777,9 +772,9 @@ impl PlatformWindow for MacWindow {
             let alert: id = msg_send![class!(NSAlert), alloc];
             let alert: id = msg_send![alert, init];
             let alert_style = match level {
-                WindowPromptLevel::Info => 1,
-                WindowPromptLevel::Warning => 0,
-                WindowPromptLevel::Critical => 2,
+                PromptLevel::Info => 1,
+                PromptLevel::Warning => 0,
+                PromptLevel::Critical => 2,
             };
             let _: () = msg_send![alert, setAlertStyle: alert_style];
             let _: () = msg_send![alert, setMessageText: ns_string(msg)];

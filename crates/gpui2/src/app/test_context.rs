@@ -87,15 +87,6 @@ impl TestAppContext {
         cx.update(f)
     }
 
-    pub fn update_window<R>(
-        &self,
-        handle: AnyWindowHandle,
-        update: impl FnOnce(AnyView, &mut WindowContext) -> R,
-    ) -> R {
-        let mut app = self.app.borrow_mut();
-        app.update_window(handle, update).unwrap()
-    }
-
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
