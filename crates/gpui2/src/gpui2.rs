@@ -74,34 +74,30 @@ use taffy::TaffyLayoutEngine;
 type AnyBox = Box<dyn Any>;
 
 pub trait Context {
-    type WindowContext<'a>: UpdateView;
-    type ModelContext<'a, T>;
     type Result<T>;
 
     fn build_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>>;
 
     fn update_model<T, R>(
         &mut self,
         handle: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> Self::Result<R>
     where
         T: 'static;
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T;
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T;
 }
 
 pub trait VisualContext: Context {
-    type ViewContext<'a, V: 'static>;
-
     fn build_view<V>(
         &mut self,
-        build_view: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
+        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static;
@@ -109,25 +105,15 @@ pub trait VisualContext: Context {
     fn update_view<V: 'static, R>(
         &mut self,
         view: &View<V>,
-        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> Self::Result<R>;
 
     fn replace_root_view<V>(
         &mut self,
-        build_view: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
+        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Send + Render;
-}
-
-pub trait UpdateView {
-    type ViewContext<'a, V: 'static>;
-
-    fn update_view<V: 'static, R>(
-        &mut self,
-        view: &View<V>,
-        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, V>) -> R,
-    ) -> R;
 }
 
 pub trait Entity<T>: Sealed {

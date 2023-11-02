@@ -15,13 +15,11 @@ pub struct TestAppContext {
 }
 
 impl Context for TestAppContext {
-    type WindowContext<'a> = WindowContext<'a>;
-    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
     fn build_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>>
     where
         T: 'static,
@@ -33,7 +31,7 @@ impl Context for TestAppContext {
     fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         let mut app = self.app.borrow_mut();
         app.update_model(handle, update)
@@ -41,7 +39,7 @@ impl Context for TestAppContext {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
     {
         let mut lock = self.app.borrow_mut();
         lock.update_window(window, f)

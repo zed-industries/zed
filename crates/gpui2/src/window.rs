@@ -7,7 +7,7 @@ use crate::{
     MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad,
     Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder,
     Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task, Underline,
-    UnderlineStyle, UpdateView, View, VisualContext, WeakView, WindowOptions, SUBPIXEL_VARIANTS,
+    UnderlineStyle, View, VisualContext, WeakView, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -1233,13 +1233,11 @@ impl<'a> WindowContext<'a> {
 }
 
 impl Context for WindowContext<'_> {
-    type WindowContext<'a> = WindowContext<'a>;
-    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
     fn build_model<T>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Model<T>
     where
         T: 'static,
@@ -1252,7 +1250,7 @@ impl Context for WindowContext<'_> {
     fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> R {
         let mut entity = self.entities.lease(model);
         let result = update(
@@ -1265,7 +1263,7 @@ impl Context for WindowContext<'_> {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
     {
         if window == self.window.handle {
             let root_view = self.window.root_view.clone().unwrap();
@@ -1277,11 +1275,9 @@ impl Context for WindowContext<'_> {
 }
 
 impl VisualContext for WindowContext<'_> {
-    type ViewContext<'a, V: 'static> = ViewContext<'a, V>;
-
     fn build_view<V>(
         &mut self,
-        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
+        build_view_state: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static,
@@ -1300,7 +1296,7 @@ impl VisualContext for WindowContext<'_> {
     fn update_view<T: 'static, R>(
         &mut self,
         view: &View<T>,
-        update: impl FnOnce(&mut T, &mut Self::ViewContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ViewContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         let mut lease = self.app.entities.lease(&view.model);
         let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
@@ -1311,7 +1307,7 @@ impl VisualContext for WindowContext<'_> {
 
     fn replace_root_view<V>(
         &mut self,
-        build_view: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
+        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Send + Render,
@@ -1325,18 +1321,6 @@ impl VisualContext for WindowContext<'_> {
         self.entities.insert(slot, entity);
         self.window.root_view = Some(view.clone().into());
         view
-    }
-}
-
-impl UpdateView for WindowContext<'_> {
-    type ViewContext<'a, V: 'static> = ViewContext<'a, V>;
-
-    fn update_view<V: 'static, R>(
-        &mut self,
-        view: &View<V>,
-        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, V>) -> R,
-    ) -> R {
-        VisualContext::update_view(self, view, update)
     }
 }
 
@@ -1882,13 +1866,11 @@ where
 }
 
 impl<V> Context for ViewContext<'_, V> {
-    type WindowContext<'a> = WindowContext<'a>;
-    type ModelContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
     fn build_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Model<T> {
         self.window_cx.build_model(build_model)
     }
@@ -1896,25 +1878,23 @@ impl<V> Context for ViewContext<'_, V> {
     fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> R {
         self.window_cx.update_model(model, update)
     }
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
     {
         self.window_cx.update_window(window, update)
     }
 }
 
 impl<V: 'static> VisualContext for ViewContext<'_, V> {
-    type ViewContext<'a, W: 'static> = ViewContext<'a, W>;
-
     fn build_view<W: 'static>(
         &mut self,
-        build_view: impl FnOnce(&mut Self::ViewContext<'_, W>) -> W,
+        build_view: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>> {
         self.window_cx.build_view(build_view)
     }
@@ -1922,14 +1902,14 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
     fn update_view<V2: 'static, R>(
         &mut self,
         view: &View<V2>,
-        update: impl FnOnce(&mut V2, &mut Self::ViewContext<'_, V2>) -> R,
+        update: impl FnOnce(&mut V2, &mut ViewContext<'_, V2>) -> R,
     ) -> Self::Result<R> {
         VisualContext::update_view(&mut self.window_cx, view, update)
     }
 
     fn replace_root_view<W>(
         &mut self,
-        build_view: impl FnOnce(&mut Self::ViewContext<'_, W>) -> W,
+        build_view: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>>
     where
         W: 'static + Send + Render,
@@ -1983,7 +1963,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     pub fn update<C, R>(
         self,
         cx: &mut C,
-        update: impl FnOnce(&mut V, &mut <C::WindowContext<'_> as UpdateView>::ViewContext<'_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> Result<R>
     where
         C: Context,
@@ -1992,7 +1972,6 @@ impl<V: 'static + Render> WindowHandle<V> {
             let view = root_view
                 .downcast::<V>()
                 .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
-
             Ok(cx.update_view(&view, update))
         })?
     }
@@ -2054,7 +2033,7 @@ impl AnyWindowHandle {
     pub fn update<C, R>(
         self,
         cx: &mut C,
-        update: impl FnOnce(AnyView, &mut C::WindowContext<'_>) -> R,
+        update: impl FnOnce(AnyView, &mut WindowContext<'_>) -> R,
     ) -> Result<R>
     where
         C: Context,

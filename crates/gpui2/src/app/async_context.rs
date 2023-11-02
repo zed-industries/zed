@@ -14,13 +14,11 @@ pub struct AsyncAppContext {
 }
 
 impl Context for AsyncAppContext {
-    type WindowContext<'a> = WindowContext<'a>;
-    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = Result<T>;
 
     fn build_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>>
     where
         T: 'static,
@@ -36,7 +34,7 @@ impl Context for AsyncAppContext {
     fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         let app = self
             .app
@@ -48,7 +46,7 @@ impl Context for AsyncAppContext {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
     {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.borrow_mut();
@@ -200,14 +198,11 @@ impl AsyncWindowContext {
 }
 
 impl Context for AsyncWindowContext {
-    type WindowContext<'a> = WindowContext<'a>;
-    type ModelContext<'a, T> = ModelContext<'a, T>;
-
     type Result<T> = Result<T>;
 
     fn build_model<T>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Result<Model<T>>
     where
         T: 'static,
@@ -219,7 +214,7 @@ impl Context for AsyncWindowContext {
     fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> Result<R> {
         self.window
             .update(self, |_, cx| cx.update_model(handle, update))
@@ -227,18 +222,16 @@ impl Context for AsyncWindowContext {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
     {
         self.app.update_window(window, update)
     }
 }
 
 impl VisualContext for AsyncWindowContext {
-    type ViewContext<'a, V: 'static> = ViewContext<'a, V>;
-
     fn build_view<V>(
         &mut self,
-        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
+        build_view_state: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static,
@@ -250,7 +243,7 @@ impl VisualContext for AsyncWindowContext {
     fn update_view<V: 'static, R>(
         &mut self,
         view: &View<V>,
-        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> Self::Result<R> {
         self.window
             .update(self, |_, cx| cx.update_view(view, update))
@@ -258,7 +251,7 @@ impl VisualContext for AsyncWindowContext {
 
     fn replace_root_view<V>(
         &mut self,
-        build_view: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
+        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Send + Render,

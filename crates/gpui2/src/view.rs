@@ -53,7 +53,7 @@ impl<V: 'static> View<V> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        f: impl FnOnce(&mut V, &mut C::ViewContext<'_, V>) -> R,
+        f: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> C::Result<R>
     where
         C: VisualContext,
@@ -152,7 +152,7 @@ impl<V: 'static> WeakView<V> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        f: impl FnOnce(&mut V, &mut C::ViewContext<'_, V>) -> R,
+        f: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> Result<R>
     where
         C: VisualContext,

@@ -753,8 +753,6 @@ impl AppContext {
 }
 
 impl Context for AppContext {
-    type WindowContext<'a> = WindowContext<'a>;
-    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
     /// Build an entity that is owned by the application. The given function will be invoked with
@@ -762,7 +760,7 @@ impl Context for AppContext {
     /// which can be used to access the entity in a context.
     fn build_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Model<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
@@ -776,7 +774,7 @@ impl Context for AppContext {
     fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> R {
         self.update(|cx| {
             let mut entity = cx.entities.lease(model);
@@ -788,7 +786,7 @@ impl Context for AppContext {
 
     fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
     {
         self.update(|cx| {
             let mut window = cx

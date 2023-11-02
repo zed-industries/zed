@@ -213,13 +213,11 @@ where
 }
 
 impl<'a, T> Context for ModelContext<'a, T> {
-    type WindowContext<'b> = WindowContext<'b>;
-    type ModelContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
     fn build_model<U: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, U>) -> U,
+        build_model: impl FnOnce(&mut ModelContext<'_, U>) -> U,
     ) -> Model<U> {
         self.app.build_model(build_model)
     }
@@ -227,14 +225,14 @@ impl<'a, T> Context for ModelContext<'a, T> {
     fn update_model<U: 'static, R>(
         &mut self,
         handle: &Model<U>,
-        update: impl FnOnce(&mut U, &mut Self::ModelContext<'_, U>) -> R,
+        update: impl FnOnce(&mut U, &mut ModelContext<'_, U>) -> R,
     ) -> R {
         self.app.update_model(handle, update)
     }
 
     fn update_window<R, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<R>
     where
-        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> R,
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> R,
     {
         self.app.update_window(window, update)
     }
