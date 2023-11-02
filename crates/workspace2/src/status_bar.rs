@@ -1,7 +1,11 @@
 use std::any::TypeId;
 
 use crate::{ItemHandle, Pane};
-use gpui2::{AnyView, Render, Subscription, View, ViewContext, WindowContext};
+use gpui2::{
+    div, AnyView, Component, Div, Element, ParentElement, Render, Styled, Subscription, View,
+    ViewContext, WindowContext,
+};
+use theme2::ActiveTheme;
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
@@ -27,6 +31,41 @@ pub struct StatusBar {
     right_items: Vec<Box<dyn StatusItemViewHandle>>,
     active_pane: View<Pane>,
     _observe_active_pane: Subscription,
+}
+
+impl Render for StatusBar {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        div()
+            .py_0p5()
+            .px_1()
+            .flex()
+            .items_center()
+            .justify_between()
+            .w_full()
+            .bg(cx.theme().colors().status_bar)
+            .child(self.render_left_tools(cx))
+            .child(self.render_right_tools(cx))
+    }
+}
+
+impl StatusBar {
+    fn render_left_tools(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .children(self.left_items.iter().map(|item| item.to_any()))
+    }
+
+    fn render_right_tools(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .children(self.right_items.iter().map(|item| item.to_any()))
+    }
 }
 
 // todo!()

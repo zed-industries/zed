@@ -1,7 +1,7 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui2::{
-    Action, AnyView, AppContext, Div, Entity, EntityId, EventEmitter, Render, Subscription, View,
-    ViewContext, WeakView, WindowContext,
+    div, Action, AnyView, AppContext, Div, Entity, EntityId, EventEmitter, ParentElement, Render,
+    Subscription, View, ViewContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -605,8 +605,13 @@ impl EventEmitter for PanelButtons {
 impl Render for PanelButtons {
     type Element = Div<Self>;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        todo!()
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let dock = self.dock.read(cx);
+        div().children(
+            dock.panel_entries
+                .iter()
+                .map(|panel| panel.panel.persistent_name(cx)),
+        )
     }
 }
 

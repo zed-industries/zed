@@ -555,7 +555,7 @@ pub struct Workspace {
     active_pane: View<Pane>,
     last_active_center_pane: Option<WeakView<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
-    //     status_bar: View<StatusBar>,
+    status_bar: View<StatusBar>,
     //     titlebar_item: Option<AnyViewHandle>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
@@ -704,7 +704,7 @@ impl Workspace {
             cx.build_view(|cx| PanelButtons::new(bottom_dock.clone(), weak_handle.clone(), cx));
         let right_dock_buttons =
             cx.build_view(|cx| PanelButtons::new(right_dock.clone(), weak_handle.clone(), cx));
-        let _status_bar = cx.build_view(|cx| {
+        let status_bar = cx.build_view(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
             status_bar.add_left_item(left_dock_buttons, cx);
             status_bar.add_right_item(right_dock_buttons, cx);
@@ -771,7 +771,7 @@ impl Workspace {
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.downgrade()),
             last_active_view_id: None,
-            // status_bar,
+            status_bar,
             // titlebar_item: None,
             notifications: Default::default(),
             left_dock,
@@ -3856,7 +3856,7 @@ impl Render for Workspace {
                        //     .filter(|_| self.is_assistant_panel_open()),
                        // ),
             )
-            // .child(StatusBar::new())
+            .child(self.status_bar.clone())
             // .when(self.debug.show_toast, |this| {
             //     this.child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))
             // })
