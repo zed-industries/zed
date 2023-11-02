@@ -37,8 +37,6 @@ impl<V: 'static> Toast<V> {
     }
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
-
         let mut div = div();
 
         if self.origin == ToastOrigin::Bottom {
@@ -56,7 +54,7 @@ impl<V: 'static> Toast<V> {
             .rounded_lg()
             .shadow_md()
             .overflow_hidden()
-            .bg(theme.elevated_surface)
+            .bg(cx.theme().colors().elevated_surface)
             .children(self.children)
     }
 }

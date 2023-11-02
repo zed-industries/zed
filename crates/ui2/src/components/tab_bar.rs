@@ -24,15 +24,13 @@ impl TabBar {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
-
         let (can_navigate_back, can_navigate_forward) = self.can_navigate;
 
         div()
             .id(self.id.clone())
             .w_full()
             .flex()
-            .bg(theme.tab_bar)
+            .bg(cx.theme().colors().tab_bar)
             // Left Side
             .child(
                 div()

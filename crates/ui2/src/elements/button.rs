@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use gpui2::{div, DefiniteLength, Hsla, MouseButton, WindowContext};
+use gpui2::{div, rems, DefiniteLength, Hsla, MouseButton, WindowContext};
 
-use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor};
-use crate::{prelude::*, LineHeightStyle};
+use crate::prelude::*;
+use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor, LineHeightStyle};
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum IconPosition {
@@ -21,29 +21,23 @@ pub enum ButtonVariant {
 
 impl ButtonVariant {
     pub fn bg_color(&self, cx: &mut WindowContext) -> Hsla {
-        let theme = theme(cx);
-
         match self {
-            ButtonVariant::Ghost => theme.ghost_element,
-            ButtonVariant::Filled => theme.filled_element,
+            ButtonVariant::Ghost => cx.theme().colors().ghost_element,
+            ButtonVariant::Filled => cx.theme().colors().element,
         }
     }
 
     pub fn bg_color_hover(&self, cx: &mut WindowContext) -> Hsla {
-        let theme = theme(cx);
-
         match self {
-            ButtonVariant::Ghost => theme.ghost_element_hover,
-            ButtonVariant::Filled => theme.filled_element_hover,
+            ButtonVariant::Ghost => cx.theme().colors().ghost_element_hover,
+            ButtonVariant::Filled => cx.theme().colors().element_hover,
         }
     }
 
     pub fn bg_color_active(&self, cx: &mut WindowContext) -> Hsla {
-        let theme = theme(cx);
-
         match self {
-            ButtonVariant::Ghost => theme.ghost_element_active,
-            ButtonVariant::Filled => theme.filled_element_active,
+            ButtonVariant::Ghost => cx.theme().colors().ghost_element_active,
+            ButtonVariant::Filled => cx.theme().colors().element_active,
         }
     }
 }
@@ -157,7 +151,7 @@ impl<V: 'static> Button<V> {
             .relative()
             .id(SharedString::from(format!("{}", self.label)))
             .p_1()
-            .text_size(ui_size(cx, 1.))
+            .text_size(rems(1.))
             .rounded_md()
             .bg(self.variant.bg_color(cx))
             .hover(|style| style.bg(self.variant.bg_color_hover(cx)))
@@ -204,7 +198,7 @@ impl<V: 'static> ButtonGroup<V> {
     }
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let mut el = h_stack().text_size(ui_size(cx, 1.));
+        let mut el = h_stack().text_size(rems(1.));
 
         for button in self.buttons {
             el = el.child(button.render(_view, cx));

@@ -1,4 +1,4 @@
-use gpui2::{svg, Hsla};
+use gpui2::{rems, svg, Hsla};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -26,13 +26,14 @@ pub enum IconColor {
 
 impl IconColor {
     pub fn color(self, cx: &WindowContext) -> Hsla {
-        let theme = theme(cx);
+        let theme_colors = cx.theme().colors();
+
         match self {
-            IconColor::Default => gpui2::red(),
-            IconColor::Muted => gpui2::red(),
-            IconColor::Disabled => gpui2::red(),
-            IconColor::Placeholder => gpui2::red(),
-            IconColor::Accent => gpui2::red(),
+            IconColor::Default => theme_colors.icon,
+            IconColor::Muted => theme_colors.icon_muted,
+            IconColor::Disabled => theme_colors.icon_disabled,
+            IconColor::Placeholder => theme_colors.icon_placeholder,
+            IconColor::Accent => theme_colors.icon_accent,
             IconColor::Error => gpui2::red(),
             IconColor::Warning => gpui2::red(),
             IconColor::Success => gpui2::red(),
@@ -174,8 +175,8 @@ impl IconElement {
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let fill = self.color.color(cx);
         let svg_size = match self.size {
-            IconSize::Small => ui_size(cx, 12. / 14.),
-            IconSize::Medium => ui_size(cx, 15. / 14.),
+            IconSize::Small => rems(0.75),
+            IconSize::Medium => rems(0.9375),
         };
 
         svg()

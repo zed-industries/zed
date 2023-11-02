@@ -87,7 +87,6 @@ impl Tab {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
         let has_fs_conflict = self.fs_status == FileSystemStatus::Conflict;
         let is_deleted = self.fs_status == FileSystemStatus::Deleted;
 
@@ -110,14 +109,14 @@ impl Tab {
 
         let (tab_bg, tab_hover_bg, tab_active_bg) = match self.current {
             true => (
-                theme.ghost_element,
-                theme.ghost_element_hover,
-                theme.ghost_element_active,
+                cx.theme().colors().ghost_element,
+                cx.theme().colors().ghost_element_hover,
+                cx.theme().colors().ghost_element_active,
             ),
             false => (
-                theme.filled_element,
-                theme.filled_element_hover,
-                theme.filled_element_active,
+                cx.theme().colors().element,
+                cx.theme().colors().element_hover,
+                cx.theme().colors().element_active,
             ),
         };
 

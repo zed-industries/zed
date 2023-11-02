@@ -60,15 +60,13 @@ impl Key {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
-
         div()
             .px_2()
             .py_0()
             .rounded_md()
             .text_sm()
-            .text_color(theme.text)
-            .bg(theme.filled_element)
+            .text_color(cx.theme().colors().text)
+            .bg(cx.theme().colors().element)
             .child(self.key.clone())
     }
 }

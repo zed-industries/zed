@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui2::MouseButton;
+use gpui2::{rems, MouseButton};
 
 use crate::{h_stack, prelude::*};
 use crate::{ClickHandler, Icon, IconColor, IconElement};
@@ -66,8 +66,6 @@ impl<V: 'static> IconButton<V> {
     }
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
-
         let icon_color = match (self.state, self.color) {
             (InteractionState::Disabled, _) => IconColor::Disabled,
             _ => self.color,
@@ -75,14 +73,14 @@ impl<V: 'static> IconButton<V> {
 
         let (bg_color, bg_hover_color, bg_active_color) = match self.variant {
             ButtonVariant::Filled => (
-                theme.filled_element,
-                theme.filled_element_hover,
-                theme.filled_element_active,
+                cx.theme().colors().element,
+                cx.theme().colors().element_hover,
+                cx.theme().colors().element_active,
             ),
             ButtonVariant::Ghost => (
-                theme.ghost_element,
-                theme.ghost_element_hover,
-                theme.ghost_element_active,
+                cx.theme().colors().ghost_element,
+                cx.theme().colors().ghost_element_hover,
+                cx.theme().colors().ghost_element_active,
             ),
         };
 
@@ -90,8 +88,8 @@ impl<V: 'static> IconButton<V> {
             .id(self.id.clone())
             .justify_center()
             .rounded_md()
-            .py(ui_size(cx, 0.25))
-            .px(ui_size(cx, 6. / 14.))
+            .py(rems(0.21875))
+            .px(rems(0.375))
             .bg(bg_color)
             .hover(|style| style.bg(bg_hover_color))
             .active(|style| style.bg(bg_active_color))
