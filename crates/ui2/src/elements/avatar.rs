@@ -62,6 +62,9 @@ mod stories {
                     "https://avatars.githubusercontent.com/u/326587?v=4",
                 ))
                 // .child(Avatar::new(
+                //     "https://avatars.githubusercontent.com/u/326587?v=4",
+                // ))
+                // .child(Avatar::new(
                 //     "https://avatars.githubusercontent.com/u/482957?v=4",
                 // ))
                 // .child(Avatar::new(

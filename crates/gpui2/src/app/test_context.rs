@@ -24,7 +24,7 @@ impl Context for TestAppContext {
     where
         T: 'static,
     {
-        let mut app = self.app.borrow_mut("test_context.rs::build_model");
+        let mut app = self.app.borrow_mut();
         app.build_model(build_model)
     }
 
@@ -33,7 +33,7 @@ impl Context for TestAppContext {
         handle: &Model<T>,
         update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
-        let mut app = self.app.borrow_mut("test_context::update_model");
+        let mut app = self.app.borrow_mut();
         app.update_model(handle, update)
     }
 
@@ -41,7 +41,7 @@ impl Context for TestAppContext {
     where
         F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
     {
-        let mut lock = self.app.borrow_mut("test_context::update_window");
+        let mut lock = self.app.borrow_mut();
         lock.update_window(window, f)
     }
 }
@@ -65,11 +65,11 @@ impl TestAppContext {
     }
 
     pub fn quit(&self) {
-        self.app.borrow_mut("test_context.rs::quit").quit();
+        self.app.borrow_mut().quit();
     }
 
     pub fn refresh(&mut self) -> Result<()> {
-        let mut app = self.app.borrow_mut("test_context.rs::refresh");
+        let mut app = self.app.borrow_mut();
         app.refresh();
         Ok(())
     }
@@ -83,7 +83,7 @@ impl TestAppContext {
     }
 
     pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> R {
-        let mut cx = self.app.borrow_mut("test_context::update");
+        let mut cx = self.app.borrow_mut();
         cx.update(f)
     }
 
@@ -117,7 +117,7 @@ impl TestAppContext {
         &mut self,
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
     ) -> R {
-        let mut lock = self.app.borrow_mut("test_context.rs::update_global");
+        let mut lock = self.app.borrow_mut();
         lock.update_global(update)
     }
 

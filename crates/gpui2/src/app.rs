@@ -47,10 +47,10 @@ impl AppCell {
         AppRef(self.app.borrow())
     }
 
-    pub fn borrow_mut(&self, label: &str) -> AppRefMut {
+    pub fn borrow_mut(&self) -> AppRefMut {
         let thread_id = std::thread::current().id();
 
-        eprintln!(">>> borrowing {thread_id:?}: {label}");
+        eprintln!(">>> borrowing {thread_id:?}");
         AppRefMut(self.app.borrow_mut())
     }
 }
@@ -85,7 +85,7 @@ impl App {
         let platform = self.0.borrow().platform.clone();
         platform.run(Box::new(move || {
             dbg!("run callback");
-            let cx = &mut *this.borrow_mut("app::borrow_mut");
+            let cx = &mut *this.borrow_mut();
             on_finish_launching(cx);
         }));
     }
@@ -99,7 +99,7 @@ impl App {
         let this = Rc::downgrade(&self.0);
         self.0.borrow().platform.on_open_urls(Box::new(move |urls| {
             if let Some(app) = this.upgrade() {
-                callback(urls, &mut *app.borrow_mut("app.rs::on_open_urls"));
+                callback(urls, &mut *app.borrow_mut());
             }
         }));
         self
@@ -110,11 +110,14 @@ impl App {
         F: 'static + FnMut(&mut AppContext),
     {
         let this = Rc::downgrade(&self.0);
-        self.0.borrow_mut("app.rs::on_reopen").platform.on_reopen(Box::new(move || {
-            if let Some(app) = this.upgrade() {
-                callback(&mut app.borrow_mut("app.rs::on_reopen(callback)"));
-            }
-        }));
+        self.0
+            .borrow_mut()
+            .platform
+            .on_reopen(Box::new(move || {
+                if let Some(app) = this.upgrade() {
+                    callback(&mut app.borrow_mut());
+                }
+            }));
         self
     }
 
