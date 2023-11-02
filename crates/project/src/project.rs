@@ -4158,17 +4158,7 @@ impl Project {
                                     match prettier_task.await
                                     {
                                         Ok(prettier) => {
-                                            let buffer_file = buffer.update(&mut cx, |buffer, _| buffer.file().cloned());
-                                            let buffer_path= {
-                                                File::from_dyn(buffer_file.as_ref()).map(|file| {
-                                                    cx.update(|cx| {
-                                                       let worktree_id = file.worktree_id(cx);
-                                                       let file_abs_path = file.abs_path(cx);
-                                                       project.update(cx, |project, _| project.prettiers_per_worktree.entry(worktree_id).or_default().insert(prettier_path));
-                                                       file_abs_path
-                                                    })
-                                                })
-                                            };
+                                            let buffer_path = buffer.update(&mut cx, |buffer, cx| File::from_dyn(buffer.file()).map(|f| f.abs_path(cx)));
                                             format_operation = Some(FormatOperation::Prettier(
                                                 prettier
                                                     .format(buffer, buffer_path, &cx)
@@ -4218,17 +4208,7 @@ impl Project {
                                     match prettier_task.await
                                     {
                                         Ok(prettier) => {
-                                            let buffer_file = buffer.update(&mut cx, |buffer, _| buffer.file().cloned());
-                                            let buffer_path= {
-                                                File::from_dyn(buffer_file.as_ref()).map(|file| {
-                                                    cx.update(|cx| {
-                                                       let worktree_id = file.worktree_id(cx);
-                                                       let file_abs_path = file.abs_path(cx);
-                                                       project.update(cx, |project, _| project.prettiers_per_worktree.entry(worktree_id).or_default().insert(prettier_path));
-                                                       file_abs_path
-                                                    })
-                                                })
-                                            };
+                                            let buffer_path = buffer.update(&mut cx, |buffer, cx| File::from_dyn(buffer.file()).map(|f| f.abs_path(cx)));
                                             format_operation = Some(FormatOperation::Prettier(
                                                 prettier
                                                     .format(buffer, buffer_path, &cx)
@@ -8429,8 +8409,9 @@ impl Project {
             let Some(node) = self.node.as_ref().map(Arc::clone) else {
                 return Task::ready(None);
             };
-            match File::from_dyn(buffer_file).map(|file| file.abs_path(cx)) {
-                Some(buffer_path) => {
+            match File::from_dyn(buffer_file).map(|file| (file.worktree_id(cx), file.abs_path(cx)))
+            {
+                Some((worktree_id, buffer_path)) => {
                     let fs = Arc::clone(&self.fs);
                     let installed_prettiers = self.prettier_instances.keys().cloned().collect();
                     return cx.spawn(|project, mut cx| async move {
@@ -8447,9 +8428,20 @@ impl Project {
                             .await
                         {
                             Ok(None) => {
+                                project.update(&mut cx, |project, _| {
+                                    project
+                                        .prettiers_per_worktree
+                                        .entry(worktree_id)
+                                        .or_default()
+                                        .insert(None)
+                                });
                                 let new_task = project.update(&mut cx, |project, cx| {
-                                    let new_task =
-                                        start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), cx);
+                                    let new_task = start_prettier(
+                                        node,
+                                        DEFAULT_PRETTIER_DIR.clone(),
+                                        Some(worktree_id),
+                                        cx,
+                                    );
                                     project
                                         .default_prettier
                                         .get_or_insert_with(|| DefaultPrettier {
@@ -8462,16 +8454,14 @@ impl Project {
                                 });
                                 return Some((None, new_task));
                             }
-                            Err(e) => {
-                                return Some((
-                                    None,
-                                    Task::ready(Err(Arc::new(
-                                        e.context("determining prettier path"),
-                                    )))
-                                    .shared(),
-                                ));
-                            }
                             Ok(Some(prettier_dir)) => {
+                                project.update(&mut cx, |project, _| {
+                                    project
+                                        .prettiers_per_worktree
+                                        .entry(worktree_id)
+                                        .or_default()
+                                        .insert(Some(prettier_dir.clone()))
+                                });
                                 if let Some(existing_prettier) =
                                     project.update(&mut cx, |project, _| {
                                         project.prettier_instances.get(&prettier_dir).cloned()
@@ -8482,8 +8472,12 @@ impl Project {
 
                                 log::info!("Found prettier in {prettier_dir:?}, starting.");
                                 let new_prettier_task = project.update(&mut cx, |project, cx| {
-                                    let new_prettier_task =
-                                        start_prettier(node, prettier_dir.clone(), cx);
+                                    let new_prettier_task = start_prettier(
+                                        node,
+                                        prettier_dir.clone(),
+                                        Some(worktree_id),
+                                        cx,
+                                    );
                                     project
                                         .prettier_instances
                                         .insert(prettier_dir.clone(), new_prettier_task.clone());
@@ -8491,11 +8485,20 @@ impl Project {
                                 });
                                 Some((Some(prettier_dir), new_prettier_task))
                             }
+                            Err(e) => {
+                                return Some((
+                                    None,
+                                    Task::ready(Err(Arc::new(
+                                        e.context("determining prettier path"),
+                                    )))
+                                    .shared(),
+                                ));
+                            }
                         }
                     });
                 }
                 None => {
-                    let new_task = start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), cx);
+                    let new_task = start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), None, cx);
                     self.default_prettier
                         .get_or_insert_with(|| DefaultPrettier {
                             instance: None,
@@ -8639,6 +8642,7 @@ impl Project {
 fn start_prettier(
     node: Arc<dyn NodeRuntime>,
     prettier_dir: PathBuf,
+    worktree_id: Option<WorktreeId>,
     cx: &mut ModelContext<'_, Project>,
 ) -> Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>> {
     cx.spawn(|project, mut cx| async move {
@@ -8650,7 +8654,7 @@ fn start_prettier(
             .context("default prettier spawn")
             .map(Arc::new)
             .map_err(Arc::new)?;
-        register_new_prettier(&project, &new_prettier, new_server_id, &mut cx);
+        register_new_prettier(&project, &new_prettier, worktree_id, new_server_id, &mut cx);
         Ok(new_prettier)
     })
     .shared()
@@ -8659,19 +8663,44 @@ fn start_prettier(
 fn register_new_prettier(
     project: &ModelHandle<Project>,
     prettier: &Prettier,
+    worktree_id: Option<WorktreeId>,
     new_server_id: LanguageServerId,
     cx: &mut AsyncAppContext,
 ) {
-    log::info!("Started prettier in {:?}", prettier.prettier_dir());
+    let prettier_dir = prettier.prettier_dir();
+    let is_default = prettier.is_default();
+    if is_default {
+        log::info!("Started default prettier in {prettier_dir:?}");
+    } else {
+        log::info!("Started prettier in {prettier_dir:?}");
+    }
     if let Some(prettier_server) = prettier.server() {
         project.update(cx, |project, cx| {
-            let name = if prettier.is_default() {
+            let name = if is_default {
                 LanguageServerName(Arc::from("prettier (default)"))
             } else {
-                LanguageServerName(Arc::from(format!(
-                    "prettier ({})",
-                    prettier.prettier_dir().display(),
-                )))
+                let worktree_path = worktree_id
+                    .and_then(|id| project.worktree_for_id(id, cx))
+                    .map(|worktree| worktree.update(cx, |worktree, _| worktree.abs_path()));
+                let name = match worktree_path {
+                    Some(worktree_path) => {
+                        if prettier_dir == worktree_path.as_ref() {
+                            let name = prettier_dir
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .unwrap_or_default();
+                            format!("prettier ({name})")
+                        } else {
+                            let dir_to_display = prettier_dir
+                                .strip_prefix(worktree_path.as_ref())
+                                .ok()
+                                .unwrap_or(prettier_dir);
+                            format!("prettier ({})", dir_to_display.display())
+                        }
+                    }
+                    None => format!("prettier ({})", prettier_dir.display()),
+                };
+                LanguageServerName(Arc::from(name))
             };
             project
                 .supplementary_language_servers
