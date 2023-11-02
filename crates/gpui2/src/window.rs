@@ -4,11 +4,11 @@ use crate::{
     Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId,
     Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
     Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
-    SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformWindow, Point,
+    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
+    Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -28,6 +28,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
+    rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -164,6 +165,7 @@ impl Drop for FocusHandle {
 // Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
+    pub(crate) removed: bool,
     platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -256,6 +258,7 @@ impl Window {
 
         Window {
             handle,
+            removed: false,
             platform_window,
             display_id,
             sprite_atlas,
@@ -349,6 +352,11 @@ impl<'a> WindowContext<'a> {
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn notify(&mut self) {
         self.window.dirty = true;
+    }
+
+    /// Close this window.
+    pub fn remove_window(&mut self) {
+        self.window.removed = true;
     }
 
     /// Obtain a new `FocusHandle`, which allows you to track and manipulate the keyboard focus
@@ -577,6 +585,21 @@ impl<'a> WindowContext<'a> {
 
     pub fn window_bounds(&self) -> WindowBounds {
         self.window.bounds
+    }
+
+    pub fn is_window_active(&self) -> bool {
+        self.window.active
+    }
+
+    pub fn zoom_window(&self) {
+        self.window.platform_window.zoom();
+    }
+
+    pub fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        self.platform
+            .displays()
+            .into_iter()
+            .find(|display| display.id() == self.window.display_id)
     }
 
     /// The scale factor of the display associated with the window. For example, it could

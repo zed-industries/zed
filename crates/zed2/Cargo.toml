@@ -70,7 +70,7 @@ theme = { package = "theme2", path = "../theme2" }
 util = { path = "../util" }
 # semantic_index = { path = "../semantic_index" }
 # vim = { path = "../vim" }
-# workspace = { path = "../workspace" }
+workspace2 = { path = "../workspace2" }
 # welcome = { path = "../welcome" }
 # zed-actions = {path = "../zed-actions"}
 anyhow.workspace = true

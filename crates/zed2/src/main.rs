@@ -1,3 +1,6 @@
+#![allow(unused_variables, dead_code, unused_mut)]
+// todo!() this is to make transition easier.
+
 // Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
 
@@ -12,7 +15,7 @@ use client::UserStore;
 use db::kvp::KEY_VALUE_STORE;
 use fs::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
+use gpui::{Action, App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -40,13 +43,15 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use util::{
+    async_maybe,
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     http::{self, HttpClient},
     paths, ResultExt,
 };
 use uuid::Uuid;
-use zed2::languages;
-use zed2::{ensure_only_instance, AppState, Assets, IsOnlyInstance};
+use workspace2::{AppState, WorkspaceStore};
+use zed2::{build_window_options, initialize_workspace, languages};
+use zed2::{ensure_only_instance, Assets, IsOnlyInstance};
 
 mod open_listener;
 
@@ -125,7 +130,7 @@ fn main() {
         language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
-        // let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let workspace_store = cx.build_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         cx.set_global(client.clone());
 
@@ -170,26 +175,23 @@ fn main() {
 
         // client.telemetry().start(installation_id, session_id, cx);
 
-        // todo!("app_state")
-        let app_state = Arc::new(AppState { client, user_store });
-        // let app_state = Arc::new(AppState {
-        //     languages,
-        //     client: client.clone(),
-        //     user_store,
-        //     fs,
-        //     build_window_options,
-        //     initialize_workspace,
-        //     background_actions,
-        //     workspace_store,
-        //     node_runtime,
-        // });
-        // cx.set_global(Arc::downgrade(&app_state));
+        let app_state = Arc::new(AppState {
+            languages,
+            client: client.clone(),
+            user_store,
+            fs,
+            build_window_options,
+            initialize_workspace,
+            // background_actions: todo!("ask Mikayla"),
+            workspace_store,
+            node_runtime,
+        });
+        cx.set_global(Arc::downgrade(&app_state));
 
         // audio::init(Assets, cx);
         // auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
-        // todo!("workspace")
-        // workspace::init(app_state.clone(), cx);
+        workspace2::init(app_state.clone(), cx);
         // recent_projects::init(cx);
 
         // journal2::init(app_state.clone(), cx);
@@ -320,22 +322,30 @@ async fn installation_id() -> Result<String> {
     }
 }
 
-async fn restore_or_create_workspace(_app_state: &Arc<AppState>, mut _cx: AsyncAppContext) {
-    todo!("workspace")
-    // if let Some(location) = workspace::last_opened_workspace_paths().await {
-    //     cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))
-    //         .await
-    //         .log_err();
-    // } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-    //     cx.update(|cx| show_welcome_experience(app_state, cx));
-    // } else {
-    //     cx.update(|cx| {
-    //         workspace::open_new(app_state, cx, |workspace, cx| {
-    //             Editor::new_file(workspace, &Default::default(), cx)
-    //         })
-    //         .detach();
-    //     });
-    // }
+async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
+    async_maybe!({
+        if let Some(location) = workspace2::last_opened_workspace_paths().await {
+            cx.update(|cx| workspace2::open_paths(location.paths().as_ref(), app_state, None, cx))?
+                .await
+                .log_err();
+        } else if matches!(KEY_VALUE_STORE.read_kvp("******* THIS IS A BAD KEY PLEASE UNCOMMENT BELOW TO FIX THIS VERY LONG LINE *******"), Ok(None)) {
+            // todo!(welcome)
+            //} else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+            //todo!()
+            // cx.update(|cx| show_welcome_experience(app_state, cx));
+        } else {
+            cx.update(|cx| {
+                workspace2::open_new(app_state, cx, |workspace, cx| {
+                    // todo!(editor)
+                    // Editor::new_file(workspace, &Default::default(), cx)
+                })
+                .detach();
+            })?;
+        }
+        anyhow::Ok(())
+    })
+    .await
+    .log_err();
 }
 
 fn init_paths() {
@@ -919,11 +929,13 @@ async fn handle_cli_connection(
     }
 }
 
-// pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
-//     &[
-//         ("Go to file", &file_finder::Toggle),
-//         ("Open command palette", &command_palette::Toggle),
-//         ("Open recent projects", &recent_projects::OpenRecent),
-//         ("Change your settings", &zed_actions::OpenSettings),
-//     ]
-// }
+pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
+    // &[
+    //     ("Go to file", &file_finder::Toggle),
+    //     ("Open command palette", &command_palette::Toggle),
+    //     ("Open recent projects", &recent_projects::OpenRecent),
+    //     ("Change your settings", &zed_actions::OpenSettings),
+    // ]
+    // todo!()
+    &[]
+}

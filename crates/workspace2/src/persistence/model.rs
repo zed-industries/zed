@@ -7,7 +7,7 @@ use db2::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui2::{AsyncAppContext, Handle, Task, View, WeakView, WindowBounds};
+use gpui2::{AsyncWindowContext, Model, Task, View, WeakView, WindowBounds};
 use project2::Project;
 use std::{
     path::{Path, PathBuf},
@@ -55,7 +55,7 @@ impl Column for WorkspaceLocation {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 pub struct SerializedWorkspace {
     pub id: WorkspaceId,
     pub location: WorkspaceLocation,
@@ -127,7 +127,7 @@ impl Bind for DockData {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 pub enum SerializedPaneGroup {
     Group {
         axis: Axis,
@@ -151,10 +151,10 @@ impl SerializedPaneGroup {
     #[async_recursion(?Send)]
     pub(crate) async fn deserialize(
         self,
-        project: &Handle<Project>,
+        project: &Model<Project>,
         workspace_id: WorkspaceId,
-        workspace: &WeakView<Workspace>,
-        cx: &mut AsyncAppContext,
+        workspace: WeakView<Workspace>,
+        cx: &mut AsyncWindowContext,
     ) -> Option<(Member, Option<View<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
         match self {
             SerializedPaneGroup::Group {
@@ -167,7 +167,7 @@ impl SerializedPaneGroup {
                 let mut items = Vec::new();
                 for child in children {
                     if let Some((new_member, active_pane, new_items)) = child
-                        .deserialize(project, workspace_id, workspace, cx)
+                        .deserialize(project, workspace_id, workspace.clone(), cx)
                         .await
                     {
                         members.push(new_member);
@@ -196,14 +196,11 @@ impl SerializedPaneGroup {
                     .log_err()?;
                 let active = serialized_pane.active;
                 let new_items = serialized_pane
-                    .deserialize_to(project, &pane, workspace_id, workspace, cx)
+                    .deserialize_to(project, &pane, workspace_id, workspace.clone(), cx)
                     .await
                     .log_err()?;
 
-                if pane
-                    .read_with(cx, |pane, _| pane.items_len() != 0)
-                    .log_err()?
-                {
+                if pane.update(cx, |pane, _| pane.items_len() != 0).log_err()? {
                     let pane = pane.upgrade()?;
                     Some((Member::Pane(pane.clone()), active.then(|| pane), new_items))
                 } else {
@@ -231,11 +228,11 @@ impl SerializedPane {
 
     pub async fn deserialize_to(
         &self,
-        project: &Handle<Project>,
+        project: &Model<Project>,
         pane: &WeakView<Pane>,
         workspace_id: WorkspaceId,
-        workspace: &WeakView<Workspace>,
-        cx: &mut AsyncAppContext,
+        workspace: WeakView<Workspace>,
+        cx: &mut AsyncWindowContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
         let mut items = Vec::new();
         let mut active_item_index = None;
@@ -289,15 +286,15 @@ pub struct SerializedItem {
     pub active: bool,
 }
 
-impl SerializedItem {
-    pub fn new(kind: impl AsRef<str>, item_id: ItemId, active: bool) -> Self {
-        Self {
-            kind: Arc::from(kind.as_ref()),
-            item_id,
-            active,
-        }
-    }
-}
+// impl SerializedItem {
+//     pub fn new(kind: impl AsRef<str>, item_id: ItemId, active: bool) -> Self {
+//         Self {
+//             kind: Arc::from(kind.as_ref()),
+//             item_id,
+//             active,
+//         }
+//     }
+// }
 
 #[cfg(test)]
 impl Default for SerializedItem {

@@ -822,10 +822,13 @@ impl Context for AppContext {
 
             let root_view = window.root_view.clone().unwrap();
             let result = update(root_view, &mut WindowContext::new(cx, &mut window));
-            cx.windows
-                .get_mut(handle.id)
-                .ok_or_else(|| anyhow!("window not found"))?
-                .replace(window);
+
+            if !window.removed {
+                cx.windows
+                    .get_mut(handle.id)
+                    .ok_or_else(|| anyhow!("window not found"))?
+                    .replace(window);
+            }
 
             Ok(result)
         })
