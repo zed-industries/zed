@@ -1,0 +1,18 @@
+{
+  "name": "Ayu",
+  "author": "dempfi (Ike Ku)",
+  "themes": [
+    {
+      "name": "Ayu Light",
+      "appearance": "light"
+    },
+    {
+      "name": "Ayu Mirage",
+      "appearance": "dark"
+    },
+    {
+      "name": "Ayu Dark",
+      "appearance": "dark"
+    }
+  ]
+}

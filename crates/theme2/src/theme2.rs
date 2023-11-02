@@ -1,7 +1,6 @@
 mod colors;
 mod default_colors;
 mod default_theme;
-mod import;
 mod registry;
 mod scale;
 mod settings;
@@ -40,8 +39,7 @@ impl ActiveTheme for AppContext {
 }
 
 pub struct ThemeFamily {
-    #[allow(dead_code)]
-    pub(crate) id: String,
+    pub id: String,
     pub name: SharedString,
     pub author: SharedString,
     pub themes: Vec<ThemeVariant>,

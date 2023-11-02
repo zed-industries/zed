@@ -1,0 +1,10 @@
+{
+  "name": "Dracula",
+  "author": "Zeno Rocha",
+  "themes": [
+    {
+      "name": "Dracula",
+      "appearance": "dark"
+    }
+  ]
+}
