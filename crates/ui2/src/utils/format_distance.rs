@@ -2,7 +2,7 @@ use chrono::NaiveDateTime;
 
 fn distance_in_seconds(date: NaiveDateTime, base_date: NaiveDateTime) -> i64 {
     let duration = date.signed_duration_since(base_date);
-    duration.num_seconds()
+    -duration.num_seconds()
 }
 
 fn distance_string(distance: i64, include_seconds: bool, add_suffix: bool) -> String {
@@ -46,16 +46,25 @@ fn distance_string(distance: i64, include_seconds: bool, add_suffix: bool) -> St
         "about 1 month".to_string()
     } else if d < 7776000 {
         "about 2 months".to_string()
-    } else if d < 31536000 {
+    } else if d < 31540000 {
         format!("{} months", months)
-    } else if d < 39408000 {
+    } else if d < 39425000 {
         "about 1 year".to_string()
-    } else if d < 47318400 {
+    } else if d < 55195000 {
         "over 1 year".to_string()
-    } else if d < 63072000 {
+    } else if d < 63080000 {
         "almost 2 years".to_string()
     } else {
-        format!("{} years", years)
+        let years = d / 31536000;
+        let remaining_months = (d % 31536000) / 2592000;
+
+        if remaining_months < 3 {
+            format!("about {} years", years)
+        } else if remaining_months < 9 {
+            format!("over {} years", years)
+        } else {
+            format!("almost {} years", years + 1)
+        }
     };
 
     if add_suffix {
@@ -91,53 +100,42 @@ mod tests {
     use super::*;
     use chrono::NaiveDateTime;
 
-    // #[test]
-    // fn test_naive_format_distance() {
-    //     let date = NaiveDateTime::from_timestamp_opt(0, 0);
-    //     let base_date = NaiveDateTime::from_timestamp_opt(9400, 0);
+    #[test]
+    fn test_naive_format_distance() {
+        let date =
+            NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date");
+        let base_date =
+            NaiveDateTime::from_timestamp_opt(0, 0).expect("Invalid NaiveDateTime for base_date");
 
-    //     assert_eq!(
-    //         "about 2 hours ago",
-    //         naive_format_distance(
-    //             date.expect("invalid datetime"),
-    //             base_date.expect("invalid datetime"),
-    //             false,
-    //             true
-    //         )
-    //     );
-    // }
+        assert_eq!(
+            "about 2 hours",
+            naive_format_distance(date, base_date, false, false)
+        );
+    }
 
-    // #[test]
-    // fn test_naive_format_distance_with_seconds() {
-    //     let date = NaiveDateTime::from_timestamp_opt(0, 0);
-    //     let base_date = NaiveDateTime::from_timestamp_opt(10, 0);
+    #[test]
+    fn test_naive_format_distance_with_suffix() {
+        let date =
+            NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date");
+        let base_date =
+            NaiveDateTime::from_timestamp_opt(0, 0).expect("Invalid NaiveDateTime for base_date");
 
-    //     assert_eq!(
-    //         "less than 30 seconds ago",
-    //         naive_format_distance(
-    //             date.expect("invalid datetime"),
-    //             base_date.expect("invalid datetime"),
-    //             true,
-    //             true
-    //         )
-    //     );
-    // }
+        assert_eq!(
+            "about 2 hours from now",
+            naive_format_distance(date, base_date, false, true)
+        );
+    }
 
-    // #[test]
-    // fn test_naive_format_distance_with_future_date() {
-    //     let date = NaiveDateTime::from_timestamp_opt(3400, 0);
-    //     let base_date = NaiveDateTime::from_timestamp_opt(00, 0);
+    #[test]
+    fn test_naive_format_distance_from_now() {
+        let date = NaiveDateTime::parse_from_str("1969-07-20T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ")
+            .expect("Invalid NaiveDateTime for date");
 
-    //     assert_eq!(
-    //         "about 56 from now",
-    //         naive_format_distance(
-    //             date.expect("invalid datetime"),
-    //             base_date.expect("invalid datetime"),
-    //             false,
-    //             true
-    //         )
-    //     );
-    // }
+        assert_eq!(
+            "over 54 years ago",
+            naive_format_distance_from_now(date, false, true)
+        );
+    }
 
     #[test]
     fn test_naive_format_distance_string() {
@@ -152,6 +150,15 @@ mod tests {
         assert_eq!(distance_string(18002, false, false), "about 5 hours");
         assert_eq!(distance_string(86470, false, false), "1 day");
         assert_eq!(distance_string(345880, false, false), "4 days");
+        assert_eq!(distance_string(2764800, false, false), "about 1 month");
+        assert_eq!(distance_string(5184000, false, false), "about 2 months");
+        assert_eq!(distance_string(10368000, false, false), "4 months");
+        assert_eq!(distance_string(34694000, false, false), "about 1 year");
+        assert_eq!(distance_string(47310000, false, false), "over 1 year");
+        assert_eq!(distance_string(61503000, false, false), "almost 2 years");
+        assert_eq!(distance_string(160854000, false, false), "about 5 years");
+        assert_eq!(distance_string(236550000, false, false), "over 7 years");
+        assert_eq!(distance_string(249166000, false, false), "almost 8 years");
     }
 
     #[test]
