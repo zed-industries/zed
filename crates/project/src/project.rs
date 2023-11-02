@@ -4179,9 +4179,15 @@ impl Project {
                                                     },
                                                 }
                                             });
-                                            anyhow::bail!(
-                                                "Failed to create prettier instance from {prettier_path:?} for buffer during autoformatting: {e:#}"
-                                            )},
+                                            match &prettier_path {
+                                                Some(prettier_path) => {
+                                                    log::error!("Failed to create prettier instance from {prettier_path:?} for buffer during autoformatting: {e:#}");
+                                                },
+                                                None => {
+                                                    log::error!("Failed to create default prettier instance for buffer during autoformatting: {e:#}");
+                                                },
+                                            }
+                                        }
                                     }
                             } else if let Some((language_server, buffer_abs_path)) =
                                 language_server.as_ref().zip(buffer_abs_path.as_ref())
@@ -4229,9 +4235,15 @@ impl Project {
                                                     },
                                                 }
                                             });
-                                            anyhow::bail!(
-                                                "Failed to create prettier instance from {prettier_path:?} for buffer during formatting: {e:#}"
-                                            )},
+                                            match &prettier_path {
+                                                Some(prettier_path) => {
+                                                    log::error!("Failed to create prettier instance from {prettier_path:?} for buffer during autoformatting: {e:#}");
+                                                },
+                                                None => {
+                                                    log::error!("Failed to create default prettier instance for buffer during autoformatting: {e:#}");
+                                                },
+                                            }
+                                        }
                                     }
                                 }
                         }

@@ -75,12 +75,14 @@ impl Prettier {
         let mut project_path_with_prettier_dependency = None;
         loop {
             if installed_prettiers.contains(&path_to_check) {
+                log::debug!("Found prettier path {path_to_check:?} in installed prettiers");
                 return Ok(Some(path_to_check));
             } else if let Some(package_json_contents) =
                 read_package_json(fs, &path_to_check).await?
             {
                 if has_prettier_in_package_json(&package_json_contents) {
                     if has_prettier_in_node_modules(fs, &path_to_check).await? {
+                        log::debug!("Found prettier path {path_to_check:?} in both package.json and node_modules");
                         return Ok(Some(path_to_check));
                     } else if project_path_with_prettier_dependency.is_none() {
                         project_path_with_prettier_dependency = Some(path_to_check.clone());
@@ -105,6 +107,8 @@ impl Prettier {
                                             workspace_definition == subproject_path.to_string_lossy()
                                         }
                                     }) {
+                                        anyhow::ensure!(has_prettier_in_node_modules(fs, &path_to_check).await?, "Found prettier path {path_to_check:?} in the workspace root for project in {project_path_with_prettier_dependency:?}, but it's not installed into workspace root's node_modules");
+                                        log::info!("Found prettier path {path_to_check:?} in the workspace root for project in {project_path_with_prettier_dependency:?}");
                                         return Ok(Some(path_to_check));
                                     } else {
                                         log::warn!("Skipping path {path_to_check:?} that has prettier in its 'node_modules' subdirectory, but is not included in its package.json workspaces {workspaces:?}");
@@ -123,8 +127,13 @@ impl Prettier {
 
             if !path_to_check.pop() {
                 match project_path_with_prettier_dependency {
-                    Some(closest_prettier_discovered) => anyhow::bail!("No prettier found in ancestors of {locate_from:?}, but discovered prettier package.json dependency in {closest_prettier_discovered:?}"),
-                    None => return Ok(None),
+                    Some(closest_prettier_discovered) => {
+                        anyhow::bail!("No prettier found in node_modules for ancestors of {locate_from:?}, but discovered prettier package.json dependency in {closest_prettier_discovered:?}")
+                    }
+                    None => {
+                        log::debug!("Found no prettier in ancestors of {locate_from:?}");
+                        return Ok(None);
+                    }
                 }
             }
         }
@@ -697,6 +706,61 @@ mod tests {
             Some(PathBuf::from("/root/work/full-stack-foundations")),
             "Should ascend to the multi-workspace root and find the prettier there",
         );
+    }
+
+    #[gpui::test]
+    async fn test_prettier_lookup_in_npm_workspaces_for_not_installed(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "work": {
+                    "full-stack-foundations": {
+                        "exercises": {
+                            "03.loading": {
+                                "01.problem.loader": {
+                                    "app": {
+                                        "routes": {
+                                            "users+": {
+                                                "$username_+": {
+                                                    "notes.tsx": "// notes.tsx file contents",
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "node_modules": {},
+                                    "package.json": r#"{
+                                        "devDependencies": {
+                                            "prettier": "^3.0.3"
+                                        }
+                                    }"#
+                                },
+                            },
+                        },
+                        "package.json": r#"{
+                            "workspaces": ["exercises/*/*", "examples/*"]
+                        }"#,
+                    },
+                }
+            }),
+        )
+        .await;
+
+        match Prettier::locate_prettier_installation(
+            fs.as_ref(),
+            &HashSet::default(),
+            Path::new("/root/work/full-stack-foundations/exercises/03.loading/01.problem.loader/app/routes/users+/$username_+/notes.tsx")
+        )
+        .await {
+            Ok(path) => panic!("Expected to fail for prettier in package.json but not in node_modules found, but got path {path:?}"),
+            Err(e) => {
+                let message = e.to_string();
+                assert!(message.contains("/root/work/full-stack-foundations/exercises/03.loading/01.problem.loader"), "Error message should mention which project had prettier defined");
+                assert!(message.contains("/root/work/full-stack-foundations"), "Error message should mention potential candidates without prettier node_modules contents");
+            },
+        };
     }
 }
 
