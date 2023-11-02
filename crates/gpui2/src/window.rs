@@ -188,6 +188,8 @@ pub struct Window {
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
+    active: bool,
+    activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) scene_builder: SceneBuilder,
     pub(crate) dirty: bool,
     pub(crate) last_blur: Option<Option<FocusId>>,
@@ -221,6 +223,20 @@ impl Window {
             move || {
                 handle
                     .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .log_err();
+            }
+        }));
+        platform_window.on_active_status_change(Box::new({
+            let mut cx = cx.to_async();
+            move |active| {
+                handle
+                    .update(&mut cx, |_, cx| {
+                        cx.window.active = active;
+                        cx.window
+                            .activation_observers
+                            .clone()
+                            .retain(&(), |callback| callback(cx));
+                    })
                     .log_err();
             }
         }));
@@ -264,6 +280,8 @@ impl Window {
             scale_factor,
             bounds,
             bounds_observers: SubscriberSet::new(),
+            active: false,
+            activation_observers: SubscriberSet::new(),
             scene_builder: SceneBuilder::new(),
             dirty: true,
             last_blur: None,
@@ -1748,7 +1766,16 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         )
     }
 
-    fn observe_window_activation(&mut self) -> Subscription {}
+    pub fn observe_window_activation(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        self.window.activation_observers.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        )
+    }
 
     pub fn on_focus_changed(
         &mut self,
