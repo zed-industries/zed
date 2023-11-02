@@ -272,19 +272,21 @@ impl ThemeColors {
     }
 }
 
-struct DefaultColorScaleSet {
+type StaticColorScale = [&'static str; 12];
+
+struct StaticColorScaleSet {
     scale: &'static str,
-    light: [&'static str; 12],
-    light_alpha: [&'static str; 12],
-    dark: [&'static str; 12],
-    dark_alpha: [&'static str; 12],
+    light: StaticColorScale,
+    light_alpha: StaticColorScale,
+    dark: StaticColorScale,
+    dark_alpha: StaticColorScale,
 }
 
-impl TryFrom<DefaultColorScaleSet> for ColorScaleSet {
+impl TryFrom<StaticColorScaleSet> for ColorScaleSet {
     type Error = ParseIntError;
 
-    fn try_from(value: DefaultColorScaleSet) -> Result<Self, Self::Error> {
-        fn to_color_scale(scale: [&'static str; 12]) -> Result<ColorScale, ParseIntError> {
+    fn try_from(value: StaticColorScaleSet) -> Result<Self, Self::Error> {
+        fn to_color_scale(scale: StaticColorScale) -> Result<ColorScale, ParseIntError> {
             scale
                 .into_iter()
                 .map(|color| Rgba::try_from(color).map(Hsla::from))
@@ -341,7 +343,7 @@ pub fn default_color_scales() -> ColorScales {
 }
 
 fn gray() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Gray",
         light: [
             "#fcfcfcff",
@@ -405,7 +407,7 @@ fn gray() -> ColorScaleSet {
 }
 
 fn mauve() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Mauve",
         light: [
             "#fdfcfdff",
@@ -469,7 +471,7 @@ fn mauve() -> ColorScaleSet {
 }
 
 fn slate() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Slate",
         light: [
             "#fcfcfdff",
@@ -533,7 +535,7 @@ fn slate() -> ColorScaleSet {
 }
 
 fn sage() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Sage",
         light: [
             "#fbfdfcff",
@@ -597,7 +599,7 @@ fn sage() -> ColorScaleSet {
 }
 
 fn olive() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Olive",
         light: [
             "#fcfdfcff",
@@ -661,7 +663,7 @@ fn olive() -> ColorScaleSet {
 }
 
 fn sand() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Sand",
         light: [
             "#fdfdfcff",
@@ -725,7 +727,7 @@ fn sand() -> ColorScaleSet {
 }
 
 fn gold() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Gold",
         light: [
             "#fdfdfcff",
@@ -789,7 +791,7 @@ fn gold() -> ColorScaleSet {
 }
 
 fn bronze() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Bronze",
         light: [
             "#fdfcfcff",
@@ -853,7 +855,7 @@ fn bronze() -> ColorScaleSet {
 }
 
 fn brown() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Brown",
         light: [
             "#fefdfcff",
@@ -917,7 +919,7 @@ fn brown() -> ColorScaleSet {
 }
 
 fn yellow() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Yellow",
         light: [
             "#fdfdf9ff",
@@ -981,7 +983,7 @@ fn yellow() -> ColorScaleSet {
 }
 
 fn amber() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Amber",
         light: [
             "#fefdfbff",
@@ -1045,7 +1047,7 @@ fn amber() -> ColorScaleSet {
 }
 
 fn orange() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Orange",
         light: [
             "#fefcfbff",
@@ -1109,7 +1111,7 @@ fn orange() -> ColorScaleSet {
 }
 
 fn tomato() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Tomato",
         light: [
             "#fffcfcff",
@@ -1173,7 +1175,7 @@ fn tomato() -> ColorScaleSet {
 }
 
 fn red() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Red",
         light: [
             "#fffcfcff",
@@ -1237,7 +1239,7 @@ fn red() -> ColorScaleSet {
 }
 
 fn ruby() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Ruby",
         light: [
             "#fffcfdff",
@@ -1301,7 +1303,7 @@ fn ruby() -> ColorScaleSet {
 }
 
 fn crimson() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Crimson",
         light: [
             "#fffcfdff",
@@ -1365,7 +1367,7 @@ fn crimson() -> ColorScaleSet {
 }
 
 fn pink() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Pink",
         light: [
             "#fffcfeff",
@@ -1429,7 +1431,7 @@ fn pink() -> ColorScaleSet {
 }
 
 fn plum() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Plum",
         light: [
             "#fefcffff",
@@ -1493,7 +1495,7 @@ fn plum() -> ColorScaleSet {
 }
 
 fn purple() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Purple",
         light: [
             "#fefcfeff",
@@ -1557,7 +1559,7 @@ fn purple() -> ColorScaleSet {
 }
 
 fn violet() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Violet",
         light: [
             "#fdfcfeff",
@@ -1621,7 +1623,7 @@ fn violet() -> ColorScaleSet {
 }
 
 fn iris() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Iris",
         light: [
             "#fdfdffff",
@@ -1685,7 +1687,7 @@ fn iris() -> ColorScaleSet {
 }
 
 fn indigo() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Indigo",
         light: [
             "#fdfdfeff",
@@ -1749,7 +1751,7 @@ fn indigo() -> ColorScaleSet {
 }
 
 fn blue() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Blue",
         light: [
             "#fbfdffff",
@@ -1813,7 +1815,7 @@ fn blue() -> ColorScaleSet {
 }
 
 fn cyan() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Cyan",
         light: [
             "#fafdfeff",
@@ -1877,7 +1879,7 @@ fn cyan() -> ColorScaleSet {
 }
 
 fn teal() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Teal",
         light: [
             "#fafefdff",
@@ -1941,7 +1943,7 @@ fn teal() -> ColorScaleSet {
 }
 
 fn jade() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Jade",
         light: [
             "#fbfefdff",
@@ -2005,7 +2007,7 @@ fn jade() -> ColorScaleSet {
 }
 
 fn green() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Green",
         light: [
             "#fbfefcff",
@@ -2069,7 +2071,7 @@ fn green() -> ColorScaleSet {
 }
 
 fn grass() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Grass",
         light: [
             "#fbfefbff",
@@ -2133,7 +2135,7 @@ fn grass() -> ColorScaleSet {
 }
 
 fn lime() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Lime",
         light: [
             "#fcfdfaff",
@@ -2197,7 +2199,7 @@ fn lime() -> ColorScaleSet {
 }
 
 fn mint() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Mint",
         light: [
             "#f9fefdff",
@@ -2261,7 +2263,7 @@ fn mint() -> ColorScaleSet {
 }
 
 fn sky() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Sky",
         light: [
             "#f9feffff",
@@ -2325,7 +2327,7 @@ fn sky() -> ColorScaleSet {
 }
 
 fn black() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Black",
         light: [
             "#0000000d",
@@ -2389,7 +2391,7 @@ fn black() -> ColorScaleSet {
 }
 
 fn white() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "White",
         light: [
             "#ffffff0d",
