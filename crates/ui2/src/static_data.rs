@@ -1,17 +1,20 @@
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 
+use chrono::DateTime;
 use gpui2::{AppContext, ViewContext};
 use rand::Rng;
 use theme2::ActiveTheme;
 
 use crate::{
     Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
-    HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListItem,
-    Livestream, MicStatus, ModifierKeys, PaletteItem, Player, PlayerCallStatus,
-    PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, ToggleState, VideoStatus,
+    HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListSubHeader,
+    Livestream, MicStatus, ModifierKeys, Notification, PaletteItem, Player, PlayerCallStatus,
+    PlayerWithCallStatus, PublicActor, ScreenShareStatus, Symbol, Tab, ToggleState, VideoStatus,
 };
 use crate::{HighlightedText, ListDetailsEntry};
+use crate::{ListItem, NotificationAction};
 
 pub fn static_tabs_example() -> Vec<Tab> {
     vec![
@@ -325,27 +328,227 @@ pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
     ]
 }
 
-pub fn static_new_notification_items<V: 'static>() -> Vec<ListItem<V>> {
+pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
     vec![
-        ListDetailsEntry::new("maxdeviant invited you to join a stream in #design.")
-            .meta("4 people in stream."),
-        ListDetailsEntry::new("nathansobo accepted your contact request."),
+        Notification::new_icon_message(
+            "notif-1",
+            "You were mentioned in a note.",
+            DateTime::parse_from_rfc3339("2023-11-02T11:59:57Z")
+                .unwrap()
+                .naive_local(),
+            Icon::AtSign,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-2",
+            "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("2023-11-02T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
+        Notification::new_icon_message(
+            "notif-3",
+            "You were mentioned #design.",
+            DateTime::parse_from_rfc3339("2023-11-02T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            Icon::MessageBubbles,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-4",
+            "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("2023-11-01T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
+        Notification::new_icon_message(
+            "notif-5",
+            "You were mentioned in a note.",
+            DateTime::parse_from_rfc3339("2023-10-28T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            Icon::AtSign,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-6",
+            "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("2022-10-25T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
+        Notification::new_icon_message(
+            "notif-7",
+            "You were mentioned in a note.",
+            DateTime::parse_from_rfc3339("2022-10-14T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            Icon::AtSign,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-8",
+            "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("2021-10-12T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
+        Notification::new_icon_message(
+            "notif-9",
+            "You were mentioned in a note.",
+            DateTime::parse_from_rfc3339("2021-02-02T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            Icon::AtSign,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-10",
+            "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("1969-07-20T00:00:00Z")
+                .unwrap()
+                .naive_local(),
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
     ]
-    .into_iter()
-    .map(From::from)
-    .collect()
 }
 
-pub fn static_read_notification_items<V: 'static>() -> Vec<ListItem<V>> {
+pub fn static_new_notification_items<V: 'static>() -> Vec<ListItem<V>> {
     vec![
-        ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
-            Button::new("Decline"),
-            Button::new("Accept").variant(crate::ButtonVariant::Filled),
-        ]),
-        ListDetailsEntry::new("maxdeviant invited you to a stream in #design.")
-            .seen(true)
-            .meta("This stream has ended."),
-        ListDetailsEntry::new("as-cii accepted your contact request."),
+        ListItem::Header(ListSubHeader::new("New")),
+        ListItem::Details(
+            ListDetailsEntry::new("maxdeviant invited you to join a stream in #design.")
+                .meta("4 people in stream."),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "nathansobo accepted your contact request.",
+        )),
+        ListItem::Header(ListSubHeader::new("Earlier")),
+        ListItem::Details(
+            ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
+                Button::new("Decline"),
+                Button::new("Accept").variant(crate::ButtonVariant::Filled),
+            ]),
+        ),
+        ListItem::Details(
+            ListDetailsEntry::new("maxdeviant invited you to a stream in #design.")
+                .seen(true)
+                .meta("This stream has ended."),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "as-cii accepted your contact request.",
+        )),
+        ListItem::Details(
+            ListDetailsEntry::new("You were added as an admin on the #gpui2 channel.").seen(true),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "osiewicz accepted your contact request.",
+        )),
+        ListItem::Details(ListDetailsEntry::new(
+            "ConradIrwin accepted your contact request.",
+        )),
+        ListItem::Details(
+            ListDetailsEntry::new("nathansobo invited you to a stream in #gpui2.")
+                .seen(true)
+                .meta("This stream has ended."),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "nathansobo accepted your contact request.",
+        )),
+        ListItem::Header(ListSubHeader::new("Earlier")),
+        ListItem::Details(
+            ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
+                Button::new("Decline"),
+                Button::new("Accept").variant(crate::ButtonVariant::Filled),
+            ]),
+        ),
+        ListItem::Details(
+            ListDetailsEntry::new("maxdeviant invited you to a stream in #design.")
+                .seen(true)
+                .meta("This stream has ended."),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "as-cii accepted your contact request.",
+        )),
+        ListItem::Details(
+            ListDetailsEntry::new("You were added as an admin on the #gpui2 channel.").seen(true),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "osiewicz accepted your contact request.",
+        )),
+        ListItem::Details(ListDetailsEntry::new(
+            "ConradIrwin accepted your contact request.",
+        )),
+        ListItem::Details(
+            ListDetailsEntry::new("nathansobo invited you to a stream in #gpui2.")
+                .seen(true)
+                .meta("This stream has ended."),
+        ),
     ]
     .into_iter()
     .map(From::from)

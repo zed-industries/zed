@@ -70,6 +70,18 @@ impl ThemeVariant {
         &self.styles.syntax
     }
 
+    /// Returns the [`StatusColors`] for the theme.
+    #[inline(always)]
+    pub fn status(&self) -> &StatusColors {
+        &self.styles.status
+    }
+
+    /// Returns the [`GitStatusColors`] for the theme.
+    #[inline(always)]
+    pub fn git(&self) -> &GitStatusColors {
+        &self.styles.git
+    }
+
     /// Returns the color for the syntax node with the given name.
     #[inline(always)]
     pub fn syntax_color(&self, name: &str) -> Hsla {

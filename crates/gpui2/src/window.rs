@@ -6,8 +6,9 @@ use crate::{
     Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite,
     PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
-    SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task,
-    Underline, UnderlineStyle, View, VisualContext, WeakView, WindowOptions, SUBPIXEL_VARIANTS,
+    SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
+    WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -53,6 +54,7 @@ pub enum DispatchPhase {
     Capture,
 }
 
+type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
 type AnyListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 type AnyKeyListener = Box<
     dyn Fn(
@@ -185,6 +187,10 @@ pub struct Window {
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     scale_factor: f32,
+    bounds: WindowBounds,
+    bounds_observers: SubscriberSet<(), AnyObserver>,
+    active: bool,
+    activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) scene_builder: SceneBuilder,
     pub(crate) dirty: bool,
     pub(crate) last_blur: Option<Option<FocusId>>,
@@ -203,16 +209,34 @@ impl Window {
         let mouse_position = platform_window.mouse_position();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
+        let bounds = platform_window.bounds();
+
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
-            move |content_size, scale_factor| {
+            move |_, _| {
+                handle
+                    .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .log_err();
+            }
+        }));
+        platform_window.on_moved(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .log_err();
+            }
+        }));
+        platform_window.on_active_status_change(Box::new({
+            let mut cx = cx.to_async();
+            move |active| {
                 handle
                     .update(&mut cx, |_, cx| {
-                        cx.window.scale_factor = scale_factor;
-                        cx.window.scene_builder = SceneBuilder::new();
-                        cx.window.content_size = content_size;
-                        cx.window.display_id = cx.window.platform_window.display().id();
-                        cx.window.dirty = true;
+                        cx.window.active = active;
+                        cx.window
+                            .activation_observers
+                            .clone()
+                            .retain(&(), |callback| callback(cx));
                     })
                     .log_err();
             }
@@ -256,6 +280,10 @@ impl Window {
             default_prevented: true,
             mouse_position,
             scale_factor,
+            bounds,
+            bounds_observers: SubscriberSet::new(),
+            active: false,
+            activation_observers: SubscriberSet::new(),
             scene_builder: SceneBuilder::new(),
             dirty: true,
             last_blur: None,
@@ -523,6 +551,23 @@ impl<'a> WindowContext<'a> {
             .map(Into::into);
         bounds.origin += self.element_offset();
         bounds
+    }
+
+    fn window_bounds_changed(&mut self) {
+        self.window.scale_factor = self.window.platform_window.scale_factor();
+        self.window.content_size = self.window.platform_window.content_size();
+        self.window.bounds = self.window.platform_window.bounds();
+        self.window.display_id = self.window.platform_window.display().id();
+        self.window.dirty = true;
+
+        self.window
+            .bounds_observers
+            .clone()
+            .retain(&(), |callback| callback(self));
+    }
+
+    pub fn window_bounds(&self) -> WindowBounds {
+        self.window.bounds
     }
 
     /// The scale factor of the display associated with the window. For example, it could
@@ -1715,6 +1760,28 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         self.window_cx.app.push_effect(Effect::Notify {
             emitter: self.view.model.entity_id,
         });
+    }
+
+    pub fn observe_window_bounds(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        self.window.bounds_observers.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        )
+    }
+
+    pub fn observe_window_activation(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        self.window.activation_observers.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        )
     }
 
     pub fn on_focus_changed(

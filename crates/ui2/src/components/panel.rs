@@ -98,16 +98,14 @@ impl<V: 'static> Panel<V> {
         v_stack()
             .id(self.id.clone())
             .flex_initial()
-            .when(
-                self.current_side == PanelSide::Left || self.current_side == PanelSide::Right,
-                |this| this.h_full().w(current_size),
-            )
-            .when(self.current_side == PanelSide::Left, |this| this.border_r())
-            .when(self.current_side == PanelSide::Right, |this| {
-                this.border_l()
+            .map(|this| match self.current_side {
+                PanelSide::Left | PanelSide::Right => this.h_full().w(current_size),
+                PanelSide::Bottom => this,
             })
-            .when(self.current_side == PanelSide::Bottom, |this| {
-                this.border_b().w_full().h(current_size)
+            .map(|this| match self.current_side {
+                PanelSide::Left => this.border_r(),
+                PanelSide::Right => this.border_l(),
+                PanelSide::Bottom => this.border_b().w_full().h(current_size),
             })
             .bg(cx.theme().colors().surface)
             .border_color(cx.theme().colors().border)
