@@ -94,14 +94,13 @@ impl Input {
             .active(|style| style.bg(input_active_bg))
             .flex()
             .items_center()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .text_sm()
-                    .when(self.value.is_empty(), |this| this.child(placeholder_label))
-                    .when(!self.value.is_empty(), |this| this.child(label)),
-            )
+            .child(div().flex().items_center().text_sm().map(|this| {
+                if self.value.is_empty() {
+                    this.child(placeholder_label)
+                } else {
+                    this.child(label)
+                }
+            }))
     }
 }
 
