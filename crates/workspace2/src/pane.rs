@@ -1355,22 +1355,6 @@ impl Pane {
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl Component<Self> {
         let label = item.tab_content(Some(detail), cx);
-
-        // let label = match (self.git_status, is_deleted) {
-        //     (_, true) | (GitStatus::Deleted, false) => Label::new(self.title.clone())
-        //         .color(LabelColor::Hidden)
-        //         .set_strikethrough(true),
-        //     (GitStatus::None, false) => Label::new(self.title.clone()),
-        //     (GitStatus::Created, false) => {
-        //         Label::new(self.title.clone()).color(LabelColor::Created)
-        //     }
-        //     (GitStatus::Modified, false) => {
-        //         Label::new(self.title.clone()).color(LabelColor::Modified)
-        //     }
-        //     (GitStatus::Renamed, false) => Label::new(self.title.clone()).color(LabelColor::Accent),
-        //     (GitStatus::Conflict, false) => Label::new(self.title.clone()),
-        // };
-
         let close_icon = || IconElement::new(Icon::Close).color(IconColor::Muted);
 
         let (tab_bg, tab_hover_bg, tab_active_bg) = match ix == self.active_item_index {
