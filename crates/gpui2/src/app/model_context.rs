@@ -1,7 +1,8 @@
 use crate::{
-    AppContext, AsyncAppContext, Context, Effect, Entity, EntityId, EventEmitter, Model, Reference,
-    Subscription, Task, WeakModel,
+    AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity, EntityId,
+    EventEmitter, Model, Subscription, Task, WeakModel, WindowContext,
 };
+use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use std::{
@@ -14,16 +15,13 @@ use std::{
 pub struct ModelContext<'a, T> {
     #[deref]
     #[deref_mut]
-    app: Reference<'a, AppContext>,
+    app: &'a mut AppContext,
     model_state: WeakModel<T>,
 }
 
 impl<'a, T: 'static> ModelContext<'a, T> {
-    pub(crate) fn mutable(app: &'a mut AppContext, model_state: WeakModel<T>) -> Self {
-        Self {
-            app: Reference::Mutable(app),
-            model_state,
-        }
+    pub(crate) fn new(app: &'a mut AppContext, model_state: WeakModel<T>) -> Self {
+        Self { app, model_state }
     }
 
     pub fn entity_id(&self) -> EntityId {
@@ -95,7 +93,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn on_release(
         &mut self,
-        mut on_release: impl FnMut(&mut T, &mut AppContext) + 'static,
+        on_release: impl FnOnce(&mut T, &mut AppContext) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -112,7 +110,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe_release<T2, E>(
         &mut self,
         entity: &E,
-        mut on_release: impl FnMut(&mut T, &mut T2, &mut ModelContext<'_, T>) + 'static,
+        on_release: impl FnOnce(&mut T, &mut T2, &mut ModelContext<'_, T>) + 'static,
     ) -> Subscription
     where
         T: Any,
@@ -215,12 +213,11 @@ where
 }
 
 impl<'a, T> Context for ModelContext<'a, T> {
-    type ModelContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
     fn build_model<U: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, U>) -> U,
+        build_model: impl FnOnce(&mut ModelContext<'_, U>) -> U,
     ) -> Model<U> {
         self.app.build_model(build_model)
     }
@@ -228,9 +225,16 @@ impl<'a, T> Context for ModelContext<'a, T> {
     fn update_model<U: 'static, R>(
         &mut self,
         handle: &Model<U>,
-        update: impl FnOnce(&mut U, &mut Self::ModelContext<'_, U>) -> R,
+        update: impl FnOnce(&mut U, &mut ModelContext<'_, U>) -> R,
     ) -> R {
         self.app.update_model(handle, update)
+    }
+
+    fn update_window<R, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<R>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> R,
+    {
+        self.app.update_window(window, update)
     }
 }
 

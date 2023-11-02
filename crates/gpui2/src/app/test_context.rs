@@ -1,7 +1,7 @@
 use crate::{
-    AnyWindowHandle, AppContext, AsyncAppContext, BackgroundExecutor, Context, EventEmitter,
-    ForegroundExecutor, Model, ModelContext, Result, Task, TestDispatcher, TestPlatform,
-    WindowContext,
+    AnyView, AnyWindowHandle, AppContext, AsyncAppContext, BackgroundExecutor, Context,
+    EventEmitter, ForegroundExecutor, Model, ModelContext, Result, Task, TestDispatcher,
+    TestPlatform, WindowContext,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -15,12 +15,11 @@ pub struct TestAppContext {
 }
 
 impl Context for TestAppContext {
-    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
     fn build_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>>
     where
         T: 'static,
@@ -32,10 +31,18 @@ impl Context for TestAppContext {
     fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         let mut app = self.app.borrow_mut();
         app.update_model(handle, update)
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+    {
+        let mut lock = self.app.borrow_mut();
+        lock.update_window(window, f)
     }
 }
 
@@ -80,22 +87,13 @@ impl TestAppContext {
         cx.update(f)
     }
 
-    pub fn read_window<R>(
-        &self,
-        handle: AnyWindowHandle,
-        read: impl FnOnce(&WindowContext) -> R,
-    ) -> R {
-        let app_context = self.app.borrow();
-        app_context.read_window(handle.id, read).unwrap()
-    }
-
     pub fn update_window<R>(
         &self,
         handle: AnyWindowHandle,
-        update: impl FnOnce(&mut WindowContext) -> R,
+        update: impl FnOnce(AnyView, &mut WindowContext) -> R,
     ) -> R {
         let mut app = self.app.borrow_mut();
-        app.update_window(handle.id, update).unwrap()
+        app.update_window(handle, update).unwrap()
     }
 
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>

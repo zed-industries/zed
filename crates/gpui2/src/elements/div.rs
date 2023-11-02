@@ -305,7 +305,6 @@ where
 
 impl<V, I, F> Component<V> for Div<V, I, F>
 where
-    // V: Any + Send + Sync,
     I: ElementInteraction<V>,
     F: ElementFocus<V>,
 {

@@ -68,34 +68,36 @@ use derive_more::{Deref, DerefMut};
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
-    ops::{Deref, DerefMut},
 };
 use taffy::TaffyLayoutEngine;
 
 type AnyBox = Box<dyn Any>;
 
 pub trait Context {
-    type ModelContext<'a, T>;
     type Result<T>;
 
     fn build_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>>;
 
-    fn update_model<T: 'static, R>(
+    fn update_model<T, R>(
         &mut self,
         handle: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
-    ) -> Self::Result<R>;
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static;
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T;
 }
 
 pub trait VisualContext: Context {
-    type ViewContext<'a, 'w, V>;
-
     fn build_view<V>(
         &mut self,
-        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
+        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static;
@@ -103,12 +105,19 @@ pub trait VisualContext: Context {
     fn update_view<V: 'static, R>(
         &mut self,
         view: &View<V>,
-        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, '_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> Self::Result<R>;
+
+    fn replace_root_view<V>(
+        &mut self,
+        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+    ) -> Self::Result<View<V>>
+    where
+        V: Render;
 }
 
 pub trait Entity<T>: Sealed {
-    type Weak: 'static + Send;
+    type Weak: 'static;
 
     fn entity_id(&self) -> EntityId;
     fn downgrade(&self) -> Self::Weak;
@@ -128,7 +137,7 @@ pub trait BorrowAppContext {
     where
         F: FnOnce(&mut Self) -> R;
 
-    fn set_global<T: Send + 'static>(&mut self, global: T);
+    fn set_global<T: 'static>(&mut self, global: T);
 }
 
 impl<C> BorrowAppContext for C
@@ -145,7 +154,7 @@ where
         result
     }
 
-    fn set_global<G: 'static + Send>(&mut self, global: G) {
+    fn set_global<G: 'static>(&mut self, global: G) {
         self.borrow_mut().set_global(global)
     }
 }
@@ -206,32 +215,5 @@ impl std::fmt::Display for SharedString {
 impl<T: Into<ArcCow<'static, str>>> From<T> for SharedString {
     fn from(value: T) -> Self {
         Self(value.into())
-    }
-}
-
-pub enum Reference<'a, T> {
-    Immutable(&'a T),
-    Mutable(&'a mut T),
-}
-
-impl<'a, T> Deref for Reference<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Reference::Immutable(target) => target,
-            Reference::Mutable(target) => target,
-        }
-    }
-}
-
-impl<'a, T> DerefMut for Reference<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Reference::Immutable(_) => {
-                panic!("cannot mutably deref an immutable reference. this is a bug in GPUI.");
-            }
-            Reference::Mutable(target) => target,
-        }
     }
 }
