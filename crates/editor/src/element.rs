@@ -1662,7 +1662,7 @@ impl EditorElement {
                     let include_root = editor
                         .project
                         .as_ref()
-                        .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+                        .map(|project| project.visible_worktrees_count(cx) > 1)
                         .unwrap_or_default();
                     let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
                         let jump_path = ProjectPath {
@@ -1691,20 +1691,14 @@ impl EditorElement {
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_click(MouseButton::Left, move |_, editor, cx| {
-                            if let Some(workspace) = editor
-                                .workspace
-                                .as_ref()
-                                .and_then(|(workspace, _)| workspace.upgrade(cx))
-                            {
-                                workspace.update(cx, |workspace, cx| {
-                                    Editor::jump(
-                                        workspace,
-                                        jump_path.clone(),
-                                        jump_position,
-                                        jump_anchor,
-                                        cx,
-                                    );
-                                });
+                            if let Some((workspace, _)) = editor.workspace.as_mut() {
+                                Editor::jump(
+                                    &**workspace,
+                                    jump_path.clone(),
+                                    jump_position,
+                                    jump_anchor,
+                                    cx,
+                                );
                             }
                         })
                         .with_tooltip::<JumpIcon>(

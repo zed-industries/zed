@@ -396,16 +396,14 @@ pub fn show_link_definition(
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
                     // query the LSP for definition info
-                    cx.update(|cx| {
-                        project.update(cx, |project, cx| match definition_kind {
-                            LinkDefinitionKind::Symbol => {
-                                project.definition(&buffer, buffer_position, cx)
-                            }
+                    cx.update(|cx| match definition_kind {
+                        LinkDefinitionKind::Symbol => {
+                            project.definition(&buffer, buffer_position, cx)
+                        }
 
-                            LinkDefinitionKind::Type => {
-                                project.type_definition(&buffer, buffer_position, cx)
-                            }
-                        })
+                        LinkDefinitionKind::Type => {
+                            project.type_definition(&buffer, buffer_position, cx)
+                        }
                     })
                     .await
                     .ok()

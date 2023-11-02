@@ -129,8 +129,11 @@ impl FollowableItem for Editor {
                     });
 
                     cx.add_view(|cx| {
-                        let mut editor =
-                            Editor::for_multibuffer(multibuffer, Some(project.clone()), cx);
+                        let mut editor = Editor::for_multibuffer(
+                            multibuffer,
+                            Some(Arc::new(project.clone())),
+                            cx,
+                        );
                         editor.remote_id = Some(remote_id);
                         editor
                     })
@@ -652,7 +655,7 @@ impl Item for Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         self.report_editor_event("save", None, cx);
-        let format = self.perform_format(project.clone(), FormatTrigger::Save, cx);
+        let format = self.perform_format(Arc::new(project.clone()), FormatTrigger::Save, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.spawn(|_, mut cx| async move {
             format.await?;
@@ -787,7 +790,7 @@ impl Item for Editor {
                 cx,
                 self.project
                     .as_ref()
-                    .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+                    .map(|project| project.visible_worktrees_count(cx) > 1)
                     .unwrap_or_default(),
             )
             .map(|path| path.to_string_lossy().to_string())
@@ -807,7 +810,7 @@ impl Item for Editor {
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         let workspace_id = workspace.database_id();
         let item_id = cx.view_id();
-        self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
+        self.workspace = Some((Arc::new(workspace.weak_handle()), workspace.database_id()));
 
         fn serialize(
             buffer: ModelHandle<Buffer>,
@@ -879,7 +882,8 @@ impl Item for Editor {
                         .context("Project item at stored path was not a buffer")?;
                     Ok(pane.update(&mut cx, |_, cx| {
                         cx.add_view(|cx| {
-                            let mut editor = Editor::for_buffer(buffer, Some(project), cx);
+                            let mut editor =
+                                Editor::for_buffer(buffer, Some(Arc::new(project)), cx);
                             editor.read_scroll_position_from_db(item_id, workspace_id, cx);
                             editor
                         })
@@ -898,7 +902,7 @@ impl ProjectItem for Editor {
         buffer: ModelHandle<Buffer>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        Self::for_buffer(buffer, Some(project), cx)
+        Self::for_buffer(buffer, Some(Arc::new(project)), cx)
     }
 }
 

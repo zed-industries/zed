@@ -539,14 +539,12 @@ impl InlayHintCache {
                                 .buffer(buffer_id)
                                 .and_then(|buffer| {
                                     let project = editor.project.as_ref()?;
-                                    Some(project.update(cx, |project, cx| {
-                                        project.resolve_inlay_hint(
-                                            hint_to_resolve,
-                                            buffer,
-                                            server_id,
-                                            cx,
-                                        )
-                                    }))
+                                    Some(project.resolve_inlay_hint(
+                                        hint_to_resolve,
+                                        buffer,
+                                        server_id,
+                                        cx,
+                                    ))
                                 })
                         })?;
                         if let Some(resolved_hint_task) = resolved_hint_task {
@@ -896,9 +894,9 @@ async fn fetch_and_update_hints(
                 .buffer(query.buffer_id)
                 .and_then(|buffer| {
                     let project = editor.project.as_ref()?;
-                    Some(project.update(cx, |project, cx| {
+                    Some(
                         project.inlay_hints(buffer, fetch_range.clone(), cx)
-                    }))
+                    )
                 })
         })
         .ok()

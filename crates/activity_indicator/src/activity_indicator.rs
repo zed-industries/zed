@@ -103,9 +103,9 @@ impl ActivityIndicator {
                         );
                     });
                     workspace.add_item(
-                        Box::new(
-                            cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
-                        ),
+                        Box::new(cx.add_view(|cx| {
+                            Editor::for_buffer(buffer, Some(Arc::new(project.clone())), cx)
+                        })),
                         cx,
                     );
                 }

@@ -2,7 +2,7 @@ use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
     link_go_to_definition::{InlayHighlight, RangeInEditor},
     Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
-    ExcerptId, RangeToAnchorExt,
+    ExcerptId, ProjectT, RangeToAnchorExt, WorkspaceT,
 };
 use futures::FutureExt;
 use gpui::{
@@ -103,11 +103,11 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                 cx.background()
                     .timer(Duration::from_millis(HOVER_DELAY_MILLIS))
                     .await;
-                this.update(&mut cx, |this, _| {
+                let language_registry = this.update(&mut cx, |this, cx| {
                     this.hover_state.diagnostic_popover = None;
+                    project.languages(cx)
                 })?;
 
-                let language_registry = project.update(&mut cx, |p, _| p.languages().clone());
                 let blocks = vec![inlay_hover.tooltip];
                 let parsed_content = parse_blocks(&blocks, &language_registry, None).await;
 
@@ -252,11 +252,7 @@ fn show_hover(
             };
 
             // query the LSP for hover info
-            let hover_request = cx.update(|cx| {
-                project.update(cx, |project, cx| {
-                    project.hover(&buffer, buffer_position, cx)
-                })
-            });
+            let hover_request = cx.update(|cx| project.hover(&buffer, buffer_position, cx));
 
             if let Some(delay) = delay {
                 delay.await;
@@ -310,7 +306,7 @@ fn show_hover(
                         anchor..anchor
                     };
 
-                    let language_registry = project.update(&mut cx, |p, _| p.languages().clone());
+                    let language_registry = cx.update(|cx| project.languages(cx));
                     let blocks = hover_result.contents;
                     let language = hover_result.language;
                     let parsed_content = parse_blocks(&blocks, &language_registry, language).await;
@@ -423,7 +419,7 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         visible_rows: Range<u32>,
-        workspace: Option<WeakViewHandle<Workspace>>,
+        workspace: Option<Arc<dyn WorkspaceT>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement<Editor>>)> {
         // If there is a diagnostic, position the popovers based on that.
@@ -462,7 +458,7 @@ impl HoverState {
 
 #[derive(Debug, Clone)]
 pub struct InfoPopover {
-    pub project: ModelHandle<Project>,
+    pub project: Arc<dyn ProjectT>,
     symbol_range: RangeInEditor,
     pub blocks: Vec<HoverBlock>,
     parsed_content: ParsedMarkdown,
@@ -472,7 +468,7 @@ impl InfoPopover {
     pub fn render(
         &mut self,
         style: &EditorStyle,
-        workspace: Option<WeakViewHandle<Workspace>>,
+        workspace: Option<Arc<dyn WorkspaceT>>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement<Editor> {
         MouseEventHandler::new::<InfoPopover, _>(0, cx, |_, cx| {

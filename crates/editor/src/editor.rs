@@ -48,8 +48,8 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
     serde_json, AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem,
-    CursorRegion, Element, Entity, ModelHandle, MouseRegion, Subscription, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle, WindowContext,
+    CursorRegion, Element, Entity, Handle, ModelHandle, MouseRegion, Subscription, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -59,17 +59,17 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
-    markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel,
-    Completion, CursorShape, Diagnostic, DiagnosticSeverity, Documentation, File, IndentKind,
-    IndentSize, Language, LanguageRegistry, LanguageServerName, OffsetRangeExt, OffsetUtf16, Point,
-    Selection, SelectionGoal, TransactionId,
+    markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, CachedLspAdapter, CodeAction,
+    CodeLabel, Completion, CursorShape, Diagnostic, DiagnosticSeverity, Documentation, File,
+    IndentKind, IndentSize, Language, LanguageRegistry, LanguageServerName, OffsetRangeExt,
+    OffsetUtf16, Point, Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, GoToDefinitionLink, InlayHighlight,
     LinkGoToDefinitionState,
 };
 use log::error;
-use lsp::LanguageServerId;
+use lsp::{LanguageServer, LanguageServerId};
 use movement::TextLayoutDetails;
 use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
@@ -96,7 +96,7 @@ use std::{
     mem,
     num::NonZeroU32,
     ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -105,7 +105,9 @@ use sum_tree::TreeMap;
 use text::Rope;
 use theme::{DiagnosticStyle, Theme, ThemeSettings};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, SplitDirection, ViewId, Workspace};
+use workspace::{
+    item::ItemHandle, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace, WorkspaceId,
+};
 
 use crate::git::diff_hunk_to_display;
 
@@ -122,7 +124,7 @@ pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub fn render_parsed_markdown<Tag: 'static>(
     parsed: &language::ParsedMarkdown,
     editor_style: &EditorStyle,
-    workspace: Option<WeakViewHandle<Workspace>>,
+    workspace: Option<Arc<dyn WorkspaceT>>,
     cx: &mut ViewContext<Editor>,
 ) -> Text {
     enum RenderedMarkdown {}
@@ -155,13 +157,14 @@ pub fn render_parsed_markdown<Tag: 'static>(
                 });
                 cx.scene().push_mouse_region(
                     MouseRegion::new::<(RenderedMarkdown, Tag)>(view_id, region_id, bounds)
-                        .on_down::<Editor, _>(MouseButton::Left, move |_, _, cx| match &link {
-                            markdown::Link::Web { url } => cx.platform().open_url(url),
-                            markdown::Link::Path { path } => {
-                                if let Some(workspace) = &workspace {
-                                    _ = workspace.update(cx, |workspace, cx| {
+                        .on_down::<Editor, _>(MouseButton::Left, {
+                            let workspace = workspace.clone();
+                            move |_, _, cx| match &link {
+                                markdown::Link::Web { url } => cx.platform().open_url(url),
+                                markdown::Link::Path { path } => {
+                                    if let Some(ref workspace) = workspace {
                                         workspace.open_abs_path(path.clone(), false, cx).detach();
-                                    });
+                                    }
                                 }
                             }
                         }),
@@ -538,10 +541,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::restart_language_server);
     cx.add_action(Editor::show_character_palette);
     cx.add_async_action(Editor::confirm_completion);
-    cx.add_async_action(Editor::confirm_code_action);
+    //cx.add_async_action(Editor::confirm_code_action);
     cx.add_async_action(Editor::rename);
     cx.add_async_action(Editor::confirm_rename);
-    cx.add_async_action(Editor::find_all_references);
+    // cx.add_async_action(Editor::find_all_references);
     cx.add_action(Editor::next_copilot_suggestion);
     cx.add_action(Editor::previous_copilot_suggestion);
     cx.add_action(Editor::copilot_suggest);
@@ -624,6 +627,458 @@ type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 type BackgroundHighlight = (fn(&Theme) -> Color, Vec<Range<Anchor>>);
 type InlayBackgroundHighlight = (fn(&Theme) -> Color, Vec<InlayHighlight>);
 
+pub trait WorkspaceT: 'static {
+    fn open_abs_path(
+        &self,
+        abs_path: PathBuf,
+        visible: bool,
+        cx: &mut AppContext,
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>>;
+    fn open_path(
+        &self,
+        path: ProjectPath,
+        pane: Option<WeakViewHandle<Pane>>,
+        focus_item: bool,
+        cx: &mut AppContext,
+    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>>;
+    fn active_item(&self, cx: &mut AppContext) -> Option<Box<dyn ItemHandle>>;
+    fn project(&self, cx: &mut AppContext) -> Arc<dyn ProjectT>;
+    fn active_pane(&self, cx: &mut AppContext) -> ViewHandle<Pane>;
+    fn split_buffer(&self, buffer: ModelHandle<Buffer>, cx: &mut AppContext) -> ViewHandle<Editor>;
+    fn open_buffer(&self, buffer: ModelHandle<Buffer>, cx: &mut AppContext) -> ViewHandle<Editor>;
+    fn add_item(&self, item: Box<dyn ItemHandle>, cx: &mut AppContext);
+    fn split_item(
+        &self,
+        split_direction: SplitDirection,
+        item: Box<dyn ItemHandle>,
+        cx: &mut AppContext,
+    );
+}
+
+pub trait ProjectT: 'static + std::fmt::Debug {
+    fn apply_code_action(
+        &self,
+        buffer_handle: ModelHandle<Buffer>,
+        action: CodeAction,
+        push_to_history: bool,
+        cx: &mut AppContext,
+    ) -> Task<Result<ProjectTransaction>>;
+    fn inlay_hints(
+        &self,
+        buffer_handle: ModelHandle<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut AppContext,
+    ) -> Task<anyhow::Result<Vec<project::InlayHint>>>;
+    fn visible_worktrees_count(&self, cx: &AppContext) -> usize;
+    fn resolve_inlay_hint(
+        &self,
+        hint: project::InlayHint,
+        buffer_handle: ModelHandle<Buffer>,
+        server_id: LanguageServerId,
+        cx: &mut AppContext,
+    ) -> Task<anyhow::Result<project::InlayHint>>;
+    fn languages(&self, cx: &AppContext) -> Arc<LanguageRegistry>;
+    fn hover(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Option<project::Hover>>>;
+    fn definition(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<project::LocationLink>>>;
+
+    fn type_definition(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<project::LocationLink>>>;
+    fn completions(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<Completion>>>;
+    fn as_hub(&self) -> Box<dyn CollaborationHub>;
+    fn is_remote(&self, cx: &AppContext) -> bool;
+    fn is_local(&self, cx: &AppContext) -> bool {
+        !self.is_remote(cx)
+    }
+    fn remote_id(&self, cx: &AppContext) -> Option<u64>;
+    fn language_servers_for_buffer(
+        &self,
+        buffer: &Buffer,
+        cx: &AppContext,
+    ) -> Vec<(Arc<CachedLspAdapter>, Arc<LanguageServer>)>;
+    fn on_type_format(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        position: text::Anchor,
+        trigger: String,
+        push_to_history: bool,
+        cx: &mut AppContext,
+    ) -> Task<Result<Option<text::Transaction>>>;
+    fn client(&self, cx: &AppContext) -> Arc<Client>;
+    fn language_server_for_id(
+        &self,
+        id: LanguageServerId,
+        cx: &AppContext,
+    ) -> Option<Arc<LanguageServer>>;
+
+    fn code_actions(
+        &self,
+        buffer_handle: &ModelHandle<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<CodeAction>>>;
+    fn document_highlights(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<project::DocumentHighlight>>>;
+    fn format(
+        &self,
+        buffers: HashSet<ModelHandle<Buffer>>,
+        push_to_history: bool,
+        trigger: FormatTrigger,
+        cx: &mut AppContext,
+    ) -> Task<anyhow::Result<ProjectTransaction>>;
+    fn restart_language_servers_for_buffers(
+        &self,
+        buffers: HashSet<ModelHandle<Buffer>>,
+        cx: &mut AppContext,
+    ) -> Option<()>;
+    fn prepare_rename(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        position: usize,
+        cx: &mut AppContext,
+    ) -> Task<Result<Option<Range<text::Anchor>>>>;
+    fn references(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<project::Location>>>;
+    fn apply_additional_edits_for_completion(
+        &self,
+        buffer_handle: ModelHandle<Buffer>,
+        completion: Completion,
+        push_to_history: bool,
+        cx: &mut AppContext,
+    ) -> Task<Result<Option<text::Transaction>>>;
+    fn language_server_for_buffer<'a>(
+        &self,
+        buffer: &Buffer,
+        server_id: LanguageServerId,
+        cx: &'a AppContext,
+    ) -> Option<(&'a Arc<CachedLspAdapter>, &'a Arc<LanguageServer>)>;
+    fn open_local_buffer_via_lsp(
+        &self,
+        abs_path: lsp::Url,
+        language_server_id: LanguageServerId,
+        language_server_name: LanguageServerName,
+        cx: &mut AppContext,
+    ) -> Task<Result<ModelHandle<Buffer>>>;
+    fn subscribe(&self, is_singleton: bool, cx: &mut ViewContext<Editor>) -> Vec<Subscription>;
+}
+impl ProjectT for ModelHandle<Project> {
+    fn apply_code_action(
+        &self,
+        buffer_handle: ModelHandle<Buffer>,
+        mut action: CodeAction,
+        push_to_history: bool,
+        cx: &mut AppContext,
+    ) -> Task<Result<ProjectTransaction>> {
+        self.update(cx, |this, cx| {
+            this.apply_code_action(buffer_handle, action, push_to_history, cx)
+        })
+    }
+
+    fn inlay_hints(
+        &self,
+        buffer_handle: ModelHandle<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut AppContext,
+    ) -> Task<anyhow::Result<Vec<project::InlayHint>>> {
+        self.update(cx, |this, cx| this.inlay_hints(buffer_handle, range, cx))
+    }
+    fn visible_worktrees_count(&self, cx: &AppContext) -> usize {
+        self.read(cx).visible_worktrees(cx).count()
+    }
+    fn resolve_inlay_hint(
+        &self,
+        hint: project::InlayHint,
+        buffer_handle: ModelHandle<Buffer>,
+        server_id: LanguageServerId,
+        cx: &mut AppContext,
+    ) -> Task<anyhow::Result<project::InlayHint>> {
+        self.update(cx, |this, cx| {
+            this.resolve_inlay_hint(hint, buffer_handle, server_id, cx)
+        })
+    }
+    fn languages(&self, cx: &AppContext) -> Arc<LanguageRegistry> {
+        self.read(cx).languages().clone()
+    }
+    fn hover(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Option<project::Hover>>> {
+        self.update(cx, |this, cx| this.hover(buffer, position, cx))
+    }
+    fn definition(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<project::LocationLink>>> {
+        self.update(cx, |this, cx| this.definition(buffer, position, cx))
+    }
+
+    fn type_definition(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<project::LocationLink>>> {
+        self.update(cx, |this, cx| this.type_definition(buffer, position, cx))
+    }
+
+    fn completions(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<Completion>>> {
+        self.update(cx, |this, cx| this.completions(buffer, position, cx))
+    }
+
+    fn as_hub(&self) -> Box<dyn CollaborationHub> {
+        Box::new(self.clone())
+    }
+    fn is_remote(&self, cx: &AppContext) -> bool {
+        self.read(cx).is_remote()
+    }
+    fn remote_id(&self, cx: &AppContext) -> Option<u64> {
+        self.read(cx).remote_id()
+    }
+    fn language_servers_for_buffer(
+        &self,
+        buffer: &Buffer,
+        cx: &AppContext,
+    ) -> Vec<(Arc<CachedLspAdapter>, Arc<LanguageServer>)> {
+        self.read(cx)
+            .language_servers_for_buffer(buffer, cx)
+            .map(|(adapter, server)| (adapter.clone(), server.clone()))
+            .collect()
+    }
+
+    fn on_type_format(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        position: text::Anchor,
+        trigger: String,
+        push_to_history: bool,
+        cx: &mut AppContext,
+    ) -> Task<Result<Option<text::Transaction>>> {
+        self.update(cx, |this, cx| {
+            this.on_type_format(buffer, position, trigger, push_to_history, cx)
+        })
+    }
+    fn client(&self, cx: &AppContext) -> Arc<Client> {
+        self.read(cx).client().clone()
+    }
+
+    fn language_server_for_id(
+        &self,
+        id: LanguageServerId,
+        cx: &AppContext,
+    ) -> Option<Arc<LanguageServer>> {
+        self.read(cx).language_server_for_id(id).clone()
+    }
+
+    fn code_actions(
+        &self,
+        buffer_handle: &ModelHandle<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<CodeAction>>> {
+        self.update(cx, |this, cx| this.code_actions(buffer_handle, range, cx))
+    }
+    fn document_highlights(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<project::DocumentHighlight>>> {
+        self.update(cx, |this, cx| {
+            this.document_highlights(buffer, position, cx)
+        })
+    }
+
+    fn format(
+        &self,
+        buffers: HashSet<ModelHandle<Buffer>>,
+        push_to_history: bool,
+        trigger: FormatTrigger,
+        cx: &mut AppContext,
+    ) -> Task<anyhow::Result<ProjectTransaction>> {
+        self.update(cx, |this, cx| {
+            this.format(buffers, push_to_history, trigger, cx)
+        })
+    }
+
+    fn restart_language_servers_for_buffers(
+        &self,
+        buffers: HashSet<ModelHandle<Buffer>>,
+        cx: &mut AppContext,
+    ) -> Option<()> {
+        self.update(cx, |this, cx| {
+            this.restart_language_servers_for_buffers(buffers, cx)
+        })
+    }
+
+    fn prepare_rename(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        position: usize,
+        cx: &mut AppContext,
+    ) -> Task<Result<Option<Range<text::Anchor>>>> {
+        self.update(cx, |this, cx| this.prepare_rename(buffer, position, cx))
+    }
+
+    fn references(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<project::Location>>> {
+        self.update(cx, |this, cx| this.references(buffer, position, cx))
+    }
+
+    fn apply_additional_edits_for_completion(
+        &self,
+        buffer_handle: ModelHandle<Buffer>,
+        completion: Completion,
+        push_to_history: bool,
+        cx: &mut AppContext,
+    ) -> Task<Result<Option<text::Transaction>>> {
+        self.update(cx, |this, cx| {
+            this.apply_additional_edits_for_completion(
+                buffer_handle,
+                completion,
+                push_to_history,
+                cx,
+            )
+        })
+    }
+
+    fn language_server_for_buffer<'a>(
+        &self,
+        buffer: &Buffer,
+        server_id: LanguageServerId,
+        cx: &'a AppContext,
+    ) -> Option<(&'a Arc<CachedLspAdapter>, &'a Arc<LanguageServer>)> {
+        self.read(cx)
+            .language_server_for_buffer(buffer, server_id, cx)
+    }
+
+    fn open_local_buffer_via_lsp(
+        &self,
+        abs_path: lsp::Url,
+        language_server_id: LanguageServerId,
+        language_server_name: LanguageServerName,
+        cx: &mut AppContext,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        self.update(cx, |this, cx| {
+            this.open_local_buffer_via_lsp(abs_path, language_server_id, language_server_name, cx)
+        })
+    }
+
+    fn subscribe(&self, is_singleton: bool, cx: &mut ViewContext<Editor>) -> Vec<Subscription> {
+        let mut project_subscriptions = Vec::with_capacity(2);
+        if is_singleton {
+            project_subscriptions.push(cx.observe(self, |_, _, cx| {
+                cx.emit(Event::TitleChanged);
+            }));
+        }
+        project_subscriptions.push(cx.subscribe(self, |editor, _, event, cx| {
+            if let project::Event::RefreshInlayHints = event {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
+            };
+        }));
+        project_subscriptions
+    }
+}
+
+impl WorkspaceT for WeakViewHandle<Workspace> {
+    fn open_abs_path(
+        &self,
+        abs_path: PathBuf,
+        visible: bool,
+        cx: &mut AppContext,
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        self.update(cx, |workspace, cx| {
+            workspace.open_abs_path(abs_path, visible, cx)
+        })
+        .map_or_else(|err| Task::ready(Err(err)), |ok| ok)
+    }
+    fn open_path(
+        &self,
+        path: ProjectPath,
+        pane: Option<WeakViewHandle<Pane>>,
+        focus_item: bool,
+        cx: &mut AppContext,
+    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+        self.update(cx, |this, cx| this.open_path(path, pane, focus_item, cx))
+            .map_or_else(|err| Task::ready(Err(err)), |ok| ok)
+    }
+
+    fn active_item(&self, cx: &mut AppContext) -> Option<Box<dyn ItemHandle>> {
+        self.update(cx, |workspace, cx| workspace.active_item(cx))
+            .log_err()
+            .flatten()
+    }
+
+    fn project(&self, cx: &mut AppContext) -> Arc<dyn ProjectT> {
+        self.update(cx, |this, cx| Arc::new(this.project().clone()))
+            .unwrap()
+    }
+    fn active_pane(&self, cx: &mut AppContext) -> ViewHandle<Pane> {
+        self.update(cx, |this, cx| this.active_pane().clone())
+            .unwrap()
+    }
+
+    fn split_buffer(&self, buffer: ModelHandle<Buffer>, cx: &mut AppContext) -> ViewHandle<Editor> {
+        self.update(cx, |this, cx| this.split_project_item(buffer, cx))
+            .unwrap()
+    }
+
+    fn open_buffer(&self, buffer: ModelHandle<Buffer>, cx: &mut AppContext) -> ViewHandle<Editor> {
+        self.update(cx, |this, cx| this.open_project_item(buffer, cx))
+            .unwrap()
+    }
+
+    fn add_item(&self, item: Box<dyn ItemHandle>, cx: &mut AppContext) {
+        self.update(cx, |this, cx| this.add_item(item, cx));
+    }
+
+    fn split_item(
+        &self,
+        split_direction: SplitDirection,
+        item: Box<dyn ItemHandle>,
+        cx: &mut AppContext,
+    ) {
+        self.update(cx, |this, cx| this.split_item(split_direction, item, cx));
+    }
+}
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
@@ -643,7 +1098,7 @@ pub struct Editor {
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
     override_text_style: Option<Box<OverrideTextStyle>>,
-    project: Option<ModelHandle<Project>>,
+    project: Option<Arc<dyn ProjectT>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     focused: bool,
     blink_manager: ModelHandle<BlinkManager>,
@@ -668,7 +1123,7 @@ pub struct Editor {
     cursor_shape: CursorShape,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
-    workspace: Option<(WeakViewHandle<Workspace>, i64)>,
+    workspace: Option<(Arc<dyn WorkspaceT>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
     read_only: bool,
@@ -851,7 +1306,7 @@ enum ContextMenu {
 impl ContextMenu {
     fn select_first(
         &mut self,
-        project: Option<&ModelHandle<Project>>,
+        project: Option<Arc<dyn ProjectT>>,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         if self.visible() {
@@ -867,7 +1322,7 @@ impl ContextMenu {
 
     fn select_prev(
         &mut self,
-        project: Option<&ModelHandle<Project>>,
+        project: Option<Arc<dyn ProjectT>>,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         if self.visible() {
@@ -883,7 +1338,7 @@ impl ContextMenu {
 
     fn select_next(
         &mut self,
-        project: Option<&ModelHandle<Project>>,
+        project: Option<Arc<dyn ProjectT>>,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         if self.visible() {
@@ -899,7 +1354,7 @@ impl ContextMenu {
 
     fn select_last(
         &mut self,
-        project: Option<&ModelHandle<Project>>,
+        project: Option<Arc<dyn ProjectT>>,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         if self.visible() {
@@ -924,7 +1379,7 @@ impl ContextMenu {
         &self,
         cursor_position: DisplayPoint,
         style: EditorStyle,
-        workspace: Option<WeakViewHandle<Workspace>>,
+        workspace: Option<Arc<dyn WorkspaceT>>,
         cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, AnyElement<Editor>) {
         match self {
@@ -947,22 +1402,14 @@ struct CompletionsMenu {
 }
 
 impl CompletionsMenu {
-    fn select_first(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn select_first(&mut self, project: Option<Arc<dyn ProjectT>>, cx: &mut ViewContext<Editor>) {
         self.selected_item = 0;
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
 
-    fn select_prev(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn select_prev(&mut self, project: Option<Arc<dyn ProjectT>>, cx: &mut ViewContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
         } else {
@@ -973,11 +1420,7 @@ impl CompletionsMenu {
         cx.notify();
     }
 
-    fn select_next(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn select_next(&mut self, project: Option<Arc<dyn ProjectT>>, cx: &mut ViewContext<Editor>) {
         if self.selected_item + 1 < self.matches.len() {
             self.selected_item += 1;
         } else {
@@ -988,11 +1431,7 @@ impl CompletionsMenu {
         cx.notify();
     }
 
-    fn select_last(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn select_last(&mut self, project: Option<Arc<dyn ProjectT>>, cx: &mut ViewContext<Editor>) {
         self.selected_item = self.matches.len() - 1;
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         self.attempt_resolve_selected_completion_documentation(project, cx);
@@ -1001,7 +1440,7 @@ impl CompletionsMenu {
 
     fn pre_resolve_completion_documentation(
         &self,
-        project: Option<ModelHandle<Project>>,
+        project: Option<Arc<dyn ProjectT>>,
         cx: &mut ViewContext<Editor>,
     ) {
         let settings = settings::get::<EditorSettings>(cx);
@@ -1012,11 +1451,11 @@ impl CompletionsMenu {
         let Some(project) = project else {
             return;
         };
-        let client = project.read(cx).client();
-        let language_registry = project.read(cx).languages().clone();
+        let client = project.client(cx);
+        let language_registry = project.languages(cx);
 
-        let is_remote = project.read(cx).is_remote();
-        let project_id = project.read(cx).remote_id();
+        let is_remote = project.is_remote(cx);
+        let project_id = project.remote_id(cx);
 
         let completions = self.completions.clone();
         let completion_indices: Vec<_> = self.matches.iter().map(|m| m.candidate_id).collect();
@@ -1064,9 +1503,7 @@ impl CompletionsMenu {
                     let completion = completion.lsp_completion.clone();
                     drop(completions_guard);
 
-                    let server = project.read_with(&mut cx, |project, _| {
-                        project.language_server_for_id(server_id)
-                    });
+                    let server = cx.update(|cx| project.language_server_for_id(server_id, &cx));
                     let Some(server) = server else {
                         return;
                     };
@@ -1089,7 +1526,7 @@ impl CompletionsMenu {
 
     fn attempt_resolve_selected_completion_documentation(
         &mut self,
-        project: Option<&ModelHandle<Project>>,
+        project: Option<Arc<dyn ProjectT>>,
         cx: &mut ViewContext<Editor>,
     ) {
         let settings = settings::get::<EditorSettings>(cx);
@@ -1101,7 +1538,7 @@ impl CompletionsMenu {
         let Some(project) = project else {
             return;
         };
-        let language_registry = project.read(cx).languages().clone();
+        let language_registry = project.languages(cx).clone();
 
         let completions = self.completions.clone();
         let completions_guard = completions.read();
@@ -1114,13 +1551,13 @@ impl CompletionsMenu {
         let completion = completion.lsp_completion.clone();
         drop(completions_guard);
 
-        if project.read(cx).is_remote() {
-            let Some(project_id) = project.read(cx).remote_id() else {
+        if project.is_remote(cx) {
+            let Some(project_id) = project.remote_id(cx) else {
                 log::error!("Remote project without remote_id");
                 return;
             };
 
-            let client = project.read(cx).client();
+            let client = project.client(cx);
 
             cx.spawn(move |this, mut cx| async move {
                 Self::resolve_completion_documentation_remote(
@@ -1138,7 +1575,7 @@ impl CompletionsMenu {
             })
             .detach();
         } else {
-            let Some(server) = project.read(cx).language_server_for_id(server_id) else {
+            let Some(server) = project.language_server_for_id(server_id, cx) else {
                 return;
             };
 
@@ -1250,7 +1687,7 @@ impl CompletionsMenu {
     fn render(
         &self,
         style: EditorStyle,
-        workspace: Option<WeakViewHandle<Workspace>>,
+        workspace: Option<Arc<dyn WorkspaceT>>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement<Editor> {
         enum CompletionTag {}
@@ -1598,23 +2035,18 @@ impl CodeActionsMenu {
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_down(MouseButton::Left, move |_, this, cx| {
-                            let workspace = this
-                                .workspace
-                                .as_ref()
-                                .and_then(|(workspace, _)| workspace.upgrade(cx));
+                            let workspace = this.workspace.clone();
                             cx.window_context().defer(move |cx| {
                                 if let Some(workspace) = workspace {
-                                    workspace.update(cx, |workspace, cx| {
-                                        if let Some(task) = Editor::confirm_code_action(
-                                            workspace,
-                                            &ConfirmCodeAction {
-                                                item_ix: Some(item_ix),
-                                            },
-                                            cx,
-                                        ) {
-                                            task.detach_and_log_err(cx);
-                                        }
-                                    });
+                                    if let Some(task) = Editor::confirm_code_action(
+                                        workspace.0,
+                                        &ConfirmCodeAction {
+                                            item_ix: Some(item_ix),
+                                        },
+                                        cx,
+                                    ) {
+                                        task.detach_and_log_err(cx);
+                                    }
                                 }
                             });
                         })
@@ -1835,7 +2267,7 @@ impl Editor {
 
     pub fn for_buffer(
         buffer: ModelHandle<Buffer>,
-        project: Option<ModelHandle<Project>>,
+        project: Option<Arc<dyn ProjectT>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
@@ -1844,7 +2276,7 @@ impl Editor {
 
     pub fn for_multibuffer(
         buffer: ModelHandle<MultiBuffer>,
-        project: Option<ModelHandle<Project>>,
+        project: Option<Arc<dyn ProjectT>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self::new(EditorMode::Full, buffer, project, None, cx)
@@ -1873,7 +2305,7 @@ impl Editor {
     fn new(
         mode: EditorMode,
         buffer: ModelHandle<MultiBuffer>,
-        project: Option<ModelHandle<Project>>,
+        project: Option<Arc<dyn ProjectT>>,
         get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -1902,16 +2334,8 @@ impl Editor {
         let mut project_subscriptions = Vec::new();
         if mode == EditorMode::Full {
             if let Some(project) = project.as_ref() {
-                if buffer.read(cx).is_singleton() {
-                    project_subscriptions.push(cx.observe(project, |_, _, cx| {
-                        cx.emit(Event::TitleChanged);
-                    }));
-                }
-                project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
-                    if let project::Event::RefreshInlayHints = event {
-                        editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
-                    };
-                }));
+                let is_singleton = buffer.read(cx).is_singleton();
+                project_subscriptions.extend(project.subscribe(is_singleton, cx));
             }
         }
 
@@ -1939,7 +2363,7 @@ impl Editor {
             active_diagnostics: None,
             soft_wrap_mode_override,
             get_field_editor_theme,
-            collaboration_hub: project.clone().map(|project| Box::new(project) as _),
+            collaboration_hub: project.clone().map(|project| project.as_hub()),
             project,
             focused: false,
             blink_manager: blink_manager.clone(),
@@ -2028,7 +2452,9 @@ impl Editor {
             .log_err()
         {
             workspace.add_item(
-                Box::new(cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
+                Box::new(cx.add_view(|cx| {
+                    Editor::for_buffer(buffer, Some(Arc::new(project.clone())), cx)
+                })),
                 cx,
             );
         }
@@ -2048,7 +2474,9 @@ impl Editor {
         {
             workspace.split_item(
                 action.0,
-                Box::new(cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
+                Box::new(cx.add_view(|cx| {
+                    Editor::for_buffer(buffer, Some(Arc::new(project.clone())), cx)
+                })),
                 cx,
             );
         }
@@ -2064,10 +2492,6 @@ impl Editor {
 
     pub fn buffer(&self) -> &ModelHandle<MultiBuffer> {
         &self.buffer
-    }
-
-    fn workspace(&self, cx: &AppContext) -> Option<ViewHandle<Workspace>> {
-        self.workspace.as_ref()?.0.upgrade(cx)
     }
 
     pub fn title<'a>(&self, cx: &'a AppContext) -> Cow<'a, str> {
@@ -3524,17 +3948,15 @@ impl Editor {
         // hence we do LSP request & edit on host side only — add formats to host's history.
         let push_to_lsp_host_history = true;
         // If this is not the host, append its history with new edits.
-        let push_to_client_history = project.read(cx).is_remote();
+        let push_to_client_history = project.is_remote(cx);
 
-        let on_type_formatting = project.update(cx, |project, cx| {
-            project.on_type_format(
-                buffer.clone(),
-                buffer_position,
-                input,
-                push_to_lsp_host_history,
-                cx,
-            )
-        });
+        let on_type_formatting = project.on_type_format(
+            buffer.clone(),
+            buffer_position,
+            input,
+            push_to_lsp_host_history,
+            cx,
+        );
         Some(cx.spawn(|editor, mut cx| async move {
             if let Some(transaction) = on_type_formatting.await? {
                 if push_to_client_history {
@@ -3573,9 +3995,7 @@ impl Editor {
         };
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
-        let completions = project.update(cx, |project, cx| {
-            project.completions(&buffer, buffer_position, cx)
-        });
+        let completions = project.completions(&buffer, buffer_position, cx);
 
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn(|this, mut cx| {
@@ -3770,14 +4190,12 @@ impl Editor {
         });
 
         let project = self.project.clone()?;
-        let apply_edits = project.update(cx, |project, cx| {
-            project.apply_additional_edits_for_completion(
-                buffer_handle,
-                completion.clone(),
-                true,
-                cx,
-            )
-        });
+        let apply_edits = project.apply_additional_edits_for_completion(
+            buffer_handle,
+            completion.clone(),
+            true,
+            cx,
+        );
         Some(cx.foreground().spawn(async move {
             apply_edits.await?;
             Ok(())
@@ -3824,13 +4242,14 @@ impl Editor {
     }
 
     pub fn confirm_code_action(
-        workspace: &mut Workspace,
+        workspace: Arc<dyn WorkspaceT>,
         action: &ConfirmCodeAction,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
-        let actions_menu = if let ContextMenu::CodeActions(menu) =
-            editor.update(cx, |editor, cx| editor.hide_context_menu(cx))?
+        let actions_menu = if let ContextMenu::CodeActions(menu) = editor
+            .update(cx, |editor, cx| editor.hide_context_menu(cx))
+            .flatten()?
         {
             menu
         } else {
@@ -3841,19 +4260,21 @@ impl Editor {
         let title = action.lsp_action.title.clone();
         let buffer = actions_menu.buffer;
 
-        let apply_code_actions = workspace.project().clone().update(cx, |project, cx| {
-            project.apply_code_action(buffer, action, true, cx)
-        });
+        let apply_code_actions = workspace
+            .project(cx)
+            .apply_code_action(buffer, action, true, cx);
         let editor = editor.downgrade();
-        Some(cx.spawn(|workspace, cx| async move {
+        let workspace = workspace.clone();
+        Some(cx.spawn(|cx| async move {
             let project_transaction = apply_code_actions.await?;
-            Self::open_project_transaction(&editor, workspace, project_transaction, title, cx).await
+            Self::open_project_transaction(&editor, &*workspace, project_transaction, title, cx)
+                .await
         }))
     }
 
     async fn open_project_transaction(
         this: &WeakViewHandle<Editor>,
-        workspace: WeakViewHandle<Workspace>,
+        workspace: &dyn WorkspaceT,
         transaction: ProjectTransaction,
         title: String,
         mut cx: AsyncAppContext,
@@ -3918,19 +4339,21 @@ impl Editor {
             multibuffer
         });
 
-        workspace.update(&mut cx, |workspace, cx| {
-            let project = workspace.project().clone();
+        let editor = this.update(&mut cx, |_, mut cx| {
+            let project = workspace.project(&mut cx);
             let editor =
                 cx.add_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
-            workspace.add_item(Box::new(editor.clone()), cx);
-            editor.update(cx, |editor, cx| {
-                editor.highlight_background::<Self>(
-                    ranges_to_highlight,
-                    |theme| theme.editor.highlighted_line_background,
-                    cx,
-                );
-            });
+            workspace.add_item(Box::new(editor.clone()), &mut cx);
+            editor
         })?;
+
+        editor.update(&mut cx, |editor, cx| {
+            editor.highlight_background::<Self>(
+                ranges_to_highlight,
+                |theme| theme.editor.highlighted_line_background,
+                cx,
+            );
+        });
 
         Ok(())
     }
@@ -3948,10 +4371,8 @@ impl Editor {
         self.code_actions_task = Some(cx.spawn(|this, mut cx| async move {
             cx.background().timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT).await;
 
-            let actions = project
-                .update(&mut cx, |project, cx| {
-                    project.code_actions(&start_buffer, start..end, cx)
-                })
+            let actions = cx
+                .update(|cx| project.code_actions(&start_buffer, start..end, cx))
                 .await;
 
             this.update(&mut cx, |this, cx| {
@@ -3990,8 +4411,8 @@ impl Editor {
                 .timer(DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let highlights = project
-                .update(&mut cx, |project, cx| {
+            let highlights = cx
+                .update(|cx| {
                     project.document_highlights(&cursor_buffer, cursor_buffer_position, cx)
                 })
                 .await
@@ -5825,7 +6246,7 @@ impl Editor {
             .context_menu
             .write()
             .as_mut()
-            .map(|menu| menu.select_last(self.project.as_ref(), cx))
+            .map(|menu| menu.select_last(self.project.clone(), cx))
             .unwrap_or(false)
         {
             return;
@@ -5879,25 +6300,25 @@ impl Editor {
 
     pub fn context_menu_first(&mut self, _: &ContextMenuFirst, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.write().as_mut() {
-            context_menu.select_first(self.project.as_ref(), cx);
+            context_menu.select_first(self.project.clone(), cx);
         }
     }
 
     pub fn context_menu_prev(&mut self, _: &ContextMenuPrev, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.write().as_mut() {
-            context_menu.select_prev(self.project.as_ref(), cx);
+            context_menu.select_prev(self.project.clone(), cx);
         }
     }
 
     pub fn context_menu_next(&mut self, _: &ContextMenuNext, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.write().as_mut() {
-            context_menu.select_next(self.project.as_ref(), cx);
+            context_menu.select_next(self.project.clone(), cx);
         }
     }
 
     pub fn context_menu_last(&mut self, _: &ContextMenuLast, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.write().as_mut() {
-            context_menu.select_last(self.project.as_ref(), cx);
+            context_menu.select_last(self.project.clone(), cx);
         }
     }
 
@@ -7364,7 +7785,7 @@ impl Editor {
         split: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(workspace) = self.workspace(cx) else {
+        let Some((ref mut workspace, _)) = self.workspace else {
             return;
         };
         let buffer = self.buffer.read(cx);
@@ -7375,11 +7796,11 @@ impl Editor {
             return;
         };
 
-        let project = workspace.read(cx).project().clone();
-        let definitions = project.update(cx, |project, cx| match kind {
+        let project = workspace.project(cx).clone();
+        let definitions = match kind {
             GotoDefinitionKind::Symbol => project.definition(&buffer, head, cx),
             GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
-        });
+        };
 
         cx.spawn_labeled("Fetching Definition...", |editor, mut cx| async move {
             let definitions = definitions.await?;
@@ -7404,10 +7825,10 @@ impl Editor {
         split: bool,
         cx: &mut ViewContext<Editor>,
     ) {
-        let Some(workspace) = self.workspace(cx) else {
+        let Some((workspace, _)) = self.workspace.clone() else {
             return;
         };
-        let pane = workspace.read(cx).active_pane().clone();
+        let pane = workspace.active_pane(cx).clone();
         // If there is one definition, just open it directly
         if definitions.len() == 1 {
             let definition = definitions.pop().unwrap();
@@ -7429,14 +7850,12 @@ impl Editor {
                             });
                         } else {
                             cx.window_context().defer(move |cx| {
-                                let target_editor: ViewHandle<Self> =
-                                    workspace.update(cx, |workspace, cx| {
-                                        if split {
-                                            workspace.split_project_item(target.buffer.clone(), cx)
-                                        } else {
-                                            workspace.open_project_item(target.buffer.clone(), cx)
-                                        }
-                                    });
+                                let target_editor: ViewHandle<Self> = if split {
+                                    workspace.split_buffer(target.buffer.clone(), cx)
+                                } else {
+                                    workspace.open_buffer(target.buffer.clone(), cx)
+                                };
+
                                 target_editor.update(cx, |target_editor, cx| {
                                     // When selecting a definition in a different buffer, disable the nav history
                                     // to avoid creating a history entry at the previous cursor location.
@@ -7501,10 +7920,15 @@ impl Editor {
                     .filter_map(|location| location.transpose())
                     .collect::<Result<_>>()
                     .context("location tasks")?;
-                workspace.update(&mut cx, |workspace, cx| {
+                editor.update(&mut cx, |_, cx| {
                     Self::open_locations_in_multibuffer(
-                        workspace, locations, replica_id, title, split, cx,
-                    )
+                        &*workspace,
+                        locations,
+                        replica_id,
+                        title,
+                        split,
+                        cx,
+                    );
                 });
 
                 anyhow::Ok(())
@@ -7525,23 +7949,21 @@ impl Editor {
 
         cx.spawn(move |editor, mut cx| async move {
             let location_task = editor.update(&mut cx, |editor, cx| {
-                project.update(cx, |project, cx| {
-                    let language_server_name =
-                        editor.buffer.read(cx).as_singleton().and_then(|buffer| {
-                            project
-                                .language_server_for_buffer(buffer.read(cx), server_id, cx)
-                                .map(|(_, lsp_adapter)| {
-                                    LanguageServerName(Arc::from(lsp_adapter.name()))
-                                })
-                        });
-                    language_server_name.map(|language_server_name| {
-                        project.open_local_buffer_via_lsp(
-                            lsp_location.uri.clone(),
-                            server_id,
-                            language_server_name,
-                            cx,
-                        )
-                    })
+                let language_server_name =
+                    editor.buffer.read(cx).as_singleton().and_then(|buffer| {
+                        project
+                            .language_server_for_buffer(buffer.read(cx), server_id, cx)
+                            .map(|(_, lsp_adapter)| {
+                                LanguageServerName(Arc::from(lsp_adapter.name()))
+                            })
+                    });
+                language_server_name.map(|language_server_name| {
+                    project.open_local_buffer_via_lsp(
+                        lsp_location.uri.clone(),
+                        server_id,
+                        language_server_name,
+                        cx,
+                    )
                 })
             })?;
             let location = match location_task {
@@ -7573,9 +7995,9 @@ impl Editor {
     }
 
     pub fn find_all_references(
-        workspace: &mut Workspace,
+        workspace: Arc<dyn WorkspaceT>,
         _: &FindAllReferences,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         let active_item = workspace.active_item(cx)?;
         let editor_handle = active_item.act_as::<Self>(cx)?;
@@ -7586,21 +8008,20 @@ impl Editor {
         let (buffer, head) = buffer.text_anchor_for_position(head, cx)?;
         let replica_id = editor.replica_id(cx);
 
-        let project = workspace.project().clone();
-        let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-        Some(cx.spawn_labeled(
-            "Finding All References...",
-            |workspace, mut cx| async move {
+        let project = workspace.project(cx);
+        let references = project.references(&buffer, head, cx);
+        Some(
+            cx.spawn_labeled("Finding All References...", |mut cx| async move {
                 let locations = references.await?;
                 if locations.is_empty() {
                     return Ok(());
                 }
 
-                workspace.update(&mut cx, |workspace, cx| {
-                    let title = locations
-                        .first()
-                        .as_ref()
-                        .map(|location| {
+                let title = locations
+                    .first()
+                    .as_ref()
+                    .map(|location| {
+                        cx.update(|cx| {
                             let buffer = location.buffer.read(cx);
                             format!(
                                 "References to `{}`",
@@ -7609,25 +8030,32 @@ impl Editor {
                                     .collect::<String>()
                             )
                         })
-                        .unwrap();
+                    })
+                    .unwrap();
+                editor_handle.update(&mut cx, |_, cx| {
                     Self::open_locations_in_multibuffer(
-                        workspace, locations, replica_id, title, false, cx,
-                    );
-                })?;
+                        &*workspace,
+                        locations,
+                        replica_id,
+                        title,
+                        false,
+                        cx,
+                    )
+                });
 
                 Ok(())
-            },
-        ))
+            }),
+        )
     }
 
     /// Opens a multibuffer with the given project locations in it
     pub fn open_locations_in_multibuffer(
-        workspace: &mut Workspace,
+        workspace: &dyn WorkspaceT,
         mut locations: Vec<Location>,
         replica_id: ReplicaId,
         title: String,
         split: bool,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut WindowContext,
     ) {
         // If there are multiple definitions, open them in a multibuffer
         locations.sort_by_key(|location| location.buffer.read(cx).remote_id());
@@ -7664,7 +8092,7 @@ impl Editor {
         });
 
         let editor = cx.add_view(|cx| {
-            Editor::for_multibuffer(excerpt_buffer, Some(workspace.project().clone()), cx)
+            Editor::for_multibuffer(excerpt_buffer, Some(workspace.project(cx).clone()), cx)
         });
         editor.update(cx, |editor, cx| {
             editor.highlight_background::<Self>(
@@ -7699,9 +8127,7 @@ impl Editor {
 
         let snapshot = cursor_buffer.read(cx).snapshot();
         let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
-        let prepare_rename = project.update(cx, |project, cx| {
-            project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx)
-        });
+        let prepare_rename = project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx);
 
         Some(cx.spawn(|this, mut cx| async move {
             let rename_range = if let Some(range) = prepare_rename.await? {
@@ -7845,7 +8271,7 @@ impl Editor {
             let project_transaction = rename.await?;
             Self::open_project_transaction(
                 &editor,
-                workspace,
+                &workspace,
                 project_transaction,
                 format!("Rename: {} → {}", old_name, new_name),
                 cx.clone(),
@@ -7912,7 +8338,7 @@ impl Editor {
 
     fn perform_format(
         &mut self,
-        project: ModelHandle<Project>,
+        project: Arc<dyn ProjectT>,
         trigger: FormatTrigger,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
@@ -7920,7 +8346,7 @@ impl Editor {
         let buffers = buffer.read(cx).all_buffers();
 
         let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
-        let format = project.update(cx, |project, cx| project.format(buffers, true, trigger, cx));
+        let format = project.format(buffers, true, trigger, cx);
 
         cx.spawn(|_, mut cx| async move {
             let transaction = futures::select_biased! {
@@ -7948,9 +8374,7 @@ impl Editor {
     fn restart_language_server(&mut self, _: &RestartLanguageServer, cx: &mut ViewContext<Self>) {
         if let Some(project) = self.project.clone() {
             self.buffer.update(cx, |multi_buffer, cx| {
-                project.update(cx, |project, cx| {
-                    project.restart_language_servers_for_buffers(multi_buffer.all_buffers(), cx);
-                });
+                project.restart_language_servers_for_buffers(multi_buffer.all_buffers(), cx);
             })
         }
     }
@@ -8708,7 +9132,6 @@ impl Editor {
 
                 if *sigleton_buffer_edited {
                     if let Some(project) = &self.project {
-                        let project = project.read(cx);
                         let languages_affected = multibuffer
                             .read(cx)
                             .all_buffers()
@@ -8716,8 +9139,8 @@ impl Editor {
                             .filter_map(|buffer| {
                                 let buffer = buffer.read(cx);
                                 let language = buffer.language()?;
-                                if project.is_local()
-                                    && project.language_servers_for_buffer(buffer, cx).count() == 0
+                                if project.is_local(cx)
+                                    && project.language_servers_for_buffer(buffer, cx).len() == 0
                                 {
                                     None
                                 } else {
@@ -8847,14 +9270,14 @@ impl Editor {
     }
 
     fn jump(
-        workspace: &mut Workspace,
+        workspace: &dyn WorkspaceT,
         path: ProjectPath,
         position: Point,
         anchor: language::Anchor,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut AppContext,
     ) {
         let editor = workspace.open_path(path, None, true, cx);
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let editor = editor
                 .await?
                 .downcast::<Editor>()
@@ -8943,7 +9366,7 @@ impl Editor {
             .and_then(|e| e.to_str())
             .map(|a| a.to_string());
 
-        let telemetry = project.read(cx).client().telemetry().clone();
+        let telemetry = project.client(cx).telemetry().clone();
         let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
 
         let event = ClickhouseEvent::Copilot {
@@ -8997,7 +9420,7 @@ impl Editor {
             .settings_at(0, cx)
             .show_copilot_suggestions;
 
-        let telemetry = project.read(cx).client().telemetry().clone();
+        let telemetry = project.client(cx).telemetry().clone();
         let event = ClickhouseEvent::Editor {
             file_extension,
             vim_mode,
@@ -9120,13 +9543,13 @@ impl Editor {
         let Some(project) = self.project.as_ref() else {
             return false;
         };
-        let project = project.read(cx);
 
         let mut supports = false;
         self.buffer().read(cx).for_each_buffer(|buffer| {
             if !supports {
                 supports = project
                     .language_servers_for_buffer(buffer.read(cx), cx)
+                    .into_iter()
                     .any(
                         |(_, server)| match server.capabilities().inlay_hint_provider {
                             Some(lsp::OneOf::Left(enabled)) => enabled,

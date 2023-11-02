@@ -195,7 +195,11 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
                             });
                             workspace.add_item(
                                 Box::new(cx.add_view(|cx| {
-                                    Editor::for_multibuffer(buffer, Some(project.clone()), cx)
+                                    Editor::for_multibuffer(
+                                        buffer,
+                                        Some(Arc::new(project.clone())),
+                                        cx,
+                                    )
                                 })),
                                 cx,
                             );
@@ -535,11 +539,9 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
                         });
                         workspace.add_item(
-                            Box::new(
-                                cx.add_view(|cx| {
-                                    Editor::for_multibuffer(buffer, Some(project), cx)
-                                }),
-                            ),
+                            Box::new(cx.add_view(|cx| {
+                                Editor::for_multibuffer(buffer, Some(Arc::new(project)), cx)
+                            })),
                             cx,
                         );
                     })
@@ -706,7 +708,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
                 workspace.add_item(
-                    Box::new(cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
+                    Box::new(cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(Arc::new(project)), cx))),
                     cx,
                 );
             }).log_err()?;
@@ -741,7 +743,7 @@ fn open_bundled_file(
                     });
                     workspace.add_item(
                         Box::new(cx.add_view(|cx| {
-                            Editor::for_multibuffer(buffer, Some(project.clone()), cx)
+                            Editor::for_multibuffer(buffer, Some(Arc::new(project.clone())), cx)
                         })),
                         cx,
                     );

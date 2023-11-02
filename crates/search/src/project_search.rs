@@ -965,7 +965,7 @@ impl ProjectSearchView {
             editor
         });
         let results_editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_multibuffer(excerpts, Some(project.clone()), cx);
+            let mut editor = Editor::for_multibuffer(excerpts, Some(Arc::new(project.clone())), cx);
             editor.set_searchable(false);
             editor
         });

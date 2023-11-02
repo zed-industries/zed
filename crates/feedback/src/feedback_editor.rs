@@ -71,7 +71,7 @@ impl FeedbackEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
+            let mut editor = Editor::for_buffer(buffer, Some(Arc::new(project.clone())), cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
