@@ -361,7 +361,7 @@ impl<V> Notification<V> {
     }
 }
 
-use chrono::{DateTime, NaiveDateTime};
+use chrono::NaiveDateTime;
 use gpui2::{px, Styled};
 #[cfg(feature = "stories")]
 pub use stories::*;
