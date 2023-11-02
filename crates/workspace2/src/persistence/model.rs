@@ -1,14 +1,19 @@
-use crate::{Axis, WorkspaceId};
+use crate::{
+    item::ItemHandle, Axis, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId,
+};
 use anyhow::{Context, Result};
+use async_recursion::async_recursion;
 use db2::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui2::WindowBounds;
+use gpui2::{AsyncWindowContext, Model, Task, View, WeakView, WindowBounds};
+use project2::Project;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use util::ResultExt;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,75 +147,73 @@ impl Default for SerializedPaneGroup {
     }
 }
 
-// impl SerializedPaneGroup {
-//     #[async_recursion(?Send)]
-//     pub(crate) async fn deserialize(
-//         self,
-//         project: &Model<Project>,
-//         workspace_id: WorkspaceId,
-//         workspace: WeakView<Workspace>,
-//         cx: &mut AsyncAppContext,
-//     ) -> Option<(Member, Option<View<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
-//         match self {
-//             SerializedPaneGroup::Group {
-//                 axis,
-//                 children,
-//                 flexes,
-//             } => {
-//                 let mut current_active_pane = None;
-//                 let mut members = Vec::new();
-//                 let mut items = Vec::new();
-//                 for child in children {
-//                     if let Some((new_member, active_pane, new_items)) = child
-//                         .deserialize(project, workspace_id, workspace, cx)
-//                         .await
-//                     {
-//                         members.push(new_member);
-//                         items.extend(new_items);
-//                         current_active_pane = current_active_pane.or(active_pane);
-//                     }
-//                 }
+impl SerializedPaneGroup {
+    #[async_recursion(?Send)]
+    pub(crate) async fn deserialize(
+        self,
+        project: &Model<Project>,
+        workspace_id: WorkspaceId,
+        workspace: WeakView<Workspace>,
+        cx: &mut AsyncWindowContext,
+    ) -> Option<(Member, Option<View<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
+        match self {
+            SerializedPaneGroup::Group {
+                axis,
+                children,
+                flexes,
+            } => {
+                let mut current_active_pane = None;
+                let mut members = Vec::new();
+                let mut items = Vec::new();
+                for child in children {
+                    if let Some((new_member, active_pane, new_items)) = child
+                        .deserialize(project, workspace_id, workspace, cx)
+                        .await
+                    {
+                        members.push(new_member);
+                        items.extend(new_items);
+                        current_active_pane = current_active_pane.or(active_pane);
+                    }
+                }
 
-//                 if members.is_empty() {
-//                     return None;
-//                 }
+                if members.is_empty() {
+                    return None;
+                }
 
-//                 if members.len() == 1 {
-//                     return Some((members.remove(0), current_active_pane, items));
-//                 }
+                if members.len() == 1 {
+                    return Some((members.remove(0), current_active_pane, items));
+                }
 
-//                 Some((
-//                     Member::Axis(PaneAxis::load(axis, members, flexes)),
-//                     current_active_pane,
-//                     items,
-//                 ))
-//             }
-//             SerializedPaneGroup::Pane(serialized_pane) => {
-//                 let pane = workspace
-//                     .update(cx, |workspace, cx| workspace.add_pane(cx).downgrade())
-//                     .log_err()?;
-//                 let active = serialized_pane.active;
-//                 let new_items = serialized_pane
-//                     .deserialize_to(project, &pane, workspace_id, workspace, cx)
-//                     .await
-//                     .log_err()?;
+                Some((
+                    Member::Axis(PaneAxis::load(axis, members, flexes)),
+                    current_active_pane,
+                    items,
+                ))
+            }
+            SerializedPaneGroup::Pane(serialized_pane) => {
+                let pane = workspace
+                    .update(cx, |workspace, cx| workspace.add_pane(cx).downgrade())
+                    .log_err()?;
+                let active = serialized_pane.active;
+                let new_items = serialized_pane
+                    .deserialize_to(project, &pane, workspace_id, workspace, cx)
+                    .await
+                    .log_err()?;
 
-//                 // todo!();
-//                 // if pane.update(cx, |pane, _| pane.items_len() != 0).log_err()? {
-//                 //     let pane = pane.upgrade()?;
-//                 //     Some((Member::Pane(pane.clone()), active.then(|| pane), new_items))
-//                 // } else {
-//                 //     let pane = pane.upgrade()?;
-//                 //     workspace
-//                 //         .update(cx, |workspace, cx| workspace.force_remove_pane(&pane, cx))
-//                 //         .log_err()?;
-//                 //     None
-//                 // }
-//                 None
-//             }
-//         }
-//     }
-// }
+                if pane.update(cx, |pane, _| pane.items_len() != 0).log_err()? {
+                    let pane = pane.upgrade()?;
+                    Some((Member::Pane(pane.clone()), active.then(|| pane), new_items))
+                } else {
+                    let pane = pane.upgrade()?;
+                    workspace
+                        .update(cx, |workspace, cx| workspace.force_remove_pane(&pane, cx))
+                        .log_err()?;
+                    None
+                }
+            }
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub struct SerializedPane {
@@ -223,55 +226,53 @@ impl SerializedPane {
         SerializedPane { children, active }
     }
 
-    //     pub async fn deserialize_to(
-    //         &self,
-    //         _project: &Model<Project>,
-    //         _pane: &WeakView<Pane>,
-    //         _workspace_id: WorkspaceId,
-    //         _workspace: WindowHandle<Workspace>,
-    //         _cx: &mut AsyncAppContext,
-    //     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
-    //         anyhow::bail!("todo!()")
-    //         // todo!()
-    //         // let mut items = Vec::new();
-    //         // let mut active_item_index = None;
-    //         // for (index, item) in self.children.iter().enumerate() {
-    //         //     let project = project.clone();
-    //         //     let item_handle = pane
-    //         //         .update(cx, |_, cx| {
-    //         //             if let Some(deserializer) = cx.global::<ItemDeserializers>().get(&item.kind) {
-    //         //                 deserializer(project, workspace, workspace_id, item.item_id, cx)
-    //         //             } else {
-    //         //                 Task::ready(Err(anyhow::anyhow!(
-    //         //                     "Deserializer does not exist for item kind: {}",
-    //         //                     item.kind
-    //         //                 )))
-    //         //             }
-    //         //         })?
-    //         //         .await
-    //         //         .log_err();
+    pub async fn deserialize_to(
+        &self,
+        project: &Model<Project>,
+        pane: &WeakView<Pane>,
+        workspace_id: WorkspaceId,
+        workspace: WeakView<Workspace>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
+        let mut items = Vec::new();
+        let mut active_item_index = None;
+        for (index, item) in self.children.iter().enumerate() {
+            let project = project.clone();
+            let item_handle = pane
+                .update(cx, |_, cx| {
+                    if let Some(deserializer) = cx.global::<ItemDeserializers>().get(&item.kind) {
+                        deserializer(project, workspace.clone(), workspace_id, item.item_id, cx)
+                    } else {
+                        Task::ready(Err(anyhow::anyhow!(
+                            "Deserializer does not exist for item kind: {}",
+                            item.kind
+                        )))
+                    }
+                })?
+                .await
+                .log_err();
 
-    //         //     items.push(item_handle.clone());
+            items.push(item_handle.clone());
 
-    //         //     if let Some(item_handle) = item_handle {
-    //         //         pane.update(cx, |pane, cx| {
-    //         //             pane.add_item(item_handle.clone(), true, true, None, cx);
-    //         //         })?;
-    //         //     }
+            if let Some(item_handle) = item_handle {
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(item_handle.clone(), true, true, None, cx);
+                })?;
+            }
 
-    //         //     if item.active {
-    //         //         active_item_index = Some(index);
-    //         //     }
-    //         // }
+            if item.active {
+                active_item_index = Some(index);
+            }
+        }
 
-    //         // if let Some(active_item_index) = active_item_index {
-    //         //     pane.update(cx, |pane, cx| {
-    //         //         pane.activate_item(active_item_index, false, false, cx);
-    //         //     })?;
-    //         // }
+        if let Some(active_item_index) = active_item_index {
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(active_item_index, false, false, cx);
+            })?;
+        }
 
-    //         // anyhow::Ok(items)
-    //     }
+        anyhow::Ok(items)
+    }
 }
 
 pub type GroupId = i64;

@@ -13,7 +13,7 @@ use client2::{
 };
 use gpui2::{
     AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, HighlightStyle, Model, Pixels,
-    Point, Render, SharedString, Task, View, ViewContext, WeakView, WindowContext, WindowHandle,
+    Point, Render, SharedString, Task, View, ViewContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -190,7 +190,7 @@ pub trait Item: Render + EventEmitter + Send {
 
     fn deserialize(
         _project: Model<Project>,
-        _workspace: WindowHandle<Workspace>,
+        _workspace: WeakView<Workspace>,
         _workspace_id: WorkspaceId,
         _item_id: ItemId,
         _cx: &mut ViewContext<Pane>,
