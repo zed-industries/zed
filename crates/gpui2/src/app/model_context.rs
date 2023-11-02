@@ -40,15 +40,15 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         self.model_state.clone()
     }
 
-    pub fn observe<T2, E>(
+    pub fn observe<W, E>(
         &mut self,
         entity: &E,
         mut on_notify: impl FnMut(&mut T, E, &mut ModelContext<'_, T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
-        T2: 'static,
-        E: Entity<T2>,
+        W: 'static,
+        E: Entity<W>,
     {
         let this = self.weak_model();
         let entity_id = entity.entity_id();

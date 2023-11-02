@@ -17,7 +17,7 @@ use futures::{
     },
     select_biased,
     task::Poll,
-    FutureExt, Stream, StreamExt,
+    FutureExt as _, Stream, StreamExt,
 };
 use fuzzy2::CharBag;
 use git::{DOT_GIT, GITIGNORE};
@@ -4053,7 +4053,8 @@ impl WorktreeModelHandle for Model<Worktree> {
         &self,
         cx: &'a mut gpui2::TestAppContext,
     ) -> futures::future::LocalBoxFuture<'a, ()> {
-        let filename = "fs-event-sentinel";
+        let file_name = "fs-event-sentinel";
+
         let tree = self.clone();
         let (fs, root_path) = self.update(cx, |tree, _| {
             let tree = tree.as_local().unwrap();
@@ -4061,16 +4062,17 @@ impl WorktreeModelHandle for Model<Worktree> {
         });
 
         async move {
-            fs.create_file(&root_path.join(filename), Default::default())
+            fs.create_file(&root_path.join(file_name), Default::default())
                 .await
                 .unwrap();
+            cx.condition(&tree, |tree, _| tree.entry_for_path(file_name).is_some())
+                .await;
 
-            assert!(tree.update(cx, |tree, _| tree.entry_for_path(filename).is_some()));
-
-            fs.remove_file(&root_path.join(filename), Default::default())
+            fs.remove_file(&root_path.join(file_name), Default::default())
                 .await
                 .unwrap();
-            assert!(tree.update(cx, |tree, _| tree.entry_for_path(filename).is_none()));
+            cx.condition(&tree, |tree, _| tree.entry_for_path(file_name).is_none())
+                .await;
 
             cx.update(|cx| tree.read(cx).as_local().unwrap().scan_complete())
                 .await;

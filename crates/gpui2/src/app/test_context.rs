@@ -3,8 +3,9 @@ use crate::{
     ForegroundExecutor, Model, ModelContext, Result, Task, TestDispatcher, TestPlatform,
     WindowContext,
 };
-use futures::SinkExt;
-use std::{cell::RefCell, future::Future, rc::Rc, sync::Arc};
+use anyhow::anyhow;
+use futures::{SinkExt, StreamExt};
+use std::{cell::RefCell, future::Future, rc::Rc, sync::Arc, time::Duration};
 
 #[derive(Clone)]
 pub struct TestAppContext {
@@ -157,5 +158,41 @@ impl TestAppContext {
             })
             .detach();
         rx
+    }
+
+    pub async fn condition<T: EventEmitter + 'static>(
+        &mut self,
+        model: &Model<T>,
+        mut predicate: impl FnMut(&mut T, &mut ModelContext<T>) -> bool,
+    ) {
+        let (mut tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
+        let timer = self.executor().timer(Duration::from_secs(3));
+
+        let subscriptions = model.update(self, move |_, cx| {
+            (
+                cx.observe(model, move |_, _, _| {
+                    // let _ = tx.send(());
+                }),
+                cx.subscribe(model, move |_, _, _, _| {
+                    let _ = tx.send(());
+                }),
+            )
+        });
+
+        use futures::FutureExt as _;
+        use smol::future::FutureExt as _;
+
+        async {
+            while rx.next().await.is_some() {
+                if model.update(self, &mut predicate) {
+                    return Ok(());
+                }
+            }
+            drop(subscriptions);
+            unreachable!()
+        }
+        .race(timer.map(|_| Err(anyhow!("condition timed out"))))
+        .await
+        .unwrap();
     }
 }
