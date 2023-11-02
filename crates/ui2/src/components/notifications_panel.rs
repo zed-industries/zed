@@ -1,3 +1,4 @@
+use crate::utils::naive_format_distance_from_now;
 use crate::{
     h_stack, prelude::*, static_new_notification_items_2, v_stack, Avatar, Button, Icon,
     IconButton, IconElement, Label, LabelColor, LineHeightStyle, ListHeaderMeta, ListSeparator,
@@ -137,6 +138,7 @@ impl<V> Notification<V> {
     fn new(
         id: ElementId,
         message: SharedString,
+        date_received: NaiveDateTime,
         slot: ActorOrIcon,
         click_action: Option<ClickHandler<V>>,
     ) -> Self {
@@ -150,9 +152,7 @@ impl<V> Notification<V> {
 
         Self {
             id,
-            date_received: DateTime::parse_from_rfc3339("1969-07-20T00:00:00Z")
-                .unwrap()
-                .naive_local(),
+            date_received,
             message,
             meta: None,
             slot,
@@ -170,12 +170,14 @@ impl<V> Notification<V> {
     pub fn new_actor_message(
         id: impl Into<ElementId>,
         message: impl Into<SharedString>,
+        date_received: NaiveDateTime,
         actor: PublicActor,
         click_action: ClickHandler<V>,
     ) -> Self {
         Self::new(
             id.into(),
             message.into(),
+            date_received,
             ActorOrIcon::Actor(actor),
             Some(click_action),
         )
@@ -187,12 +189,14 @@ impl<V> Notification<V> {
     pub fn new_icon_message(
         id: impl Into<ElementId>,
         message: impl Into<SharedString>,
+        date_received: NaiveDateTime,
         icon: Icon,
         click_action: ClickHandler<V>,
     ) -> Self {
         Self::new(
             id.into(),
             message.into(),
+            date_received,
             ActorOrIcon::Icon(icon),
             Some(click_action),
         )
@@ -205,10 +209,18 @@ impl<V> Notification<V> {
     pub fn new_actor_with_actions(
         id: impl Into<ElementId>,
         message: impl Into<SharedString>,
+        date_received: NaiveDateTime,
         actor: PublicActor,
         actions: [NotificationAction<V>; 2],
     ) -> Self {
-        Self::new(id.into(), message.into(), ActorOrIcon::Actor(actor), None).actions(actions)
+        Self::new(
+            id.into(),
+            message.into(),
+            date_received,
+            ActorOrIcon::Actor(actor),
+            None,
+        )
+        .actions(actions)
     }
 
     /// Creates a new notification with an icon slot
@@ -218,10 +230,18 @@ impl<V> Notification<V> {
     pub fn new_icon_with_actions(
         id: impl Into<ElementId>,
         message: impl Into<SharedString>,
+        date_received: NaiveDateTime,
         icon: Icon,
         actions: [NotificationAction<V>; 2],
     ) -> Self {
-        Self::new(id.into(), message.into(), ActorOrIcon::Icon(icon), None).actions(actions)
+        Self::new(
+            id.into(),
+            message.into(),
+            date_received,
+            ActorOrIcon::Icon(icon),
+            None,
+        )
+        .actions(actions)
     }
 
     fn on_click(mut self, handler: ClickHandler<V>) -> Self {
@@ -303,9 +323,11 @@ impl<V> Notification<V> {
                                 h_stack()
                                     .gap_1()
                                     .child(
-                                        Label::new(
-                                            self.date_received.format("%m/%d/%Y").to_string(),
-                                        )
+                                        Label::new(naive_format_distance_from_now(
+                                            self.date_received,
+                                            true,
+                                            true,
+                                        ))
                                         .color(LabelColor::Muted),
                                     )
                                     .child(self.render_meta_items(cx)),

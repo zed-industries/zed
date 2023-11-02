@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use chrono::{DateTime, NaiveDateTime};
 use gpui2::{AppContext, ViewContext};
 use rand::Rng;
 use theme2::ActiveTheme;
@@ -332,12 +333,18 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
         Notification::new_icon_message(
             "notif-1",
             "You were mentioned in a note.",
+            DateTime::parse_from_rfc3339("2023-11-02T11:59:57Z")
+                .unwrap()
+                .naive_local(),
             Icon::AtSign,
             Arc::new(|_, _| {}),
         ),
         Notification::new_actor_with_actions(
             "notif-2",
             "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("2023-11-02T12:09:07Z")
+                .unwrap()
+                .naive_local(),
             PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
             [
                 NotificationAction::new(
@@ -355,12 +362,18 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
         Notification::new_icon_message(
             "notif-3",
             "You were mentioned #design.",
+            DateTime::parse_from_rfc3339("2023-11-02T12:09:07Z")
+                .unwrap()
+                .naive_local(),
             Icon::MessageBubbles,
             Arc::new(|_, _| {}),
         ),
         Notification::new_actor_with_actions(
             "notif-4",
             "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("2023-11-01T12:09:07Z")
+                .unwrap()
+                .naive_local(),
             PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
             [
                 NotificationAction::new(
@@ -378,12 +391,18 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
         Notification::new_icon_message(
             "notif-5",
             "You were mentioned in a note.",
+            DateTime::parse_from_rfc3339("2023-10-28T12:09:07Z")
+                .unwrap()
+                .naive_local(),
             Icon::AtSign,
             Arc::new(|_, _| {}),
         ),
         Notification::new_actor_with_actions(
             "notif-6",
             "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("2022-10-25T12:09:07Z")
+                .unwrap()
+                .naive_local(),
             PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
             [
                 NotificationAction::new(
@@ -401,12 +420,18 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
         Notification::new_icon_message(
             "notif-7",
             "You were mentioned in a note.",
+            DateTime::parse_from_rfc3339("2022-10-14T12:09:07Z")
+                .unwrap()
+                .naive_local(),
             Icon::AtSign,
             Arc::new(|_, _| {}),
         ),
         Notification::new_actor_with_actions(
             "notif-8",
             "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("2021-10-12T12:09:07Z")
+                .unwrap()
+                .naive_local(),
             PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
             [
                 NotificationAction::new(
@@ -424,12 +449,18 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
         Notification::new_icon_message(
             "notif-9",
             "You were mentioned in a note.",
+            DateTime::parse_from_rfc3339("2021-02-02T12:09:07Z")
+                .unwrap()
+                .naive_local(),
             Icon::AtSign,
             Arc::new(|_, _| {}),
         ),
         Notification::new_actor_with_actions(
             "notif-10",
             "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("1969-07-20T00:00:00Z")
+                .unwrap()
+                .naive_local(),
             PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
             [
                 NotificationAction::new(
