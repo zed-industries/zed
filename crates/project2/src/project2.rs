@@ -8649,7 +8649,7 @@ impl Project {
             .get(&(worktree, default_prettier_dir.to_path_buf()))
             .cloned();
         let fs = Arc::clone(&self.fs);
-        cx.spawn_on_main(move |this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             if let Some(previous_installation_process) = previous_installation_process {
                 previous_installation_process.await;
             }
