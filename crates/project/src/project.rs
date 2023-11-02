@@ -8440,31 +8440,43 @@ impl Project {
                             .await
                         {
                             Ok(None) => {
-                                project.update(&mut cx, |project, _| {
-                                    project
-                                        .prettiers_per_worktree
-                                        .entry(worktree_id)
-                                        .or_default()
-                                        .insert(None)
-                                });
-                                let new_task = project.update(&mut cx, |project, cx| {
-                                    let new_task = start_prettier(
-                                        node,
-                                        DEFAULT_PRETTIER_DIR.clone(),
-                                        Some(worktree_id),
-                                        cx,
-                                    );
-                                    project
-                                        .default_prettier
-                                        .get_or_insert_with(|| DefaultPrettier {
-                                            instance: None,
-                                            #[cfg(not(any(test, feature = "test-support")))]
-                                            installed_plugins: HashSet::default(),
-                                        })
-                                        .instance = Some(new_task.clone());
-                                    new_task
-                                });
-                                return Some((None, new_task));
+                                let started_default_prettier =
+                                    project.update(&mut cx, |project, _| {
+                                        project
+                                            .prettiers_per_worktree
+                                            .entry(worktree_id)
+                                            .or_default()
+                                            .insert(None);
+                                        project.default_prettier.as_ref().and_then(
+                                            |default_prettier| default_prettier.instance.clone(),
+                                        )
+                                    });
+                                match started_default_prettier {
+                                    Some(old_task) => return Some((None, old_task)),
+                                    None => {
+                                        let new_task = project.update(&mut cx, |project, cx| {
+                                            let new_task = start_prettier(
+                                                node,
+                                                DEFAULT_PRETTIER_DIR.clone(),
+                                                Some(worktree_id),
+                                                cx,
+                                            );
+                                            project
+                                                .default_prettier
+                                                .get_or_insert_with(|| DefaultPrettier {
+                                                    instance: None,
+                                                    #[cfg(not(any(
+                                                        test,
+                                                        feature = "test-support"
+                                                    )))]
+                                                    installed_plugins: HashSet::default(),
+                                                })
+                                                .instance = Some(new_task.clone());
+                                            new_task
+                                        });
+                                        return Some((None, new_task));
+                                    }
+                                }
                             }
                             Ok(Some(prettier_dir)) => {
                                 project.update(&mut cx, |project, _| {
@@ -8479,6 +8491,9 @@ impl Project {
                                         project.prettier_instances.get(&prettier_dir).cloned()
                                     })
                                 {
+                                    log::debug!(
+                                        "Found already started prettier in {prettier_dir:?}"
+                                    );
                                     return Some((Some(prettier_dir), existing_prettier));
                                 }
 
@@ -8510,15 +8525,25 @@ impl Project {
                     });
                 }
                 None => {
-                    let new_task = start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), None, cx);
-                    self.default_prettier
-                        .get_or_insert_with(|| DefaultPrettier {
-                            instance: None,
-                            #[cfg(not(any(test, feature = "test-support")))]
-                            installed_plugins: HashSet::default(),
-                        })
-                        .instance = Some(new_task.clone());
-                    return Task::ready(Some((None, new_task)));
+                    let started_default_prettier = self
+                        .default_prettier
+                        .as_ref()
+                        .and_then(|default_prettier| default_prettier.instance.clone());
+                    match started_default_prettier {
+                        Some(old_task) => return Task::ready(Some((None, old_task))),
+                        None => {
+                            let new_task =
+                                start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), None, cx);
+                            self.default_prettier
+                                .get_or_insert_with(|| DefaultPrettier {
+                                    instance: None,
+                                    #[cfg(not(any(test, feature = "test-support")))]
+                                    installed_plugins: HashSet::default(),
+                                })
+                                .instance = Some(new_task.clone());
+                            return Task::ready(Some((None, new_task)));
+                        }
+                    }
                 }
             }
         } else if self.remote_id().is_some() {
