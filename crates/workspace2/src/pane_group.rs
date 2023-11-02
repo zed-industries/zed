@@ -6,12 +6,13 @@ use db2::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui2::{point, size, AnyElement, AnyView, Bounds, Model, Pixels, Point, View, ViewContext};
+use gpui2::{
+    point, size, AnyElement, AnyView, AnyWeakView, Bounds, Model, Pixels, Point, View, ViewContext,
+};
 use parking_lot::Mutex;
 use project2::Project;
 use serde::Deserialize;
 use std::sync::Arc;
-use theme2::ThemeVariant;
 use ui::prelude::*;
 
 const HANDLE_HITBOX_SIZE: f32 = 4.0;
@@ -128,10 +129,10 @@ impl PaneGroup {
         follower_states: &HashMap<View<Pane>, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
-        zoomed: Option<&AnyView>,
+        zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> AnyElement<Workspace> {
+    ) -> impl Component<Workspace> {
         self.root.render(
             project,
             0,
@@ -189,36 +190,38 @@ impl Member {
         follower_states: &HashMap<View<Pane>, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
-        zoomed: Option<&AnyView>,
+        zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> AnyElement<Workspace> {
+    ) -> impl Component<Workspace> {
         match self {
             Member::Pane(pane) => {
-                let pane_element = if Some(&**pane) == zoomed {
-                    None
-                } else {
-                    Some(pane)
-                };
+                // todo!()
+                // let pane_element = if Some(pane.into()) == zoomed {
+                //     None
+                // } else {
+                //     Some(pane)
+                // };
+
+                div().child(pane.clone()).render()
 
                 //         Stack::new()
                 //             .with_child(pane_element.contained().with_border(leader_border))
                 //             .with_children(leader_status_box)
                 //             .into_any()
 
-                let el = div()
-                    .flex()
-                    .flex_1()
-                    .gap_px()
-                    .w_full()
-                    .h_full()
-                    .bg(cx.theme().colors().editor)
-                    .children();
+                // let el = div()
+                //     .flex()
+                //     .flex_1()
+                //     .gap_px()
+                //     .w_full()
+                //     .h_full()
+                //     .bg(cx.theme().colors().editor)
+                //     .children();
             }
             Member::Axis(axis) => axis.render(
                 project,
                 basis + 1,
-                theme,
                 follower_states,
                 active_call,
                 active_pane,
@@ -541,11 +544,10 @@ impl PaneAxis {
         &self,
         project: &Model<Project>,
         basis: usize,
-        theme: &ThemeVariant,
         follower_states: &HashMap<View<Pane>, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
-        zoomed: Option<&AnyView>,
+        zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {

@@ -28,10 +28,11 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui2::{
-    div, point, size, AnyModel, AnyView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds,
-    Component, Div, Element, EntityId, EventEmitter, GlobalPixels, Model, ModelContext,
-    ParentElement, Point, Render, Size, StatefulInteractive, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    div, point, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
+    AsyncWindowContext, Bounds, Component, Div, EntityId, EventEmitter, GlobalPixels,
+    Model, ModelContext, ParentElement, Point, Render, Size, StatefulInteractive, Styled,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use language2::LanguageRegistry;
@@ -544,7 +545,7 @@ pub enum Event {
 pub struct Workspace {
     weak_self: WeakView<Self>,
     //     modal: Option<ActiveModal>,
-    //     zoomed: Option<AnyWeakViewHandle>,
+    zoomed: Option<AnyWeakView>,
     //     zoomed_position: Option<DockPosition>,
     center: PaneGroup,
     left_dock: View<Dock>,
@@ -622,7 +623,7 @@ impl Workspace {
                 }
 
                 project2::Event::Closed => {
-                    cx.remove_window();
+                    // cx.remove_window();
                 }
 
                 project2::Event::DeletedEntry(entry_id) => {
@@ -763,7 +764,7 @@ impl Workspace {
         Workspace {
             weak_self: weak_handle.clone(),
             // modal: None,
-            // zoomed: None,
+            zoomed: None,
             // zoomed_position: None,
             center: PaneGroup::new(center_pane.clone()),
             panes: vec![center_pane.clone()],
@@ -2698,7 +2699,8 @@ impl Workspace {
             .id("titlebar")
             .on_click(|workspace, event, cx| {
                 if event.up.click_count == 2 {
-                    cx.zoom_window();
+                    // todo!()
+                    // cx.zoom_window();
                 }
             })
             .child("Collab title bar Item") // self.titlebar_item
@@ -3805,12 +3807,12 @@ impl Render for Workspace {
                     .child(
                         div().flex().flex_col().flex_1().h_full().child(
                             div().flex().flex_1().child(self.center.render(
-                                project,
-                                follower_states,
-                                active_call,
-                                active_pane,
-                                zoomed,
-                                app_state,
+                                &self.project,
+                                &self.follower_states,
+                                self.active_call(),
+                                &self.active_pane,
+                                self.zoomed.as_ref(),
+                                &self.app_state,
                                 cx,
                             )),
                         ), // .children(
