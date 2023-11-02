@@ -142,7 +142,7 @@ pub struct AssistantPanel {
     zoomed: bool,
     has_focus: bool,
     toolbar: ViewHandle<Toolbar>,
-    completion_provider: Box<dyn CompletionProvider>,
+    completion_provider: Arc<dyn CompletionProvider>,
     api_key_editor: Option<ViewHandle<Editor>>,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
@@ -204,7 +204,7 @@ impl AssistantPanel {
 
                     let semantic_index = SemanticIndex::global(cx);
                     // Defaulting currently to GPT4, allow for this to be set via config.
-                    let completion_provider = Box::new(OpenAICompletionProvider::new(
+                    let completion_provider = Arc::new(OpenAICompletionProvider::new(
                         "gpt-4",
                         cx.background().clone(),
                     ));
@@ -259,7 +259,13 @@ impl AssistantPanel {
         cx: &mut ViewContext<Workspace>,
     ) {
         let this = if let Some(this) = workspace.panel::<AssistantPanel>(cx) {
-            if this.update(cx, |assistant, _| assistant.has_credentials()) {
+            if this.update(cx, |assistant, cx| {
+                if !assistant.has_credentials() {
+                    assistant.load_credentials(cx);
+                };
+
+                assistant.has_credentials()
+            }) {
                 this
             } else {
                 workspace.focus_panel::<AssistantPanel>(cx);
@@ -320,13 +326,10 @@ impl AssistantPanel {
         };
 
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
-        let provider = Arc::new(OpenAICompletionProvider::new(
-            "gpt-4",
-            cx.background().clone(),
-        ));
+        let provider = self.completion_provider.clone();
 
         // Retrieve Credentials Authenticates the Provider
-        // provider.retrieve_credentials(cx);
+        provider.retrieve_credentials(cx);
 
         let codegen = cx.add_model(|cx| {
             Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, provider, cx)
@@ -1439,7 +1442,7 @@ struct Conversation {
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
-    completion_provider: Box<dyn CompletionProvider>,
+    completion_provider: Arc<dyn CompletionProvider>,
 }
 
 impl Entity for Conversation {
@@ -1450,7 +1453,7 @@ impl Conversation {
     fn new(
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
-        completion_provider: Box<dyn CompletionProvider>,
+        completion_provider: Arc<dyn CompletionProvider>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
         let buffer = cx.add_model(|cx| {
@@ -1544,7 +1547,7 @@ impl Conversation {
             None => Some(Uuid::new_v4().to_string()),
         };
         let model = saved_conversation.model;
-        let completion_provider: Box<dyn CompletionProvider> = Box::new(
+        let completion_provider: Arc<dyn CompletionProvider> = Arc::new(
             OpenAICompletionProvider::new(model.full_name(), cx.background().clone()),
         );
         completion_provider.retrieve_credentials(cx);
@@ -2201,7 +2204,7 @@ struct ConversationEditor {
 
 impl ConversationEditor {
     fn new(
-        completion_provider: Box<dyn CompletionProvider>,
+        completion_provider: Arc<dyn CompletionProvider>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         workspace: WeakViewHandle<Workspace>,
@@ -3406,7 +3409,7 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
 
-        let completion_provider = Box::new(FakeCompletionProvider::new());
+        let completion_provider = Arc::new(FakeCompletionProvider::new());
         let conversation = cx.add_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
@@ -3535,7 +3538,7 @@ mod tests {
         cx.set_global(SettingsStore::test(cx));
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
-        let completion_provider = Box::new(FakeCompletionProvider::new());
+        let completion_provider = Arc::new(FakeCompletionProvider::new());
 
         let conversation = cx.add_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
@@ -3633,7 +3636,7 @@ mod tests {
         cx.set_global(SettingsStore::test(cx));
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
-        let completion_provider = Box::new(FakeCompletionProvider::new());
+        let completion_provider = Arc::new(FakeCompletionProvider::new());
         let conversation = cx.add_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
@@ -3716,7 +3719,7 @@ mod tests {
         cx.set_global(SettingsStore::test(cx));
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
-        let completion_provider = Box::new(FakeCompletionProvider::new());
+        let completion_provider = Arc::new(FakeCompletionProvider::new());
         let conversation =
             cx.add_model(|cx| Conversation::new(registry.clone(), cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
