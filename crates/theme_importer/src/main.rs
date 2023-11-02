@@ -18,16 +18,6 @@ use vscode::VsCodeThemeConverter;
 use crate::theme_printer::ThemeFamilyPrinter;
 use crate::vscode::VsCodeTheme;
 
-pub(crate) fn new_theme_family(name: String, author: String) -> ThemeFamily {
-    ThemeFamily {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: name.into(),
-        author: author.into(),
-        themes: Vec::new(),
-        scales: default_color_scales(),
-    }
-}
-
 #[derive(Debug, Deserialize)]
 struct FamilyMetadata {
     pub name: String,

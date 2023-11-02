@@ -1,14 +1,10 @@
-use std::path::{Path, PathBuf};
-
 use anyhow::Result;
 use gpui::{Hsla, Refineable, Rgba};
 use serde::Deserialize;
 use theme::{
-    default_color_scales, Appearance, ColorScales, GitStatusColors, PlayerColors, StatusColors,
-    SyntaxTheme, SystemColors, ThemeColors, ThemeColorsRefinement, ThemeFamily, ThemeStyles,
-    ThemeVariant,
+    Appearance, GitStatusColors, PlayerColors, StatusColors, SyntaxTheme, SystemColors,
+    ThemeColors, ThemeColorsRefinement, ThemeStyles, ThemeVariant,
 };
-use uuid::Uuid;
 
 use crate::ThemeMetadata;
 
@@ -32,41 +28,6 @@ pub struct VsCodeColors {
     text: String,
     #[serde(rename = "editor.background")]
     editor: String,
-}
-
-pub(crate) fn new_theme_family_from_vsc(path: &Path) -> Result<ThemeFamily> {
-    todo!()
-
-    // let path_str = path.to_str().unwrap();
-    // let family_name = path_str.split('/').last().unwrap();
-
-    // let mut json_files: Vec<String> = Vec::new();
-
-    // if path.is_dir() {
-    //     for entry in std::fs::read_dir(path).unwrap() {
-    //         let entry = entry.unwrap();
-    //         let path = entry.path();
-    //         if path.is_file() {
-    //             if let Some(extension) = path.extension() {
-    //                 if extension == "json" {
-    //                     json_files.push(path.file_name().unwrap().to_str().unwrap().to_string());
-    //                 }
-    //             }
-    //         }
-    //     }
-    // } else {
-    //     anyhow::bail!("Path is not a directory");
-    // }
-
-    // let mut theme_family = ThemeFamily {
-    //     id: uuid::Uuid::new_v4().to_string(),
-    //     name: family_name.into(),
-    //     author: "New Theme Family".into(),
-    //     themes: Vec::new(),
-    //     scales: default_color_scales(),
-    // };
-
-    // Ok(theme_family)
 }
 
 fn try_parse_color(color: &str) -> Result<Hsla> {
