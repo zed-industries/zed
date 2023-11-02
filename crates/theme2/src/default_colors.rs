@@ -23,7 +23,7 @@ impl Default for SystemColors {
 impl Default for StatusColors {
     fn default() -> Self {
         Self {
-            conflict: gpui2::black(),
+            conflict: red().dark().step_11(),
             created: gpui2::black(),
             deleted: gpui2::black(),
             error: gpui2::black(),
