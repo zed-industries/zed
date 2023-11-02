@@ -8,7 +8,7 @@ use crate::{
     PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
     SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription,
     TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowOptions, SUBPIXEL_VARIANTS,
+    WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -54,6 +54,7 @@ pub enum DispatchPhase {
     Capture,
 }
 
+type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
 type AnyListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 type AnyKeyListener = Box<
     dyn Fn(
@@ -65,7 +66,6 @@ type AnyKeyListener = Box<
         + 'static,
 >;
 type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + 'static>;
-type AnyFullScreenListener = Box<dyn FnMut(bool, &mut WindowContext) -> bool + 'static>;
 
 slotmap::new_key_type! { pub struct FocusId; }
 
@@ -182,12 +182,12 @@ pub struct Window {
     focus_stack: Vec<FocusId>,
     focus_parents_by_child: HashMap<FocusId, FocusId>,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
-    fullscreen_listeners: SubscriberSet<(), AnyFullScreenListener>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     scale_factor: f32,
-    fullscreen: bool,
+    bounds: WindowBounds,
+    bounds_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) scene_builder: SceneBuilder,
     pub(crate) dirty: bool,
     pub(crate) last_blur: Option<Option<FocusId>>,
@@ -206,33 +206,21 @@ impl Window {
         let mouse_position = platform_window.mouse_position();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
+        let bounds = platform_window.bounds();
 
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
-            move |content_size, scale_factor| {
+            move |_, _| {
                 handle
-                    .update(&mut cx, |_, cx| {
-                        cx.window.scale_factor = scale_factor;
-                        cx.window.scene_builder = SceneBuilder::new();
-                        cx.window.content_size = content_size;
-                        cx.window.display_id = cx.window.platform_window.display().id();
-                        cx.window.dirty = true;
-                    })
+                    .update(&mut cx, |_, cx| cx.window_bounds_changed())
                     .log_err();
             }
         }));
-        platform_window.on_fullscreen(Box::new({
+        platform_window.on_moved(Box::new({
             let mut cx = cx.to_async();
-            move |fullscreen| {
+            move || {
                 handle
-                    .update(&mut cx, |_, cx| {
-                        cx.window.fullscreen = fullscreen;
-                        cx.window
-                            .fullscreen_listeners
-                            .clone()
-                            .retain(&(), |callback| callback(fullscreen, cx));
-                        cx.window.dirty = true;
-                    })
+                    .update(&mut cx, |_, cx| cx.window_bounds_changed())
                     .log_err();
             }
         }));
@@ -270,12 +258,12 @@ impl Window {
             focus_stack: Vec::new(),
             focus_parents_by_child: HashMap::default(),
             focus_listeners: Vec::new(),
-            fullscreen_listeners: SubscriberSet::new(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             default_prevented: true,
             mouse_position,
             scale_factor,
-            fullscreen: false,
+            bounds,
+            bounds_observers: SubscriberSet::new(),
             scene_builder: SceneBuilder::new(),
             dirty: true,
             last_blur: None,
@@ -538,6 +526,23 @@ impl<'a> WindowContext<'a> {
             .map(Into::into);
         bounds.origin += self.element_offset();
         bounds
+    }
+
+    fn window_bounds_changed(&mut self) {
+        self.window.scale_factor = self.window.platform_window.scale_factor();
+        self.window.content_size = self.window.platform_window.content_size();
+        self.window.bounds = self.window.platform_window.bounds();
+        self.window.display_id = self.window.platform_window.display().id();
+        self.window.dirty = true;
+
+        self.window
+            .bounds_observers
+            .clone()
+            .retain(&(), |callback| callback(self));
+    }
+
+    pub fn window_bounds(&self) -> WindowBounds {
+        self.window.bounds
     }
 
     /// The scale factor of the display associated with the window. For example, it could
@@ -1732,23 +1737,18 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         });
     }
 
-    pub fn observe_fullscreen(
+    pub fn observe_window_bounds(
         &mut self,
-        mut callback: impl FnMut(&mut V, bool, &mut ViewContext<V>) + 'static,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
-        self.window.fullscreen_listeners.insert(
+        self.window.bounds_observers.insert(
             (),
-            Box::new(move |fullscreen, cx| {
-                view.update(cx, |view, cx| callback(view, fullscreen, cx))
-                    .is_ok()
-            }),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
         )
     }
 
-    // fn observe_window_activation(&mut self) -> Subscription {}
-
-    // fn observe_window_bounds(&mut self) -> Subscription {}
+    fn observe_window_activation(&mut self) -> Subscription {}
 
     pub fn on_focus_changed(
         &mut self,
