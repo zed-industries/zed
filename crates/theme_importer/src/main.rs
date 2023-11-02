@@ -1,19 +1,17 @@
-use std::borrow::Cow;
 use std::fs::{self, File};
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::{anyhow, Context, Result};
-use convert_case::Case;
-use gpui::{serde_json, AssetSource, SharedString};
+use gpui::serde_json;
 use log::LevelFilter;
-use rust_embed::RustEmbed;
 use serde::Deserialize;
 use simplelog::SimpleLogger;
 use theme::{
     default_color_scales, Appearance, GitStatusColors, PlayerColors, StatusColors, SyntaxTheme,
-    SystemColors, ThemeColors, ThemeColorsRefinement, ThemeFamily, ThemeStyles, ThemeVariant,
+    SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
 };
+use vscode::VsCodeThemeConverter;
 
 use crate::vscode::VsCodeTheme;
 
@@ -30,10 +28,10 @@ pub(crate) fn new_theme_family(name: String, author: String) -> ThemeFamily {
 }
 
 #[derive(Debug, Deserialize)]
-struct FamilyJson {
+struct FamilyMetadata {
     pub name: String,
     pub author: String,
-    pub themes: Vec<ThemeVariantJson>,
+    pub themes: Vec<ThemeMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,26 +41,20 @@ enum ThemeAppearanceJson {
     Dark,
 }
 
+impl From<ThemeAppearanceJson> for Appearance {
+    fn from(value: ThemeAppearanceJson) -> Self {
+        match value {
+            ThemeAppearanceJson::Light => Self::Light,
+            ThemeAppearanceJson::Dark => Self::Dark,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
-struct ThemeVariantJson {
+struct ThemeMetadata {
     pub name: String,
+    pub file_name: String,
     pub appearance: ThemeAppearanceJson,
-}
-
-struct ImportedThemeFamily {
-    pub id: String,
-    pub name: String,
-    pub author: String,
-    pub url: Option<String>,
-    // App should panic if we try to load a theme without a lisence
-    pub license: String,
-    pub themes: Vec<ImportedThemeVariant>,
-}
-
-struct ImportedThemeVariant {
-    pub id: String,
-    pub name: String,
-    pub colors: ThemeColorsRefinement,
 }
 
 // Load a vscode theme from json
@@ -92,34 +84,24 @@ fn main() -> Result<()> {
         let family_metadata_file = File::open(theme_family_dir.path().join("family.json"))
             .context(format!("no `family.json` found for '{theme_family_slug}'"))?;
 
-        let family_metadata: FamilyJson = serde_json::from_reader(family_metadata_file).context(
-            format!("failed to parse `family.json` for '{theme_family_slug}'"),
-        )?;
+        let family_metadata: FamilyMetadata = serde_json::from_reader(family_metadata_file)
+            .context(format!(
+                "failed to parse `family.json` for '{theme_family_slug}'"
+            ))?;
 
         let mut themes = Vec::new();
 
-        for theme_entry in fs::read_dir(vscode_themes_path.join(theme_family_slug))? {
-            let theme_entry = theme_entry?;
-
-            let theme_file_path = theme_entry.path();
-
-            let file_name = theme_file_path
-                .file_name()
-                .ok_or(anyhow!("no file stem"))
-                .map(|file_name| file_name.to_string_lossy())?;
-
-            if !file_name.ends_with(".json") {
-                continue;
-            }
-
-            if file_name == "family.json" {
-                continue;
-            }
+        for theme_metadata in family_metadata.themes {
+            let theme_file_path = theme_family_dir.path().join(&theme_metadata.file_name);
 
             let theme_file = File::open(&theme_file_path)?;
 
-            let theme: VsCodeTheme = serde_json::from_reader(theme_file)
+            let vscode_theme: VsCodeTheme = serde_json::from_reader(theme_file)
                 .context(format!("failed to parse theme {theme_file_path:?}"))?;
+
+            let converter = VsCodeThemeConverter::new(vscode_theme, theme_metadata);
+
+            let theme = converter.convert()?;
 
             themes.push(theme);
         }
@@ -128,22 +110,7 @@ fn main() -> Result<()> {
             id: uuid::Uuid::new_v4().to_string(),
             name: family_metadata.name.into(),
             author: family_metadata.author.into(),
-            themes: themes
-                .into_iter()
-                .map(|theme| ThemeVariant {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    name: "".into(),
-                    appearance: Appearance::Dark,
-                    styles: ThemeStyles {
-                        system: SystemColors::default(),
-                        colors: ThemeColors::default_dark(),
-                        status: StatusColors::default(),
-                        git: GitStatusColors::default(),
-                        player: PlayerColors::default(),
-                        syntax: SyntaxTheme::default_dark(),
-                    },
-                })
-                .collect(),
+            themes,
             scales: default_color_scales(),
         };
 
@@ -151,24 +118,4 @@ fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-#[derive(RustEmbed)]
-#[folder = "../../assets"]
-#[include = "themes/**/*"]
-pub struct Assets;
-
-impl AssetSource for Assets {
-    fn load(&self, path: &str) -> Result<Cow<[u8]>> {
-        Self::get(path)
-            .map(|f| f.data)
-            .ok_or_else(|| anyhow!("could not find asset at path \"{}\"", path))
-    }
-
-    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        Ok(Self::iter()
-            .filter(|p| p.starts_with(path))
-            .map(SharedString::from)
-            .collect())
-    }
 }

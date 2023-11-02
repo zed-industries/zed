@@ -1,8 +1,16 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use gpui::{Hsla, Refineable, Rgba};
 use serde::Deserialize;
-use theme::{default_color_scales, ColorScales, ThemeFamily};
+use theme::{
+    default_color_scales, Appearance, ColorScales, GitStatusColors, PlayerColors, StatusColors,
+    SyntaxTheme, SystemColors, ThemeColors, ThemeColorsRefinement, ThemeFamily, ThemeStyles,
+    ThemeVariant,
+};
+use uuid::Uuid;
+
+use crate::ThemeMetadata;
 
 #[derive(Deserialize, Debug)]
 pub struct VsCodeTheme {
@@ -59,6 +67,57 @@ pub(crate) fn new_theme_family_from_vsc(path: &Path) -> Result<ThemeFamily> {
     // };
 
     // Ok(theme_family)
+}
+
+fn try_parse_color(color: &str) -> Result<Hsla> {
+    Ok(Rgba::try_from(color)?.into())
+}
+
+pub struct VsCodeThemeConverter {
+    theme: VsCodeTheme,
+    theme_metadata: ThemeMetadata,
+}
+
+impl VsCodeThemeConverter {
+    pub fn new(theme: VsCodeTheme, theme_metadata: ThemeMetadata) -> Self {
+        Self {
+            theme,
+            theme_metadata,
+        }
+    }
+
+    pub fn convert(self) -> Result<ThemeVariant> {
+        let appearance = self.theme_metadata.appearance.into();
+
+        let mut theme_colors = match appearance {
+            Appearance::Light => ThemeColors::default_light(),
+            Appearance::Dark => ThemeColors::default_dark(),
+        };
+
+        let vscode_colors = &self.theme.colors;
+
+        let theme_colors_refinements = ThemeColorsRefinement {
+            background: Some(try_parse_color(&vscode_colors.editor)?),
+            text: Some(try_parse_color(&vscode_colors.text)?),
+            ..Default::default()
+        };
+
+        theme_colors.refine(&theme_colors_refinements);
+
+        Ok(ThemeVariant {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: self.theme_metadata.name.into(),
+            appearance,
+            styles: ThemeStyles {
+                system: SystemColors::default(),
+                colors: theme_colors,
+                status: StatusColors::default(),
+                git: GitStatusColors::default(),
+                player: PlayerColors::default(),
+                syntax: SyntaxTheme::default_dark(),
+            },
+        })
+    }
 }
 
 #[cfg(test)]

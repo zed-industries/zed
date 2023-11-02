@@ -4,14 +4,17 @@
   "themes": [
     {
       "name": "Ayu Light",
+      "file_name": "ayu-light.json",
       "appearance": "light"
     },
     {
       "name": "Ayu Mirage",
+      "file_name": "ayu-mirage.json",
       "appearance": "dark"
     },
     {
       "name": "Ayu Dark",
+      "file_name": "ayu-dark.json",
       "appearance": "dark"
     }
   ]
