@@ -42,6 +42,7 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn dispatch(&self, runnable: Runnable) {
+        println!("DISPATCH");
         unsafe {
             dispatch_async_f(
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT.try_into().unwrap(), 0),
@@ -52,6 +53,7 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
+        println!("DISPATCH ON MAIN THREAD");
         unsafe {
             dispatch_async_f(
                 dispatch_get_main_queue(),

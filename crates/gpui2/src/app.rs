@@ -5,6 +5,7 @@ mod model_context;
 mod test_context;
 
 pub use async_context::*;
+use derive_more::{Deref, DerefMut};
 pub use entity_map::*;
 pub use model_context::*;
 use refineable::Refineable;
@@ -27,7 +28,7 @@ use parking_lot::Mutex;
 use slotmap::SlotMap;
 use std::{
     any::{type_name, Any, TypeId},
-    cell::RefCell,
+    cell::{Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
@@ -38,7 +39,29 @@ use std::{
 };
 use util::http::{self, HttpClient};
 
-pub struct App(Rc<RefCell<AppContext>>);
+pub struct AppCell {
+    app: RefCell<AppContext>,
+}
+impl AppCell {
+    pub fn borrow(&self) -> AppRef {
+        AppRef(self.app.borrow())
+    }
+
+    pub fn borrow_mut(&self, label: &str) -> AppRefMut {
+        let thread_id = std::thread::current().id();
+
+        eprintln!(">>> borrowing {thread_id:?}: {label}");
+        AppRefMut(self.app.borrow_mut())
+    }
+}
+
+#[derive(Deref, DerefMut)]
+pub struct AppRef<'a>(Ref<'a, AppContext>);
+
+#[derive(Deref, DerefMut)]
+pub struct AppRefMut<'a>(RefMut<'a, AppContext>);
+
+pub struct App(Rc<AppCell>);
 
 /// Represents an application before it is fully launched. Once your app is
 /// configured, you'll start the app with `App::run`.
@@ -61,7 +84,8 @@ impl App {
         let this = self.0.clone();
         let platform = self.0.borrow().platform.clone();
         platform.run(Box::new(move || {
-            let cx = &mut *this.borrow_mut();
+            dbg!("run callback");
+            let cx = &mut *this.borrow_mut("app::borrow_mut");
             on_finish_launching(cx);
         }));
     }
@@ -75,7 +99,7 @@ impl App {
         let this = Rc::downgrade(&self.0);
         self.0.borrow().platform.on_open_urls(Box::new(move |urls| {
             if let Some(app) = this.upgrade() {
-                callback(urls, &mut *app.borrow_mut());
+                callback(urls, &mut *app.borrow_mut("app.rs::on_open_urls"));
             }
         }));
         self
@@ -86,9 +110,9 @@ impl App {
         F: 'static + FnMut(&mut AppContext),
     {
         let this = Rc::downgrade(&self.0);
-        self.0.borrow_mut().platform.on_reopen(Box::new(move || {
+        self.0.borrow_mut("app.rs::on_reopen").platform.on_reopen(Box::new(move || {
             if let Some(app) = this.upgrade() {
-                callback(&mut app.borrow_mut());
+                callback(&mut app.borrow_mut("app.rs::on_reopen(callback)"));
             }
         }));
         self
@@ -119,7 +143,7 @@ type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 
 pub struct AppContext {
-    this: Weak<RefCell<AppContext>>,
+    this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
     app_metadata: AppMetadata,
     text_system: Arc<TextSystem>,
@@ -157,7 +181,7 @@ impl AppContext {
         platform: Rc<dyn Platform>,
         asset_source: Arc<dyn AssetSource>,
         http_client: Arc<dyn HttpClient>,
-    ) -> Rc<RefCell<Self>> {
+    ) -> Rc<AppCell> {
         let executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
         assert!(
@@ -174,8 +198,8 @@ impl AppContext {
             app_version: platform.app_version().ok(),
         };
 
-        Rc::new_cyclic(|this| {
-            RefCell::new(AppContext {
+        Rc::new_cyclic(|this| AppCell {
+            app: RefCell::new(AppContext {
                 this: this.clone(),
                 text_system,
                 platform,
@@ -206,7 +230,7 @@ impl AppContext {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 active_drag: None,
-            })
+            }),
         })
     }
 

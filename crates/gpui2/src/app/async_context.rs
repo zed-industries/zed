@@ -1,15 +1,15 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppContext, BackgroundExecutor, Context, ForegroundExecutor, Model,
-    ModelContext, Render, Result, Task, View, ViewContext, VisualContext, WindowContext,
+    AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, Context, ForegroundExecutor,
+    Model, ModelContext, Render, Result, Task, View, ViewContext, VisualContext, WindowContext,
     WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
-use std::{cell::RefCell, future::Future, rc::Weak};
+use std::{future::Future, rc::Weak};
 
 #[derive(Clone)]
 pub struct AsyncAppContext {
-    pub(crate) app: Weak<RefCell<AppContext>>,
+    pub(crate) app: Weak<AppCell>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
 }
@@ -28,7 +28,8 @@ impl Context for AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let mut app = app.borrow_mut();
+        dbg!("BUILD MODEL A");
+        let mut app = app.borrow_mut("gpui2/async_context.rs::build_model");
         Ok(app.build_model(build_model))
     }
 
@@ -41,7 +42,8 @@ impl Context for AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let mut app = app.borrow_mut();
+        dbg!("UPDATE MODEL B");
+        let mut app = app.borrow_mut("gpui2/async_context.rs::update_model");
         Ok(app.update_model(handle, update))
     }
 
@@ -50,7 +52,8 @@ impl Context for AsyncAppContext {
         F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
     {
         let app = self.app.upgrade().context("app was released")?;
-        let mut lock = app.borrow_mut();
+        dbg!("UPDATE WINDOW C");
+        let mut lock = app.borrow_mut("gpui2/async_context::update_window");
         lock.update_window(window, f)
     }
 }
@@ -61,7 +64,8 @@ impl AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let mut lock = app.borrow_mut();
+        dbg!("REFRESH");
+        let mut lock = app.borrow_mut("async_context.rs::refresh");
         lock.refresh();
         Ok(())
     }
@@ -79,7 +83,7 @@ impl AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let mut lock = app.borrow_mut();
+        let mut lock = app.borrow_mut("async_context.rs::update");
         Ok(f(&mut *lock))
     }
 
@@ -95,7 +99,7 @@ impl AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let mut lock = app.borrow_mut();
+        let mut lock = app.borrow_mut("open_window");
         Ok(lock.open_window(options, build_root_view))
     }
 
@@ -112,7 +116,7 @@ impl AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let app = app.borrow_mut();
+        let app = app.borrow_mut("has_global");
         Ok(app.has_global::<G>())
     }
 
@@ -121,7 +125,8 @@ impl AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let app = app.borrow_mut(); // Need this to compile
+        dbg!("read global");
+        let app = app.borrow_mut("async_context.rs::read_global");
         Ok(read(app.global(), &app))
     }
 
@@ -130,7 +135,8 @@ impl AsyncAppContext {
         read: impl FnOnce(&G, &AppContext) -> R,
     ) -> Option<R> {
         let app = self.app.upgrade()?;
-        let app = app.borrow_mut();
+        dbg!("try read global");
+        let app = app.borrow_mut("async_context.rs::try_read_global");
         Some(read(app.try_global()?, &app))
     }
 
@@ -142,7 +148,8 @@ impl AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let mut app = app.borrow_mut();
+        dbg!("update global");
+        let mut app = app.borrow_mut("async_context.rs::update_global");
         Ok(app.update_global(update))
     }
 }

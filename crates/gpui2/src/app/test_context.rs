@@ -1,15 +1,15 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncAppContext, BackgroundExecutor, Context,
     EventEmitter, ForegroundExecutor, Model, ModelContext, Result, Task, TestDispatcher,
-    TestPlatform, WindowContext,
+    TestPlatform, WindowContext, AppCell,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
-use std::{cell::RefCell, future::Future, rc::Rc, sync::Arc, time::Duration};
+use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
 #[derive(Clone)]
 pub struct TestAppContext {
-    pub app: Rc<RefCell<AppContext>>,
+    pub app: Rc<AppCell>,
     pub background_executor: BackgroundExecutor,
     pub foreground_executor: ForegroundExecutor,
 }
@@ -24,7 +24,7 @@ impl Context for TestAppContext {
     where
         T: 'static,
     {
-        let mut app = self.app.borrow_mut();
+        let mut app = self.app.borrow_mut("test_context.rs::build_model");
         app.build_model(build_model)
     }
 
@@ -33,7 +33,7 @@ impl Context for TestAppContext {
         handle: &Model<T>,
         update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
-        let mut app = self.app.borrow_mut();
+        let mut app = self.app.borrow_mut("test_context::update_model");
         app.update_model(handle, update)
     }
 
@@ -41,7 +41,7 @@ impl Context for TestAppContext {
     where
         F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
     {
-        let mut lock = self.app.borrow_mut();
+        let mut lock = self.app.borrow_mut("test_context::update_window");
         lock.update_window(window, f)
     }
 }
@@ -65,11 +65,11 @@ impl TestAppContext {
     }
 
     pub fn quit(&self) {
-        self.app.borrow_mut().quit();
+        self.app.borrow_mut("test_context.rs::quit").quit();
     }
 
     pub fn refresh(&mut self) -> Result<()> {
-        let mut app = self.app.borrow_mut();
+        let mut app = self.app.borrow_mut("test_context.rs::refresh");
         app.refresh();
         Ok(())
     }
@@ -83,7 +83,7 @@ impl TestAppContext {
     }
 
     pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> R {
-        let mut cx = self.app.borrow_mut();
+        let mut cx = self.app.borrow_mut("test_context::update");
         cx.update(f)
     }
 
@@ -117,7 +117,7 @@ impl TestAppContext {
         &mut self,
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
     ) -> R {
-        let mut lock = self.app.borrow_mut();
+        let mut lock = self.app.borrow_mut("test_context.rs::update_global");
         lock.update_global(update)
     }
 
