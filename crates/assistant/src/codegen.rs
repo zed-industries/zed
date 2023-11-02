@@ -6,7 +6,7 @@ use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{Entity, ModelContext, ModelHandle, Task};
 use language::{Rope, TransactionId};
 use multi_buffer;
-use std::{cmp, future, ops::Range};
+use std::{cmp, future, ops::Range, sync::Arc};
 
 pub enum Event {
     Finished,
@@ -20,7 +20,7 @@ pub enum CodegenKind {
 }
 
 pub struct Codegen {
-    provider: Box<dyn CompletionProvider>,
+    provider: Arc<dyn CompletionProvider>,
     buffer: ModelHandle<MultiBuffer>,
     snapshot: MultiBufferSnapshot,
     kind: CodegenKind,
@@ -40,7 +40,7 @@ impl Codegen {
     pub fn new(
         buffer: ModelHandle<MultiBuffer>,
         kind: CodegenKind,
-        provider: Box<dyn CompletionProvider>,
+        provider: Arc<dyn CompletionProvider>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let snapshot = buffer.read(cx).snapshot(cx);
@@ -414,7 +414,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
-        let provider = Box::new(FakeCompletionProvider::new());
+        let provider = Arc::new(FakeCompletionProvider::new());
         let codegen = cx.add_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -439,6 +439,7 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
+            println!("CHUNK: {:?}", &chunk);
             provider.send_completion(chunk);
             new_text = suffix;
             deterministic.run_until_parked();
@@ -480,7 +481,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 6))
         });
-        let provider = Box::new(FakeCompletionProvider::new());
+        let provider = Arc::new(FakeCompletionProvider::new());
         let codegen = cx.add_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -546,7 +547,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 2))
         });
-        let provider = Box::new(FakeCompletionProvider::new());
+        let provider = Arc::new(FakeCompletionProvider::new());
         let codegen = cx.add_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -571,6 +572,7 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
+            println!("{:?}", &chunk);
             provider.send_completion(chunk);
             new_text = suffix;
             deterministic.run_until_parked();

@@ -153,10 +153,17 @@ impl FakeCompletionProvider {
 
     pub fn send_completion(&self, completion: impl Into<String>) {
         let mut tx = self.last_completion_tx.lock();
-        tx.as_mut().unwrap().try_send(completion.into()).unwrap();
+
+        println!("COMPLETION TX: {:?}", &tx);
+
+        let a = tx.as_mut().unwrap();
+        a.try_send(completion.into()).unwrap();
+
+        // tx.as_mut().unwrap().try_send(completion.into()).unwrap();
     }
 
     pub fn finish_completion(&self) {
+        println!("FINISHING COMPLETION");
         self.last_completion_tx.lock().take().unwrap();
     }
 }
@@ -181,8 +188,10 @@ impl CompletionProvider for FakeCompletionProvider {
         &self,
         _prompt: Box<dyn CompletionRequest>,
     ) -> BoxFuture<'static, anyhow::Result<BoxStream<'static, anyhow::Result<String>>>> {
+        println!("COMPLETING");
         let (tx, rx) = mpsc::channel(1);
         *self.last_completion_tx.lock() = Some(tx);
+        println!("TX: {:?}", *self.last_completion_tx.lock());
         async move { Ok(rx.map(|rx| Ok(rx)).boxed()) }.boxed()
     }
     fn box_clone(&self) -> Box<dyn CompletionProvider> {
