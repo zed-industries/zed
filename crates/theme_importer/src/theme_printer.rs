@@ -2,9 +2,17 @@ use std::fmt::{self, Debug};
 
 use gpui::{Hsla, Rgba};
 use theme::{
-    GitStatusColors, PlayerColor, PlayerColors, StatusColors, SyntaxTheme, SystemColors,
-    ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+    Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors, SyntaxTheme,
+    SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
 };
+
+struct RawSyntaxPrinter<'a>(&'a str);
+
+impl<'a> Debug for RawSyntaxPrinter<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 struct HslaPrinter(Hsla);
 
@@ -55,6 +63,7 @@ impl Debug for ThemeFamilyPrinter {
                         .collect(),
                 ),
             )
+            .field("scales", &RawSyntaxPrinter("default_color_scales()"))
             .finish()
     }
 }
@@ -66,9 +75,17 @@ impl<'a> Debug for ThemeVariantPrinter<'a> {
         f.debug_struct("ThemeVariant")
             .field("id", &IntoPrinter(&self.0.id))
             .field("name", &IntoPrinter(&self.0.name))
-            .field("appearance", &self.0.appearance)
+            .field("appearance", &AppearancePrinter(self.0.appearance))
             .field("styles", &ThemeStylesPrinter(&self.0.styles))
             .finish()
+    }
+}
+
+pub struct AppearancePrinter(Appearance);
+
+impl Debug for AppearancePrinter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Appearance::{:?}", self.0)
     }
 }
 

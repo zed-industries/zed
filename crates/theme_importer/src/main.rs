@@ -2,10 +2,12 @@ mod theme_printer;
 mod vscode;
 
 use std::fs::{self, File};
+use std::io::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::{anyhow, Context, Result};
+use convert_case::{Case, Casing};
 use gpui::serde_json;
 use log::LevelFilter;
 use serde::Deserialize;
@@ -65,8 +67,6 @@ pub struct ThemeMetadata {
 fn main() -> Result<()> {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    let themes_path = PathBuf::from_str("crates/theme2/src/themes")?;
-
     let vscode_themes_path = PathBuf::from_str("assets/themes/src/vscode/")?;
 
     let mut theme_families = Vec::new();
@@ -116,9 +116,58 @@ fn main() -> Result<()> {
         theme_families.push(theme_family);
     }
 
+    let themes_output_path = PathBuf::from_str("crates/theme2/src/themes")?;
+
+    let mut theme_modules = Vec::new();
+
     for theme_family in theme_families {
-        println!("{:#?}", ThemeFamilyPrinter::new(theme_family));
+        let theme_family_slug = theme_family.name.to_string().to_case(Case::Snake);
+
+        let mut output_file =
+            File::create(themes_output_path.join(format!("{theme_family_slug}.rs")))?;
+
+        let theme_module = format!(
+            r#"
+            use gpui2::rgba;
+
+            use crate::{{
+                default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
+                SyntaxTheme, SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+            }};
+
+            pub fn {theme_family_slug}() -> ThemeFamily {{
+                {theme_family_definition}
+            }}
+            "#,
+            theme_family_definition = format!("{:#?}", ThemeFamilyPrinter::new(theme_family))
+        );
+
+        output_file.write_all(theme_module.as_bytes())?;
+
+        theme_modules.push(theme_family_slug);
     }
+
+    let mut mod_rs_file = File::create(themes_output_path.join(format!("mod.rs")))?;
+
+    let mod_rs_contents = format!(
+        r#"
+        {mod_statements}
+
+        {use_statements}
+        "#,
+        mod_statements = theme_modules
+            .iter()
+            .map(|module| format!("mod {module};"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        use_statements = theme_modules
+            .iter()
+            .map(|module| format!("pub use {module}::*;"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    mod_rs_file.write_all(mod_rs_contents.as_bytes())?;
 
     Ok(())
 }
