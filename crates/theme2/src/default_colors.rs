@@ -1,9 +1,12 @@
-use gpui2::{hsla, Rgba};
+use std::num::ParseIntError;
+
+use gpui2::{hsla, Hsla, Rgba};
 
 use crate::{
     colors::{GitStatusColors, PlayerColor, PlayerColors, StatusColors, SystemColors, ThemeColors},
     scale::{ColorScaleSet, ColorScales},
     syntax::SyntaxTheme,
+    ColorScale,
 };
 
 impl Default for SystemColors {
@@ -277,23 +280,25 @@ struct DefaultColorScaleSet {
     dark_alpha: [&'static str; 12],
 }
 
-impl From<DefaultColorScaleSet> for ColorScaleSet {
-    fn from(default: DefaultColorScaleSet) -> Self {
-        Self::new(
-            default.scale,
-            default
-                .light
-                .map(|color| Rgba::try_from(color).unwrap().into()),
-            default
-                .light_alpha
-                .map(|color| Rgba::try_from(color).unwrap().into()),
-            default
-                .dark
-                .map(|color| Rgba::try_from(color).unwrap().into()),
-            default
-                .dark_alpha
-                .map(|color| Rgba::try_from(color).unwrap().into()),
-        )
+impl TryFrom<DefaultColorScaleSet> for ColorScaleSet {
+    type Error = ParseIntError;
+
+    fn try_from(value: DefaultColorScaleSet) -> Result<Self, Self::Error> {
+        fn to_color_scale(scale: [&'static str; 12]) -> Result<ColorScale, ParseIntError> {
+            scale
+                .into_iter()
+                .map(|color| Rgba::try_from(color).map(Hsla::from))
+                .collect::<Result<Vec<_>, _>>()
+                .map(ColorScale::from_iter)
+        }
+
+        Ok(Self::new(
+            value.scale,
+            to_color_scale(value.light)?,
+            to_color_scale(value.light_alpha)?,
+            to_color_scale(value.dark)?,
+            to_color_scale(value.dark_alpha)?,
+        ))
     }
 }
 
@@ -395,7 +400,8 @@ fn gray() -> ColorScaleSet {
             "#ffffffed",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn mauve() -> ColorScaleSet {
@@ -458,7 +464,8 @@ fn mauve() -> ColorScaleSet {
             "#fdfdffef",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn slate() -> ColorScaleSet {
@@ -521,7 +528,8 @@ fn slate() -> ColorScaleSet {
             "#fcfdffef",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn sage() -> ColorScaleSet {
@@ -584,7 +592,8 @@ fn sage() -> ColorScaleSet {
             "#fdfffeed",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn olive() -> ColorScaleSet {
@@ -647,7 +656,8 @@ fn olive() -> ColorScaleSet {
             "#fdfffded",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn sand() -> ColorScaleSet {
@@ -710,7 +720,8 @@ fn sand() -> ColorScaleSet {
             "#fffffded",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn gold() -> ColorScaleSet {
@@ -773,7 +784,8 @@ fn gold() -> ColorScaleSet {
             "#fef7ede7",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn bronze() -> ColorScaleSet {
@@ -836,7 +848,8 @@ fn bronze() -> ColorScaleSet {
             "#fff1e9ec",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn brown() -> ColorScaleSet {
@@ -899,7 +912,8 @@ fn brown() -> ColorScaleSet {
             "#feecd4f2",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn yellow() -> ColorScaleSet {
@@ -962,7 +976,8 @@ fn yellow() -> ColorScaleSet {
             "#fef6baf6",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn amber() -> ColorScaleSet {
@@ -1025,7 +1040,8 @@ fn amber() -> ColorScaleSet {
             "#ffe7b3ff",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn orange() -> ColorScaleSet {
@@ -1088,7 +1104,8 @@ fn orange() -> ColorScaleSet {
             "#ffe0c2ff",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn tomato() -> ColorScaleSet {
@@ -1151,7 +1168,8 @@ fn tomato() -> ColorScaleSet {
             "#ffd6cefb",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn red() -> ColorScaleSet {
@@ -1214,7 +1232,8 @@ fn red() -> ColorScaleSet {
             "#ffd1d9ff",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn ruby() -> ColorScaleSet {
@@ -1277,7 +1296,8 @@ fn ruby() -> ColorScaleSet {
             "#ffd3e2fe",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn crimson() -> ColorScaleSet {
@@ -1340,7 +1360,8 @@ fn crimson() -> ColorScaleSet {
             "#ffd5eafd",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn pink() -> ColorScaleSet {
@@ -1403,7 +1424,8 @@ fn pink() -> ColorScaleSet {
             "#ffd3ecfd",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn plum() -> ColorScaleSet {
@@ -1466,7 +1488,8 @@ fn plum() -> ColorScaleSet {
             "#feddfef4",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn purple() -> ColorScaleSet {
@@ -1529,7 +1552,8 @@ fn purple() -> ColorScaleSet {
             "#f1ddfffa",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn violet() -> ColorScaleSet {
@@ -1592,7 +1616,8 @@ fn violet() -> ColorScaleSet {
             "#e3defffe",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn iris() -> ColorScaleSet {
@@ -1655,7 +1680,8 @@ fn iris() -> ColorScaleSet {
             "#e1e0fffe",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn indigo() -> ColorScaleSet {
@@ -1718,7 +1744,8 @@ fn indigo() -> ColorScaleSet {
             "#d6e1ffff",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn blue() -> ColorScaleSet {
@@ -1781,7 +1808,8 @@ fn blue() -> ColorScaleSet {
             "#c2e6ffff",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn cyan() -> ColorScaleSet {
@@ -1844,7 +1872,8 @@ fn cyan() -> ColorScaleSet {
             "#bbf3fef7",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn teal() -> ColorScaleSet {
@@ -1907,7 +1936,8 @@ fn teal() -> ColorScaleSet {
             "#b8ffebef",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn jade() -> ColorScaleSet {
@@ -1970,7 +2000,8 @@ fn jade() -> ColorScaleSet {
             "#b8ffe1ef",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn green() -> ColorScaleSet {
@@ -2033,7 +2064,8 @@ fn green() -> ColorScaleSet {
             "#bbffd7f0",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn grass() -> ColorScaleSet {
@@ -2096,7 +2128,8 @@ fn grass() -> ColorScaleSet {
             "#ceffceef",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn lime() -> ColorScaleSet {
@@ -2159,7 +2192,8 @@ fn lime() -> ColorScaleSet {
             "#e9febff7",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn mint() -> ColorScaleSet {
@@ -2222,7 +2256,8 @@ fn mint() -> ColorScaleSet {
             "#cbfee9f5",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn sky() -> ColorScaleSet {
@@ -2285,7 +2320,8 @@ fn sky() -> ColorScaleSet {
             "#c2f3ffff",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn black() -> ColorScaleSet {
@@ -2348,7 +2384,8 @@ fn black() -> ColorScaleSet {
             "#000000f2",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn white() -> ColorScaleSet {
@@ -2411,5 +2448,6 @@ fn white() -> ColorScaleSet {
             "#fffffff2",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
