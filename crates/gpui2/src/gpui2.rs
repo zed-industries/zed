@@ -113,7 +113,7 @@ pub trait VisualContext: Context {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static + Send + Render;
+        V: Render;
 }
 
 pub trait Entity<T>: Sealed {

@@ -1310,7 +1310,7 @@ impl VisualContext for WindowContext<'_> {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static + Send + Render,
+        V: Render,
     {
         let slot = self.app.entities.reserve();
         let view = View {
@@ -1598,7 +1598,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn observe<V2, E>(
         &mut self,
         entity: &E,
-        mut on_notify: impl FnMut(&mut V, E, &mut ViewContext<'_, V>) + Send + 'static,
+        mut on_notify: impl FnMut(&mut V, E, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription
     where
         V2: 'static,
@@ -1629,7 +1629,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn subscribe<V2, E>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(&mut V, E, &V2::Event, &mut ViewContext<'_, V>) + Send + 'static,
+        mut on_event: impl FnMut(&mut V, E, &V2::Event, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription
     where
         V2: EventEmitter,
@@ -1659,7 +1659,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     pub fn on_release(
         &mut self,
-        on_release: impl FnOnce(&mut V, &mut WindowContext) + Send + 'static,
+        on_release: impl FnOnce(&mut V, &mut WindowContext) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
@@ -1674,10 +1674,10 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn observe_release<V2, E>(
         &mut self,
         entity: &E,
-        mut on_release: impl FnMut(&mut V, &mut V2, &mut ViewContext<'_, V>) + Send + 'static,
+        mut on_release: impl FnMut(&mut V, &mut V2, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription
     where
-        V: Any + Send,
+        V: 'static,
         V2: 'static,
         E: Entity<V2>,
     {
@@ -1704,7 +1704,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     pub fn on_focus_changed(
         &mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + 'static,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
     ) {
         let handle = self.view().downgrade();
         self.window.focus_listeners.push(Box::new(move |event, cx| {
@@ -1814,7 +1814,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static + Send,
+        G: 'static,
     {
         let mut global = self.app.lease_global::<G>();
         let result = f(&mut global, self);
@@ -1824,7 +1824,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut V, &mut ViewContext<'_, V>) + Send + 'static,
+        f: impl Fn(&mut V, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         let view = self.view().downgrade();
@@ -1854,7 +1854,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 impl<V> ViewContext<'_, V>
 where
     V: EventEmitter,
-    V::Event: 'static + Send,
+    V::Event: 'static,
 {
     pub fn emit(&mut self, event: V::Event) {
         let emitter = self.view.model.entity_id;
@@ -1904,7 +1904,7 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
         view: &View<V2>,
         update: impl FnOnce(&mut V2, &mut ViewContext<'_, V2>) -> R,
     ) -> Self::Result<R> {
-        VisualContext::update_view(&mut self.window_cx, view, update)
+        self.window_cx.update_view(view, update)
     }
 
     fn replace_root_view<W>(
@@ -1912,7 +1912,7 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
         build_view: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>>
     where
-        W: 'static + Send + Render,
+        W: Render,
     {
         self.window_cx.replace_root_view(build_view)
     }
