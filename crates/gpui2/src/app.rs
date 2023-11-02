@@ -13,11 +13,12 @@ use smallvec::SmallVec;
 pub use test_context::*;
 
 use crate::{
-    current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AppMetadata, AssetSource,
-    BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId, FocusEvent, FocusHandle,
-    FocusId, ForegroundExecutor, KeyBinding, Keymap, LayoutId, Pixels, Platform, Point, Render,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
-    TextSystem, View, Window, WindowContext, WindowHandle, WindowId,
+    current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AnyWindowHandle,
+    AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
+    Entity, FocusEvent, FocusHandle, FocusId, ForegroundExecutor, KeyBinding, Keymap, LayoutId,
+    Pixels, Platform, Point, Render, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextStyle, TextStyleRefinement, TextSystem, View, Window, WindowContext, WindowHandle,
+    WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -114,8 +115,8 @@ type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<d
 type FrameCallback = Box<dyn FnOnce(&mut WindowContext)>;
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
-type QuitHandler = Box<dyn FnMut(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
-type ReleaseListener = Box<dyn FnMut(&mut dyn Any, &mut AppContext) + 'static>;
+type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
+type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 
 pub struct AppContext {
     this: Weak<RefCell<AppContext>>,
@@ -214,10 +215,9 @@ impl AppContext {
     pub fn quit(&mut self) {
         let mut futures = Vec::new();
 
-        self.quit_observers.clone().retain(&(), |observer| {
+        for observer in self.quit_observers.remove(&()) {
             futures.push(observer(self));
-            true
-        });
+        }
 
         self.windows.clear();
         self.flush_effects();
@@ -255,37 +255,31 @@ impl AppContext {
         result
     }
 
-    pub(crate) fn read_window<R>(
-        &self,
-        id: WindowId,
-        read: impl FnOnce(&WindowContext) -> R,
-    ) -> Result<R> {
-        let window = self
-            .windows
-            .get(id)
-            .ok_or_else(|| anyhow!("window not found"))?
-            .as_ref()
-            .unwrap();
-        Ok(read(&WindowContext::immutable(self, &window)))
+    pub fn windows(&self) -> Vec<AnyWindowHandle> {
+        self.windows
+            .values()
+            .filter_map(|window| Some(window.as_ref()?.handle.clone()))
+            .collect()
     }
 
     pub(crate) fn update_window<R>(
         &mut self,
-        id: WindowId,
-        update: impl FnOnce(&mut WindowContext) -> R,
+        handle: AnyWindowHandle,
+        update: impl FnOnce(AnyView, &mut WindowContext) -> R,
     ) -> Result<R> {
         self.update(|cx| {
             let mut window = cx
                 .windows
-                .get_mut(id)
+                .get_mut(handle.id)
                 .ok_or_else(|| anyhow!("window not found"))?
                 .take()
                 .unwrap();
 
-            let result = update(&mut WindowContext::mutable(cx, &mut window));
+            let root_view = window.root_view.clone().unwrap();
+            let result = update(root_view, &mut WindowContext::new(cx, &mut window));
 
             cx.windows
-                .get_mut(id)
+                .get_mut(handle.id)
                 .ok_or_else(|| anyhow!("window not found"))?
                 .replace(window);
 
@@ -305,7 +299,7 @@ impl AppContext {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
             let mut window = Window::new(handle.into(), options, cx);
-            let root_view = build_root_view(&mut WindowContext::mutable(cx, &mut window));
+            let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
             window.root_view.replace(root_view.into());
             cx.windows.get_mut(id).unwrap().replace(window);
             handle
@@ -386,8 +380,11 @@ impl AppContext {
                         self.apply_notify_effect(emitter);
                     }
                     Effect::Emit { emitter, event } => self.apply_emit_effect(emitter, event),
-                    Effect::FocusChanged { window_id, focused } => {
-                        self.apply_focus_changed_effect(window_id, focused);
+                    Effect::FocusChanged {
+                        window_handle,
+                        focused,
+                    } => {
+                        self.apply_focus_changed_effect(window_handle, focused);
                     }
                     Effect::Refresh => {
                         self.apply_refresh_effect();
@@ -407,18 +404,18 @@ impl AppContext {
         let dirty_window_ids = self
             .windows
             .iter()
-            .filter_map(|(window_id, window)| {
+            .filter_map(|(_, window)| {
                 let window = window.as_ref().unwrap();
                 if window.dirty {
-                    Some(window_id)
+                    Some(window.handle.clone())
                 } else {
                     None
                 }
             })
             .collect::<SmallVec<[_; 8]>>();
 
-        for dirty_window_id in dirty_window_ids {
-            self.update_window(dirty_window_id, |cx| cx.draw()).unwrap();
+        for dirty_window_handle in dirty_window_ids {
+            dirty_window_handle.update(self, |_, cx| cx.draw()).unwrap();
         }
     }
 
@@ -435,7 +432,7 @@ impl AppContext {
             for (entity_id, mut entity) in dropped {
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
-                for mut release_callback in self.release_listeners.remove(&entity_id) {
+                for release_callback in self.release_listeners.remove(&entity_id) {
                     release_callback(entity.as_mut(), self);
                 }
             }
@@ -446,27 +443,27 @@ impl AppContext {
     /// For now, we simply blur the window if this happens, but we may want to support invoking
     /// a window blur handler to restore focus to some logical element.
     fn release_dropped_focus_handles(&mut self) {
-        let window_ids = self.windows.keys().collect::<SmallVec<[_; 8]>>();
-        for window_id in window_ids {
-            self.update_window(window_id, |cx| {
-                let mut blur_window = false;
-                let focus = cx.window.focus;
-                cx.window.focus_handles.write().retain(|handle_id, count| {
-                    if count.load(SeqCst) == 0 {
-                        if focus == Some(handle_id) {
-                            blur_window = true;
+        for window_handle in self.windows() {
+            window_handle
+                .update(self, |_, cx| {
+                    let mut blur_window = false;
+                    let focus = cx.window.focus;
+                    cx.window.focus_handles.write().retain(|handle_id, count| {
+                        if count.load(SeqCst) == 0 {
+                            if focus == Some(handle_id) {
+                                blur_window = true;
+                            }
+                            false
+                        } else {
+                            true
                         }
-                        false
-                    } else {
-                        true
-                    }
-                });
+                    });
 
-                if blur_window {
-                    cx.blur();
-                }
-            })
-            .unwrap();
+                    if blur_window {
+                        cx.blur();
+                    }
+                })
+                .unwrap();
         }
     }
 
@@ -483,30 +480,35 @@ impl AppContext {
             .retain(&emitter, |handler| handler(event.as_ref(), self));
     }
 
-    fn apply_focus_changed_effect(&mut self, window_id: WindowId, focused: Option<FocusId>) {
-        self.update_window(window_id, |cx| {
-            if cx.window.focus == focused {
-                let mut listeners = mem::take(&mut cx.window.focus_listeners);
-                let focused =
-                    focused.map(|id| FocusHandle::for_id(id, &cx.window.focus_handles).unwrap());
-                let blurred = cx
-                    .window
-                    .last_blur
-                    .take()
-                    .unwrap()
-                    .and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
-                if focused.is_some() || blurred.is_some() {
-                    let event = FocusEvent { focused, blurred };
-                    for listener in &listeners {
-                        listener(&event, cx);
+    fn apply_focus_changed_effect(
+        &mut self,
+        window_handle: AnyWindowHandle,
+        focused: Option<FocusId>,
+    ) {
+        window_handle
+            .update(self, |_, cx| {
+                if cx.window.focus == focused {
+                    let mut listeners = mem::take(&mut cx.window.focus_listeners);
+                    let focused = focused
+                        .map(|id| FocusHandle::for_id(id, &cx.window.focus_handles).unwrap());
+                    let blurred = cx
+                        .window
+                        .last_blur
+                        .take()
+                        .unwrap()
+                        .and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
+                    if focused.is_some() || blurred.is_some() {
+                        let event = FocusEvent { focused, blurred };
+                        for listener in &listeners {
+                            listener(&event, cx);
+                        }
                     }
-                }
 
-                listeners.extend(cx.window.focus_listeners.drain(..));
-                cx.window.focus_listeners = listeners;
-            }
-        })
-        .ok();
+                    listeners.extend(cx.window.focus_listeners.drain(..));
+                    cx.window.focus_listeners = listeners;
+                }
+            })
+            .ok();
     }
 
     fn apply_refresh_effect(&mut self) {
@@ -680,6 +682,24 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
+    pub fn observe_release<E, T>(
+        &mut self,
+        handle: &E,
+        on_release: impl FnOnce(&mut T, &mut AppContext) + 'static,
+    ) -> Subscription
+    where
+        E: Entity<T>,
+        T: 'static,
+    {
+        self.release_listeners.insert(
+            handle.entity_id(),
+            Box::new(move |entity, cx| {
+                let entity = entity.downcast_mut().expect("invalid entity type");
+                on_release(entity, cx)
+            }),
+        )
+    }
+
     pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
         self.text_style_stack.push(text_style);
     }
@@ -733,7 +753,6 @@ impl AppContext {
 }
 
 impl Context for AppContext {
-    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
     /// Build an entity that is owned by the application. The given function will be invoked with
@@ -741,11 +760,11 @@ impl Context for AppContext {
     /// which can be used to access the entity in a context.
     fn build_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Model<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
-            let entity = build_model(&mut ModelContext::mutable(cx, slot.downgrade()));
+            let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
             cx.entities.insert(slot, entity)
         })
     }
@@ -755,16 +774,36 @@ impl Context for AppContext {
     fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> R {
         self.update(|cx| {
             let mut entity = cx.entities.lease(model);
-            let result = update(
-                &mut entity,
-                &mut ModelContext::mutable(cx, model.downgrade()),
-            );
+            let result = update(&mut entity, &mut ModelContext::new(cx, model.downgrade()));
             cx.entities.end_lease(entity);
             result
+        })
+    }
+
+    fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+    {
+        self.update(|cx| {
+            let mut window = cx
+                .windows
+                .get_mut(handle.id)
+                .ok_or_else(|| anyhow!("window not found"))?
+                .take()
+                .unwrap();
+
+            let root_view = window.root_view.clone().unwrap();
+            let result = update(root_view, &mut WindowContext::new(cx, &mut window));
+            cx.windows
+                .get_mut(handle.id)
+                .ok_or_else(|| anyhow!("window not found"))?
+                .replace(window);
+
+            Ok(result)
         })
     }
 }
@@ -779,7 +818,7 @@ pub(crate) enum Effect {
         event: Box<dyn Any>,
     },
     FocusChanged {
-        window_id: WindowId,
+        window_handle: AnyWindowHandle,
         focused: Option<FocusId>,
     },
     Refresh,
