@@ -12,7 +12,10 @@ use crate::{
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
-use futures::channel::oneshot;
+use futures::{
+    channel::{mpsc, oneshot},
+    StreamExt,
+};
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -410,6 +413,31 @@ impl<'a> WindowContext<'a> {
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + 'static) {
         let f = Box::new(f);
         let display_id = self.window.display_id;
+
+        self.next_frame_callbacks
+            .entry(display_id)
+            .or_default()
+            .push(f);
+
+        self.frame_consumers.entry(display_id).or_insert_with(|| {
+            let (tx, rx) = mpsc::unbounded::<()>();
+
+            self.spawn(|cx| async move {
+                while rx.next().await.is_some() {
+                    let _ = cx.update(|_, cx| {
+                        for callback in cx
+                            .app
+                            .next_frame_callbacks
+                            .get_mut(&display_id)
+                            .unwrap()
+                            .drain(..)
+                        {
+                            callback(cx);
+                        }
+                    });
+                }
+            })
+        });
 
         if let Some(callbacks) = self.next_frame_callbacks.get_mut(&display_id) {
             callbacks.push(f);

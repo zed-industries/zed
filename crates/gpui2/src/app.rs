@@ -139,11 +139,17 @@ impl App {
 }
 
 type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
-type FrameCallback = Box<dyn FnOnce(&mut WindowContext)>;
+type FrameCallback = Box<dyn FnOnce(&mut AppContext)>;
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
+
+// struct FrameConsumer {
+//     next_frame_callbacks: Vec<FrameCallback>,
+//     task: Task<()>,
+//     display_linker
+// }
 
 pub struct AppContext {
     this: Weak<AppCell>,
@@ -154,6 +160,7 @@ pub struct AppContext {
     pending_updates: usize,
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
+    pub(crate) frame_consumers: HashMap<DisplayId, Task<()>>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) svg_renderer: SvgRenderer,
@@ -204,12 +211,14 @@ impl AppContext {
         Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(AppContext {
                 this: this.clone(),
-                text_system,
                 platform,
                 app_metadata,
+                text_system,
                 flushing_effects: false,
                 pending_updates: 0,
-                next_frame_callbacks: Default::default(),
+                active_drag: None,
+                next_frame_callbacks: HashMap::default(),
+                frame_consumers: HashMap::default(),
                 background_executor: executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
@@ -232,7 +241,6 @@ impl AppContext {
                 quit_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
-                active_drag: None,
             }),
         })
     }
