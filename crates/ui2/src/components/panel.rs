@@ -107,7 +107,7 @@ impl<V: 'static> Panel<V> {
                 PanelSide::Right => this.border_l(),
                 PanelSide::Bottom => this.border_b().w_full().h(current_size),
             })
-            .bg(cx.theme().colors().surface)
+            .bg(cx.theme().colors().surface_background)
             .border_color(cx.theme().colors().border)
             .children(self.children)
     }

@@ -46,7 +46,7 @@ impl ContextMenu {
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         v_stack()
             .flex()
-            .bg(cx.theme().colors().elevated_surface)
+            .bg(cx.theme().colors().elevated_surface_background)
             .border()
             .border_color(cx.theme().colors().border)
             .child(

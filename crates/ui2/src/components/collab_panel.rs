@@ -18,7 +18,7 @@ impl CollabPanel {
         v_stack()
             .id(self.id.clone())
             .h_full()
-            .bg(cx.theme().colors().surface)
+            .bg(cx.theme().colors().surface_background)
             .child(
                 v_stack()
                     .id("crdb")

@@ -22,8 +22,8 @@ pub enum ButtonVariant {
 impl ButtonVariant {
     pub fn bg_color(&self, cx: &mut WindowContext) -> Hsla {
         match self {
-            ButtonVariant::Ghost => cx.theme().colors().ghost_element,
-            ButtonVariant::Filled => cx.theme().colors().element,
+            ButtonVariant::Ghost => cx.theme().colors().ghost_element_background,
+            ButtonVariant::Filled => cx.theme().colors().element_background,
         }
     }
 

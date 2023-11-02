@@ -24,7 +24,7 @@ impl Terminal {
                 div()
                     .w_full()
                     .flex()
-                    .bg(cx.theme().colors().surface)
+                    .bg(cx.theme().colors().surface_background)
                     .child(
                         div().px_1().flex().flex_none().gap_2().child(
                             div()

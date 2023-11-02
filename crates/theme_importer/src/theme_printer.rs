@@ -138,10 +138,13 @@ impl<'a> Debug for ThemeColorsPrinter<'a> {
                 "border_transparent",
                 &HslaPrinter(self.0.border_transparent),
             )
-            .field("elevated_surface", &HslaPrinter(self.0.elevated_surface))
-            .field("surface", &HslaPrinter(self.0.surface))
+            .field(
+                "elevated_surface",
+                &HslaPrinter(self.0.elevated_surface_background),
+            )
+            .field("surface", &HslaPrinter(self.0.surface_background))
             .field("background", &HslaPrinter(self.0.background))
-            .field("element", &HslaPrinter(self.0.element))
+            .field("element", &HslaPrinter(self.0.element_background))
             .field("element_hover", &HslaPrinter(self.0.element_hover))
             .field("element_active", &HslaPrinter(self.0.element_active))
             .field("element_selected", &HslaPrinter(self.0.element_selected))
@@ -154,7 +157,10 @@ impl<'a> Debug for ThemeColorsPrinter<'a> {
                 "element_drop_target",
                 &HslaPrinter(self.0.element_drop_target),
             )
-            .field("ghost_element", &HslaPrinter(self.0.ghost_element))
+            .field(
+                "ghost_element",
+                &HslaPrinter(self.0.ghost_element_background),
+            )
             .field(
                 "ghost_element_hover",
                 &HslaPrinter(self.0.ghost_element_hover),
@@ -181,14 +187,17 @@ impl<'a> Debug for ThemeColorsPrinter<'a> {
             .field("icon_disabled", &HslaPrinter(self.0.icon_disabled))
             .field("icon_placeholder", &HslaPrinter(self.0.icon_placeholder))
             .field("icon_accent", &HslaPrinter(self.0.icon_accent))
-            .field("status_bar", &HslaPrinter(self.0.status_bar))
-            .field("title_bar", &HslaPrinter(self.0.title_bar))
-            .field("toolbar", &HslaPrinter(self.0.toolbar))
-            .field("tab_bar", &HslaPrinter(self.0.tab_bar))
-            .field("tab_inactive", &HslaPrinter(self.0.tab_inactive))
-            .field("tab_active", &HslaPrinter(self.0.tab_active))
-            .field("editor", &HslaPrinter(self.0.editor))
-            .field("editor_subheader", &HslaPrinter(self.0.editor_subheader))
+            .field("status_bar", &HslaPrinter(self.0.status_bar_background))
+            .field("title_bar", &HslaPrinter(self.0.title_bar_background))
+            .field("toolbar", &HslaPrinter(self.0.toolbar_background))
+            .field("tab_bar", &HslaPrinter(self.0.tab_bar_background))
+            .field("tab_inactive", &HslaPrinter(self.0.tab_inactive_background))
+            .field("tab_active", &HslaPrinter(self.0.tab_active_background))
+            .field("editor", &HslaPrinter(self.0.editor_background))
+            .field(
+                "editor_subheader",
+                &HslaPrinter(self.0.editor_subheader_background),
+            )
             .field(
                 "editor_active_line",
                 &HslaPrinter(self.0.editor_active_line),

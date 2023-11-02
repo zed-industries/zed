@@ -106,7 +106,7 @@ impl ListHeader {
 
         h_stack()
             .w_full()
-            .bg(cx.theme().colors().surface)
+            .bg(cx.theme().colors().surface_background)
             // TODO: Add focus state
             // .when(self.state == InteractionState::Focused, |this| {
             //     this.border()
@@ -399,7 +399,7 @@ impl ListEntry {
         div()
             .relative()
             .group("")
-            .bg(cx.theme().colors().surface)
+            .bg(cx.theme().colors().surface_background)
             .when(self.state == InteractionState::Focused, |this| {
                 this.border()
                     .border_color(cx.theme().colors().border_focused)
@@ -490,7 +490,7 @@ impl<V: 'static> ListDetailsEntry<V> {
         let settings = user_settings(cx);
 
         let (item_bg, item_bg_hover, item_bg_active) = (
-            cx.theme().colors().ghost_element,
+            cx.theme().colors().ghost_element_background,
             cx.theme().colors().ghost_element_hover,
             cx.theme().colors().ghost_element_active,
         );
@@ -516,7 +516,7 @@ impl<V: 'static> ListDetailsEntry<V> {
                         .top_3()
                         .rounded_full()
                         .border_2()
-                        .border_color(cx.theme().colors().surface)
+                        .border_color(cx.theme().colors().surface_background)
                         .w(px(9.0))
                         .h(px(9.0))
                         .z_index(2)
