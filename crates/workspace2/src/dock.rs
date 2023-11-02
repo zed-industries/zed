@@ -622,7 +622,7 @@ impl StatusItemView for PanelButtons {
         _active_pane_item: Option<&dyn crate::ItemHandle>,
         _cx: &mut ViewContext<Self>,
     ) {
-        todo!()
+        // todo!(This is empty in the old `workspace::dock`)
     }
 }
 
