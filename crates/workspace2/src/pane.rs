@@ -104,32 +104,32 @@ pub enum SaveIntent {
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
-// todo!()
-// pub fn init(cx: &mut AppContext) {
-//     cx.add_action(Pane::toggle_zoom);
-//     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
-//         pane.activate_item(action.0, true, true, cx);
-//     });
-//     cx.add_action(|pane: &mut Pane, _: &ActivateLastItem, cx| {
-//         pane.activate_item(pane.items.len() - 1, true, true, cx);
-//     });
-//     cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
-//         pane.activate_prev_item(true, cx);
-//     });
-//     cx.add_action(|pane: &mut Pane, _: &ActivateNextItem, cx| {
-//         pane.activate_next_item(true, cx);
-//     });
-//     cx.add_async_action(Pane::close_active_item);
-//     cx.add_async_action(Pane::close_inactive_items);
-//     cx.add_async_action(Pane::close_clean_items);
-//     cx.add_async_action(Pane::close_items_to_the_left);
-//     cx.add_async_action(Pane::close_items_to_the_right);
-//     cx.add_async_action(Pane::close_all_items);
-//     cx.add_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx));
-//     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
-//     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
-//     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
-// }
+pub fn init(cx: &mut AppContext) {
+    // todo!()
+    //     cx.add_action(Pane::toggle_zoom);
+    //     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
+    //         pane.activate_item(action.0, true, true, cx);
+    //     });
+    //     cx.add_action(|pane: &mut Pane, _: &ActivateLastItem, cx| {
+    //         pane.activate_item(pane.items.len() - 1, true, true, cx);
+    //     });
+    //     cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
+    //         pane.activate_prev_item(true, cx);
+    //     });
+    //     cx.add_action(|pane: &mut Pane, _: &ActivateNextItem, cx| {
+    //         pane.activate_next_item(true, cx);
+    //     });
+    //     cx.add_async_action(Pane::close_active_item);
+    //     cx.add_async_action(Pane::close_inactive_items);
+    //     cx.add_async_action(Pane::close_clean_items);
+    //     cx.add_async_action(Pane::close_items_to_the_left);
+    //     cx.add_async_action(Pane::close_items_to_the_right);
+    //     cx.add_async_action(Pane::close_all_items);
+    //     cx.add_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx));
+    //     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
+    //     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
+    //     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
+}
 
 pub enum Event {
     AddItem { item: Box<dyn ItemHandle> },

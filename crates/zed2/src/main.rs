@@ -188,8 +188,7 @@ fn main() {
         // audio::init(Assets, cx);
         // auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
-        // todo!("workspace")
-        // workspace::init(app_state.clone(), cx);
+        workspace2::init(app_state.clone(), cx);
         // recent_projects::init(cx);
 
         // journal2::init(app_state.clone(), cx);

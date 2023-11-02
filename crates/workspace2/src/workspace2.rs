@@ -60,7 +60,7 @@ use std::{
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
 use uuid::Uuid;
-use workspace_settings::WorkspaceSettings;
+use workspace_settings::{AutosaveSetting, WorkspaceSettings};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Size<GlobalPixels>> = env::var("ZED_WINDOW_SIZE")
@@ -233,129 +233,129 @@ pub fn init_settings(cx: &mut AppContext) {
     ItemSettings::register(cx);
 }
 
-// pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
-//     init_settings(cx);
-//     pane::init(cx);
-//     notifications::init(cx);
+pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
+    init_settings(cx);
+    pane::init(cx);
+    notifications::init(cx);
 
-//     cx.add_global_action({
-//         let app_state = Arc::downgrade(&app_state);
-//         move |_: &Open, cx: &mut AppContext| {
-//             let mut paths = cx.prompt_for_paths(PathPromptOptions {
-//                 files: true,
-//                 directories: true,
-//                 multiple: true,
-//             });
+    //     cx.add_global_action({
+    //         let app_state = Arc::downgrade(&app_state);
+    //         move |_: &Open, cx: &mut AppContext| {
+    //             let mut paths = cx.prompt_for_paths(PathPromptOptions {
+    //                 files: true,
+    //                 directories: true,
+    //                 multiple: true,
+    //             });
 
-//             if let Some(app_state) = app_state.upgrade() {
-//                 cx.spawn(move |mut cx| async move {
-//                     if let Some(paths) = paths.recv().await.flatten() {
-//                         cx.update(|cx| {
-//                             open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx)
-//                         });
-//                     }
-//                 })
-//                 .detach();
-//             }
-//         }
-//     });
-//     cx.add_async_action(Workspace::open);
+    //             if let Some(app_state) = app_state.upgrade() {
+    //                 cx.spawn(move |mut cx| async move {
+    //                     if let Some(paths) = paths.recv().await.flatten() {
+    //                         cx.update(|cx| {
+    //                             open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx)
+    //                         });
+    //                     }
+    //                 })
+    //                 .detach();
+    //             }
+    //         }
+    //     });
+    //     cx.add_async_action(Workspace::open);
 
-//     cx.add_async_action(Workspace::follow_next_collaborator);
-//     cx.add_async_action(Workspace::close);
-//     cx.add_async_action(Workspace::close_inactive_items_and_panes);
-//     cx.add_async_action(Workspace::close_all_items_and_panes);
-//     cx.add_global_action(Workspace::close_global);
-//     cx.add_global_action(restart);
-//     cx.add_async_action(Workspace::save_all);
-//     cx.add_action(Workspace::add_folder_to_project);
-//     cx.add_action(
-//         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
-//             let pane = workspace.active_pane().clone();
-//             workspace.unfollow(&pane, cx);
-//         },
-//     );
-//     cx.add_action(
-//         |workspace: &mut Workspace, action: &Save, cx: &mut ViewContext<Workspace>| {
-//             workspace
-//                 .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
-//                 .detach_and_log_err(cx);
-//         },
-//     );
-//     cx.add_action(
-//         |workspace: &mut Workspace, _: &SaveAs, cx: &mut ViewContext<Workspace>| {
-//             workspace
-//                 .save_active_item(SaveIntent::SaveAs, cx)
-//                 .detach_and_log_err(cx);
-//         },
-//     );
-//     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
-//         workspace.activate_previous_pane(cx)
-//     });
-//     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
-//         workspace.activate_next_pane(cx)
-//     });
+    //     cx.add_async_action(Workspace::follow_next_collaborator);
+    //     cx.add_async_action(Workspace::close);
+    //     cx.add_async_action(Workspace::close_inactive_items_and_panes);
+    //     cx.add_async_action(Workspace::close_all_items_and_panes);
+    //     cx.add_global_action(Workspace::close_global);
+    //     cx.add_global_action(restart);
+    //     cx.add_async_action(Workspace::save_all);
+    //     cx.add_action(Workspace::add_folder_to_project);
+    //     cx.add_action(
+    //         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
+    //             let pane = workspace.active_pane().clone();
+    //             workspace.unfollow(&pane, cx);
+    //         },
+    //     );
+    //     cx.add_action(
+    //         |workspace: &mut Workspace, action: &Save, cx: &mut ViewContext<Workspace>| {
+    //             workspace
+    //                 .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
+    //                 .detach_and_log_err(cx);
+    //         },
+    //     );
+    //     cx.add_action(
+    //         |workspace: &mut Workspace, _: &SaveAs, cx: &mut ViewContext<Workspace>| {
+    //             workspace
+    //                 .save_active_item(SaveIntent::SaveAs, cx)
+    //                 .detach_and_log_err(cx);
+    //         },
+    //     );
+    //     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
+    //         workspace.activate_previous_pane(cx)
+    //     });
+    //     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
+    //         workspace.activate_next_pane(cx)
+    //     });
 
-//     cx.add_action(
-//         |workspace: &mut Workspace, action: &ActivatePaneInDirection, cx| {
-//             workspace.activate_pane_in_direction(action.0, cx)
-//         },
-//     );
+    //     cx.add_action(
+    //         |workspace: &mut Workspace, action: &ActivatePaneInDirection, cx| {
+    //             workspace.activate_pane_in_direction(action.0, cx)
+    //         },
+    //     );
 
-//     cx.add_action(
-//         |workspace: &mut Workspace, action: &SwapPaneInDirection, cx| {
-//             workspace.swap_pane_in_direction(action.0, cx)
-//         },
-//     );
+    //     cx.add_action(
+    //         |workspace: &mut Workspace, action: &SwapPaneInDirection, cx| {
+    //             workspace.swap_pane_in_direction(action.0, cx)
+    //         },
+    //     );
 
-//     cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftDock, cx| {
-//         workspace.toggle_dock(DockPosition::Left, cx);
-//     });
-//     cx.add_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
-//         workspace.toggle_dock(DockPosition::Right, cx);
-//     });
-//     cx.add_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
-//         workspace.toggle_dock(DockPosition::Bottom, cx);
-//     });
-//     cx.add_action(|workspace: &mut Workspace, _: &CloseAllDocks, cx| {
-//         workspace.close_all_docks(cx);
-//     });
-//     cx.add_action(Workspace::activate_pane_at_index);
-//     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
-//         workspace.reopen_closed_item(cx).detach();
-//     });
-//     cx.add_action(|workspace: &mut Workspace, _: &GoBack, cx| {
-//         workspace
-//             .go_back(workspace.active_pane().downgrade(), cx)
-//             .detach();
-//     });
-//     cx.add_action(|workspace: &mut Workspace, _: &GoForward, cx| {
-//         workspace
-//             .go_forward(workspace.active_pane().downgrade(), cx)
-//             .detach();
-//     });
+    //     cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftDock, cx| {
+    //         workspace.toggle_dock(DockPosition::Left, cx);
+    //     });
+    //     cx.add_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
+    //         workspace.toggle_dock(DockPosition::Right, cx);
+    //     });
+    //     cx.add_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
+    //         workspace.toggle_dock(DockPosition::Bottom, cx);
+    //     });
+    //     cx.add_action(|workspace: &mut Workspace, _: &CloseAllDocks, cx| {
+    //         workspace.close_all_docks(cx);
+    //     });
+    //     cx.add_action(Workspace::activate_pane_at_index);
+    //     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
+    //         workspace.reopen_closed_item(cx).detach();
+    //     });
+    //     cx.add_action(|workspace: &mut Workspace, _: &GoBack, cx| {
+    //         workspace
+    //             .go_back(workspace.active_pane().downgrade(), cx)
+    //             .detach();
+    //     });
+    //     cx.add_action(|workspace: &mut Workspace, _: &GoForward, cx| {
+    //         workspace
+    //             .go_forward(workspace.active_pane().downgrade(), cx)
+    //             .detach();
+    //     });
 
-//     cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
-//         cx.spawn(|workspace, mut cx| async move {
-//             let err = install_cli::install_cli(&cx)
-//                 .await
-//                 .context("Failed to create CLI symlink");
+    //     cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
+    //         cx.spawn(|workspace, mut cx| async move {
+    //             let err = install_cli::install_cli(&cx)
+    //                 .await
+    //                 .context("Failed to create CLI symlink");
 
-//             workspace.update(&mut cx, |workspace, cx| {
-//                 if matches!(err, Err(_)) {
-//                     err.notify_err(workspace, cx);
-//                 } else {
-//                     workspace.show_notification(1, cx, |cx| {
-//                         cx.build_view(|_| {
-//                             MessageNotification::new("Successfully installed the `zed` binary")
-//                         })
-//                     });
-//                 }
-//             })
-//         })
-//         .detach();
-//     });
-// }
+    //             workspace.update(&mut cx, |workspace, cx| {
+    //                 if matches!(err, Err(_)) {
+    //                     err.notify_err(workspace, cx);
+    //                 } else {
+    //                     workspace.show_notification(1, cx, |cx| {
+    //                         cx.build_view(|_| {
+    //                             MessageNotification::new("Successfully installed the `zed` binary")
+    //                         })
+    //                     });
+    //                 }
+    //             })
+    //         })
+    //         .detach();
+    //     });
+}
 
 type ProjectItemBuilders =
     HashMap<TypeId, fn(Model<Project>, AnyModel, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>>;
@@ -553,7 +553,7 @@ pub struct Workspace {
     panes_by_item: HashMap<EntityId, WeakView<Pane>>,
     active_pane: View<Pane>,
     last_active_center_pane: Option<WeakView<Pane>>,
-    //     last_active_view_id: Option<proto::ViewId>,
+    last_active_view_id: Option<proto::ViewId>,
     //     status_bar: View<StatusBar>,
     //     titlebar_item: Option<AnyViewHandle>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
@@ -725,24 +725,25 @@ impl Workspace {
         }
 
         let subscriptions = vec![
-            // todo!()
-            // cx.observe_fullscreen(|_, _, cx| cx.notify()),
-            // cx.observe_window_activation(Self::on_window_activation_changed),
-            // cx.observe_window_bounds(move |_, mut bounds, display, cx| {
-            //     // Transform fixed bounds to be stored in terms of the containing display
-            //     if let WindowBounds::Fixed(mut window_bounds) = bounds {
-            //         if let Some(screen) = cx.platform().screen_by_id(display) {
-            //             let screen_bounds = screen.bounds();
-            //             window_bounds.origin.x -= screen_bounds.origin.x;
-            //             window_bounds.origin.y -= screen_bounds.origin.y;
-            //             bounds = WindowBounds::Fixed(window_bounds);
-            //         }
-            //     }
+            cx.observe_window_activation(Self::on_window_activation_changed),
+            cx.observe_window_bounds(move |_, cx| {
+                if let Some(display) = cx.display() {
+                    // Transform fixed bounds to be stored in terms of the containing display
+                    let mut bounds = cx.window_bounds();
+                    if let WindowBounds::Fixed(window_bounds) = &mut bounds {
+                        let display_bounds = display.bounds();
+                        window_bounds.origin.x -= display_bounds.origin.x;
+                        window_bounds.origin.y -= display_bounds.origin.y;
+                    }
 
-            //     cx.background()
-            //         .spawn(DB.set_window_bounds(workspace_id, bounds, display))
-            //         .detach_and_log_err(cx);
-            // }),
+                    if let Some(display_uuid) = display.uuid().log_err() {
+                        cx.background_executor()
+                            .spawn(DB.set_window_bounds(workspace_id, bounds, display_uuid))
+                            .detach_and_log_err(cx);
+                    }
+                }
+                cx.notify();
+            }),
             cx.observe(&left_dock, |this, _, cx| {
                 this.serialize_workspace(cx);
                 cx.notify();
@@ -768,7 +769,7 @@ impl Workspace {
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.downgrade()),
-            // last_active_view_id: None,
+            last_active_view_id: None,
             // status_bar,
             // titlebar_item: None,
             notifications: Default::default(),
@@ -3018,33 +3019,33 @@ impl Workspace {
         Ok(())
     }
 
-    //     fn update_active_view_for_followers(&mut self, cx: &AppContext) {
-    //         let mut is_project_item = true;
-    //         let mut update = proto::UpdateActiveView::default();
-    //         if self.active_pane.read(cx).has_focus() {
-    //             let item = self
-    //                 .active_item(cx)
-    //                 .and_then(|item| item.to_followable_item_handle(cx));
-    //             if let Some(item) = item {
-    //                 is_project_item = item.is_project_item(cx);
-    //                 update = proto::UpdateActiveView {
-    //                     id: item
-    //                         .remote_id(&self.app_state.client, cx)
-    //                         .map(|id| id.to_proto()),
-    //                     leader_id: self.leader_for_pane(&self.active_pane),
-    //                 };
-    //             }
-    //         }
+    fn update_active_view_for_followers(&mut self, cx: &mut ViewContext<Self>) {
+        let mut is_project_item = true;
+        let mut update = proto::UpdateActiveView::default();
+        if self.active_pane.read(cx).has_focus() {
+            let item = self
+                .active_item(cx)
+                .and_then(|item| item.to_followable_item_handle(cx));
+            if let Some(item) = item {
+                is_project_item = item.is_project_item(cx);
+                update = proto::UpdateActiveView {
+                    id: item
+                        .remote_id(&self.app_state.client, cx)
+                        .map(|id| id.to_proto()),
+                    leader_id: self.leader_for_pane(&self.active_pane),
+                };
+            }
+        }
 
-    //         if update.id != self.last_active_view_id {
-    //             self.last_active_view_id = update.id.clone();
-    //             self.update_followers(
-    //                 is_project_item,
-    //                 proto::update_followers::Variant::UpdateActiveView(update),
-    //                 cx,
-    //             );
-    //         }
-    //     }
+        if update.id != self.last_active_view_id {
+            self.last_active_view_id = update.id.clone();
+            self.update_followers(
+                is_project_item,
+                proto::update_followers::Variant::UpdateActiveView(update),
+                cx,
+            );
+        }
+    }
 
     fn update_followers(
         &self,
@@ -3154,31 +3155,31 @@ impl Workspace {
     //         Some(cx.build_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
     //     }
 
-    //     pub fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-    //         if active {
-    //             self.update_active_view_for_followers(cx);
-    //             cx.background()
-    //                 .spawn(persistence::DB.update_timestamp(self.database_id()))
-    //                 .detach();
-    //         } else {
-    //             for pane in &self.panes {
-    //                 pane.update(cx, |pane, cx| {
-    //                     if let Some(item) = pane.active_item() {
-    //                         item.workspace_deactivated(cx);
-    //                     }
-    //                     if matches!(
-    //                         settings::get::<WorkspaceSettings>(cx).autosave,
-    //                         AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
-    //                     ) {
-    //                         for item in pane.items() {
-    //                             Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
-    //                                 .detach_and_log_err(cx);
-    //                         }
-    //                     }
-    //                 });
-    //             }
-    //         }
-    //     }
+    pub fn on_window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {
+        if cx.is_window_active() {
+            self.update_active_view_for_followers(cx);
+            cx.background_executor()
+                .spawn(persistence::DB.update_timestamp(self.database_id()))
+                .detach();
+        } else {
+            for pane in &self.panes {
+                pane.update(cx, |pane, cx| {
+                    if let Some(item) = pane.active_item() {
+                        item.workspace_deactivated(cx);
+                    }
+                    if matches!(
+                        WorkspaceSettings::get_global(cx).autosave,
+                        AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
+                    ) {
+                        for item in pane.items() {
+                            Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
+                                .detach_and_log_err(cx);
+                        }
+                    }
+                });
+            }
+        }
+    }
 
     fn active_call(&self) -> Option<&Model<ActiveCall>> {
         self.active_call.as_ref().map(|(call, _)| call)

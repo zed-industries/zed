@@ -4,11 +4,11 @@ use crate::{
     Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId,
     Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
     Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
-    SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformWindow, Point,
+    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
+    Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -25,6 +25,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
+    rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -568,6 +569,17 @@ impl<'a> WindowContext<'a> {
 
     pub fn window_bounds(&self) -> WindowBounds {
         self.window.bounds
+    }
+
+    pub fn is_window_active(&self) -> bool {
+        self.window.active
+    }
+
+    pub fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        self.platform
+            .displays()
+            .into_iter()
+            .find(|display| display.id() == self.window.display_id)
     }
 
     /// The scale factor of the display associated with the window. For example, it could
