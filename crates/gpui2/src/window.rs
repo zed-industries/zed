@@ -6,8 +6,9 @@ use crate::{
     Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite,
     PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
-    SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task,
-    Underline, UnderlineStyle, View, VisualContext, WeakView, WindowOptions, SUBPIXEL_VARIANTS,
+    SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -64,6 +65,7 @@ type AnyKeyListener = Box<
         + 'static,
 >;
 type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + 'static>;
+type AnyFullScreenListener = Box<dyn FnMut(bool, &mut WindowContext) -> bool + 'static>;
 
 slotmap::new_key_type! { pub struct FocusId; }
 
@@ -180,10 +182,12 @@ pub struct Window {
     focus_stack: Vec<FocusId>,
     focus_parents_by_child: HashMap<FocusId, FocusId>,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
+    fullscreen_listeners: SubscriberSet<(), AnyFullScreenListener>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     scale_factor: f32,
+    fullscreen: bool,
     pub(crate) scene_builder: SceneBuilder,
     pub(crate) dirty: bool,
     pub(crate) last_blur: Option<Option<FocusId>>,
@@ -202,6 +206,7 @@ impl Window {
         let mouse_position = platform_window.mouse_position();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
+
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
             move |content_size, scale_factor| {
@@ -211,6 +216,21 @@ impl Window {
                         cx.window.scene_builder = SceneBuilder::new();
                         cx.window.content_size = content_size;
                         cx.window.display_id = cx.window.platform_window.display().id();
+                        cx.window.dirty = true;
+                    })
+                    .log_err();
+            }
+        }));
+        platform_window.on_fullscreen(Box::new({
+            let mut cx = cx.to_async();
+            move |fullscreen| {
+                handle
+                    .update(&mut cx, |_, cx| {
+                        cx.window.fullscreen = fullscreen;
+                        cx.window
+                            .fullscreen_listeners
+                            .clone()
+                            .retain(&(), |callback| callback(fullscreen, cx));
                         cx.window.dirty = true;
                     })
                     .log_err();
@@ -250,10 +270,12 @@ impl Window {
             focus_stack: Vec::new(),
             focus_parents_by_child: HashMap::default(),
             focus_listeners: Vec::new(),
+            fullscreen_listeners: SubscriberSet::new(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             default_prevented: true,
             mouse_position,
             scale_factor,
+            fullscreen: false,
             scene_builder: SceneBuilder::new(),
             dirty: true,
             last_blur: None,
@@ -1709,6 +1731,24 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             emitter: self.view.model.entity_id,
         });
     }
+
+    pub fn observe_fullscreen(
+        &mut self,
+        mut callback: impl FnMut(&mut V, bool, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        self.window.fullscreen_listeners.insert(
+            (),
+            Box::new(move |fullscreen, cx| {
+                view.update(cx, |view, cx| callback(view, fullscreen, cx))
+                    .is_ok()
+            }),
+        )
+    }
+
+    // fn observe_window_activation(&mut self) -> Subscription {}
+
+    // fn observe_window_bounds(&mut self) -> Subscription {}
 
     pub fn on_focus_changed(
         &mut self,
