@@ -16,9 +16,9 @@ use crate::{
     current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AnyWindowHandle,
     AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
     Entity, FocusEvent, FocusHandle, FocusId, ForegroundExecutor, KeyBinding, Keymap, LayoutId,
-    Pixels, Platform, PlatformDisplay, Point, Render, SharedString, SubscriberSet, Subscription,
-    SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window, WindowContext,
-    WindowHandle, WindowId,
+    Pixels, Platform, Point, Render, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextStyle, TextStyleRefinement, TextSystem, View, Window, WindowContext, WindowHandle,
+    WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -115,8 +115,8 @@ type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<d
 type FrameCallback = Box<dyn FnOnce(&mut WindowContext)>;
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
-type QuitHandler = Box<dyn FnMut(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
-type ReleaseListener = Box<dyn FnMut(&mut dyn Any, &mut AppContext) + 'static>;
+type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
+type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 
 pub struct AppContext {
     this: Weak<RefCell<AppContext>>,
@@ -215,10 +215,9 @@ impl AppContext {
     pub fn quit(&mut self) {
         let mut futures = Vec::new();
 
-        self.quit_observers.clone().retain(&(), |observer| {
+        for observer in self.quit_observers.remove(&()) {
             futures.push(observer(self));
-            true
-        });
+        }
 
         self.windows.clear();
         self.flush_effects();
@@ -265,21 +264,22 @@ impl AppContext {
 
     pub(crate) fn update_window<R>(
         &mut self,
-        id: WindowId,
-        update: impl FnOnce(&mut WindowContext) -> R,
+        handle: AnyWindowHandle,
+        update: impl FnOnce(AnyView, &mut WindowContext) -> R,
     ) -> Result<R> {
         self.update(|cx| {
             let mut window = cx
                 .windows
-                .get_mut(id)
+                .get_mut(handle.id)
                 .ok_or_else(|| anyhow!("window not found"))?
                 .take()
                 .unwrap();
 
-            let result = update(&mut WindowContext::new(cx, &mut window));
+            let root_view = window.root_view.clone().unwrap();
+            let result = update(root_view, &mut WindowContext::new(cx, &mut window));
 
             cx.windows
-                .get_mut(id)
+                .get_mut(handle.id)
                 .ok_or_else(|| anyhow!("window not found"))?
                 .replace(window);
 
@@ -432,7 +432,7 @@ impl AppContext {
             for (entity_id, mut entity) in dropped {
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
-                for mut release_callback in self.release_listeners.remove(&entity_id) {
+                for release_callback in self.release_listeners.remove(&entity_id) {
                     release_callback(entity.as_mut(), self);
                 }
             }

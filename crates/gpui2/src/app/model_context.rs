@@ -93,7 +93,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn on_release(
         &mut self,
-        mut on_release: impl FnMut(&mut T, &mut AppContext) + 'static,
+        on_release: impl FnOnce(&mut T, &mut AppContext) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -110,7 +110,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe_release<T2, E>(
         &mut self,
         entity: &E,
-        mut on_release: impl FnMut(&mut T, &mut T2, &mut ModelContext<'_, T>) + 'static,
+        on_release: impl FnOnce(&mut T, &mut T2, &mut ModelContext<'_, T>) + 'static,
     ) -> Subscription
     where
         T: Any,

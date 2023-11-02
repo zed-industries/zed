@@ -204,14 +204,15 @@ impl Window {
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
             move |content_size, scale_factor| {
-                cx.update_window(handle, |cx| {
-                    cx.window.scale_factor = scale_factor;
-                    cx.window.scene_builder = SceneBuilder::new();
-                    cx.window.content_size = content_size;
-                    cx.window.display_id = cx.window.platform_window.display().id();
-                    cx.window.dirty = true;
-                })
-                .log_err();
+                handle
+                    .update(&mut cx, |_, cx| {
+                        cx.window.scale_factor = scale_factor;
+                        cx.window.scene_builder = SceneBuilder::new();
+                        cx.window.content_size = content_size;
+                        cx.window.display_id = cx.window.platform_window.display().id();
+                        cx.window.dirty = true;
+                    })
+                    .log_err();
             }
         }));
 
@@ -416,7 +417,7 @@ impl<'a> WindowContext<'a> {
                 return;
             }
         } else {
-            let async_cx = self.to_async();
+            let mut async_cx = self.to_async();
             self.next_frame_callbacks.insert(display_id, vec![f]);
             self.platform().set_display_link_output_callback(
                 display_id,
@@ -1681,7 +1682,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             self.view.model.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
-                // todo!("are we okay with silently swallowing the error?")
                 let _ = window_handle.update(cx, |_, cx| on_release(this, cx));
             }),
         )
@@ -1981,7 +1981,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     }
 
     pub fn update<C, R>(
-        &self,
+        self,
         cx: &mut C,
         update: impl FnOnce(&mut V, &mut <C::WindowContext<'_> as UpdateView>::ViewContext<'_, V>) -> R,
     ) -> Result<R>
@@ -2052,14 +2052,14 @@ impl AnyWindowHandle {
     }
 
     pub fn update<C, R>(
-        &self,
+        self,
         cx: &mut C,
         update: impl FnOnce(AnyView, &mut C::WindowContext<'_>) -> R,
     ) -> Result<R>
     where
         C: Context,
     {
-        cx.update_window(*self, update)
+        cx.update_window(self, update)
     }
 }
 

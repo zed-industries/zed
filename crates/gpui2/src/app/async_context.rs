@@ -1,11 +1,10 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, BackgroundExecutor, Context, ForegroundExecutor, Model,
     ModelContext, Render, Result, Task, View, ViewContext, VisualContext, WindowContext,
-    WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
-use std::{cell::RefCell, future::Future, mem, rc::Weak};
+use std::{cell::RefCell, future::Future, rc::Weak};
 
 #[derive(Clone)]
 pub struct AsyncAppContext {
@@ -88,14 +87,14 @@ impl AsyncAppContext {
     pub fn update_window<R>(
         &self,
         handle: AnyWindowHandle,
-        update: impl FnOnce(&mut WindowContext) -> R,
+        update: impl FnOnce(AnyView, &mut WindowContext) -> R,
     ) -> Result<R> {
         let app = self
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut app_context = app.borrow_mut();
-        app_context.update_window(handle.id, update)
+        app_context.update_window(handle, update)
     }
 
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
@@ -167,17 +166,14 @@ impl AsyncWindowContext {
     }
 
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + Send + 'static) {
-        self.app
-            .update_window(self.window, |cx| cx.on_next_frame(f))
-            .ok();
+        self.window.update(self, |_, cx| cx.on_next_frame(f)).ok();
     }
 
     pub fn read_global<G: 'static, R>(
         &mut self,
         read: impl FnOnce(&G, &WindowContext) -> R,
     ) -> Result<R> {
-        self.app
-            .update_window(self.window, |cx| read(cx.global(), cx))
+        self.window.update(self, |_, cx| read(cx.global(), cx))
     }
 
     pub fn update_global<G, R>(
@@ -187,8 +183,7 @@ impl AsyncWindowContext {
     where
         G: 'static,
     {
-        self.app
-            .update_window(self.window, |cx| cx.update_global(update))
+        self.window.update(self, |_, cx| cx.update_global(update))
     }
 
     pub fn spawn<Fut, R>(
@@ -217,8 +212,8 @@ impl Context for AsyncWindowContext {
     where
         T: 'static,
     {
-        self.app
-            .update_window(self.window, |cx| cx.build_model(build_model))
+        self.window
+            .update(self, |_, cx| cx.build_model(build_model))
     }
 
     fn update_model<T: 'static, R>(
@@ -226,8 +221,8 @@ impl Context for AsyncWindowContext {
         handle: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Result<R> {
-        self.app
-            .update_window(self.window, |cx| cx.update_model(handle, update))
+        self.window
+            .update(self, |_, cx| cx.update_model(handle, update))
     }
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
@@ -248,8 +243,8 @@ impl VisualContext for AsyncWindowContext {
     where
         V: 'static,
     {
-        self.app
-            .update_window(self.window, |cx| cx.build_view(build_view_state))
+        self.window
+            .update(self, |_, cx| cx.build_view(build_view_state))
     }
 
     fn update_view<V: 'static, R>(
@@ -257,8 +252,8 @@ impl VisualContext for AsyncWindowContext {
         view: &View<V>,
         update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, V>) -> R,
     ) -> Self::Result<R> {
-        self.app
-            .update_window(self.window, |cx| cx.update_view(view, update))
+        self.window
+            .update(self, |_, cx| cx.update_view(view, update))
     }
 
     fn replace_root_view<V>(
@@ -268,7 +263,7 @@ impl VisualContext for AsyncWindowContext {
     where
         V: 'static + Send + Render,
     {
-        self.app
-            .update_window(self.window, |cx| cx.replace_root_view(build_view))
+        self.window
+            .update(self, |_, cx| cx.replace_root_view(build_view))
     }
 }
