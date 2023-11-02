@@ -259,7 +259,13 @@ impl AssistantPanel {
         cx: &mut ViewContext<Workspace>,
     ) {
         let this = if let Some(this) = workspace.panel::<AssistantPanel>(cx) {
-            if this.update(cx, |assistant, _| assistant.has_credentials()) {
+            if this.update(cx, |assistant, cx| {
+                if !assistant.has_credentials() {
+                    assistant.load_credentials(cx);
+                };
+
+                assistant.has_credentials()
+            }) {
                 this
             } else {
                 workspace.focus_panel::<AssistantPanel>(cx);
@@ -320,13 +326,10 @@ impl AssistantPanel {
         };
 
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
-        let provider = Arc::new(OpenAICompletionProvider::new(
-            "gpt-4",
-            cx.background().clone(),
-        ));
+        let provider = self.completion_provider.clone();
 
         // Retrieve Credentials Authenticates the Provider
-        // provider.retrieve_credentials(cx);
+        provider.retrieve_credentials(cx);
 
         let codegen = cx.add_model(|cx| {
             Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, provider, cx)

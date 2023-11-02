@@ -6,7 +6,7 @@ use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{Entity, ModelContext, ModelHandle, Task};
 use language::{Rope, TransactionId};
 use multi_buffer;
-use std::{cmp, future, ops::Range, sync::Arc};
+use std::{cmp, future, ops::Range};
 
 pub enum Event {
     Finished,
@@ -20,7 +20,7 @@ pub enum CodegenKind {
 }
 
 pub struct Codegen {
-    provider: Arc<dyn CompletionProvider>,
+    provider: Box<dyn CompletionProvider>,
     buffer: ModelHandle<MultiBuffer>,
     snapshot: MultiBufferSnapshot,
     kind: CodegenKind,
@@ -40,7 +40,7 @@ impl Codegen {
     pub fn new(
         buffer: ModelHandle<MultiBuffer>,
         kind: CodegenKind,
-        provider: Arc<dyn CompletionProvider>,
+        provider: Box<dyn CompletionProvider>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let snapshot = buffer.read(cx).snapshot(cx);
@@ -367,6 +367,8 @@ fn strip_invalid_spans_from_codeblock(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use ai::test::FakeCompletionProvider;
     use futures::stream::{self};
@@ -412,7 +414,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
-        let provider = Arc::new(FakeCompletionProvider::new());
+        let provider = Box::new(FakeCompletionProvider::new());
         let codegen = cx.add_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -478,7 +480,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 6))
         });
-        let provider = Arc::new(FakeCompletionProvider::new());
+        let provider = Box::new(FakeCompletionProvider::new());
         let codegen = cx.add_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -544,7 +546,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 2))
         });
-        let provider = Arc::new(FakeCompletionProvider::new());
+        let provider = Box::new(FakeCompletionProvider::new());
         let codegen = cx.add_model(|cx| {
             Codegen::new(
                 buffer.clone(),
