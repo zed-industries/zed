@@ -12,8 +12,8 @@ use client2::{
     Client,
 };
 use gpui2::{
-    AnyElement, AnyView, AppContext, EventEmitter, HighlightStyle, Model, Pixels, Point, Render,
-    SharedString, Task, View, ViewContext, WeakView, WindowContext, WindowHandle,
+    AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, HighlightStyle, Model, Pixels,
+    Point, Render, SharedString, Task, View, ViewContext, WeakView, WindowContext, WindowHandle,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -21,7 +21,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings2::Settings;
 use smallvec::SmallVec;
-use theme2::ThemeVariant;
 use std::{
     any::{Any, TypeId},
     ops::Range,
@@ -32,6 +31,7 @@ use std::{
     },
     time::Duration,
 };
+use theme2::ThemeVariant;
 
 #[derive(Deserialize)]
 pub struct ItemSettings {
@@ -237,7 +237,7 @@ pub trait ItemHandle: 'static + Send {
     fn deactivated(&self, cx: &mut WindowContext);
     fn workspace_deactivated(&self, cx: &mut WindowContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut WindowContext) -> bool;
-    fn id(&self) -> usize;
+    fn id(&self) -> EntityId;
     fn to_any(&self) -> AnyView;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
@@ -266,7 +266,7 @@ pub trait ItemHandle: 'static + Send {
 }
 
 pub trait WeakItemHandle: Send + Sync {
-    fn id(&self) -> usize;
+    fn id(&self) -> EntityId;
     fn upgrade(&self) -> Option<Box<dyn ItemHandle>>;
 }
 
@@ -518,8 +518,8 @@ impl<T: Item> ItemHandle for View<T> {
         self.update(cx, |this, cx| this.navigate(data, cx))
     }
 
-    fn id(&self) -> usize {
-        self.id()
+    fn id(&self) -> EntityId {
+        self.entity_id()
     }
 
     fn to_any(&self) -> AnyView {
@@ -621,8 +621,8 @@ impl Clone for Box<dyn ItemHandle> {
 }
 
 impl<T: Item> WeakItemHandle for WeakView<T> {
-    fn id(&self) -> usize {
-        self.id()
+    fn id(&self) -> EntityId {
+        self.entity_id()
     }
 
     fn upgrade(&self) -> Option<Box<dyn ItemHandle>> {
@@ -695,7 +695,7 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
         self.read(cx).remote_id().or_else(|| {
             client.peer_id().map(|creator| ViewId {
                 creator,
-                id: self.id() as u64,
+                id: self.id().as_u64(),
             })
         })
     }

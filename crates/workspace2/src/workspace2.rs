@@ -29,12 +29,12 @@ use futures::{
 };
 use gpui2::{
     div, point, size, AnyModel, AnyView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds,
-    Context, Div, EventEmitter, GlobalPixels, MainThread, Model, ModelContext, Point, Render, Size,
+    Div, EntityId, EventEmitter, GlobalPixels, Model, ModelContext, Point, Render, Size,
     Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
     WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
-use language2::{LanguageRegistry, LocalFile};
+use language2::LanguageRegistry;
 use lazy_static::lazy_static;
 use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
@@ -386,7 +386,7 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
         (
             |pane, workspace, id, state, cx| {
                 I::from_state_proto(pane, workspace, id, state, cx).map(|task| {
-                    cx.executor()
+                    cx.foreground_executor()
                         .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
                 })
             },
@@ -412,7 +412,8 @@ pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
                 Arc::from(serialized_item_kind),
                 |project, workspace, workspace_id, item_id, cx| {
                     let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
-                    cx.spawn_on_main(|_| async { Ok(Box::new(task.await?) as Box<_>) })
+                    cx.foreground_executor()
+                        .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
                 },
             );
         }
@@ -426,7 +427,7 @@ pub struct AppState {
     pub workspace_store: Model<WorkspaceStore>,
     pub fs: Arc<dyn fs2::Fs>,
     pub build_window_options:
-        fn(Option<WindowBounds>, Option<Uuid>, &mut MainThread<AppContext>) -> WindowOptions,
+        fn(Option<WindowBounds>, Option<Uuid>, &mut AppContext) -> WindowOptions,
     pub initialize_workspace: fn(
         WeakView<Workspace>,
         bool,
@@ -511,7 +512,7 @@ impl DelayedDebouncedEditAction {
 
         let previous_task = self.task.take();
         self.task = Some(cx.spawn(move |workspace, mut cx| async move {
-            let mut timer = cx.executor().timer(delay).fuse();
+            let mut timer = cx.background_executor().timer(delay).fuse();
             if let Some(previous_task) = previous_task {
                 previous_task.await;
             }
@@ -546,7 +547,7 @@ pub struct Workspace {
     bottom_dock: View<Dock>,
     right_dock: View<Dock>,
     panes: Vec<View<Pane>>,
-    panes_by_item: HashMap<usize, WeakView<Pane>>,
+    panes_by_item: HashMap<EntityId, WeakView<Pane>>,
     active_pane: View<Pane>,
     last_active_center_pane: Option<WeakView<Pane>>,
     //     last_active_view_id: Option<proto::ViewId>,
@@ -567,9 +568,6 @@ pub struct Workspace {
     _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
 }
-
-trait AssertSend: Send {}
-impl AssertSend for WindowHandle<Workspace> {}
 
 // struct ActiveModal {
 //     view: Box<dyn ModalHandle>,
@@ -795,7 +793,7 @@ impl Workspace {
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
         _requesting_window: Option<WindowHandle<Workspace>>,
-        cx: &mut MainThread<AppContext>,
+        cx: &mut AppContext,
     ) -> Task<
         anyhow::Result<(
             WindowHandle<Workspace>,
@@ -811,7 +809,7 @@ impl Workspace {
             cx,
         );
 
-        cx.spawn_on_main(|mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let serialized_workspace: Option<SerializedWorkspace> = None; //persistence::DB.workspace_for_roots(&abs_paths.as_slice());
 
             let paths_to_open = Arc::new(abs_paths);
@@ -857,21 +855,25 @@ impl Workspace {
                     serialized_workspace
                         .as_ref()
                         .and_then(|serialized_workspace| {
-                            let display = serialized_workspace.display?;
+                            let serialized_display = serialized_workspace.display?;
                             let mut bounds = serialized_workspace.bounds?;
 
                             // Stored bounds are relative to the containing display.
                             // So convert back to global coordinates if that screen still exists
                             if let WindowBounds::Fixed(mut window_bounds) = bounds {
                                 let screen =
-                                    cx.update(|cx| cx.display_for_uuid(display)).ok()??;
+                                    cx.update(|cx|
+                                        cx.displays()
+                                            .into_iter()
+                                            .find(|display| display.uuid().ok() == Some(serialized_display))
+                                    ).ok()??;
                                 let screen_bounds = screen.bounds();
                                 window_bounds.origin.x += screen_bounds.origin.x;
                                 window_bounds.origin.y += screen_bounds.origin.y;
                                 bounds = WindowBounds::Fixed(window_bounds);
                             }
 
-                            Some((bounds, display))
+                            Some((bounds, serialized_display))
                         })
                         .unzip()
                 };
@@ -885,11 +887,12 @@ impl Workspace {
                     let workspace_id = workspace_id.clone();
                     let project_handle = project_handle.clone();
                     move |cx| {
-                    cx.build_view(|cx| {
-                        Workspace::new(workspace_id, project_handle, app_state, cx)
-                    })
-                }})?
-                 };
+                        cx.build_view(|cx| {
+                            Workspace::new(workspace_id, project_handle, app_state, cx)
+                        })
+                    }
+                })?
+            };
 
             // todo!() Ask how to do this
             let weak_view = window.update(&mut cx, |_, cx| cx.view().downgrade())?;
@@ -2123,7 +2126,7 @@ impl Workspace {
             let (project_entry_id, project_item) = project_item.await?;
             let build_item = cx.update(|_, cx| {
                 cx.default_global::<ProjectItemBuilders>()
-                    .get(&project_item.type_id())
+                    .get(&project_item.entity_type())
                     .ok_or_else(|| anyhow!("no item builder for project item"))
                     .cloned()
             })??;
@@ -3259,7 +3262,7 @@ impl Workspace {
                         .filter_map(|item_handle| {
                             Some(SerializedItem {
                                 kind: Arc::from(item_handle.serialized_item_kind()?),
-                                item_id: item_handle.id(),
+                                item_id: item_handle.id().as_u64() as usize,
                                 active: Some(item_handle.id()) == active_item_id,
                             })
                         })
@@ -3565,7 +3568,7 @@ impl Workspace {
     // }
 }
 
-fn window_bounds_env_override(cx: &MainThread<AsyncAppContext>) -> Option<WindowBounds> {
+fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<WindowBounds> {
     let display_origin = cx
         .update(|cx| Some(cx.displays().first()?.bounds().origin))
         .ok()??;
@@ -3583,7 +3586,7 @@ fn open_items(
     _serialized_workspace: Option<SerializedWorkspace>,
     project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
     app_state: Arc<AppState>,
-    cx: &mut MainThread<ViewContext<'_, Workspace>>,
+    cx: &mut ViewContext<Workspace>,
 ) -> impl Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> {
     let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
 
@@ -4115,38 +4118,34 @@ impl ViewId {
 
 // pub struct WorkspaceCreated(pub WeakView<Workspace>);
 
-pub async fn activate_workspace_for_project(
-    cx: &mut AsyncAppContext,
+pub fn activate_workspace_for_project(
+    cx: &mut AppContext,
     predicate: impl Fn(&Project, &AppContext) -> bool + Send + 'static,
 ) -> Option<WindowHandle<Workspace>> {
-    cx.run_on_main(move |cx| {
-        for window in cx.windows() {
-            let Some(workspace) = window.downcast::<Workspace>() else {
-                continue;
-            };
+    for window in cx.windows() {
+        let Some(workspace) = window.downcast::<Workspace>() else {
+            continue;
+        };
 
-            let predicate = workspace
-                .update(cx, |workspace, cx| {
-                    let project = workspace.project.read(cx);
-                    if predicate(project, cx) {
-                        cx.activate_window();
-                        true
-                    } else {
-                        false
-                    }
-                })
-                .log_err()
-                .unwrap_or(false);
+        let predicate = workspace
+            .update(cx, |workspace, cx| {
+                let project = workspace.project.read(cx);
+                if predicate(project, cx) {
+                    cx.activate_window();
+                    true
+                } else {
+                    false
+                }
+            })
+            .log_err()
+            .unwrap_or(false);
 
-            if predicate {
-                return Some(workspace);
-            }
+        if predicate {
+            return Some(workspace);
         }
+    }
 
-        None
-    })
-    .ok()?
-    .await
+    None
 }
 
 pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
@@ -4349,14 +4348,12 @@ pub fn open_paths(
 > {
     let app_state = app_state.clone();
     let abs_paths = abs_paths.to_vec();
-    cx.spawn_on_main(move |mut cx| async move {
-        // Open paths in existing workspace if possible
-        let existing = activate_workspace_for_project(&mut cx, {
-            let abs_paths = abs_paths.clone();
-            move |project, cx| project.contains_paths(&abs_paths, cx)
-        })
-        .await;
-
+    // Open paths in existing workspace if possible
+    let existing = activate_workspace_for_project(cx, {
+        let abs_paths = abs_paths.clone();
+        move |project, cx| project.contains_paths(&abs_paths, cx)
+    });
+    cx.spawn(move |mut cx| async move {
         if let Some(existing) = existing {
             // // Ok((
             //     existing.clone(),
@@ -4377,11 +4374,11 @@ pub fn open_paths(
 
 pub fn open_new(
     app_state: &Arc<AppState>,
-    cx: &mut MainThread<AppContext>,
+    cx: &mut AppContext,
     init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static + Send,
 ) -> Task<()> {
     let task = Workspace::new_local(Vec::new(), app_state.clone(), None, cx);
-    cx.spawn_on_main(|mut cx| async move {
+    cx.spawn(|mut cx| async move {
         if let Some((workspace, opened_paths)) = task.await.log_err() {
             workspace
                 .update(&mut cx, |workspace, cx| {

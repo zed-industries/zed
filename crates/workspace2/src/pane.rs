@@ -3,26 +3,29 @@
 use crate::{
     item::{Item, ItemHandle, WeakItemHandle},
     toolbar::Toolbar,
+    workspace_settings::{AutosaveSetting, WorkspaceSettings},
     SplitDirection, Workspace,
 };
 use anyhow::Result;
-use collections::{HashMap, VecDeque};
+use collections::{HashMap, HashSet, VecDeque};
 use gpui2::{
-    AppContext, EventEmitter, Model, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    AppContext, AsyncWindowContext, EntityId, EventEmitter, Model, PromptLevel, Task, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
+use settings2::Settings;
 use std::{
     any::Any,
     cmp, fmt, mem,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
 };
+use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -132,7 +135,7 @@ pub enum Event {
     AddItem { item: Box<dyn ItemHandle> },
     ActivateItem { local: bool },
     Remove,
-    RemoveItem { item_id: usize },
+    RemoveItem { item_id: EntityId },
     Split(SplitDirection),
     ChangeItemTitle,
     Focus,
@@ -167,7 +170,7 @@ impl fmt::Debug for Event {
 
 pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
-    activation_history: Vec<usize>,
+    activation_history: Vec<EntityId>,
     zoomed: bool,
     active_item_index: usize,
     //     last_focused_view_by_item: HashMap<usize, AnyWeakViewHandle>,
@@ -176,7 +179,7 @@ pub struct Pane {
     toolbar: View<Toolbar>,
     //     tab_bar_context_menu: TabBarContextMenu,
     //     tab_context_menu: ViewHandle<ContextMenu>,
-    //     workspace: WeakView<Workspace>,
+    workspace: WeakView<Workspace>,
     project: Model<Project>,
     has_focus: bool,
     //     can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
@@ -197,7 +200,7 @@ struct NavHistoryState {
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
     closed_stack: VecDeque<NavigationEntry>,
-    paths_by_item: HashMap<usize, (ProjectPath, Option<PathBuf>)>,
+    paths_by_item: HashMap<EntityId, (ProjectPath, Option<PathBuf>)>,
     pane: WeakView<Pane>,
     next_timestamp: Arc<AtomicUsize>,
 }
@@ -346,7 +349,7 @@ impl Pane {
             //     handle: context_menu,
             // },
             // tab_context_menu: cx.add_view(|cx| ContextMenu::new(pane_view_id, cx)),
-            // workspace,
+            workspace,
             project,
             has_focus: false,
             // can_drop: Rc::new(|_, _| true),
@@ -748,12 +751,11 @@ impl Pane {
 
     pub fn close_item_by_id(
         &mut self,
-        item_id_to_close: usize,
+        item_id_to_close: EntityId,
         save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        // self.close_items(cx, save_intent, move |view_id| view_id == item_id_to_close)
-        todo!()
+        self.close_items(cx, save_intent, move |view_id| view_id == item_id_to_close)
     }
 
     // pub fn close_inactive_items(
@@ -857,142 +859,142 @@ impl Pane {
     //     )
     // }
 
-    //     pub(super) fn file_names_for_prompt(
-    //         items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
-    //         all_dirty_items: usize,
-    //         cx: &AppContext,
-    //     ) -> String {
-    //         /// Quantity of item paths displayed in prompt prior to cutoff..
-    //         const FILE_NAMES_CUTOFF_POINT: usize = 10;
-    //         let mut file_names: Vec<_> = items
-    //             .filter_map(|item| {
-    //                 item.project_path(cx).and_then(|project_path| {
-    //                     project_path
-    //                         .path
-    //                         .file_name()
-    //                         .and_then(|name| name.to_str().map(ToOwned::to_owned))
-    //                 })
-    //             })
-    //             .take(FILE_NAMES_CUTOFF_POINT)
-    //             .collect();
-    //         let should_display_followup_text =
-    //             all_dirty_items > FILE_NAMES_CUTOFF_POINT || file_names.len() != all_dirty_items;
-    //         if should_display_followup_text {
-    //             let not_shown_files = all_dirty_items - file_names.len();
-    //             if not_shown_files == 1 {
-    //                 file_names.push(".. 1 file not shown".into());
-    //             } else {
-    //                 file_names.push(format!(".. {} files not shown", not_shown_files).into());
-    //             }
-    //         }
-    //         let file_names = file_names.join("\n");
-    //         format!(
-    //             "Do you want to save changes to the following {} files?\n{file_names}",
-    //             all_dirty_items
-    //         )
-    //     }
+    pub(super) fn file_names_for_prompt(
+        items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
+        all_dirty_items: usize,
+        cx: &AppContext,
+    ) -> String {
+        /// Quantity of item paths displayed in prompt prior to cutoff..
+        const FILE_NAMES_CUTOFF_POINT: usize = 10;
+        let mut file_names: Vec<_> = items
+            .filter_map(|item| {
+                item.project_path(cx).and_then(|project_path| {
+                    project_path
+                        .path
+                        .file_name()
+                        .and_then(|name| name.to_str().map(ToOwned::to_owned))
+                })
+            })
+            .take(FILE_NAMES_CUTOFF_POINT)
+            .collect();
+        let should_display_followup_text =
+            all_dirty_items > FILE_NAMES_CUTOFF_POINT || file_names.len() != all_dirty_items;
+        if should_display_followup_text {
+            let not_shown_files = all_dirty_items - file_names.len();
+            if not_shown_files == 1 {
+                file_names.push(".. 1 file not shown".into());
+            } else {
+                file_names.push(format!(".. {} files not shown", not_shown_files).into());
+            }
+        }
+        let file_names = file_names.join("\n");
+        format!(
+            "Do you want to save changes to the following {} files?\n{file_names}",
+            all_dirty_items
+        )
+    }
 
-    //     pub fn close_items(
-    //         &mut self,
-    //         cx: &mut ViewContext<Pane>,
-    //         mut save_intent: SaveIntent,
-    //         should_close: impl 'static + Fn(usize) -> bool,
-    //     ) -> Task<Result<()>> {
-    //         // Find the items to close.
-    //         let mut items_to_close = Vec::new();
-    //         let mut dirty_items = Vec::new();
-    //         for item in &self.items {
-    //             if should_close(item.id()) {
-    //                 items_to_close.push(item.boxed_clone());
-    //                 if item.is_dirty(cx) {
-    //                     dirty_items.push(item.boxed_clone());
-    //                 }
-    //             }
-    //         }
+    pub fn close_items(
+        &mut self,
+        cx: &mut ViewContext<Pane>,
+        mut save_intent: SaveIntent,
+        should_close: impl 'static + Fn(EntityId) -> bool,
+    ) -> Task<Result<()>> {
+        // Find the items to close.
+        let mut items_to_close = Vec::new();
+        let mut dirty_items = Vec::new();
+        for item in &self.items {
+            if should_close(item.id()) {
+                items_to_close.push(item.boxed_clone());
+                if item.is_dirty(cx) {
+                    dirty_items.push(item.boxed_clone());
+                }
+            }
+        }
 
-    //         // If a buffer is open both in a singleton editor and in a multibuffer, make sure
-    //         // to focus the singleton buffer when prompting to save that buffer, as opposed
-    //         // to focusing the multibuffer, because this gives the user a more clear idea
-    //         // of what content they would be saving.
-    //         items_to_close.sort_by_key(|item| !item.is_singleton(cx));
+        // If a buffer is open both in a singleton editor and in a multibuffer, make sure
+        // to focus the singleton buffer when prompting to save that buffer, as opposed
+        // to focusing the multibuffer, because this gives the user a more clear idea
+        // of what content they would be saving.
+        items_to_close.sort_by_key(|item| !item.is_singleton(cx));
 
-    //         let workspace = self.workspace.clone();
-    //         cx.spawn(|pane, mut cx| async move {
-    //             if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
-    //                 let mut answer = pane.update(&mut cx, |_, cx| {
-    //                     let prompt =
-    //                         Self::file_names_for_prompt(&mut dirty_items.iter(), dirty_items.len(), cx);
-    //                     cx.prompt(
-    //                         PromptLevel::Warning,
-    //                         &prompt,
-    //                         &["Save all", "Discard all", "Cancel"],
-    //                     )
-    //                 })?;
-    //                 match answer.next().await {
-    //                     Some(0) => save_intent = SaveIntent::SaveAll,
-    //                     Some(1) => save_intent = SaveIntent::Skip,
-    //                     _ => {}
-    //                 }
-    //             }
-    //             let mut saved_project_items_ids = HashSet::default();
-    //             for item in items_to_close.clone() {
-    //                 // Find the item's current index and its set of project item models. Avoid
-    //                 // storing these in advance, in case they have changed since this task
-    //                 // was started.
-    //                 let (item_ix, mut project_item_ids) = pane.read_with(&cx, |pane, cx| {
-    //                     (pane.index_for_item(&*item), item.project_item_model_ids(cx))
-    //                 })?;
-    //                 let item_ix = if let Some(ix) = item_ix {
-    //                     ix
-    //                 } else {
-    //                     continue;
-    //                 };
+        let workspace = self.workspace.clone();
+        cx.spawn(|pane, mut cx| async move {
+            if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
+                let answer = pane.update(&mut cx, |_, cx| {
+                    let prompt =
+                        Self::file_names_for_prompt(&mut dirty_items.iter(), dirty_items.len(), cx);
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        &prompt,
+                        &["Save all", "Discard all", "Cancel"],
+                    )
+                })?;
+                match answer.await {
+                    Ok(0) => save_intent = SaveIntent::SaveAll,
+                    Ok(1) => save_intent = SaveIntent::Skip,
+                    _ => {}
+                }
+            }
+            let mut saved_project_items_ids = HashSet::default();
+            for item in items_to_close.clone() {
+                // Find the item's current index and its set of project item models. Avoid
+                // storing these in advance, in case they have changed since this task
+                // was started.
+                let (item_ix, mut project_item_ids) = pane.update(&mut cx, |pane, cx| {
+                    (pane.index_for_item(&*item), item.project_item_model_ids(cx))
+                })?;
+                let item_ix = if let Some(ix) = item_ix {
+                    ix
+                } else {
+                    continue;
+                };
 
-    //                 // Check if this view has any project items that are not open anywhere else
-    //                 // in the workspace, AND that the user has not already been prompted to save.
-    //                 // If there are any such project entries, prompt the user to save this item.
-    //                 let project = workspace.read_with(&cx, |workspace, cx| {
-    //                     for item in workspace.items(cx) {
-    //                         if !items_to_close
-    //                             .iter()
-    //                             .any(|item_to_close| item_to_close.id() == item.id())
-    //                         {
-    //                             let other_project_item_ids = item.project_item_model_ids(cx);
-    //                             project_item_ids.retain(|id| !other_project_item_ids.contains(id));
-    //                         }
-    //                     }
-    //                     workspace.project().clone()
-    //                 })?;
-    //                 let should_save = project_item_ids
-    //                     .iter()
-    //                     .any(|id| saved_project_items_ids.insert(*id));
+                // Check if this view has any project items that are not open anywhere else
+                // in the workspace, AND that the user has not already been prompted to save.
+                // If there are any such project entries, prompt the user to save this item.
+                let project = workspace.update(&mut cx, |workspace, cx| {
+                    for item in workspace.items(cx) {
+                        if !items_to_close
+                            .iter()
+                            .any(|item_to_close| item_to_close.id() == item.id())
+                        {
+                            let other_project_item_ids = item.project_item_model_ids(cx);
+                            project_item_ids.retain(|id| !other_project_item_ids.contains(id));
+                        }
+                    }
+                    workspace.project().clone()
+                })?;
+                let should_save = project_item_ids
+                    .iter()
+                    .any(|id| saved_project_items_ids.insert(*id));
 
-    //                 if should_save
-    //                     && !Self::save_item(
-    //                         project.clone(),
-    //                         &pane,
-    //                         item_ix,
-    //                         &*item,
-    //                         save_intent,
-    //                         &mut cx,
-    //                     )
-    //                     .await?
-    //                 {
-    //                     break;
-    //                 }
+                if should_save
+                    && !Self::save_item(
+                        project.clone(),
+                        &pane,
+                        item_ix,
+                        &*item,
+                        save_intent,
+                        &mut cx,
+                    )
+                    .await?
+                {
+                    break;
+                }
 
-    //                 // Remove the item from the pane.
-    //                 pane.update(&mut cx, |pane, cx| {
-    //                     if let Some(item_ix) = pane.items.iter().position(|i| i.id() == item.id()) {
-    //                         pane.remove_item(item_ix, false, cx);
-    //                     }
-    //                 })?;
-    //             }
+                // Remove the item from the pane.
+                pane.update(&mut cx, |pane, cx| {
+                    if let Some(item_ix) = pane.items.iter().position(|i| i.id() == item.id()) {
+                        pane.remove_item(item_ix, false, cx);
+                    }
+                })?;
+            }
 
-    //             pane.update(&mut cx, |_, cx| cx.notify())?;
-    //             Ok(())
-    //         })
-    //     }
+            pane.update(&mut cx, |_, cx| cx.notify())?;
+            Ok(())
+        })
+    }
 
     pub fn remove_item(
         &mut self,
@@ -1062,106 +1064,106 @@ impl Pane {
         cx.notify();
     }
 
-    //     pub async fn save_item(
-    //         project: Model<Project>,
-    //         pane: &WeakView<Pane>,
-    //         item_ix: usize,
-    //         item: &dyn ItemHandle,
-    //         save_intent: SaveIntent,
-    //         cx: &mut AsyncAppContext,
-    //     ) -> Result<bool> {
-    //         const CONFLICT_MESSAGE: &str =
-    //             "This file has changed on disk since you started editing it. Do you want to overwrite it?";
+    pub async fn save_item(
+        project: Model<Project>,
+        pane: &WeakView<Pane>,
+        item_ix: usize,
+        item: &dyn ItemHandle,
+        save_intent: SaveIntent,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<bool> {
+        const CONFLICT_MESSAGE: &str =
+                "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
-    //         if save_intent == SaveIntent::Skip {
-    //             return Ok(true);
-    //         }
+        if save_intent == SaveIntent::Skip {
+            return Ok(true);
+        }
 
-    //         let (mut has_conflict, mut is_dirty, mut can_save, can_save_as) = cx.read(|cx| {
-    //             (
-    //                 item.has_conflict(cx),
-    //                 item.is_dirty(cx),
-    //                 item.can_save(cx),
-    //                 item.is_singleton(cx),
-    //             )
-    //         });
+        let (mut has_conflict, mut is_dirty, mut can_save, can_save_as) = cx.update(|_, cx| {
+            (
+                item.has_conflict(cx),
+                item.is_dirty(cx),
+                item.can_save(cx),
+                item.is_singleton(cx),
+            )
+        })?;
 
-    //         // when saving a single buffer, we ignore whether or not it's dirty.
-    //         if save_intent == SaveIntent::Save {
-    //             is_dirty = true;
-    //         }
+        // when saving a single buffer, we ignore whether or not it's dirty.
+        if save_intent == SaveIntent::Save {
+            is_dirty = true;
+        }
 
-    //         if save_intent == SaveIntent::SaveAs {
-    //             is_dirty = true;
-    //             has_conflict = false;
-    //             can_save = false;
-    //         }
+        if save_intent == SaveIntent::SaveAs {
+            is_dirty = true;
+            has_conflict = false;
+            can_save = false;
+        }
 
-    //         if save_intent == SaveIntent::Overwrite {
-    //             has_conflict = false;
-    //         }
+        if save_intent == SaveIntent::Overwrite {
+            has_conflict = false;
+        }
 
-    //         if has_conflict && can_save {
-    //             let mut answer = pane.update(cx, |pane, cx| {
-    //                 pane.activate_item(item_ix, true, true, cx);
-    //                 cx.prompt(
-    //                     PromptLevel::Warning,
-    //                     CONFLICT_MESSAGE,
-    //                     &["Overwrite", "Discard", "Cancel"],
-    //                 )
-    //             })?;
-    //             match answer.next().await {
-    //                 Some(0) => pane.update(cx, |_, cx| item.save(project, cx))?.await?,
-    //                 Some(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
-    //                 _ => return Ok(false),
-    //             }
-    //         } else if is_dirty && (can_save || can_save_as) {
-    //             if save_intent == SaveIntent::Close {
-    //                 let will_autosave = cx.read(|cx| {
-    //                     matches!(
-    //                         settings::get::<WorkspaceSettings>(cx).autosave,
-    //                         AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
-    //                     ) && Self::can_autosave_item(&*item, cx)
-    //                 });
-    //                 if !will_autosave {
-    //                     let mut answer = pane.update(cx, |pane, cx| {
-    //                         pane.activate_item(item_ix, true, true, cx);
-    //                         let prompt = dirty_message_for(item.project_path(cx));
-    //                         cx.prompt(
-    //                             PromptLevel::Warning,
-    //                             &prompt,
-    //                             &["Save", "Don't Save", "Cancel"],
-    //                         )
-    //                     })?;
-    //                     match answer.next().await {
-    //                         Some(0) => {}
-    //                         Some(1) => return Ok(true), // Don't save his file
-    //                         _ => return Ok(false),      // Cancel
-    //                     }
-    //                 }
-    //             }
+        if has_conflict && can_save {
+            let answer = pane.update(cx, |pane, cx| {
+                pane.activate_item(item_ix, true, true, cx);
+                cx.prompt(
+                    PromptLevel::Warning,
+                    CONFLICT_MESSAGE,
+                    &["Overwrite", "Discard", "Cancel"],
+                )
+            })?;
+            match answer.await {
+                Ok(0) => pane.update(cx, |_, cx| item.save(project, cx))?.await?,
+                Ok(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
+                _ => return Ok(false),
+            }
+        } else if is_dirty && (can_save || can_save_as) {
+            if save_intent == SaveIntent::Close {
+                let will_autosave = cx.update(|_, cx| {
+                    matches!(
+                        WorkspaceSettings::get_global(cx).autosave,
+                        AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
+                    ) && Self::can_autosave_item(&*item, cx)
+                })?;
+                if !will_autosave {
+                    let answer = pane.update(cx, |pane, cx| {
+                        pane.activate_item(item_ix, true, true, cx);
+                        let prompt = dirty_message_for(item.project_path(cx));
+                        cx.prompt(
+                            PromptLevel::Warning,
+                            &prompt,
+                            &["Save", "Don't Save", "Cancel"],
+                        )
+                    })?;
+                    match answer.await {
+                        Ok(0) => {}
+                        Ok(1) => return Ok(true), // Don't save this file
+                        _ => return Ok(false),    // Cancel
+                    }
+                }
+            }
 
-    //             if can_save {
-    //                 pane.update(cx, |_, cx| item.save(project, cx))?.await?;
-    //             } else if can_save_as {
-    //                 let start_abs_path = project
-    //                     .read_with(cx, |project, cx| {
-    //                         let worktree = project.visible_worktrees(cx).next()?;
-    //                         Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
-    //                     })
-    //                     .unwrap_or_else(|| Path::new("").into());
+            if can_save {
+                pane.update(cx, |_, cx| item.save(project, cx))?.await?;
+            } else if can_save_as {
+                let start_abs_path = project
+                    .update(cx, |project, cx| {
+                        let worktree = project.visible_worktrees(cx).next()?;
+                        Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                    })?
+                    .unwrap_or_else(|| Path::new("").into());
 
-    //                 let mut abs_path = cx.update(|cx| cx.prompt_for_new_path(&start_abs_path));
-    //                 if let Some(abs_path) = abs_path.next().await.flatten() {
-    //                     pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))?
-    //                         .await?;
-    //                 } else {
-    //                     return Ok(false);
-    //                 }
-    //             }
-    //         }
-    //         Ok(true)
-    //     }
+                let abs_path = cx.update(|_, cx| cx.prompt_for_new_path(&start_abs_path))?;
+                if let Some(abs_path) = abs_path.await.ok().flatten() {
+                    pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))?
+                        .await?;
+                } else {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
 
     fn can_autosave_item(item: &dyn ItemHandle, cx: &AppContext) -> bool {
         let is_deleted = item.project_entry_ids(cx).is_empty();
@@ -2093,7 +2095,7 @@ impl NavHistory {
         state.did_update(cx);
     }
 
-    pub fn remove_item(&mut self, item_id: usize) {
+    pub fn remove_item(&mut self, item_id: EntityId) {
         let mut state = self.0.lock();
         state.paths_by_item.remove(&item_id);
         state
@@ -2107,7 +2109,7 @@ impl NavHistory {
             .retain(|entry| entry.item.id() != item_id);
     }
 
-    pub fn path_for_item(&self, item_id: usize) -> Option<(ProjectPath, Option<PathBuf>)> {
+    pub fn path_for_item(&self, item_id: EntityId) -> Option<(ProjectPath, Option<PathBuf>)> {
         self.0.lock().paths_by_item.get(&item_id).cloned()
     }
 }
@@ -2214,14 +2216,14 @@ impl NavHistoryState {
 //     }
 // }
 
-// fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
-//     let path = buffer_path
-//         .as_ref()
-//         .and_then(|p| p.path.to_str())
-//         .unwrap_or(&"This buffer");
-//     let path = truncate_and_remove_front(path, 80);
-//     format!("{path} contains unsaved edits. Do you want to save it?")
-// }
+fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
+    let path = buffer_path
+        .as_ref()
+        .and_then(|p| p.path.to_str())
+        .unwrap_or(&"This buffer");
+    let path = truncate_and_remove_front(path, 80);
+    format!("{path} contains unsaved edits. Do you want to save it?")
+}
 
 // todo!("uncomment tests")
 // #[cfg(test)]

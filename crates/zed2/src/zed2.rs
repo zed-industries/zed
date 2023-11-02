@@ -6,8 +6,8 @@ mod open_listener;
 pub use assets::*;
 use collections::HashMap;
 use gpui2::{
-    point, px, AppContext, AsyncAppContext, AsyncWindowContext, MainThread, Point, Task,
-    TitlebarOptions, WeakView, WindowBounds, WindowHandle, WindowKind, WindowOptions,
+    point, px, AppContext, AsyncAppContext, AsyncWindowContext, Point, Task, TitlebarOptions,
+    WeakView, WindowBounds, WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -160,7 +160,7 @@ pub async fn handle_cli_connection(
                             }
 
                             if wait {
-                                let executor = cx.executor().clone();
+                                let executor = cx.background_executor().clone();
                                 let wait = async move {
                                     if paths.is_empty() {
                                         let (done_tx, done_rx) = oneshot::channel();
@@ -219,10 +219,14 @@ pub async fn handle_cli_connection(
 pub fn build_window_options(
     bounds: Option<WindowBounds>,
     display_uuid: Option<Uuid>,
-    cx: &mut MainThread<AppContext>,
+    cx: &mut AppContext,
 ) -> WindowOptions {
     let bounds = bounds.unwrap_or(WindowBounds::Maximized);
-    let display = display_uuid.and_then(|uuid| cx.display_for_uuid(uuid));
+    let display = display_uuid.and_then(|uuid| {
+        cx.displays()
+            .into_iter()
+            .find(|display| display.uuid().ok() == Some(uuid))
+    });
 
     WindowOptions {
         bounds,

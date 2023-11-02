@@ -12,7 +12,7 @@ use client2::UserStore;
 use db2::kvp::KEY_VALUE_STORE;
 use fs2::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui2::{Action, App, AppContext, AsyncAppContext, Context, MainThread, SemanticVersion, Task};
+use gpui2::{Action, App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
 use language2::LanguageRegistry;
 use log::LevelFilter;
@@ -249,7 +249,7 @@ fn main() {
                 // .detach_and_log_err(cx)
             }
             Ok(None) | Err(_) => cx
-                .spawn_on_main({
+                .spawn({
                     let app_state = app_state.clone();
                     |cx| async move { restore_or_create_workspace(&app_state, cx).await }
                 })
@@ -320,10 +320,7 @@ async fn installation_id() -> Result<String> {
     }
 }
 
-async fn restore_or_create_workspace(
-    app_state: &Arc<AppState>,
-    mut cx: MainThread<AsyncAppContext>,
-) {
+async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
     async_maybe!({
         if let Some(location) = workspace2::last_opened_workspace_paths().await {
             cx.update(|cx| workspace2::open_paths(location.paths().as_ref(), app_state, None, cx))?

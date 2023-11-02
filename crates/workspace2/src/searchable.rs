@@ -200,7 +200,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         cx: &mut WindowContext,
     ) -> Task<Vec<Box<dyn Any + Send>>> {
         let matches = self.update(cx, |this, cx| this.find_matches(query, cx));
-        cx.spawn_on_main(|cx| async {
+        cx.spawn(|cx| async {
             let matches = matches.await;
             matches
                 .into_iter()
