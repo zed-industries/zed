@@ -947,7 +947,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui2::TestAppContext) {
         .await
         .unwrap();
 
-    let mut events = cx.subscribe(&project);
+    let mut events = cx.events(&project);
 
     let fake_server = fake_servers.next().await.unwrap();
     assert_eq!(
@@ -1078,7 +1078,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui2::TestApp
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers([buffer], cx);
     });
-    let mut events = cx.subscribe(&project);
+    let mut events = cx.events(&project);
 
     // Simulate the newly started server sending more diagnostics.
     let fake_server = fake_servers.next().await.unwrap();
@@ -2788,6 +2788,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui2::TestAppContext) {
     });
 
     let remote = cx.update(|cx| Worktree::remote(1, 1, metadata, rpc.clone(), cx));
+
     cx.executor().run_until_parked();
 
     cx.update(|cx| {

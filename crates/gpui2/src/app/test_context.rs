@@ -3,8 +3,8 @@ use crate::{
     ForegroundExecutor, Model, ModelContext, Result, Task, TestDispatcher, TestPlatform,
     WindowContext,
 };
-use anyhow::anyhow;
-use futures::{SinkExt, StreamExt};
+use anyhow::{anyhow, bail};
+use futures::{SinkExt, Stream, StreamExt};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::Arc, time::Duration};
 
 #[derive(Clone)]
@@ -140,7 +140,25 @@ impl TestAppContext {
         }
     }
 
-    pub fn subscribe<T: 'static + EventEmitter>(
+    pub fn notifications<T: 'static>(&mut self, entity: &Model<T>) -> impl Stream<Item = ()> {
+        let (tx, rx) = futures::channel::mpsc::unbounded();
+
+        entity.update(self, move |_, cx: &mut ModelContext<T>| {
+            cx.observe(entity, {
+                let tx = tx.clone();
+                move |_, _, _| {
+                    let _ = tx.unbounded_send(());
+                }
+            })
+            .detach();
+
+            cx.on_release(move |_, _| tx.close_channel()).detach();
+        });
+
+        rx
+    }
+
+    pub fn events<T: 'static + EventEmitter>(
         &mut self,
         entity: &Model<T>,
     ) -> futures::channel::mpsc::UnboundedReceiver<T::Event>
@@ -160,36 +178,24 @@ impl TestAppContext {
         rx
     }
 
-    pub async fn condition<T: EventEmitter + 'static>(
+    pub async fn condition<T: 'static>(
         &mut self,
         model: &Model<T>,
         mut predicate: impl FnMut(&mut T, &mut ModelContext<T>) -> bool,
     ) {
-        let (mut tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
         let timer = self.executor().timer(Duration::from_secs(3));
-
-        let subscriptions = model.update(self, move |_, cx| {
-            (
-                cx.observe(model, move |_, _, _| {
-                    // let _ = tx.send(());
-                }),
-                cx.subscribe(model, move |_, _, _, _| {
-                    let _ = tx.send(());
-                }),
-            )
-        });
+        let mut notifications = self.notifications(model);
 
         use futures::FutureExt as _;
         use smol::future::FutureExt as _;
 
         async {
-            while rx.next().await.is_some() {
+            while notifications.next().await.is_some() {
                 if model.update(self, &mut predicate) {
                     return Ok(());
                 }
             }
-            drop(subscriptions);
-            unreachable!()
+            bail!("model dropped")
         }
         .race(timer.map(|_| Err(anyhow!("condition timed out"))))
         .await
