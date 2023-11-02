@@ -1043,9 +1043,9 @@ impl Workspace {
     //         dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
     //     }
 
-    //     pub fn status_bar(&self) -> &View<StatusBar> {
-    //         &self.status_bar
-    //     }
+    pub fn status_bar(&self) -> &View<StatusBar> {
+        &self.status_bar
+    }
 
     pub fn app_state(&self) -> &Arc<AppState> {
         &self.app_state
