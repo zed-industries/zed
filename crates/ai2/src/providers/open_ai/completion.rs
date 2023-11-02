@@ -1,10 +1,9 @@
 use anyhow::{anyhow, Result};
-use async_trait::async_trait;
 use futures::{
     future::BoxFuture, io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt,
     Stream, StreamExt,
 };
-use gpui2::{AppContext, Executor};
+use gpui2::{AppContext, BackgroundExecutor};
 use isahc::{http::StatusCode, Request, RequestExt};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -105,7 +104,7 @@ pub struct OpenAIResponseStreamEvent {
 
 pub async fn stream_completion(
     credential: ProviderCredential,
-    executor: Arc<Executor>,
+    executor: Arc<BackgroundExecutor>,
     request: Box<dyn CompletionRequest>,
 ) -> Result<impl Stream<Item = Result<OpenAIResponseStreamEvent>>> {
     let api_key = match credential {
@@ -198,11 +197,11 @@ pub async fn stream_completion(
 pub struct OpenAICompletionProvider {
     model: OpenAILanguageModel,
     credential: Arc<RwLock<ProviderCredential>>,
-    executor: Arc<Executor>,
+    executor: Arc<BackgroundExecutor>,
 }
 
 impl OpenAICompletionProvider {
-    pub fn new(model_name: &str, executor: Arc<Executor>) -> Self {
+    pub fn new(model_name: &str, executor: Arc<BackgroundExecutor>) -> Self {
         let model = OpenAILanguageModel::load(model_name);
         let credential = Arc::new(RwLock::new(ProviderCredential::NoCredentials));
         Self {
@@ -213,7 +212,6 @@ impl OpenAICompletionProvider {
     }
 }
 
-#[async_trait]
 impl CredentialProvider for OpenAICompletionProvider {
     fn has_credentials(&self) -> bool {
         match *self.credential.read() {
@@ -221,52 +219,45 @@ impl CredentialProvider for OpenAICompletionProvider {
             _ => false,
         }
     }
-    async fn retrieve_credentials(&self, cx: &mut AppContext) -> ProviderCredential {
+
+    fn retrieve_credentials(&self, cx: &mut AppContext) -> ProviderCredential {
         let existing_credential = self.credential.read().clone();
-
-        let retrieved_credential = cx
-            .run_on_main(move |cx| match existing_credential {
-                ProviderCredential::Credentials { .. } => {
-                    return existing_credential.clone();
-                }
-                _ => {
-                    if let Some(api_key) = env::var("OPENAI_API_KEY").log_err() {
-                        return ProviderCredential::Credentials { api_key };
-                    }
-
-                    if let Some(Some((_, api_key))) = cx.read_credentials(OPENAI_API_URL).log_err()
-                    {
-                        if let Some(api_key) = String::from_utf8(api_key).log_err() {
-                            return ProviderCredential::Credentials { api_key };
-                        } else {
-                            return ProviderCredential::NoCredentials;
-                        }
+        let retrieved_credential = match existing_credential {
+            ProviderCredential::Credentials { .. } => existing_credential.clone(),
+            _ => {
+                if let Some(api_key) = env::var("OPENAI_API_KEY").log_err() {
+                    ProviderCredential::Credentials { api_key }
+                } else if let Some(Some((_, api_key))) =
+                    cx.read_credentials(OPENAI_API_URL).log_err()
+                {
+                    if let Some(api_key) = String::from_utf8(api_key).log_err() {
+                        ProviderCredential::Credentials { api_key }
                     } else {
-                        return ProviderCredential::NoCredentials;
+                        ProviderCredential::NoCredentials
                     }
+                } else {
+                    ProviderCredential::NoCredentials
                 }
-            })
-            .await;
-
+            }
+        };
         *self.credential.write() = retrieved_credential.clone();
         retrieved_credential
     }
 
-    async fn save_credentials(&self, cx: &mut AppContext, credential: ProviderCredential) {
+    fn save_credentials(&self, cx: &mut AppContext, credential: ProviderCredential) {
         *self.credential.write() = credential.clone();
         let credential = credential.clone();
-        cx.run_on_main(move |cx| match credential {
+        match credential {
             ProviderCredential::Credentials { api_key } => {
                 cx.write_credentials(OPENAI_API_URL, "Bearer", api_key.as_bytes())
                     .log_err();
             }
             _ => {}
-        })
-        .await;
+        }
     }
-    async fn delete_credentials(&self, cx: &mut AppContext) {
-        cx.run_on_main(move |cx| cx.delete_credentials(OPENAI_API_URL).log_err())
-            .await;
+
+    fn delete_credentials(&self, cx: &mut AppContext) {
+        cx.delete_credentials(OPENAI_API_URL).log_err();
         *self.credential.write() = ProviderCredential::NoCredentials;
     }
 }

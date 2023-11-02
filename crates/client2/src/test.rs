@@ -1,7 +1,7 @@
 use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
 use anyhow::{anyhow, Result};
 use futures::{stream::BoxStream, StreamExt};
-use gpui2::{Context, Executor, Model, TestAppContext};
+use gpui2::{BackgroundExecutor, Context, Model, TestAppContext};
 use parking_lot::Mutex;
 use rpc2::{
     proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
@@ -14,7 +14,7 @@ pub struct FakeServer {
     peer: Arc<Peer>,
     state: Arc<Mutex<FakeServerState>>,
     user_id: u64,
-    executor: Executor,
+    executor: BackgroundExecutor,
 }
 
 #[derive(Default)]
@@ -79,10 +79,10 @@ impl FakeServer {
                         }
 
                         let (client_conn, server_conn, _) =
-                            Connection::in_memory(cx.executor().clone());
+                            Connection::in_memory(cx.background_executor().clone());
                         let (connection_id, io, incoming) =
-                            peer.add_test_connection(server_conn, cx.executor().clone());
-                        cx.executor().spawn(io).detach();
+                            peer.add_test_connection(server_conn, cx.background_executor().clone());
+                        cx.background_executor().spawn(io).detach();
                         {
                             let mut state = state.lock();
                             state.connection_id = Some(connection_id);

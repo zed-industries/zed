@@ -17,7 +17,7 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, TryFutureExt as _,
 };
-use gpui2::{AppContext, AsyncAppContext, Executor, Task};
+use gpui2::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 pub use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use lsp2::{CodeActionKind, LanguageServerBinary};
@@ -631,7 +631,7 @@ pub struct LanguageRegistry {
     lsp_binary_paths: Mutex<
         HashMap<LanguageServerName, Shared<Task<Result<LanguageServerBinary, Arc<anyhow::Error>>>>>,
     >,
-    executor: Option<Executor>,
+    executor: Option<BackgroundExecutor>,
     lsp_binary_status_tx: LspBinaryStatusSender,
 }
 
@@ -680,7 +680,7 @@ impl LanguageRegistry {
         Self::new(Task::ready(()))
     }
 
-    pub fn set_executor(&mut self, executor: Executor) {
+    pub fn set_executor(&mut self, executor: BackgroundExecutor) {
         self.executor = Some(executor);
     }
 
@@ -916,7 +916,7 @@ impl LanguageRegistry {
                 }
 
                 let servers_tx = servers_tx.clone();
-                cx.executor()
+                cx.background_executor()
                     .spawn(async move {
                         if fake_server
                             .try_receive_notification::<lsp2::notification::Initialized>()

@@ -13,30 +13,32 @@ use smallvec::SmallVec;
 pub use test_context::*;
 
 use crate::{
-    current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AppMetadata, AssetSource,
-    ClipboardItem, Context, DispatchPhase, DisplayId, Executor, FocusEvent, FocusHandle, FocusId,
-    KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly, Pixels, Platform, Point, Render,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
-    TextSystem, View, Window, WindowContext, WindowHandle, WindowId,
+    current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AnyWindowHandle,
+    AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
+    Entity, FocusEvent, FocusHandle, FocusId, ForegroundExecutor, KeyBinding, Keymap, LayoutId,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem,
+    View, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
-use futures::{future::BoxFuture, Future};
+use futures::{channel::oneshot, future::LocalBoxFuture, Future};
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use std::{
     any::{type_name, Any, TypeId},
-    borrow::Borrow,
+    cell::RefCell,
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
-    path::PathBuf,
-    sync::{atomic::Ordering::SeqCst, Arc, Weak},
+    path::{Path, PathBuf},
+    rc::{Rc, Weak},
+    sync::{atomic::Ordering::SeqCst, Arc},
     time::Duration,
 };
 use util::http::{self, HttpClient};
 
-pub struct App(Arc<Mutex<AppContext>>);
+pub struct App(Rc<RefCell<AppContext>>);
 
 /// Represents an application before it is fully launched. Once your app is
 /// configured, you'll start the app with `App::run`.
@@ -54,13 +56,12 @@ impl App {
     /// app is fully launched.
     pub fn run<F>(self, on_finish_launching: F)
     where
-        F: 'static + FnOnce(&mut MainThread<AppContext>),
+        F: 'static + FnOnce(&mut AppContext),
     {
         let this = self.0.clone();
-        let platform = self.0.lock().platform.clone();
-        platform.borrow_on_main_thread().run(Box::new(move || {
-            let cx = &mut *this.lock();
-            let cx = unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) };
+        let platform = self.0.borrow().platform.clone();
+        platform.run(Box::new(move || {
+            let cx = &mut *this.borrow_mut();
             on_finish_launching(cx);
         }));
     }
@@ -71,16 +72,12 @@ impl App {
     where
         F: 'static + FnMut(Vec<String>, &mut AppContext),
     {
-        let this = Arc::downgrade(&self.0);
-        self.0
-            .lock()
-            .platform
-            .borrow_on_main_thread()
-            .on_open_urls(Box::new(move |urls| {
-                if let Some(app) = this.upgrade() {
-                    callback(urls, &mut app.lock());
-                }
-            }));
+        let this = Rc::downgrade(&self.0);
+        self.0.borrow().platform.on_open_urls(Box::new(move |urls| {
+            if let Some(app) = this.upgrade() {
+                callback(urls, &mut *app.borrow_mut());
+            }
+        }));
         self
     }
 
@@ -88,49 +85,50 @@ impl App {
     where
         F: 'static + FnMut(&mut AppContext),
     {
-        let this = Arc::downgrade(&self.0);
-        self.0
-            .lock()
-            .platform
-            .borrow_on_main_thread()
-            .on_reopen(Box::new(move || {
-                if let Some(app) = this.upgrade() {
-                    callback(&mut app.lock());
-                }
-            }));
+        let this = Rc::downgrade(&self.0);
+        self.0.borrow_mut().platform.on_reopen(Box::new(move || {
+            if let Some(app) = this.upgrade() {
+                callback(&mut app.borrow_mut());
+            }
+        }));
         self
     }
 
     pub fn metadata(&self) -> AppMetadata {
-        self.0.lock().app_metadata.clone()
+        self.0.borrow().app_metadata.clone()
     }
 
-    pub fn executor(&self) -> Executor {
-        self.0.lock().executor.clone()
+    pub fn background_executor(&self) -> BackgroundExecutor {
+        self.0.borrow().background_executor.clone()
+    }
+
+    pub fn foreground_executor(&self) -> ForegroundExecutor {
+        self.0.borrow().foreground_executor.clone()
     }
 
     pub fn text_system(&self) -> Arc<TextSystem> {
-        self.0.lock().text_system.clone()
+        self.0.borrow().text_system.clone()
     }
 }
 
 type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
-type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
-type Handler = Box<dyn FnMut(&mut AppContext) -> bool + Send + 'static>;
-type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + Send + 'static>;
-type QuitHandler = Box<dyn FnMut(&mut AppContext) -> BoxFuture<'static, ()> + Send + 'static>;
-type ReleaseListener = Box<dyn FnMut(&mut dyn Any, &mut AppContext) + Send + 'static>;
+type FrameCallback = Box<dyn FnOnce(&mut WindowContext)>;
+type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
+type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
+type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
+type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 
 pub struct AppContext {
-    this: Weak<Mutex<AppContext>>,
-    pub(crate) platform: MainThreadOnly<dyn Platform>,
+    this: Weak<RefCell<AppContext>>,
+    pub(crate) platform: Rc<dyn Platform>,
     app_metadata: AppMetadata,
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
     pending_updates: usize,
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
-    pub(crate) executor: Executor,
+    pub(crate) background_executor: BackgroundExecutor,
+    pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) svg_renderer: SvgRenderer,
     asset_source: Arc<dyn AssetSource>,
     pub(crate) image_cache: ImageCache,
@@ -140,7 +138,7 @@ pub struct AppContext {
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) keymap: Arc<Mutex<Keymap>>,
     pub(crate) global_action_listeners:
-        HashMap<TypeId, Vec<Box<dyn Fn(&dyn Action, DispatchPhase, &mut Self) + Send>>>,
+        HashMap<TypeId, Vec<Box<dyn Fn(&dyn Action, DispatchPhase, &mut Self)>>>,
     action_builders: HashMap<SharedString, ActionBuilder>,
     pending_effects: VecDeque<Effect>,
     pub(crate) pending_notifications: HashSet<EntityId>,
@@ -156,11 +154,12 @@ pub struct AppContext {
 
 impl AppContext {
     pub(crate) fn new(
-        platform: Arc<dyn Platform>,
+        platform: Rc<dyn Platform>,
         asset_source: Arc<dyn AssetSource>,
         http_client: Arc<dyn HttpClient>,
-    ) -> Arc<Mutex<Self>> {
-        let executor = platform.executor();
+    ) -> Rc<RefCell<Self>> {
+        let executor = platform.background_executor();
+        let foreground_executor = platform.foreground_executor();
         assert!(
             executor.is_main_thread(),
             "must construct App on main thread"
@@ -175,16 +174,17 @@ impl AppContext {
             app_version: platform.app_version().ok(),
         };
 
-        Arc::new_cyclic(|this| {
-            Mutex::new(AppContext {
+        Rc::new_cyclic(|this| {
+            RefCell::new(AppContext {
                 this: this.clone(),
                 text_system,
-                platform: MainThreadOnly::new(platform, executor.clone()),
+                platform,
                 app_metadata,
                 flushing_effects: false,
                 pending_updates: 0,
                 next_frame_callbacks: Default::default(),
-                executor,
+                background_executor: executor,
+                foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 asset_source,
                 image_cache: ImageCache::new(http_client),
@@ -215,17 +215,16 @@ impl AppContext {
     pub fn quit(&mut self) {
         let mut futures = Vec::new();
 
-        self.quit_observers.clone().retain(&(), |observer| {
+        for observer in self.quit_observers.remove(&()) {
             futures.push(observer(self));
-            true
-        });
+        }
 
         self.windows.clear();
         self.flush_effects();
 
         let futures = futures::future::join_all(futures);
         if self
-            .executor
+            .background_executor
             .block_with_timeout(Duration::from_millis(100), futures)
             .is_err()
         {
@@ -244,7 +243,6 @@ impl AppContext {
     pub fn refresh(&mut self) {
         self.pending_effects.push_back(Effect::Refresh);
     }
-
     pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
         self.pending_updates += 1;
         let result = update(self);
@@ -257,42 +255,89 @@ impl AppContext {
         result
     }
 
-    pub(crate) fn read_window<R>(
-        &mut self,
-        id: WindowId,
-        read: impl FnOnce(&WindowContext) -> R,
-    ) -> Result<R> {
-        let window = self
-            .windows
-            .get(id)
-            .ok_or_else(|| anyhow!("window not found"))?
-            .as_ref()
-            .unwrap();
-        Ok(read(&WindowContext::immutable(self, &window)))
+    pub fn windows(&self) -> Vec<AnyWindowHandle> {
+        self.windows
+            .values()
+            .filter_map(|window| Some(window.as_ref()?.handle.clone()))
+            .collect()
     }
 
-    pub(crate) fn update_window<R>(
+    /// Opens a new window with the given option and the root view returned by the given function.
+    /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
+    /// functionality.
+    pub fn open_window<V: Render>(
         &mut self,
-        id: WindowId,
-        update: impl FnOnce(&mut WindowContext) -> R,
-    ) -> Result<R> {
+        options: crate::WindowOptions,
+        build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,
+    ) -> WindowHandle<V> {
         self.update(|cx| {
-            let mut window = cx
-                .windows
-                .get_mut(id)
-                .ok_or_else(|| anyhow!("window not found"))?
-                .take()
-                .unwrap();
-
-            let result = update(&mut WindowContext::mutable(cx, &mut window));
-
-            cx.windows
-                .get_mut(id)
-                .ok_or_else(|| anyhow!("window not found"))?
-                .replace(window);
-
-            Ok(result)
+            let id = cx.windows.insert(None);
+            let handle = WindowHandle::new(id);
+            let mut window = Window::new(handle.into(), options, cx);
+            let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
+            window.root_view.replace(root_view.into());
+            cx.windows.get_mut(id).unwrap().replace(window);
+            handle
         })
+    }
+
+    /// Instructs the platform to activate the application by bringing it to the foreground.
+    pub fn activate(&self, ignoring_other_apps: bool) {
+        self.platform.activate(ignoring_other_apps);
+    }
+
+    /// Returns the list of currently active displays.
+    pub fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
+        self.platform.displays()
+    }
+
+    /// Writes data to the platform clipboard.
+    pub fn write_to_clipboard(&self, item: ClipboardItem) {
+        self.platform.write_to_clipboard(item)
+    }
+
+    /// Reads data from the platform clipboard.
+    pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        self.platform.read_from_clipboard()
+    }
+
+    /// Writes credentials to the platform keychain.
+    pub fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
+        self.platform.write_credentials(url, username, password)
+    }
+
+    /// Reads credentials from the platform keychain.
+    pub fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
+        self.platform.read_credentials(url)
+    }
+
+    /// Deletes credentials from the platform keychain.
+    pub fn delete_credentials(&self, url: &str) -> Result<()> {
+        self.platform.delete_credentials(url)
+    }
+
+    /// Directs the platform's default browser to open the given URL.
+    pub fn open_url(&self, url: &str) {
+        self.platform.open_url(url);
+    }
+
+    pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
+        self.platform.path_for_auxiliary_executable(name)
+    }
+
+    pub fn prompt_for_paths(
+        &self,
+        options: PathPromptOptions,
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+        self.platform.prompt_for_paths(options)
+    }
+
+    pub fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
+        self.platform.prompt_for_new_path(directory)
+    }
+
+    pub fn reveal_path(&self, path: &Path) {
+        self.platform.reveal_path(path)
     }
 
     pub(crate) fn push_effect(&mut self, effect: Effect) {
@@ -326,8 +371,11 @@ impl AppContext {
                         self.apply_notify_effect(emitter);
                     }
                     Effect::Emit { emitter, event } => self.apply_emit_effect(emitter, event),
-                    Effect::FocusChanged { window_id, focused } => {
-                        self.apply_focus_changed_effect(window_id, focused);
+                    Effect::FocusChanged {
+                        window_handle,
+                        focused,
+                    } => {
+                        self.apply_focus_changed_effect(window_handle, focused);
                     }
                     Effect::Refresh => {
                         self.apply_refresh_effect();
@@ -347,18 +395,18 @@ impl AppContext {
         let dirty_window_ids = self
             .windows
             .iter()
-            .filter_map(|(window_id, window)| {
+            .filter_map(|(_, window)| {
                 let window = window.as_ref().unwrap();
                 if window.dirty {
-                    Some(window_id)
+                    Some(window.handle.clone())
                 } else {
                     None
                 }
             })
             .collect::<SmallVec<[_; 8]>>();
 
-        for dirty_window_id in dirty_window_ids {
-            self.update_window(dirty_window_id, |cx| cx.draw()).unwrap();
+        for dirty_window_handle in dirty_window_ids {
+            dirty_window_handle.update(self, |_, cx| cx.draw()).unwrap();
         }
     }
 
@@ -375,7 +423,7 @@ impl AppContext {
             for (entity_id, mut entity) in dropped {
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
-                for mut release_callback in self.release_listeners.remove(&entity_id) {
+                for release_callback in self.release_listeners.remove(&entity_id) {
                     release_callback(entity.as_mut(), self);
                 }
             }
@@ -386,27 +434,27 @@ impl AppContext {
     /// For now, we simply blur the window if this happens, but we may want to support invoking
     /// a window blur handler to restore focus to some logical element.
     fn release_dropped_focus_handles(&mut self) {
-        let window_ids = self.windows.keys().collect::<SmallVec<[_; 8]>>();
-        for window_id in window_ids {
-            self.update_window(window_id, |cx| {
-                let mut blur_window = false;
-                let focus = cx.window.focus;
-                cx.window.focus_handles.write().retain(|handle_id, count| {
-                    if count.load(SeqCst) == 0 {
-                        if focus == Some(handle_id) {
-                            blur_window = true;
+        for window_handle in self.windows() {
+            window_handle
+                .update(self, |_, cx| {
+                    let mut blur_window = false;
+                    let focus = cx.window.focus;
+                    cx.window.focus_handles.write().retain(|handle_id, count| {
+                        if count.load(SeqCst) == 0 {
+                            if focus == Some(handle_id) {
+                                blur_window = true;
+                            }
+                            false
+                        } else {
+                            true
                         }
-                        false
-                    } else {
-                        true
-                    }
-                });
+                    });
 
-                if blur_window {
-                    cx.blur();
-                }
-            })
-            .unwrap();
+                    if blur_window {
+                        cx.blur();
+                    }
+                })
+                .unwrap();
         }
     }
 
@@ -423,30 +471,35 @@ impl AppContext {
             .retain(&emitter, |handler| handler(event.as_ref(), self));
     }
 
-    fn apply_focus_changed_effect(&mut self, window_id: WindowId, focused: Option<FocusId>) {
-        self.update_window(window_id, |cx| {
-            if cx.window.focus == focused {
-                let mut listeners = mem::take(&mut cx.window.focus_listeners);
-                let focused =
-                    focused.map(|id| FocusHandle::for_id(id, &cx.window.focus_handles).unwrap());
-                let blurred = cx
-                    .window
-                    .last_blur
-                    .take()
-                    .unwrap()
-                    .and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
-                if focused.is_some() || blurred.is_some() {
-                    let event = FocusEvent { focused, blurred };
-                    for listener in &listeners {
-                        listener(&event, cx);
+    fn apply_focus_changed_effect(
+        &mut self,
+        window_handle: AnyWindowHandle,
+        focused: Option<FocusId>,
+    ) {
+        window_handle
+            .update(self, |_, cx| {
+                if cx.window.focus == focused {
+                    let mut listeners = mem::take(&mut cx.window.focus_listeners);
+                    let focused = focused
+                        .map(|id| FocusHandle::for_id(id, &cx.window.focus_handles).unwrap());
+                    let blurred = cx
+                        .window
+                        .last_blur
+                        .take()
+                        .unwrap()
+                        .and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
+                    if focused.is_some() || blurred.is_some() {
+                        let event = FocusEvent { focused, blurred };
+                        for listener in &listeners {
+                            listener(&event, cx);
+                        }
                     }
-                }
 
-                listeners.extend(cx.window.focus_listeners.drain(..));
-                cx.window.focus_listeners = listeners;
-            }
-        })
-        .ok();
+                    listeners.extend(cx.window.focus_listeners.drain(..));
+                    cx.window.focus_listeners = listeners;
+                }
+            })
+            .ok();
     }
 
     fn apply_refresh_effect(&mut self) {
@@ -464,7 +517,7 @@ impl AppContext {
             .retain(&type_id, |observer| observer(self));
     }
 
-    fn apply_defer_effect(&mut self, callback: Box<dyn FnOnce(&mut Self) + Send + 'static>) {
+    fn apply_defer_effect(&mut self, callback: Box<dyn FnOnce(&mut Self) + 'static>) {
         callback(self);
     }
 
@@ -473,72 +526,34 @@ impl AppContext {
     pub fn to_async(&self) -> AsyncAppContext {
         AsyncAppContext {
             app: unsafe { mem::transmute(self.this.clone()) },
-            executor: self.executor.clone(),
+            background_executor: self.background_executor.clone(),
+            foreground_executor: self.foreground_executor.clone(),
         }
     }
 
     /// Obtains a reference to the executor, which can be used to spawn futures.
-    pub fn executor(&self) -> &Executor {
-        &self.executor
+    pub fn background_executor(&self) -> &BackgroundExecutor {
+        &self.background_executor
     }
 
-    /// Runs the given closure on the main thread, where interaction with the platform
-    /// is possible. The given closure will be invoked with a `MainThread<AppContext>`, which
-    /// has platform-specific methods that aren't present on `AppContext`.
-    pub fn run_on_main<R>(
-        &mut self,
-        f: impl FnOnce(&mut MainThread<AppContext>) -> R + Send + 'static,
-    ) -> Task<R>
-    where
-        R: Send + 'static,
-    {
-        if self.executor.is_main_thread() {
-            Task::ready(f(unsafe {
-                mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(self)
-            }))
-        } else {
-            let this = self.this.upgrade().unwrap();
-            self.executor.run_on_main(move || {
-                let cx = &mut *this.lock();
-                cx.update(|cx| f(unsafe { mem::transmute::<&mut Self, &mut MainThread<Self>>(cx) }))
-            })
-        }
-    }
-
-    /// Spawns the future returned by the given function on the main thread, where interaction with
-    /// the platform is possible. The given closure will be invoked with a `MainThread<AsyncAppContext>`,
-    /// which has platform-specific methods that aren't present on `AsyncAppContext`. The future will be
-    /// polled exclusively on the main thread.
-    // todo!("I think we need somehow to prevent the MainThread<AsyncAppContext> from implementing Send")
-    pub fn spawn_on_main<F, R>(
-        &self,
-        f: impl FnOnce(MainThread<AsyncAppContext>) -> F + Send + 'static,
-    ) -> Task<R>
-    where
-        F: Future<Output = R> + 'static,
-        R: Send + 'static,
-    {
-        let cx = self.to_async();
-        self.executor.spawn_on_main(move || f(MainThread(cx)))
+    /// Obtains a reference to the executor, which can be used to spawn futures.
+    pub fn foreground_executor(&self) -> &ForegroundExecutor {
+        &self.foreground_executor
     }
 
     /// Spawns the future returned by the given function on the thread pool. The closure will be invoked
     /// with AsyncAppContext, which allows the application state to be accessed across await points.
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
     where
-        Fut: Future<Output = R> + Send + 'static,
-        R: Send + 'static,
+        Fut: Future<Output = R> + 'static,
+        R: 'static,
     {
-        let cx = self.to_async();
-        self.executor.spawn(async move {
-            let future = f(cx);
-            future.await
-        })
+        self.foreground_executor.spawn(f(self.to_async()))
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
     /// that are currently on the stack to be returned to the app.
-    pub fn defer(&mut self, f: impl FnOnce(&mut AppContext) + 'static + Send) {
+    pub fn defer(&mut self, f: impl FnOnce(&mut AppContext) + 'static) {
         self.push_effect(Effect::Defer {
             callback: Box::new(f),
         });
@@ -597,7 +612,7 @@ impl AppContext {
 
     /// Access the global of the given type mutably. A default value is assigned if a global of this type has not
     /// yet been assigned.
-    pub fn default_global<G: 'static + Default + Send>(&mut self) -> &mut G {
+    pub fn default_global<G: 'static + Default>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
@@ -608,7 +623,7 @@ impl AppContext {
     }
 
     /// Set the value of the global of the given type.
-    pub fn set_global<G: Any + Send>(&mut self, global: G) {
+    pub fn set_global<G: Any>(&mut self, global: G) {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, Box::new(global));
@@ -626,7 +641,7 @@ impl AppContext {
     /// Register a callback to be invoked when a global of the given type is updated.
     pub fn observe_global<G: 'static>(
         &mut self,
-        mut f: impl FnMut(&mut Self) + Send + 'static,
+        mut f: impl FnMut(&mut Self) + 'static,
     ) -> Subscription {
         self.global_observers.insert(
             TypeId::of::<G>(),
@@ -658,6 +673,24 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
+    pub fn observe_release<E, T>(
+        &mut self,
+        handle: &E,
+        on_release: impl FnOnce(&mut T, &mut AppContext) + 'static,
+    ) -> Subscription
+    where
+        E: Entity<T>,
+        T: 'static,
+    {
+        self.release_listeners.insert(
+            handle.entity_id(),
+            Box::new(move |entity, cx| {
+                let entity = entity.downcast_mut().expect("invalid entity type");
+                on_release(entity, cx)
+            }),
+        )
+    }
+
     pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
         self.text_style_stack.push(text_style);
     }
@@ -673,7 +706,7 @@ impl AppContext {
     }
 
     /// Register a global listener for actions invoked via the keyboard.
-    pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + Send + 'static) {
+    pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + 'static) {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
             .or_default()
@@ -711,19 +744,18 @@ impl AppContext {
 }
 
 impl Context for AppContext {
-    type ModelContext<'a, T> = ModelContext<'a, T>;
     type Result<T> = T;
 
     /// Build an entity that is owned by the application. The given function will be invoked with
     /// a `ModelContext` and must return an object representing the entity. A `Model` will be returned
     /// which can be used to access the entity in a context.
-    fn build_model<T: 'static + Send>(
+    fn build_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Model<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
-            let entity = build_model(&mut ModelContext::mutable(cx, slot.downgrade()));
+            let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
             cx.entities.insert(slot, entity)
         })
     }
@@ -733,117 +765,36 @@ impl Context for AppContext {
     fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> R {
         self.update(|cx| {
             let mut entity = cx.entities.lease(model);
-            let result = update(
-                &mut entity,
-                &mut ModelContext::mutable(cx, model.downgrade()),
-            );
+            let result = update(&mut entity, &mut ModelContext::new(cx, model.downgrade()));
             cx.entities.end_lease(entity);
             result
         })
     }
-}
 
-impl<C> MainThread<C>
-where
-    C: Borrow<AppContext>,
-{
-    pub(crate) fn platform(&self) -> &dyn Platform {
-        self.0.borrow().platform.borrow_on_main_thread()
-    }
-
-    /// Instructs the platform to activate the application by bringing it to the foreground.
-    pub fn activate(&self, ignoring_other_apps: bool) {
-        self.platform().activate(ignoring_other_apps);
-    }
-
-    /// Writes data to the platform clipboard.
-    pub fn write_to_clipboard(&self, item: ClipboardItem) {
-        self.platform().write_to_clipboard(item)
-    }
-
-    /// Reads data from the platform clipboard.
-    pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.platform().read_from_clipboard()
-    }
-
-    /// Writes credentials to the platform keychain.
-    pub fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
-        self.platform().write_credentials(url, username, password)
-    }
-
-    /// Reads credentials from the platform keychain.
-    pub fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
-        self.platform().read_credentials(url)
-    }
-
-    /// Deletes credentials from the platform keychain.
-    pub fn delete_credentials(&self, url: &str) -> Result<()> {
-        self.platform().delete_credentials(url)
-    }
-
-    /// Directs the platform's default browser to open the given URL.
-    pub fn open_url(&self, url: &str) {
-        self.platform().open_url(url);
-    }
-
-    pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
-        self.platform().path_for_auxiliary_executable(name)
-    }
-}
-
-impl MainThread<AppContext> {
-    fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
-        self.0.update(|cx| {
-            update(unsafe {
-                std::mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx)
-            })
-        })
-    }
-
-    pub(crate) fn update_window<R>(
-        &mut self,
-        id: WindowId,
-        update: impl FnOnce(&mut MainThread<WindowContext>) -> R,
-    ) -> Result<R> {
-        self.0.update_window(id, |cx| {
-            update(unsafe {
-                std::mem::transmute::<&mut WindowContext, &mut MainThread<WindowContext>>(cx)
-            })
-        })
-    }
-
-    /// Opens a new window with the given option and the root view returned by the given function.
-    /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
-    /// functionality.
-    pub fn open_window<V: Render>(
-        &mut self,
-        options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut WindowContext) -> View<V> + Send + 'static,
-    ) -> WindowHandle<V> {
+    fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+    {
         self.update(|cx| {
-            let id = cx.windows.insert(None);
-            let handle = WindowHandle::new(id);
-            let mut window = Window::new(handle.into(), options, cx);
-            let root_view = build_root_view(&mut WindowContext::mutable(cx, &mut window));
-            window.root_view.replace(root_view.into());
-            cx.windows.get_mut(id).unwrap().replace(window);
-            handle
-        })
-    }
+            let mut window = cx
+                .windows
+                .get_mut(handle.id)
+                .ok_or_else(|| anyhow!("window not found"))?
+                .take()
+                .unwrap();
 
-    /// Update the global of the given type with a closure. Unlike `global_mut`, this method provides
-    /// your closure with mutable access to the `MainThread<AppContext>` and the global simultaneously.
-    pub fn update_global<G: 'static + Send, R>(
-        &mut self,
-        update: impl FnOnce(&mut G, &mut MainThread<AppContext>) -> R,
-    ) -> R {
-        self.0.update_global(|global, cx| {
-            let cx = unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) };
-            update(global, cx)
+            let root_view = window.root_view.clone().unwrap();
+            let result = update(root_view, &mut WindowContext::new(cx, &mut window));
+            cx.windows
+                .get_mut(handle.id)
+                .ok_or_else(|| anyhow!("window not found"))?
+                .replace(window);
+
+            Ok(result)
         })
     }
 }
@@ -855,10 +806,10 @@ pub(crate) enum Effect {
     },
     Emit {
         emitter: EntityId,
-        event: Box<dyn Any + Send + 'static>,
+        event: Box<dyn Any>,
     },
     FocusChanged {
-        window_id: WindowId,
+        window_handle: AnyWindowHandle,
         focused: Option<FocusId>,
     },
     Refresh,
@@ -866,7 +817,7 @@ pub(crate) enum Effect {
         global_type: TypeId,
     },
     Defer {
-        callback: Box<dyn FnOnce(&mut AppContext) + Send + 'static>,
+        callback: Box<dyn FnOnce(&mut AppContext) + 'static>,
     },
 }
 
@@ -904,16 +855,4 @@ impl<G: 'static> DerefMut for GlobalLease<G> {
 pub(crate) struct AnyDrag {
     pub view: AnyView,
     pub cursor_offset: Point<Pixels>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::AppContext;
-
-    #[test]
-    fn test_app_context_send_sync() {
-        // This will not compile if `AppContext` does not implement `Send`
-        fn assert_send<T: Send>() {}
-        assert_send::<AppContext>();
-    }
 }

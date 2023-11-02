@@ -4,55 +4,86 @@ use futures::{future, StreamExt};
 use gpui2::AppContext;
 use language2::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
-    tree_sitter_rust, Diagnostic, FakeLspAdapter, LanguageConfig, LineEnding, OffsetRangeExt,
-    Point, ToPoint,
+    tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
+    LineEnding, OffsetRangeExt, Point, ToPoint,
 };
 use lsp2::Url;
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use serde_json::json;
-use std::task::Poll;
+use std::{os, task::Poll};
 use unindent::Unindent as _;
-use util::assert_set_eq;
+use util::{assert_set_eq, test::temp_tree};
 
-// #[gpui2::test]
-// async fn test_symlinks(cx: &mut gpui2::TestAppContext) {
-//     init_test(cx);
-//     cx.executor().allow_parking();
+#[gpui2::test]
+async fn test_block_via_channel(cx: &mut gpui2::TestAppContext) {
+    cx.executor().allow_parking();
 
-//     let dir = temp_tree(json!({
-//         "root": {
-//             "apple": "",
-//             "banana": {
-//                 "carrot": {
-//                     "date": "",
-//                     "endive": "",
-//                 }
-//             },
-//             "fennel": {
-//                 "grape": "",
-//             }
-//         }
-//     }));
+    let (tx, mut rx) = futures::channel::mpsc::unbounded();
+    let _thread = std::thread::spawn(move || {
+        std::fs::metadata("/Users").unwrap();
+        std::thread::sleep(Duration::from_millis(1000));
+        tx.unbounded_send(1).unwrap();
+    });
+    rx.next().await.unwrap();
+}
 
-//     let root_link_path = dir.path().join("root_link");
-//     unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
-//     unix::fs::symlink(
-//         &dir.path().join("root/fennel"),
-//         &dir.path().join("root/finnochio"),
-//     )
-//     .unwrap();
+#[gpui2::test]
+async fn test_block_via_smol(cx: &mut gpui2::TestAppContext) {
+    cx.executor().allow_parking();
 
-//     let project = Project::test(Arc::new(RealFs), [root_link_path.as_ref()], cx).await;
-//     project.update(cx, |project, cx| {
-//         let tree = project.worktrees().next().unwrap().read(cx);
-//         assert_eq!(tree.file_count(), 5);
-//         assert_eq!(
-//             tree.inode_for_path("fennel/grape"),
-//             tree.inode_for_path("finnochio/grape")
-//         );
-//     });
-// }
+    let io_task = smol::unblock(move || {
+        println!("sleeping on thread {:?}", std::thread::current().id());
+        std::thread::sleep(Duration::from_millis(10));
+        1
+    });
+
+    let task = cx.foreground_executor().spawn(async move {
+        io_task.await;
+    });
+
+    task.await;
+}
+
+#[gpui2::test]
+async fn test_symlinks(cx: &mut gpui2::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = temp_tree(json!({
+        "root": {
+            "apple": "",
+            "banana": {
+                "carrot": {
+                    "date": "",
+                    "endive": "",
+                }
+            },
+            "fennel": {
+                "grape": "",
+            }
+        }
+    }));
+
+    let root_link_path = dir.path().join("root_link");
+    os::unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
+    os::unix::fs::symlink(
+        &dir.path().join("root/fennel"),
+        &dir.path().join("root/finnochio"),
+    )
+    .unwrap();
+
+    let project = Project::test(Arc::new(RealFs), [root_link_path.as_ref()], cx).await;
+
+    project.update(cx, |project, cx| {
+        let tree = project.worktrees().next().unwrap().read(cx);
+        assert_eq!(tree.file_count(), 5);
+        assert_eq!(
+            tree.inode_for_path("fennel/grape"),
+            tree.inode_for_path("finnochio/grape")
+        );
+    });
+}
 
 #[gpui2::test]
 async fn test_managing_project_specific_settings(cx: &mut gpui2::TestAppContext) {
@@ -916,7 +947,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui2::TestAppContext) {
         .await
         .unwrap();
 
-    let mut events = cx.subscribe(&project);
+    let mut events = cx.events(&project);
 
     let fake_server = fake_servers.next().await.unwrap();
     assert_eq!(
@@ -1047,7 +1078,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui2::TestApp
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers([buffer], cx);
     });
-    let mut events = cx.subscribe(&project);
+    let mut events = cx.events(&project);
 
     // Simulate the newly started server sending more diagnostics.
     let fake_server = fake_servers.next().await.unwrap();
@@ -2058,121 +2089,121 @@ async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui2::TestA
     });
 }
 
-// #[gpui2::test]
-// async fn test_invalid_edits_from_lsp2(cx: &mut gpui2::TestAppContext) {
-//     init_test(cx);
+#[gpui2::test]
+async fn test_invalid_edits_from_lsp2(cx: &mut gpui2::TestAppContext) {
+    init_test(cx);
 
-//     let text = "
-//         use a::b;
-//         use a::c;
+    let text = "
+        use a::b;
+        use a::c;
 
-//         fn f() {
-//             b();
-//             c();
-//         }
-//     "
-//     .unindent();
+        fn f() {
+            b();
+            c();
+        }
+    "
+    .unindent();
 
-//     let fs = FakeFs::new(cx.executor().clone());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a.rs": text.clone(),
-//         }),
-//     )
-//     .await;
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.rs": text.clone(),
+        }),
+    )
+    .await;
 
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     let buffer = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
-//         .await
-//         .unwrap();
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
 
-//     // Simulate the language server sending us edits in a non-ordered fashion,
-//     // with ranges sometimes being inverted or pointing to invalid locations.
-//     let edits = project
-//         .update(cx, |project, cx| {
-//             project.edits_from_lsp(
-//                 &buffer,
-//                 [
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(0, 9),
-//                             lsp2::Position::new(0, 9),
-//                         ),
-//                         new_text: "\n\n".into(),
-//                     },
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(0, 8),
-//                             lsp2::Position::new(0, 4),
-//                         ),
-//                         new_text: "a::{b, c}".into(),
-//                     },
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(1, 0),
-//                             lsp2::Position::new(99, 0),
-//                         ),
-//                         new_text: "".into(),
-//                     },
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(0, 9),
-//                             lsp2::Position::new(0, 9),
-//                         ),
-//                         new_text: "
-//                             fn f() {
-//                                 b();
-//                                 c();
-//                             }"
-//                         .unindent(),
-//                     },
-//                 ],
-//                 LanguageServerId(0),
-//                 None,
-//                 cx,
-//             )
-//         })
-//         .await
-//         .unwrap();
+    // Simulate the language server sending us edits in a non-ordered fashion,
+    // with ranges sometimes being inverted or pointing to invalid locations.
+    let edits = project
+        .update(cx, |project, cx| {
+            project.edits_from_lsp(
+                &buffer,
+                [
+                    lsp2::TextEdit {
+                        range: lsp2::Range::new(
+                            lsp2::Position::new(0, 9),
+                            lsp2::Position::new(0, 9),
+                        ),
+                        new_text: "\n\n".into(),
+                    },
+                    lsp2::TextEdit {
+                        range: lsp2::Range::new(
+                            lsp2::Position::new(0, 8),
+                            lsp2::Position::new(0, 4),
+                        ),
+                        new_text: "a::{b, c}".into(),
+                    },
+                    lsp2::TextEdit {
+                        range: lsp2::Range::new(
+                            lsp2::Position::new(1, 0),
+                            lsp2::Position::new(99, 0),
+                        ),
+                        new_text: "".into(),
+                    },
+                    lsp2::TextEdit {
+                        range: lsp2::Range::new(
+                            lsp2::Position::new(0, 9),
+                            lsp2::Position::new(0, 9),
+                        ),
+                        new_text: "
+                            fn f() {
+                                b();
+                                c();
+                            }"
+                        .unindent(),
+                    },
+                ],
+                LanguageServerId(0),
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
 
-//     buffer.update(cx, |buffer, cx| {
-//         let edits = edits
-//             .into_iter()
-//             .map(|(range, text)| {
-//                 (
-//                     range.start.to_point(buffer)..range.end.to_point(buffer),
-//                     text,
-//                 )
-//             })
-//             .collect::<Vec<_>>();
+    buffer.update(cx, |buffer, cx| {
+        let edits = edits
+            .into_iter()
+            .map(|(range, text)| {
+                (
+                    range.start.to_point(buffer)..range.end.to_point(buffer),
+                    text,
+                )
+            })
+            .collect::<Vec<_>>();
 
-//         assert_eq!(
-//             edits,
-//             [
-//                 (Point::new(0, 4)..Point::new(0, 8), "a::{b, c}".into()),
-//                 (Point::new(1, 0)..Point::new(2, 0), "".into())
-//             ]
-//         );
+        assert_eq!(
+            edits,
+            [
+                (Point::new(0, 4)..Point::new(0, 8), "a::{b, c}".into()),
+                (Point::new(1, 0)..Point::new(2, 0), "".into())
+            ]
+        );
 
-//         for (range, new_text) in edits {
-//             buffer.edit([(range, new_text)], None, cx);
-//         }
-//         assert_eq!(
-//             buffer.text(),
-//             "
-//                 use a::{b, c};
+        for (range, new_text) in edits {
+            buffer.edit([(range, new_text)], None, cx);
+        }
+        assert_eq!(
+            buffer.text(),
+            "
+                use a::{b, c};
 
-//                 fn f() {
-//                     b();
-//                     c();
-//                 }
-//             "
-//             .unindent()
-//         );
-//     });
-// }
+                fn f() {
+                    b();
+                    c();
+                }
+            "
+            .unindent()
+        );
+    });
+}
 
 fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
     buffer: &Buffer,
@@ -2292,168 +2323,168 @@ async fn test_definition(cx: &mut gpui2::TestAppContext) {
     }
 }
 
-// #[gpui2::test]
-// async fn test_completions_without_edit_ranges(cx: &mut gpui2::TestAppContext) {
-//     init_test(cx);
+#[gpui2::test]
+async fn test_completions_without_edit_ranges(cx: &mut gpui2::TestAppContext) {
+    init_test(cx);
 
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             name: "TypeScript".into(),
-//             path_suffixes: vec!["ts".to_string()],
-//             ..Default::default()
-//         },
-//         Some(tree_sitter_typescript::language_typescript()),
-//     );
-//     let mut fake_language_servers = language
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             capabilities: lsp2::ServerCapabilities {
-//                 completion_provider: Some(lsp2::CompletionOptions {
-//                     trigger_characters: Some(vec![":".to_string()]),
-//                     ..Default::default()
-//                 }),
-//                 ..Default::default()
-//             },
-//             ..Default::default()
-//         }))
-//         .await;
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            path_suffixes: vec!["ts".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::language_typescript()),
+    );
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp2::ServerCapabilities {
+                completion_provider: Some(lsp2::CompletionOptions {
+                    trigger_characters: Some(vec![":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
 
-//     let fs = FakeFs::new(cx.executor().clone());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a.ts": "",
-//         }),
-//     )
-//     .await;
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.ts": "",
+        }),
+    )
+    .await;
 
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-//     let buffer = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
-//         .await
-//         .unwrap();
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .await
+        .unwrap();
 
-//     let fake_server = fake_language_servers.next().await.unwrap();
+    let fake_server = fake_language_servers.next().await.unwrap();
 
-//     let text = "let a = b.fqn";
-//     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
-//     let completions = project.update(cx, |project, cx| {
-//         project.completions(&buffer, text.len(), cx)
-//     });
+    let text = "let a = b.fqn";
+    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+    let completions = project.update(cx, |project, cx| {
+        project.completions(&buffer, text.len(), cx)
+    });
 
-//     fake_server
-//         .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
-//             Ok(Some(lsp2::CompletionResponse::Array(vec![
-//                 lsp2::CompletionItem {
-//                     label: "fullyQualifiedName?".into(),
-//                     insert_text: Some("fullyQualifiedName".into()),
-//                     ..Default::default()
-//                 },
-//             ])))
-//         })
-//         .next()
-//         .await;
-//     let completions = completions.await.unwrap();
-//     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-//     assert_eq!(completions.len(), 1);
-//     assert_eq!(completions[0].new_text, "fullyQualifiedName");
-//     assert_eq!(
-//         completions[0].old_range.to_offset(&snapshot),
-//         text.len() - 3..text.len()
-//     );
+    fake_server
+        .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
+            Ok(Some(lsp2::CompletionResponse::Array(vec![
+                lsp2::CompletionItem {
+                    label: "fullyQualifiedName?".into(),
+                    insert_text: Some("fullyQualifiedName".into()),
+                    ..Default::default()
+                },
+            ])))
+        })
+        .next()
+        .await;
+    let completions = completions.await.unwrap();
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    assert_eq!(completions.len(), 1);
+    assert_eq!(completions[0].new_text, "fullyQualifiedName");
+    assert_eq!(
+        completions[0].old_range.to_offset(&snapshot),
+        text.len() - 3..text.len()
+    );
 
-//     let text = "let a = \"atoms/cmp\"";
-//     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
-//     let completions = project.update(cx, |project, cx| {
-//         project.completions(&buffer, text.len() - 1, cx)
-//     });
+    let text = "let a = \"atoms/cmp\"";
+    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+    let completions = project.update(cx, |project, cx| {
+        project.completions(&buffer, text.len() - 1, cx)
+    });
 
-//     fake_server
-//         .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
-//             Ok(Some(lsp2::CompletionResponse::Array(vec![
-//                 lsp2::CompletionItem {
-//                     label: "component".into(),
-//                     ..Default::default()
-//                 },
-//             ])))
-//         })
-//         .next()
-//         .await;
-//     let completions = completions.await.unwrap();
-//     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-//     assert_eq!(completions.len(), 1);
-//     assert_eq!(completions[0].new_text, "component");
-//     assert_eq!(
-//         completions[0].old_range.to_offset(&snapshot),
-//         text.len() - 4..text.len() - 1
-//     );
-// }
+    fake_server
+        .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
+            Ok(Some(lsp2::CompletionResponse::Array(vec![
+                lsp2::CompletionItem {
+                    label: "component".into(),
+                    ..Default::default()
+                },
+            ])))
+        })
+        .next()
+        .await;
+    let completions = completions.await.unwrap();
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    assert_eq!(completions.len(), 1);
+    assert_eq!(completions[0].new_text, "component");
+    assert_eq!(
+        completions[0].old_range.to_offset(&snapshot),
+        text.len() - 4..text.len() - 1
+    );
+}
 
-// #[gpui2::test]
-// async fn test_completions_with_carriage_returns(cx: &mut gpui2::TestAppContext) {
-//     init_test(cx);
+#[gpui2::test]
+async fn test_completions_with_carriage_returns(cx: &mut gpui2::TestAppContext) {
+    init_test(cx);
 
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             name: "TypeScript".into(),
-//             path_suffixes: vec!["ts".to_string()],
-//             ..Default::default()
-//         },
-//         Some(tree_sitter_typescript::language_typescript()),
-//     );
-//     let mut fake_language_servers = language
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             capabilities: lsp2::ServerCapabilities {
-//                 completion_provider: Some(lsp2::CompletionOptions {
-//                     trigger_characters: Some(vec![":".to_string()]),
-//                     ..Default::default()
-//                 }),
-//                 ..Default::default()
-//             },
-//             ..Default::default()
-//         }))
-//         .await;
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            path_suffixes: vec!["ts".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::language_typescript()),
+    );
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp2::ServerCapabilities {
+                completion_provider: Some(lsp2::CompletionOptions {
+                    trigger_characters: Some(vec![":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
 
-//     let fs = FakeFs::new(cx.executor().clone());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a.ts": "",
-//         }),
-//     )
-//     .await;
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.ts": "",
+        }),
+    )
+    .await;
 
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-//     let buffer = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
-//         .await
-//         .unwrap();
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .await
+        .unwrap();
 
-//     let fake_server = fake_language_servers.next().await.unwrap();
+    let fake_server = fake_language_servers.next().await.unwrap();
 
-//     let text = "let a = b.fqn";
-//     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
-//     let completions = project.update(cx, |project, cx| {
-//         project.completions(&buffer, text.len(), cx)
-//     });
+    let text = "let a = b.fqn";
+    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+    let completions = project.update(cx, |project, cx| {
+        project.completions(&buffer, text.len(), cx)
+    });
 
-//     fake_server
-//         .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
-//             Ok(Some(lsp2::CompletionResponse::Array(vec![
-//                 lsp2::CompletionItem {
-//                     label: "fullyQualifiedName?".into(),
-//                     insert_text: Some("fully\rQualified\r\nName".into()),
-//                     ..Default::default()
-//                 },
-//             ])))
-//         })
-//         .next()
-//         .await;
-//     let completions = completions.await.unwrap();
-//     assert_eq!(completions.len(), 1);
-//     assert_eq!(completions[0].new_text, "fully\nQualified\nName");
-// }
+    fake_server
+        .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
+            Ok(Some(lsp2::CompletionResponse::Array(vec![
+                lsp2::CompletionItem {
+                    label: "fullyQualifiedName?".into(),
+                    insert_text: Some("fully\rQualified\r\nName".into()),
+                    ..Default::default()
+                },
+            ])))
+        })
+        .next()
+        .await;
+    let completions = completions.await.unwrap();
+    assert_eq!(completions.len(), 1);
+    assert_eq!(completions[0].new_text, "fully\nQualified\nName");
+}
 
 #[gpui2::test(iterations = 10)]
 async fn test_apply_code_actions_with_commands(cx: &mut gpui2::TestAppContext) {
@@ -2636,212 +2667,214 @@ async fn test_save_in_single_file_worktree(cx: &mut gpui2::TestAppContext) {
     assert_eq!(new_text, buffer.update(cx, |buffer, _| buffer.text()));
 }
 
-// #[gpui2::test]
-// async fn test_save_as(cx: &mut gpui2::TestAppContext) {
-//     init_test(cx);
+#[gpui2::test]
+async fn test_save_as(cx: &mut gpui2::TestAppContext) {
+    init_test(cx);
 
-//     let fs = FakeFs::new(cx.executor().clone());
-//     fs.insert_tree("/dir", json!({})).await;
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree("/dir", json!({})).await;
 
-//     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
 
-//     let languages = project.update(cx, |project, _| project.languages().clone());
-//     languages.register(
-//         "/some/path",
-//         LanguageConfig {
-//             name: "Rust".into(),
-//             path_suffixes: vec!["rs".into()],
-//             ..Default::default()
-//         },
-//         tree_sitter_rust::language(),
-//         vec![],
-//         |_| Default::default(),
-//     );
+    let languages = project.update(cx, |project, _| project.languages().clone());
+    languages.register(
+        "/some/path",
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".into()],
+            ..Default::default()
+        },
+        tree_sitter_rust::language(),
+        vec![],
+        |_| Default::default(),
+    );
 
-//     let buffer = project.update(cx, |project, cx| {
-//         project.create_buffer("", None, cx).unwrap()
-//     });
-//     buffer.update(cx, |buffer, cx| {
-//         buffer.edit([(0..0, "abc")], None, cx);
-//         assert!(buffer.is_dirty());
-//         assert!(!buffer.has_conflict());
-//         assert_eq!(buffer.language().unwrap().name().as_ref(), "Plain Text");
-//     });
-//     project
-//         .update(cx, |project, cx| {
-//             project.save_buffer_as(buffer.clone(), "/dir/file1.rs".into(), cx)
-//         })
-//         .await
-//         .unwrap();
-//     assert_eq!(fs.load(Path::new("/dir/file1.rs")).await.unwrap(), "abc");
+    let buffer = project.update(cx, |project, cx| {
+        project.create_buffer("", None, cx).unwrap()
+    });
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "abc")], None, cx);
+        assert!(buffer.is_dirty());
+        assert!(!buffer.has_conflict());
+        assert_eq!(buffer.language().unwrap().name().as_ref(), "Plain Text");
+    });
+    project
+        .update(cx, |project, cx| {
+            project.save_buffer_as(buffer.clone(), "/dir/file1.rs".into(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(fs.load(Path::new("/dir/file1.rs")).await.unwrap(), "abc");
 
-//     cx.executor().run_until_parked();
-//     buffer.update(cx, |buffer, cx| {
-//         assert_eq!(
-//             buffer.file().unwrap().full_path(cx),
-//             Path::new("dir/file1.rs")
-//         );
-//         assert!(!buffer.is_dirty());
-//         assert!(!buffer.has_conflict());
-//         assert_eq!(buffer.language().unwrap().name().as_ref(), "Rust");
-//     });
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(
+            buffer.file().unwrap().full_path(cx),
+            Path::new("dir/file1.rs")
+        );
+        assert!(!buffer.is_dirty());
+        assert!(!buffer.has_conflict());
+        assert_eq!(buffer.language().unwrap().name().as_ref(), "Rust");
+    });
 
-//     let opened_buffer = project
-//         .update(cx, |project, cx| {
-//             project.open_local_buffer("/dir/file1.rs", cx)
-//         })
-//         .await
-//         .unwrap();
-//     assert_eq!(opened_buffer, buffer);
-// }
+    let opened_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file1.rs", cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(opened_buffer, buffer);
+}
 
 #[gpui2::test(retries = 5)]
-// async fn test_rescan_and_remote_updates(cx: &mut gpui2::TestAppContext) {
-//     init_test(cx);
-//     cx.executor().allow_parking();
+async fn test_rescan_and_remote_updates(cx: &mut gpui2::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
 
-//     let dir = temp_tree(json!({
-//         "a": {
-//             "file1": "",
-//             "file2": "",
-//             "file3": "",
-//         },
-//         "b": {
-//             "c": {
-//                 "file4": "",
-//                 "file5": "",
-//             }
-//         }
-//     }));
+    let dir = temp_tree(json!({
+        "a": {
+            "file1": "",
+            "file2": "",
+            "file3": "",
+        },
+        "b": {
+            "c": {
+                "file4": "",
+                "file5": "",
+            }
+        }
+    }));
 
-//     let project = Project::test(Arc::new(RealFs), [dir.path()], cx).await;
-//     let rpc = project.update(cx, |p, _| p.client.clone());
+    let project = Project::test(Arc::new(RealFs), [dir.path()], cx).await;
+    let rpc = project.update(cx, |p, _| p.client.clone());
 
-//     let buffer_for_path = |path: &'static str, cx: &mut gpui2::TestAppContext| {
-//         let buffer = project.update(cx, |p, cx| p.open_local_buffer(dir.path().join(path), cx));
-//         async move { buffer.await.unwrap() }
-//     };
-//     let id_for_path = |path: &'static str, cx: &mut gpui2::TestAppContext| {
-//         project.update(cx, |project, cx| {
-//             let tree = project.worktrees().next().unwrap();
-//             tree.read(cx)
-//                 .entry_for_path(path)
-//                 .unwrap_or_else(|| panic!("no entry for path {}", path))
-//                 .id
-//         })
-//     };
+    let buffer_for_path = |path: &'static str, cx: &mut gpui2::TestAppContext| {
+        let buffer = project.update(cx, |p, cx| p.open_local_buffer(dir.path().join(path), cx));
+        async move { buffer.await.unwrap() }
+    };
+    let id_for_path = |path: &'static str, cx: &mut gpui2::TestAppContext| {
+        project.update(cx, |project, cx| {
+            let tree = project.worktrees().next().unwrap();
+            tree.read(cx)
+                .entry_for_path(path)
+                .unwrap_or_else(|| panic!("no entry for path {}", path))
+                .id
+        })
+    };
 
-//     let buffer2 = buffer_for_path("a/file2", cx).await;
-//     let buffer3 = buffer_for_path("a/file3", cx).await;
-//     let buffer4 = buffer_for_path("b/c/file4", cx).await;
-//     let buffer5 = buffer_for_path("b/c/file5", cx).await;
+    let buffer2 = buffer_for_path("a/file2", cx).await;
+    let buffer3 = buffer_for_path("a/file3", cx).await;
+    let buffer4 = buffer_for_path("b/c/file4", cx).await;
+    let buffer5 = buffer_for_path("b/c/file5", cx).await;
 
-//     let file2_id = id_for_path("a/file2", cx);
-//     let file3_id = id_for_path("a/file3", cx);
-//     let file4_id = id_for_path("b/c/file4", cx);
+    let file2_id = id_for_path("a/file2", cx);
+    let file3_id = id_for_path("a/file3", cx);
+    let file4_id = id_for_path("b/c/file4", cx);
 
-//     // Create a remote copy of this worktree.
-//     let tree = project.update(cx, |project, _| project.worktrees().next().unwrap());
+    // Create a remote copy of this worktree.
+    let tree = project.update(cx, |project, _| project.worktrees().next().unwrap());
 
-//     let metadata = tree.update(cx, |tree, _| tree.as_local().unwrap().metadata_proto());
+    let metadata = tree.update(cx, |tree, _| tree.as_local().unwrap().metadata_proto());
 
-//     let updates = Arc::new(Mutex::new(Vec::new()));
-//     tree.update(cx, |tree, cx| {
-//         let _ = tree.as_local_mut().unwrap().observe_updates(0, cx, {
-//             let updates = updates.clone();
-//             move |update| {
-//                 updates.lock().push(update);
-//                 async { true }
-//             }
-//         });
-//     });
+    let updates = Arc::new(Mutex::new(Vec::new()));
+    tree.update(cx, |tree, cx| {
+        let _ = tree.as_local_mut().unwrap().observe_updates(0, cx, {
+            let updates = updates.clone();
+            move |update| {
+                updates.lock().push(update);
+                async { true }
+            }
+        });
+    });
 
-//     let remote = cx.update(|cx| Worktree::remote(1, 1, metadata, rpc.clone(), cx));
-//     cx.executor().run_until_parked();
+    let remote = cx.update(|cx| Worktree::remote(1, 1, metadata, rpc.clone(), cx));
 
-//     cx.update(|cx| {
-//         assert!(!buffer2.read(cx).is_dirty());
-//         assert!(!buffer3.read(cx).is_dirty());
-//         assert!(!buffer4.read(cx).is_dirty());
-//         assert!(!buffer5.read(cx).is_dirty());
-//     });
+    cx.executor().run_until_parked();
 
-//     // Rename and delete files and directories.
-//     tree.flush_fs_events(cx).await;
-//     std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
-//     std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
-//     std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
-//     std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
-//     tree.flush_fs_events(cx).await;
+    cx.update(|cx| {
+        assert!(!buffer2.read(cx).is_dirty());
+        assert!(!buffer3.read(cx).is_dirty());
+        assert!(!buffer4.read(cx).is_dirty());
+        assert!(!buffer5.read(cx).is_dirty());
+    });
 
-//     let expected_paths = vec![
-//         "a",
-//         "a/file1",
-//         "a/file2.new",
-//         "b",
-//         "d",
-//         "d/file3",
-//         "d/file4",
-//     ];
+    // Rename and delete files and directories.
+    tree.flush_fs_events(cx).await;
+    std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
+    std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
+    std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
+    std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
+    tree.flush_fs_events(cx).await;
 
-//     cx.update(|app| {
-//         assert_eq!(
-//             tree.read(app)
-//                 .paths()
-//                 .map(|p| p.to_str().unwrap())
-//                 .collect::<Vec<_>>(),
-//             expected_paths
-//         );
-//     });
+    let expected_paths = vec![
+        "a",
+        "a/file1",
+        "a/file2.new",
+        "b",
+        "d",
+        "d/file3",
+        "d/file4",
+    ];
 
-//     assert_eq!(id_for_path("a/file2.new", cx), file2_id);
-//     assert_eq!(id_for_path("d/file3", cx), file3_id);
-//     assert_eq!(id_for_path("d/file4", cx), file4_id);
+    cx.update(|app| {
+        assert_eq!(
+            tree.read(app)
+                .paths()
+                .map(|p| p.to_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected_paths
+        );
+    });
 
-//     cx.update(|cx| {
-//         assert_eq!(
-//             buffer2.read(cx).file().unwrap().path().as_ref(),
-//             Path::new("a/file2.new")
-//         );
-//         assert_eq!(
-//             buffer3.read(cx).file().unwrap().path().as_ref(),
-//             Path::new("d/file3")
-//         );
-//         assert_eq!(
-//             buffer4.read(cx).file().unwrap().path().as_ref(),
-//             Path::new("d/file4")
-//         );
-//         assert_eq!(
-//             buffer5.read(cx).file().unwrap().path().as_ref(),
-//             Path::new("b/c/file5")
-//         );
+    assert_eq!(id_for_path("a/file2.new", cx), file2_id);
+    assert_eq!(id_for_path("d/file3", cx), file3_id);
+    assert_eq!(id_for_path("d/file4", cx), file4_id);
 
-//         assert!(!buffer2.read(cx).file().unwrap().is_deleted());
-//         assert!(!buffer3.read(cx).file().unwrap().is_deleted());
-//         assert!(!buffer4.read(cx).file().unwrap().is_deleted());
-//         assert!(buffer5.read(cx).file().unwrap().is_deleted());
-//     });
+    cx.update(|cx| {
+        assert_eq!(
+            buffer2.read(cx).file().unwrap().path().as_ref(),
+            Path::new("a/file2.new")
+        );
+        assert_eq!(
+            buffer3.read(cx).file().unwrap().path().as_ref(),
+            Path::new("d/file3")
+        );
+        assert_eq!(
+            buffer4.read(cx).file().unwrap().path().as_ref(),
+            Path::new("d/file4")
+        );
+        assert_eq!(
+            buffer5.read(cx).file().unwrap().path().as_ref(),
+            Path::new("b/c/file5")
+        );
 
-//     // Update the remote worktree. Check that it becomes consistent with the
-//     // local worktree.
-//     cx.executor().run_until_parked();
+        assert!(!buffer2.read(cx).file().unwrap().is_deleted());
+        assert!(!buffer3.read(cx).file().unwrap().is_deleted());
+        assert!(!buffer4.read(cx).file().unwrap().is_deleted());
+        assert!(buffer5.read(cx).file().unwrap().is_deleted());
+    });
 
-//     remote.update(cx, |remote, _| {
-//         for update in updates.lock().drain(..) {
-//             remote.as_remote_mut().unwrap().update_from_remote(update);
-//         }
-//     });
-//     cx.executor().run_until_parked();
-//     remote.update(cx, |remote, _| {
-//         assert_eq!(
-//             remote
-//                 .paths()
-//                 .map(|p| p.to_str().unwrap())
-//                 .collect::<Vec<_>>(),
-//             expected_paths
-//         );
-//     });
-// }
+    // Update the remote worktree. Check that it becomes consistent with the
+    // local worktree.
+    cx.executor().run_until_parked();
+
+    remote.update(cx, |remote, _| {
+        for update in updates.lock().drain(..) {
+            remote.as_remote_mut().unwrap().update_from_remote(update);
+        }
+    });
+    cx.executor().run_until_parked();
+    remote.update(cx, |remote, _| {
+        assert_eq!(
+            remote
+                .paths()
+                .map(|p| p.to_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected_paths
+        );
+    });
+}
+
 #[gpui2::test(iterations = 10)]
 async fn test_buffer_identity_across_renames(cx: &mut gpui2::TestAppContext) {
     init_test(cx);
@@ -2942,7 +2975,6 @@ async fn test_buffer_deduping(cx: &mut gpui2::TestAppContext) {
 #[gpui2::test]
 async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
     init_test(cx);
-    dbg!("GAH");
 
     let fs = FakeFs::new(cx.executor().clone());
     fs.insert_tree(
@@ -2954,7 +2986,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
         }),
     )
     .await;
-    dbg!("NOOP");
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
 
@@ -2963,8 +2994,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
         .await
         .unwrap();
     let events = Arc::new(Mutex::new(Vec::new()));
-
-    dbg!("BOOP");
 
     // initially, the buffer isn't dirty.
     buffer1.update(cx, |buffer, cx| {
@@ -2982,7 +3011,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
 
         buffer.edit([(1..2, "")], None, cx);
     });
-    dbg!("ADSASD");
 
     // after the first edit, the buffer is dirty, and emits a dirtied event.
     buffer1.update(cx, |buffer, cx| {
@@ -3000,7 +3028,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
             cx,
         );
     });
-    dbg!("1111");
 
     // after saving, the buffer is not dirty, and emits a saved event.
     buffer1.update(cx, |buffer, cx| {
@@ -3011,8 +3038,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
         buffer.edit([(1..1, "B")], None, cx);
         buffer.edit([(2..2, "D")], None, cx);
     });
-
-    dbg!("5555555");
 
     // after editing again, the buffer is dirty, and emits another dirty event.
     buffer1.update(cx, |buffer, cx| {
@@ -3035,7 +3060,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
         assert!(!buffer.is_dirty());
     });
 
-    dbg!("666666");
     assert_eq!(
         *events.lock(),
         &[language2::Event::Edited, language2::Event::DirtyChanged]
@@ -3054,8 +3078,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
         })
         .detach();
     });
-
-    dbg!("0000000");
 
     fs.remove_file("/dir/file2".as_ref(), Default::default())
         .await
@@ -3084,7 +3106,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
         .detach();
     });
 
-    dbg!(";;;;;;");
     buffer3.update(cx, |buffer, cx| {
         buffer.edit([(0..0, "x")], None, cx);
     });

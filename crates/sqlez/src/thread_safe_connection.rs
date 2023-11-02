@@ -336,13 +336,13 @@ mod test {
                         FOREIGN KEY(dock_pane) REFERENCES panes(pane_id),
                         FOREIGN KEY(active_pane) REFERENCES panes(pane_id)
                     ) STRICT;
-                    
+
                     CREATE TABLE panes(
                         pane_id INTEGER PRIMARY KEY,
                         workspace_id INTEGER NOT NULL,
                         active INTEGER NOT NULL, -- Boolean
-                        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) 
-                            ON DELETE CASCADE 
+                        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                            ON DELETE CASCADE
                             ON UPDATE CASCADE
                     ) STRICT;
                 "]

@@ -1,4 +1,4 @@
-use crate::{private::Sealed, AnyBox, AppContext, Context, Entity};
+use crate::{private::Sealed, AnyBox, AppContext, Context, Entity, ModelContext};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -59,7 +59,7 @@ impl EntityMap {
     /// Insert an entity into a slot obtained by calling `reserve`.
     pub fn insert<T>(&mut self, slot: Slot<T>, entity: T) -> Model<T>
     where
-        T: 'static + Send,
+        T: 'static,
     {
         let model = slot.0;
         self.entities.insert(model.entity_id, Box::new(entity));
@@ -167,6 +167,10 @@ impl AnyModel {
 
     pub fn entity_id(&self) -> EntityId {
         self.entity_id
+    }
+
+    pub fn entity_type(&self) -> TypeId {
+        self.entity_type
     }
 
     pub fn downgrade(&self) -> AnyWeakModel {
@@ -329,7 +333,7 @@ impl<T: 'static> Model<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut C::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> C::Result<R>
     where
         C: Context,
@@ -475,7 +479,7 @@ impl<T: 'static> WeakModel<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut C::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> Result<R>
     where
         C: Context,

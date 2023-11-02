@@ -50,7 +50,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     fn on_mouse_down(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + Send + 'static,
+        handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -71,7 +71,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     fn on_mouse_up(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + Send + 'static,
+        handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -92,7 +92,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     fn on_mouse_down_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + Send + 'static,
+        handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -113,7 +113,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     fn on_mouse_up_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + Send + 'static,
+        handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -133,7 +133,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
 
     fn on_mouse_move(
         mut self,
-        handler: impl Fn(&mut V, &MouseMoveEvent, &mut ViewContext<V>) + Send + 'static,
+        handler: impl Fn(&mut V, &MouseMoveEvent, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -150,7 +150,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
 
     fn on_scroll_wheel(
         mut self,
-        handler: impl Fn(&mut V, &ScrollWheelEvent, &mut ViewContext<V>) + Send + 'static,
+        handler: impl Fn(&mut V, &ScrollWheelEvent, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -178,7 +178,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
 
     fn on_action<A: 'static>(
         mut self,
-        listener: impl Fn(&mut V, &A, DispatchPhase, &mut ViewContext<V>) + Send + 'static,
+        listener: impl Fn(&mut V, &A, DispatchPhase, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -196,7 +196,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
 
     fn on_key_down(
         mut self,
-        listener: impl Fn(&mut V, &KeyDownEvent, DispatchPhase, &mut ViewContext<V>) + Send + 'static,
+        listener: impl Fn(&mut V, &KeyDownEvent, DispatchPhase, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -214,7 +214,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
 
     fn on_key_up(
         mut self,
-        listener: impl Fn(&mut V, &KeyUpEvent, DispatchPhase, &mut ViewContext<V>) + Send + 'static,
+        listener: impl Fn(&mut V, &KeyUpEvent, DispatchPhase, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -258,9 +258,9 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
         self
     }
 
-    fn on_drop<W: 'static + Send>(
+    fn on_drop<W: 'static>(
         mut self,
-        listener: impl Fn(&mut V, View<W>, &mut ViewContext<V>) + Send + 'static,
+        listener: impl Fn(&mut V, View<W>, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -303,7 +303,7 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
 
     fn on_click(
         mut self,
-        listener: impl Fn(&mut V, &ClickEvent, &mut ViewContext<V>) + Send + 'static,
+        listener: impl Fn(&mut V, &ClickEvent, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -316,11 +316,11 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
 
     fn on_drag<W>(
         mut self,
-        listener: impl Fn(&mut V, &mut ViewContext<V>) -> View<W> + Send + 'static,
+        listener: impl Fn(&mut V, &mut ViewContext<V>) -> View<W> + 'static,
     ) -> Self
     where
         Self: Sized,
-        W: 'static + Send + Render,
+        W: 'static + Render,
     {
         debug_assert!(
             self.stateful_interaction().drag_listener.is_none(),
@@ -335,7 +335,7 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
     }
 }
 
-pub trait ElementInteraction<V: 'static>: 'static + Send {
+pub trait ElementInteraction<V: 'static>: 'static {
     fn as_stateless(&self) -> &StatelessInteraction<V>;
     fn as_stateless_mut(&mut self) -> &mut StatelessInteraction<V>;
     fn as_stateful(&self) -> Option<&StatefulInteraction<V>>;
@@ -672,7 +672,7 @@ impl<V> From<ElementId> for StatefulInteraction<V> {
     }
 }
 
-type DropListener<V> = dyn Fn(&mut V, AnyView, &mut ViewContext<V>) + 'static + Send;
+type DropListener<V> = dyn Fn(&mut V, AnyView, &mut ViewContext<V>) + 'static;
 
 pub struct StatelessInteraction<V> {
     pub dispatch_context: DispatchContext,
@@ -1077,32 +1077,25 @@ pub struct FocusEvent {
 }
 
 pub type MouseDownListener<V> = Box<
-    dyn Fn(&mut V, &MouseDownEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
-        + Send
-        + 'static,
+    dyn Fn(&mut V, &MouseDownEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>) + 'static,
 >;
 pub type MouseUpListener<V> = Box<
-    dyn Fn(&mut V, &MouseUpEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
-        + Send
-        + 'static,
+    dyn Fn(&mut V, &MouseUpEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>) + 'static,
 >;
 
 pub type MouseMoveListener<V> = Box<
-    dyn Fn(&mut V, &MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
-        + Send
-        + 'static,
+    dyn Fn(&mut V, &MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>) + 'static,
 >;
 
 pub type ScrollWheelListener<V> = Box<
     dyn Fn(&mut V, &ScrollWheelEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
-        + Send
         + 'static,
 >;
 
-pub type ClickListener<V> = Box<dyn Fn(&mut V, &ClickEvent, &mut ViewContext<V>) + Send + 'static>;
+pub type ClickListener<V> = Box<dyn Fn(&mut V, &ClickEvent, &mut ViewContext<V>) + 'static>;
 
 pub(crate) type DragListener<V> =
-    Box<dyn Fn(&mut V, Point<Pixels>, &mut ViewContext<V>) -> AnyDrag + Send + 'static>;
+    Box<dyn Fn(&mut V, Point<Pixels>, &mut ViewContext<V>) -> AnyDrag + 'static>;
 
 pub type KeyListener<V> = Box<
     dyn Fn(
@@ -1112,6 +1105,5 @@ pub type KeyListener<V> = Box<
             DispatchPhase,
             &mut ViewContext<V>,
         ) -> Option<Box<dyn Action>>
-        + Send
         + 'static,
 >;

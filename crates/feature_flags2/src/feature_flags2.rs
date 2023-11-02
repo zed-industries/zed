@@ -28,7 +28,7 @@ pub trait FeatureFlagViewExt<V: 'static> {
         F: Fn(bool, &mut V, &mut ViewContext<V>) + Send + Sync + 'static;
 }
 
-impl<V> FeatureFlagViewExt<V> for ViewContext<'_, '_, V>
+impl<V> FeatureFlagViewExt<V> for ViewContext<'_, V>
 where
     V: 'static + Send + Sync,
 {

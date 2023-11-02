@@ -100,16 +100,15 @@ impl FakeEmbeddingProvider {
     }
 }
 
-#[async_trait]
 impl CredentialProvider for FakeEmbeddingProvider {
     fn has_credentials(&self) -> bool {
         true
     }
-    async fn retrieve_credentials(&self, _cx: &mut AppContext) -> ProviderCredential {
+    fn retrieve_credentials(&self, _cx: &mut AppContext) -> ProviderCredential {
         ProviderCredential::NotNeeded
     }
-    async fn save_credentials(&self, _cx: &mut AppContext, _credential: ProviderCredential) {}
-    async fn delete_credentials(&self, _cx: &mut AppContext) {}
+    fn save_credentials(&self, _cx: &mut AppContext, _credential: ProviderCredential) {}
+    fn delete_credentials(&self, _cx: &mut AppContext) {}
 }
 
 #[async_trait]
@@ -162,16 +161,15 @@ impl FakeCompletionProvider {
     }
 }
 
-#[async_trait]
 impl CredentialProvider for FakeCompletionProvider {
     fn has_credentials(&self) -> bool {
         true
     }
-    async fn retrieve_credentials(&self, _cx: &mut AppContext) -> ProviderCredential {
+    fn retrieve_credentials(&self, _cx: &mut AppContext) -> ProviderCredential {
         ProviderCredential::NotNeeded
     }
-    async fn save_credentials(&self, _cx: &mut AppContext, _credential: ProviderCredential) {}
-    async fn delete_credentials(&self, _cx: &mut AppContext) {}
+    fn save_credentials(&self, _cx: &mut AppContext, _credential: ProviderCredential) {}
+    fn delete_credentials(&self, _cx: &mut AppContext) {}
 }
 
 impl CompletionProvider for FakeCompletionProvider {
