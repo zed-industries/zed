@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{BTreeMap, HashMap};
 use futures::Stream;
-use gpui2::Executor;
+use gpui2::BackgroundExecutor;
 use live_kit_server::token;
 use media::core_video::CVImageBuffer;
 use parking_lot::Mutex;
@@ -16,7 +16,7 @@ pub struct TestServer {
     pub api_key: String,
     pub secret_key: String,
     rooms: Mutex<HashMap<String, TestServerRoom>>,
-    executor: Arc<Executor>,
+    executor: Arc<BackgroundExecutor>,
 }
 
 impl TestServer {
@@ -24,7 +24,7 @@ impl TestServer {
         url: String,
         api_key: String,
         secret_key: String,
-        executor: Arc<Executor>,
+        executor: Arc<BackgroundExecutor>,
     ) -> Result<Arc<TestServer>> {
         let mut servers = SERVERS.lock();
         if servers.contains_key(&url) {
