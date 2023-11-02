@@ -12,6 +12,7 @@ use crate::{
 use anyhow::anyhow;
 use async_task::Runnable;
 use futures::channel::oneshot;
+use parking::Unparker;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -163,6 +164,8 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch_on_main_thread(&self, runnable: Runnable);
     fn dispatch_after(&self, duration: Duration, runnable: Runnable);
     fn poll(&self, background_only: bool) -> bool;
+    fn park(&self);
+    fn unparker(&self) -> Unparker;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&self) -> Option<&TestDispatcher> {

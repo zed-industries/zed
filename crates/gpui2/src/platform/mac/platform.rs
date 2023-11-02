@@ -165,10 +165,10 @@ pub struct MacPlatformState {
 
 impl MacPlatform {
     pub fn new() -> Self {
-        let dispatcher = Arc::new(MacDispatcher);
+        let dispatcher = Arc::new(MacDispatcher::new());
         Self(Mutex::new(MacPlatformState {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
-            foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
+            foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system: Arc::new(MacTextSystem::new()),
             display_linker: MacDisplayLinker::new(),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },

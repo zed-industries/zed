@@ -16,6 +16,36 @@ use unindent::Unindent as _;
 use util::{assert_set_eq, test::temp_tree};
 
 #[gpui2::test]
+async fn test_block_via_channel(cx: &mut gpui2::TestAppContext) {
+    cx.executor().allow_parking();
+
+    let (tx, mut rx) = futures::channel::mpsc::unbounded();
+    let _thread = std::thread::spawn(move || {
+        std::fs::metadata("/Users").unwrap();
+        std::thread::sleep(Duration::from_millis(1000));
+        tx.unbounded_send(1).unwrap();
+    });
+    rx.next().await.unwrap();
+}
+
+#[gpui2::test]
+async fn test_block_via_smol(cx: &mut gpui2::TestAppContext) {
+    cx.executor().allow_parking();
+
+    let io_task = smol::unblock(move || {
+        println!("sleeping on thread {:?}", std::thread::current().id());
+        std::thread::sleep(Duration::from_millis(10));
+        1
+    });
+
+    let task = cx.foreground_executor().spawn(async move {
+        io_task.await;
+    });
+
+    task.await;
+}
+
+#[gpui2::test]
 async fn test_symlinks(cx: &mut gpui2::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -35,8 +65,6 @@ async fn test_symlinks(cx: &mut gpui2::TestAppContext) {
         }
     }));
 
-    dbg!("GOT HERE");
-
     let root_link_path = dir.path().join("root_link");
     os::unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
     os::unix::fs::symlink(
@@ -45,11 +73,8 @@ async fn test_symlinks(cx: &mut gpui2::TestAppContext) {
     )
     .unwrap();
 
-    dbg!("GOT HERE 2");
-
     let project = Project::test(Arc::new(RealFs), [root_link_path.as_ref()], cx).await;
 
-    dbg!("GOT HERE 2.5");
     project.update(cx, |project, cx| {
         let tree = project.worktrees().next().unwrap().read(cx);
         assert_eq!(tree.file_count(), 5);
@@ -58,8 +83,6 @@ async fn test_symlinks(cx: &mut gpui2::TestAppContext) {
             tree.inode_for_path("finnochio/grape")
         );
     });
-
-    dbg!("GOT HERE 3");
 }
 
 #[gpui2::test]
@@ -2706,7 +2729,7 @@ async fn test_save_as(cx: &mut gpui2::TestAppContext) {
 #[gpui2::test(retries = 5)]
 async fn test_rescan_and_remote_updates(cx: &mut gpui2::TestAppContext) {
     init_test(cx);
-    // cx.executor().allow_parking();
+    cx.executor().allow_parking();
 
     let dir = temp_tree(json!({
         "a": {

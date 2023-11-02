@@ -70,6 +70,10 @@ impl TestAppContext {
         &self.background_executor
     }
 
+    pub fn foreground_executor(&self) -> &ForegroundExecutor {
+        &self.foreground_executor
+    }
+
     pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> R {
         let mut cx = self.app.borrow_mut();
         cx.update(f)

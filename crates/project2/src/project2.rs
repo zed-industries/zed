@@ -877,17 +877,14 @@ impl Project {
             )
         });
         for path in root_paths {
-            dbg!(&path);
             let (tree, _) = project
                 .update(cx, |project, cx| {
                     project.find_or_create_local_worktree(path, true, cx)
                 })
                 .await
                 .unwrap();
-            dbg!("aaa");
             tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
                 .await;
-            dbg!("bbb");
         }
         project
     }
@@ -5993,10 +5990,8 @@ impl Project {
     ) -> Task<Result<(Model<Worktree>, PathBuf)>> {
         let abs_path = abs_path.as_ref();
         if let Some((tree, relative_path)) = self.find_local_worktree(abs_path, cx) {
-            dbg!("shortcut");
             Task::ready(Ok((tree, relative_path)))
         } else {
-            dbg!("long cut");
             let worktree = self.create_local_worktree(abs_path, visible, cx);
             cx.background_executor()
                 .spawn(async move { Ok((worktree.await?, PathBuf::new())) })

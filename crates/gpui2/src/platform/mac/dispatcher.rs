@@ -9,8 +9,11 @@ use objc::{
     runtime::{BOOL, YES},
     sel, sel_impl,
 };
+use parking::{Parker, Unparker};
+use parking_lot::Mutex;
 use std::{
     ffi::c_void,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -20,7 +23,17 @@ pub fn dispatch_get_main_queue() -> dispatch_queue_t {
     unsafe { &_dispatch_main_q as *const _ as dispatch_queue_t }
 }
 
-pub struct MacDispatcher;
+pub struct MacDispatcher {
+    parker: Arc<Mutex<Parker>>,
+}
+
+impl MacDispatcher {
+    pub fn new() -> Self {
+        MacDispatcher {
+            parker: Arc::new(Mutex::new(Parker::new())),
+        }
+    }
+}
 
 impl PlatformDispatcher for MacDispatcher {
     fn is_main_thread(&self) -> bool {
@@ -70,6 +83,14 @@ impl PlatformDispatcher for MacDispatcher {
 
     fn poll(&self, _background_only: bool) -> bool {
         false
+    }
+
+    fn park(&self) {
+        self.parker.lock().park()
+    }
+
+    fn unparker(&self) -> Unparker {
+        self.parker.lock().unparker()
     }
 }
 

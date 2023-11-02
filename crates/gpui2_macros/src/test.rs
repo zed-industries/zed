@@ -91,7 +91,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                         }
                         Some("BackgroundExecutor") => {
                             inner_fn_args.extend(quote!(gpui2::BackgroundExecutor::new(
-                                std::sync::Arc::new(dispatcher.clone())
+                                std::sync::Arc::new(dispatcher.clone()),
                             ),));
                             continue;
                         }

@@ -28,7 +28,7 @@ pub fn run_test(
             }
             let result = panic::catch_unwind(|| {
                 let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(seed));
-                test_fn(dispatcher.clone(), seed);
+                test_fn(dispatcher, seed);
             });
 
             match result {
