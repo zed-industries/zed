@@ -678,10 +678,15 @@ impl MacWindow {
 
 impl Drop for MacWindow {
     fn drop(&mut self) {
-        let native_window = self.0.lock().native_window;
-        unsafe {
-            native_window.close();
-        }
+        let this = self.0.lock();
+        let window = this.native_window;
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    window.close();
+                }
+            })
+            .detach();
     }
 }
 
@@ -868,17 +873,25 @@ impl PlatformWindow for MacWindow {
     fn zoom(&self) {
         let this = self.0.lock();
         let window = this.native_window;
-        unsafe {
-            window.zoom_(nil);
-        }
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    window.zoom_(nil);
+                }
+            })
+            .detach();
     }
 
     fn toggle_full_screen(&self) {
         let this = self.0.lock();
         let window = this.native_window;
-        unsafe {
-            window.toggleFullScreen_(nil);
-        }
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    window.toggleFullScreen_(nil);
+                }
+            })
+            .detach();
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(InputEvent) -> bool>) {

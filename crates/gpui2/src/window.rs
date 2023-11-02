@@ -575,6 +575,10 @@ impl<'a> WindowContext<'a> {
         self.window.active
     }
 
+    pub fn zoom_window(&self) {
+        self.window.platform_window.zoom();
+    }
+
     pub fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform
             .displays()

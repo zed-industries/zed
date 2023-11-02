@@ -2690,14 +2690,15 @@ impl Workspace {
 
     fn render_titlebar(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
         div()
+            .bg(cx.theme().colors().title_bar)
             .when(
-                matches!(cx.window_bounds(), WindowBounds::Fullscreen),
+                !matches!(cx.window_bounds(), WindowBounds::Fullscreen),
                 |s| s.pl_20(),
             )
-            .id(0)
+            .id("titlebar")
             .on_click(|workspace, event, cx| {
                 if event.up.click_count == 2 {
-                    println!("ZOOOOOM")
+                    cx.zoom_window();
                 }
             })
             .child("Collab title bar Item") // self.titlebar_item
