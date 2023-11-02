@@ -2,7 +2,24 @@ use gpui2::{AppContext, Hsla, SharedString};
 
 use crate::{ActiveTheme, Appearance};
 
-pub type ColorScale = [Hsla; 12];
+/// A one-based step in a [`ColorScale`].
+pub type ColorScaleStep = usize;
+
+pub struct ColorScale(Vec<Hsla>);
+
+impl FromIterator<Hsla> for ColorScale {
+    fn from_iter<T: IntoIterator<Item = Hsla>>(iter: T) -> Self {
+        Self(Vec::from_iter(iter))
+    }
+}
+
+impl std::ops::Index<ColorScaleStep> for ColorScale {
+    type Output = Hsla;
+
+    fn index(&self, index: ColorScaleStep) -> &Self::Output {
+        &self.0[index - 1]
+    }
+}
 
 pub struct ColorScales {
     pub gray: ColorScaleSet,
@@ -84,9 +101,6 @@ impl IntoIterator for ColorScales {
         .into_iter()
     }
 }
-
-/// A one-based step in a [`ColorScale`].
-pub type ColorScaleStep = usize;
 
 pub struct ColorScaleSet {
     name: SharedString,
