@@ -49,8 +49,7 @@ pub struct ThemeFamily {
 impl ThemeFamily {}
 
 pub struct ThemeVariant {
-    #[allow(dead_code)]
-    pub(crate) id: String,
+    pub id: String,
     pub name: SharedString,
     pub appearance: Appearance,
     pub styles: ThemeStyles,

@@ -5,21 +5,21 @@ use serde::Deserialize;
 use theme::{default_color_scales, ColorScales, ThemeFamily};
 
 #[derive(Deserialize, Debug)]
-pub struct VSCodeTheme {
+pub struct VsCodeTheme {
     #[serde(rename = "$schema")]
-    pub schema: String,
-    pub name: String,
-    pub author: String,
-    pub maintainers: Vec<String>,
+    pub schema: Option<String>,
+    pub name: Option<String>,
+    pub author: Option<String>,
+    pub maintainers: Option<Vec<String>>,
     #[serde(rename = "semanticClass")]
-    pub semantic_class: String,
+    pub semantic_class: Option<String>,
     #[serde(rename = "semanticHighlighting")]
-    pub semantic_highlighting: bool,
-    pub colors: VSCodeColors,
+    pub semantic_highlighting: Option<bool>,
+    pub colors: VsCodeColors,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct VSCodeColors {
+pub struct VsCodeColors {
     #[serde(rename = "editor.foreground")]
     text: String,
     #[serde(rename = "editor.background")]
@@ -27,36 +27,38 @@ pub struct VSCodeColors {
 }
 
 pub(crate) fn new_theme_family_from_vsc(path: &Path) -> Result<ThemeFamily> {
-    let path_str = path.to_str().unwrap();
-    let family_name = path_str.split('/').last().unwrap();
+    todo!()
 
-    let mut json_files: Vec<String> = Vec::new();
+    // let path_str = path.to_str().unwrap();
+    // let family_name = path_str.split('/').last().unwrap();
 
-    if path.is_dir() {
-        for entry in std::fs::read_dir(path).unwrap() {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(extension) = path.extension() {
-                    if extension == "json" {
-                        json_files.push(path.file_name().unwrap().to_str().unwrap().to_string());
-                    }
-                }
-            }
-        }
-    } else {
-        anyhow::bail!("Path is not a directory");
-    }
+    // let mut json_files: Vec<String> = Vec::new();
 
-    let mut theme_family = ThemeFamily {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: family_name.into(),
-        author: "New Theme Family".into(),
-        themes: Vec::new(),
-        scales: default_color_scales(),
-    };
+    // if path.is_dir() {
+    //     for entry in std::fs::read_dir(path).unwrap() {
+    //         let entry = entry.unwrap();
+    //         let path = entry.path();
+    //         if path.is_file() {
+    //             if let Some(extension) = path.extension() {
+    //                 if extension == "json" {
+    //                     json_files.push(path.file_name().unwrap().to_str().unwrap().to_string());
+    //                 }
+    //             }
+    //         }
+    //     }
+    // } else {
+    //     anyhow::bail!("Path is not a directory");
+    // }
 
-    Ok(theme_family)
+    // let mut theme_family = ThemeFamily {
+    //     id: uuid::Uuid::new_v4().to_string(),
+    //     name: family_name.into(),
+    //     author: "New Theme Family".into(),
+    //     themes: Vec::new(),
+    //     scales: default_color_scales(),
+    // };
+
+    // Ok(theme_family)
 }
 
 #[cfg(test)]
