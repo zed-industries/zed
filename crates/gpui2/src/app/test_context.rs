@@ -4,7 +4,7 @@ use crate::{
     WindowContext,
 };
 use anyhow::{anyhow, bail};
-use futures::{SinkExt, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::Arc, time::Duration};
 
 #[derive(Clone)]
@@ -165,13 +165,11 @@ impl TestAppContext {
     where
         T::Event: 'static + Clone,
     {
-        let (mut tx, rx) = futures::channel::mpsc::unbounded();
+        let (tx, rx) = futures::channel::mpsc::unbounded();
         entity
             .update(self, |_, cx: &mut ModelContext<T>| {
-                cx.subscribe(entity, move |_, _, event, cx| {
-                    cx.background_executor()
-                        .block(tx.send(event.clone()))
-                        .unwrap();
+                cx.subscribe(entity, move |_model, _handle, event, _cx| {
+                    let _ = tx.unbounded_send(event.clone());
                 })
             })
             .detach();

@@ -1943,6 +1943,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
             .detach();
             buffer
         });
+
         buffers.push(buffer);
         replica_ids.push(i as ReplicaId);
         network.lock().add_peer(i as ReplicaId);

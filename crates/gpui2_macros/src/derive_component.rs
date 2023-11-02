@@ -36,10 +36,6 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
         }
     };
 
-    if name == "CollabPanel" {
-        println!("{}", expanded)
-    }
-
     TokenStream::from(expanded)
 }
 

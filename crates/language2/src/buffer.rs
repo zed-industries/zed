@@ -434,7 +434,7 @@ impl Buffer {
         ));
 
         let text_operations = self.text.operations().clone();
-        cx.spawn(|_| async move {
+        cx.background_executor().spawn(async move {
             let since = since.unwrap_or_default();
             operations.extend(
                 text_operations
