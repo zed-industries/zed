@@ -134,7 +134,7 @@ impl Room {
                 }
             });
 
-            let _maintain_video_tracks = cx.spawn_on_main({
+            let _maintain_video_tracks = cx.spawn({
                 let room = room.clone();
                 move |this, mut cx| async move {
                     let mut track_video_changes = room.remote_video_track_updates();
@@ -153,7 +153,7 @@ impl Room {
                 }
             });
 
-            let _maintain_audio_tracks = cx.spawn_on_main({
+            let _maintain_audio_tracks = cx.spawn({
                 let room = room.clone();
                 |this, mut cx| async move {
                     let mut track_audio_changes = room.remote_audio_track_updates();
@@ -326,7 +326,7 @@ impl Room {
     fn app_will_quit(&mut self, cx: &mut ModelContext<Self>) -> impl Future<Output = ()> {
         let task = if self.status.is_online() {
             let leave = self.leave_internal(cx);
-            Some(cx.executor().spawn(async move {
+            Some(cx.background_executor().spawn(async move {
                 leave.await.log_err();
             }))
         } else {
@@ -394,7 +394,7 @@ impl Room {
         self.clear_state(cx);
 
         let leave_room = self.client.request(proto::LeaveRoom {});
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             leave_room.await?;
             anyhow::Ok(())
         })
@@ -449,7 +449,8 @@ impl Room {
 
                 // Wait for client to re-establish a connection to the server.
                 {
-                    let mut reconnection_timeout = cx.executor().timer(RECONNECT_TIMEOUT).fuse();
+                    let mut reconnection_timeout =
+                        cx.background_executor().timer(RECONNECT_TIMEOUT).fuse();
                     let client_reconnection = async {
                         let mut remaining_attempts = 3;
                         while remaining_attempts > 0 {
@@ -1195,7 +1196,7 @@ impl Room {
         };
 
         cx.notify();
-        cx.executor().spawn_on_main(move || async move {
+        cx.background_executor().spawn(async move {
             client
                 .request(proto::UpdateParticipantLocation {
                     room_id,
@@ -1300,7 +1301,9 @@ impl Room {
                                 live_kit.room.unpublish_track(publication);
                             } else {
                                 if muted {
-                                    cx.executor().spawn(publication.set_mute(muted)).detach();
+                                    cx.background_executor()
+                                        .spawn(publication.set_mute(muted))
+                                        .detach();
                                 }
                                 live_kit.microphone_track = LocalTrack::Published {
                                     track_publication: publication,
@@ -1343,7 +1346,7 @@ impl Room {
             return Task::ready(Err(anyhow!("live-kit was not initialized")));
         };
 
-        cx.spawn_on_main(move |this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             let publish_track = async {
                 let displays = displays.await?;
                 let display = displays
@@ -1386,7 +1389,9 @@ impl Room {
                                 live_kit.room.unpublish_track(publication);
                             } else {
                                 if muted {
-                                    cx.executor().spawn(publication.set_mute(muted)).detach();
+                                    cx.background_executor()
+                                        .spawn(publication.set_mute(muted))
+                                        .detach();
                                 }
                                 live_kit.screen_track = LocalTrack::Published {
                                     track_publication: publication,
@@ -1453,14 +1458,11 @@ impl Room {
                     .remote_audio_track_publications(&participant.user.id.to_string())
                 {
                     let deafened = live_kit.deafened;
-                    tasks.push(
-                        cx.executor()
-                            .spawn_on_main(move || track.set_enabled(!deafened)),
-                    );
+                    tasks.push(cx.foreground_executor().spawn(track.set_enabled(!deafened)));
                 }
             }
 
-            Ok(cx.executor().spawn_on_main(|| async {
+            Ok(cx.foreground_executor().spawn(async move {
                 if let Some(mute_task) = mute_task {
                     mute_task.await?;
                 }
@@ -1551,7 +1553,8 @@ impl LiveKitRoom {
                 *muted = should_mute;
                 cx.notify();
                 Ok((
-                    cx.executor().spawn(track_publication.set_mute(*muted)),
+                    cx.background_executor()
+                        .spawn(track_publication.set_mute(*muted)),
                     old_muted,
                 ))
             }

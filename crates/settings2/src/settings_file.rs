@@ -2,7 +2,7 @@ use crate::{settings_store::SettingsStore, Settings};
 use anyhow::Result;
 use fs2::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui2::{AppContext, Executor};
+use gpui2::{AppContext, BackgroundExecutor};
 use std::{io::ErrorKind, path::PathBuf, str, sync::Arc, time::Duration};
 use util::{paths, ResultExt};
 
@@ -28,7 +28,7 @@ pub fn test_settings() -> String {
 }
 
 pub fn watch_config_file(
-    executor: &Executor,
+    executor: &BackgroundExecutor,
     fs: Arc<dyn Fs>,
     path: PathBuf,
 ) -> mpsc::UnboundedReceiver<String> {
@@ -63,7 +63,10 @@ pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,
 ) {
-    let user_settings_content = cx.executor().block(user_settings_file_rx.next()).unwrap();
+    let user_settings_content = cx
+        .background_executor()
+        .block(user_settings_file_rx.next())
+        .unwrap();
     cx.update_global(|store: &mut SettingsStore, cx| {
         store
             .set_user_settings(&user_settings_content, cx)

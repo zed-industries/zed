@@ -7,9 +7,7 @@ use util::ResultExt;
 // actions!(cli, [Install]);
 
 pub async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
-    let cli_path = cx
-        .run_on_main(|cx| cx.path_for_auxiliary_executable("cli"))?
-        .await?;
+    let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))??;
     let link_path = Path::new("/usr/local/bin/zed");
     let bin_dir_path = link_path.parent().unwrap();
 

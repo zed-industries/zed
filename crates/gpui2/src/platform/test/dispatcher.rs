@@ -2,6 +2,7 @@ use crate::PlatformDispatcher;
 use async_task::Runnable;
 use backtrace::Backtrace;
 use collections::{HashMap, VecDeque};
+use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use std::{
@@ -19,6 +20,8 @@ struct TestDispatcherId(usize);
 pub struct TestDispatcher {
     id: TestDispatcherId,
     state: Arc<Mutex<TestDispatcherState>>,
+    parker: Arc<Mutex<Parker>>,
+    unparker: Unparker,
 }
 
 struct TestDispatcherState {
@@ -35,6 +38,7 @@ struct TestDispatcherState {
 
 impl TestDispatcher {
     pub fn new(random: StdRng) -> Self {
+        let (parker, unparker) = parking::pair();
         let state = TestDispatcherState {
             random,
             foreground: HashMap::default(),
@@ -50,6 +54,8 @@ impl TestDispatcher {
         TestDispatcher {
             id: TestDispatcherId(0),
             state: Arc::new(Mutex::new(state)),
+            parker: Arc::new(Mutex::new(parker)),
+            unparker,
         }
     }
 
@@ -96,7 +102,7 @@ impl TestDispatcher {
     }
 
     pub fn run_until_parked(&self) {
-        while self.poll() {}
+        while self.poll(false) {}
     }
 
     pub fn parking_allowed(&self) -> bool {
@@ -129,6 +135,8 @@ impl Clone for TestDispatcher {
         Self {
             id: TestDispatcherId(id),
             state: self.state.clone(),
+            parker: self.parker.clone(),
+            unparker: self.unparker.clone(),
         }
     }
 }
@@ -140,6 +148,7 @@ impl PlatformDispatcher for TestDispatcher {
 
     fn dispatch(&self, runnable: Runnable) {
         self.state.lock().background.push(runnable);
+        self.unparker.unpark();
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
@@ -149,6 +158,7 @@ impl PlatformDispatcher for TestDispatcher {
             .entry(self.id)
             .or_default()
             .push_back(runnable);
+        self.unparker.unpark();
     }
 
     fn dispatch_after(&self, duration: std::time::Duration, runnable: Runnable) {
@@ -160,7 +170,7 @@ impl PlatformDispatcher for TestDispatcher {
         state.delayed.insert(ix, (next_time, runnable));
     }
 
-    fn poll(&self) -> bool {
+    fn poll(&self, background_only: bool) -> bool {
         let mut state = self.state.lock();
 
         while let Some((deadline, _)) = state.delayed.first() {
@@ -171,11 +181,15 @@ impl PlatformDispatcher for TestDispatcher {
             state.background.push(runnable);
         }
 
-        let foreground_len: usize = state
-            .foreground
-            .values()
-            .map(|runnables| runnables.len())
-            .sum();
+        let foreground_len: usize = if background_only {
+            0
+        } else {
+            state
+                .foreground
+                .values()
+                .map(|runnables| runnables.len())
+                .sum()
+        };
         let background_len = state.background.len();
 
         if foreground_len == 0 && background_len == 0 {
@@ -211,62 +225,15 @@ impl PlatformDispatcher for TestDispatcher {
         true
     }
 
+    fn park(&self) {
+        self.parker.lock().park();
+    }
+
+    fn unparker(&self) -> Unparker {
+        self.unparker.clone()
+    }
+
     fn as_test(&self) -> Option<&TestDispatcher> {
         Some(self)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Executor;
-    use std::sync::Arc;
-
-    #[test]
-    fn test_dispatch() {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let executor = Executor::new(Arc::new(dispatcher));
-
-        let result = executor.block(async { executor.run_on_main(|| 1).await });
-        assert_eq!(result, 1);
-
-        let result = executor.block({
-            let executor = executor.clone();
-            async move {
-                executor
-                    .spawn_on_main({
-                        let executor = executor.clone();
-                        assert!(executor.is_main_thread());
-                        || async move {
-                            assert!(executor.is_main_thread());
-                            let result = executor
-                                .spawn({
-                                    let executor = executor.clone();
-                                    async move {
-                                        assert!(!executor.is_main_thread());
-
-                                        let result = executor
-                                            .spawn_on_main({
-                                                let executor = executor.clone();
-                                                || async move {
-                                                    assert!(executor.is_main_thread());
-                                                    2
-                                                }
-                                            })
-                                            .await;
-
-                                        assert!(!executor.is_main_thread());
-                                        result
-                                    }
-                                })
-                                .await;
-                            assert!(executor.is_main_thread());
-                            result
-                        }
-                    })
-                    .await
-            }
-        });
-        assert_eq!(result, 2);
     }
 }

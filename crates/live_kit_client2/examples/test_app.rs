@@ -42,7 +42,7 @@ fn main() {
         let live_kit_key = std::env::var("LIVE_KIT_KEY").unwrap_or("devkey".into());
         let live_kit_secret = std::env::var("LIVE_KIT_SECRET").unwrap_or("secret".into());
 
-        cx.spawn_on_main(|cx| async move {
+        cx.spawn(|cx| async move {
             let user_a_token = token::create(
                 &live_kit_key,
                 &live_kit_secret,
@@ -104,7 +104,7 @@ fn main() {
             }
 
             println!("Pausing for 5 seconds to test audio, make some noise!");
-            let timer = cx.executor().timer(Duration::from_secs(5));
+            let timer = cx.background_executor().timer(Duration::from_secs(5));
             timer.await;
             let remote_audio_track = room_b
                 .remote_audio_tracks("test-participant-1")

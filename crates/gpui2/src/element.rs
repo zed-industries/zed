@@ -4,7 +4,7 @@ pub(crate) use smallvec::SmallVec;
 use std::{any::Any, mem};
 
 pub trait Element<V: 'static> {
-    type ElementState: 'static + Send;
+    type ElementState: 'static;
 
     fn id(&self) -> Option<ElementId>;
 
@@ -97,7 +97,7 @@ impl<V, E: Element<V>> RenderedElement<V, E> {
 impl<V, E> ElementObject<V> for RenderedElement<V, E>
 where
     E: Element<V>,
-    E::ElementState: 'static + Send,
+    E::ElementState: 'static,
 {
     fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
         let frame_state = if let Some(id) = self.element.id() {
@@ -170,16 +170,14 @@ where
     }
 }
 
-pub struct AnyElement<V>(Box<dyn ElementObject<V> + Send>);
-
-unsafe impl<V> Send for AnyElement<V> {}
+pub struct AnyElement<V>(Box<dyn ElementObject<V>>);
 
 impl<V> AnyElement<V> {
     pub fn new<E>(element: E) -> Self
     where
         V: 'static,
-        E: 'static + Element<V> + Send,
-        E::ElementState: Any + Send,
+        E: 'static + Element<V>,
+        E::ElementState: Any,
     {
         AnyElement(Box::new(RenderedElement::new(element)))
     }
@@ -220,8 +218,8 @@ impl<V> Component<V> for AnyElement<V> {
 impl<V, E, F> Element<V> for Option<F>
 where
     V: 'static,
-    E: 'static + Component<V> + Send,
-    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    E: 'static + Component<V>,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static,
 {
     type ElementState = AnyElement<V>;
 
@@ -264,8 +262,8 @@ where
 impl<V, E, F> Component<V> for Option<F>
 where
     V: 'static,
-    E: 'static + Component<V> + Send,
-    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    E: 'static + Component<V>,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static,
 {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
@@ -275,8 +273,8 @@ where
 impl<V, E, F> Component<V> for F
 where
     V: 'static,
-    E: 'static + Component<V> + Send,
-    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + Send + 'static,
+    E: 'static + Component<V>,
+    F: FnOnce(&mut V, &mut ViewContext<'_, '_, V>) -> E + 'static,
 {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(Some(self))

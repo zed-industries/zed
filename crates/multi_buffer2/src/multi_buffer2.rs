@@ -878,7 +878,7 @@ impl MultiBuffer {
         cx.spawn(move |this, mut cx| async move {
             let mut excerpt_ranges = Vec::new();
             let mut range_counts = Vec::new();
-            cx.executor()
+            cx.background_executor()
                 .scoped(|scope| {
                     scope.spawn(async {
                         let (ranges, counts) =
@@ -4177,7 +4177,7 @@ mod tests {
         let guest_buffer = cx.build_model(|cx| {
             let state = host_buffer.read(cx).to_proto();
             let ops = cx
-                .executor()
+                .background_executor()
                 .block(host_buffer.read(cx).serialize_ops(None, cx));
             let mut buffer = Buffer::from_proto(1, state, None).unwrap();
             buffer
