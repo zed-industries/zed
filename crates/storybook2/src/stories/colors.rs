@@ -1,6 +1,6 @@
 use crate::story::Story;
 use gpui2::{px, Div, Render};
-use theme2::default_color_scales;
+use theme2::{default_color_scales, ColorScaleStep};
 use ui::prelude::*;
 
 pub struct ColorsStory;
@@ -30,9 +30,14 @@ impl Render for ColorsStory {
                                     .line_height(px(24.))
                                     .child(scale.name().to_string()),
                             )
-                            .child(div().flex().gap_1().children(
-                                (1..=12).map(|step| div().flex().size_6().bg(scale.step(cx, step))),
-                            ))
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1()
+                                    .children(ColorScaleStep::ALL.map(|step| {
+                                        div().flex().size_6().bg(scale.step(cx, step))
+                                    })),
+                            )
                     })),
             )
     }

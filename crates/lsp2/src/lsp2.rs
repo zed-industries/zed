@@ -5,7 +5,7 @@ pub use lsp_types::*;
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt};
-use gpui2::{AsyncAppContext, Executor, Task};
+use gpui2::{AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -62,7 +62,7 @@ pub struct LanguageServer {
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
     io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
-    executor: Executor,
+    executor: BackgroundExecutor,
     #[allow(clippy::type_complexity)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
@@ -248,7 +248,7 @@ impl LanguageServer {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
         });
-        let output_task = cx.executor().spawn({
+        let output_task = cx.background_executor().spawn({
             Self::handle_output(
                 stdin,
                 outbound_rx,
@@ -269,7 +269,7 @@ impl LanguageServer {
             code_action_kinds,
             next_id: Default::default(),
             outbound_tx,
-            executor: cx.executor().clone(),
+            executor: cx.background_executor().clone(),
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
@@ -595,8 +595,8 @@ impl LanguageServer {
     where
         T: request::Request,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(T::Params, AsyncAppContext) -> Fut,
-        Fut: 'static + Future<Output = Result<T::Result>> + Send,
+        F: 'static + FnMut(T::Params, AsyncAppContext) -> Fut + Send,
+        Fut: 'static + Future<Output = Result<T::Result>>,
     {
         self.on_custom_request(T::METHOD, f)
     }
@@ -629,7 +629,7 @@ impl LanguageServer {
     #[must_use]
     pub fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
-        F: 'static + Send + FnMut(Params, AsyncAppContext),
+        F: 'static + FnMut(Params, AsyncAppContext) + Send,
         Params: DeserializeOwned,
     {
         let prev_handler = self.notification_handlers.lock().insert(
@@ -657,8 +657,8 @@ impl LanguageServer {
         mut f: F,
     ) -> Subscription
     where
-        F: 'static + Send + FnMut(Params, AsyncAppContext) -> Fut,
-        Fut: 'static + Future<Output = Result<Res>> + Send,
+        F: 'static + FnMut(Params, AsyncAppContext) -> Fut + Send,
+        Fut: 'static + Future<Output = Result<Res>>,
         Params: DeserializeOwned + Send + 'static,
         Res: Serialize,
     {
@@ -670,10 +670,10 @@ impl LanguageServer {
                     match serde_json::from_str(params) {
                         Ok(params) => {
                             let response = f(params, cx.clone());
-                            cx.executor()
-                                .spawn_on_main({
+                            cx.foreground_executor()
+                                .spawn({
                                     let outbound_tx = outbound_tx.clone();
-                                    move || async move {
+                                    async move {
                                         let response = match response.await {
                                             Ok(result) => Response {
                                                 jsonrpc: JSON_RPC_VERSION,
@@ -769,7 +769,7 @@ impl LanguageServer {
         next_id: &AtomicUsize,
         response_handlers: &Mutex<Option<HashMap<usize, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
-        executor: &Executor,
+        executor: &BackgroundExecutor,
         params: T::Params,
     ) -> impl 'static + Future<Output = anyhow::Result<T::Result>>
     where
@@ -1047,8 +1047,9 @@ impl FakeLanguageServer {
             .on_request::<T, _, _>(move |params, cx| {
                 let result = handler(params, cx.clone());
                 let responded_tx = responded_tx.clone();
+                let executor = cx.background_executor().clone();
                 async move {
-                    cx.executor().simulate_random_delay().await;
+                    executor.simulate_random_delay().await;
                     let result = result.await;
                     responded_tx.unbounded_send(()).ok();
                     result

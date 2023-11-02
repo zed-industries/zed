@@ -129,7 +129,7 @@ impl Tab {
             .on_drag(move |_view, cx| cx.build_view(|cx| drag_state.clone()))
             .drag_over::<TabDragState>(|d| d.bg(black()))
             .on_drop(|_view, state: View<TabDragState>, cx| {
-                dbg!(state.read(cx));
+                eprintln!("{:?}", state.read(cx));
             })
             .px_2()
             .py_0p5()

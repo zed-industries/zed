@@ -68,25 +68,20 @@ use derive_more::{Deref, DerefMut};
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
-    mem,
-    ops::{Deref, DerefMut},
-    sync::Arc,
 };
 use taffy::TaffyLayoutEngine;
 
-type AnyBox = Box<dyn Any + Send>;
+type AnyBox = Box<dyn Any>;
 
 pub trait Context {
     type WindowContext<'a>: UpdateView;
     type ModelContext<'a, T>;
     type Result<T>;
 
-    fn build_model<T>(
+    fn build_model<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
-    ) -> Self::Result<Model<T>>
-    where
-        T: 'static + Send;
+    ) -> Self::Result<Model<T>>;
 
     fn update_model<T, R>(
         &mut self,
@@ -109,7 +104,7 @@ pub trait VisualContext: Context {
         build_view: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static + Send;
+        V: 'static;
 
     fn update_view<V: 'static, R>(
         &mut self,
@@ -149,153 +144,6 @@ pub enum GlobalKey {
     Numeric(usize),
     View(EntityId),
     Type(TypeId),
-}
-
-#[repr(transparent)]
-pub struct MainThread<T>(T);
-
-impl<T> Deref for MainThread<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> DerefMut for MainThread<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<C: Context> Context for MainThread<C> {
-    type WindowContext<'a> = MainThread<C::WindowContext<'a>>;
-    type ModelContext<'a, T> = MainThread<C::ModelContext<'a, T>>;
-    type Result<T> = C::Result<T>;
-
-    fn build_model<T>(
-        &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
-    ) -> Self::Result<Model<T>>
-    where
-        T: 'static + Send,
-    {
-        self.0.build_model(|cx| {
-            let cx = unsafe {
-                mem::transmute::<
-                    &mut C::ModelContext<'_, T>,
-                    &mut MainThread<C::ModelContext<'_, T>>,
-                >(cx)
-            };
-            build_model(cx)
-        })
-    }
-
-    fn update_model<T: 'static, R>(
-        &mut self,
-        handle: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
-    ) -> Self::Result<R> {
-        self.0.update_model(handle, |entity, cx| {
-            let cx = unsafe {
-                mem::transmute::<
-                    &mut C::ModelContext<'_, T>,
-                    &mut MainThread<C::ModelContext<'_, T>>,
-                >(cx)
-            };
-            update(entity, cx)
-        })
-    }
-
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
-    where
-        F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T,
-    {
-        self.0.update_window(window, |root, cx| {
-            let cx = unsafe {
-                mem::transmute::<&mut C::WindowContext<'_>, &mut MainThread<C::WindowContext<'_>>>(
-                    cx,
-                )
-            };
-            update(root, cx)
-        })
-    }
-}
-
-impl<C: VisualContext> VisualContext for MainThread<C> {
-    type ViewContext<'a, V: 'static> = MainThread<C::ViewContext<'a, V>>;
-
-    fn build_view<V>(
-        &mut self,
-        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
-    ) -> Self::Result<View<V>>
-    where
-        V: 'static + Send,
-    {
-        self.0.build_view(|cx| {
-            let cx = unsafe {
-                mem::transmute::<
-                    &mut C::ViewContext<'_, V>,
-                    &mut MainThread<C::ViewContext<'_, V>>,
-                >(cx)
-            };
-            build_view_state(cx)
-        })
-    }
-
-    fn update_view<V: 'static, R>(
-        &mut self,
-        view: &View<V>,
-        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, V>) -> R,
-    ) -> Self::Result<R> {
-        self.0.update_view(view, |view_state, cx| {
-            let cx = unsafe {
-                mem::transmute::<
-                    &mut C::ViewContext<'_, V>,
-                    &mut MainThread<C::ViewContext<'_, V>>,
-                >(cx)
-            };
-            update(view_state, cx)
-        })
-    }
-
-    fn replace_root_view<V>(
-        &mut self,
-        build_view: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
-    ) -> Self::Result<View<V>>
-    where
-        V: 'static + Send + Render,
-    {
-        self.0.replace_root_view(|cx| {
-            let cx = unsafe {
-                mem::transmute::<
-                    &mut C::ViewContext<'_, V>,
-                    &mut MainThread<C::ViewContext<'_, V>>,
-                >(cx)
-            };
-            build_view(cx)
-        })
-    }
-}
-
-impl<C: UpdateView> UpdateView for MainThread<C> {
-    type ViewContext<'a, V: 'static> = MainThread<C::ViewContext<'a, V>>;
-
-    fn update_view<V: 'static, R>(
-        &mut self,
-        view: &View<V>,
-        update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, V>) -> R,
-    ) -> R {
-        self.0.update_view(view, |view_state, cx| {
-            let cx = unsafe {
-                mem::transmute::<
-                    &mut C::ViewContext<'_, V>,
-                    &mut MainThread<C::ViewContext<'_, V>>,
-                >(cx)
-            };
-            update(view_state, cx)
-        })
-    }
 }
 
 pub trait BorrowAppContext {
@@ -383,32 +231,3 @@ impl<T: Into<ArcCow<'static, str>>> From<T> for SharedString {
         Self(value.into())
     }
 }
-
-pub(crate) struct MainThreadOnly<T: ?Sized> {
-    executor: Executor,
-    value: Arc<T>,
-}
-
-impl<T: ?Sized> Clone for MainThreadOnly<T> {
-    fn clone(&self) -> Self {
-        Self {
-            executor: self.executor.clone(),
-            value: self.value.clone(),
-        }
-    }
-}
-
-/// Allows a value to be accessed only on the main thread, allowing a non-`Send` type
-/// to become `Send`.
-impl<T: 'static + ?Sized> MainThreadOnly<T> {
-    pub(crate) fn new(value: Arc<T>, executor: Executor) -> Self {
-        Self { executor, value }
-    }
-
-    pub(crate) fn borrow_on_main_thread(&self) -> &T {
-        assert!(self.executor.is_main_thread());
-        &self.value
-    }
-}
-
-unsafe impl<T: ?Sized> Send for MainThreadOnly<T> {}

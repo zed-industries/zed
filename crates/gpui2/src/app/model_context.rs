@@ -1,6 +1,6 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity, EntityId,
-    EventEmitter, MainThread, Model, Subscription, Task, WeakModel, WindowContext,
+    EventEmitter, Model, Subscription, Task, WeakModel, WindowContext,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -38,15 +38,15 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         self.model_state.clone()
     }
 
-    pub fn observe<T2, E>(
+    pub fn observe<W, E>(
         &mut self,
         entity: &E,
-        mut on_notify: impl FnMut(&mut T, E, &mut ModelContext<'_, T>) + Send + 'static,
+        mut on_notify: impl FnMut(&mut T, E, &mut ModelContext<'_, T>) + 'static,
     ) -> Subscription
     where
-        T: 'static + Send,
-        T2: 'static,
-        E: Entity<T2>,
+        T: 'static,
+        W: 'static,
+        E: Entity<W>,
     {
         let this = self.weak_model();
         let entity_id = entity.entity_id();
@@ -67,10 +67,10 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn subscribe<T2, E>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(&mut T, E, &T2::Event, &mut ModelContext<'_, T>) + Send + 'static,
+        mut on_event: impl FnMut(&mut T, E, &T2::Event, &mut ModelContext<'_, T>) + 'static,
     ) -> Subscription
     where
-        T: 'static + Send,
+        T: 'static,
         T2: 'static + EventEmitter,
         E: Entity<T2>,
     {
@@ -93,7 +93,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn on_release(
         &mut self,
-        mut on_release: impl FnMut(&mut T, &mut AppContext) + Send + 'static,
+        mut on_release: impl FnMut(&mut T, &mut AppContext) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -110,10 +110,10 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe_release<T2, E>(
         &mut self,
         entity: &E,
-        mut on_release: impl FnMut(&mut T, &mut T2, &mut ModelContext<'_, T>) + Send + 'static,
+        mut on_release: impl FnMut(&mut T, &mut T2, &mut ModelContext<'_, T>) + 'static,
     ) -> Subscription
     where
-        T: Any + Send,
+        T: Any,
         T2: 'static,
         E: Entity<T2>,
     {
@@ -132,10 +132,10 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        mut f: impl FnMut(&mut T, &mut ModelContext<'_, T>) + Send + 'static,
+        mut f: impl FnMut(&mut T, &mut ModelContext<'_, T>) + 'static,
     ) -> Subscription
     where
-        T: 'static + Send,
+        T: 'static,
     {
         let handle = self.weak_model();
         self.global_observers.insert(
@@ -146,11 +146,11 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn on_app_quit<Fut>(
         &mut self,
-        mut on_quit: impl FnMut(&mut T, &mut ModelContext<T>) -> Fut + Send + 'static,
+        mut on_quit: impl FnMut(&mut T, &mut ModelContext<T>) -> Fut + 'static,
     ) -> Subscription
     where
-        Fut: 'static + Future<Output = ()> + Send,
-        T: 'static + Send,
+        Fut: 'static + Future<Output = ()>,
+        T: 'static,
     {
         let handle = self.weak_model();
         self.app.quit_observers.insert(
@@ -162,7 +162,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
                         future.await;
                     }
                 }
-                .boxed()
+                .boxed_local()
             }),
         )
     }
@@ -181,7 +181,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static + Send,
+        G: 'static,
     {
         let mut global = self.app.lease_global::<G>();
         let result = f(&mut global, self);
@@ -192,30 +192,17 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakModel<T>, AsyncAppContext) -> Fut) -> Task<R>
     where
         T: 'static,
-        Fut: Future<Output = R> + Send + 'static,
-        R: Send + 'static,
+        Fut: Future<Output = R> + 'static,
+        R: 'static,
     {
         let this = self.weak_model();
         self.app.spawn(|cx| f(this, cx))
-    }
-
-    pub fn spawn_on_main<Fut, R>(
-        &self,
-        f: impl FnOnce(WeakModel<T>, MainThread<AsyncAppContext>) -> Fut + Send + 'static,
-    ) -> Task<R>
-    where
-        Fut: Future<Output = R> + 'static,
-        R: Send + 'static,
-    {
-        let this = self.weak_model();
-        self.app.spawn_on_main(|cx| f(this, cx))
     }
 }
 
 impl<'a, T> ModelContext<'a, T>
 where
     T: EventEmitter,
-    T::Event: Send,
 {
     pub fn emit(&mut self, event: T::Event) {
         self.app.pending_effects.push_back(Effect::Emit {
@@ -230,13 +217,10 @@ impl<'a, T> Context for ModelContext<'a, T> {
     type ModelContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
-    fn build_model<U>(
+    fn build_model<U: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut Self::ModelContext<'_, U>) -> U,
-    ) -> Model<U>
-    where
-        U: 'static + Send,
-    {
+    ) -> Model<U> {
         self.app.build_model(build_model)
     }
 

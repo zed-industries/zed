@@ -1,16 +1,17 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppContext, Context, Executor, MainThread, Model, ModelContext,
-    Render, Result, Task, View, ViewContext, VisualContext, WindowContext, WindowHandle,
+    AnyView, AnyWindowHandle, AppContext, BackgroundExecutor, Context, ForegroundExecutor, Model,
+    ModelContext, Render, Result, Task, View, ViewContext, VisualContext, WindowContext,
+    WindowHandle,
 };
-use anyhow::Context as _;
+use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
-use parking_lot::Mutex;
-use std::{future::Future, mem, sync::Weak};
+use std::{cell::RefCell, future::Future, mem, rc::Weak};
 
 #[derive(Clone)]
 pub struct AsyncAppContext {
-    pub(crate) app: Weak<Mutex<AppContext>>,
-    pub(crate) executor: Executor,
+    pub(crate) app: Weak<RefCell<AppContext>>,
+    pub(crate) background_executor: BackgroundExecutor,
+    pub(crate) foreground_executor: ForegroundExecutor,
 }
 
 impl Context for AsyncAppContext {
@@ -23,11 +24,14 @@ impl Context for AsyncAppContext {
         build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>>
     where
-        T: 'static + Send,
+        T: 'static,
     {
-        let app = self.app.upgrade().context("app was released")?;
-        let mut lock = app.lock(); // Need this to compile
-        Ok(lock.build_model(build_model))
+        let app = self
+            .app
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut app = app.borrow_mut();
+        Ok(app.build_model(build_model))
     }
 
     fn update_model<T: 'static, R>(
@@ -35,9 +39,12 @@ impl Context for AsyncAppContext {
         handle: &Model<T>,
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
-        let app = self.app.upgrade().context("app was released")?;
-        let mut lock = app.lock(); // Need this to compile
-        Ok(lock.update_model(handle, update))
+        let app = self
+            .app
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut app = app.borrow_mut();
+        Ok(app.update_model(handle, update))
     }
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
@@ -45,72 +52,76 @@ impl Context for AsyncAppContext {
         F: FnOnce(AnyView, &mut Self::WindowContext<'_>) -> T,
     {
         let app = self.app.upgrade().context("app was released")?;
-        let mut lock = app.lock(); // Need this to compile
+        let mut lock = app.borrow_mut();
         lock.update_window(window, f)
     }
 }
 
 impl AsyncAppContext {
     pub fn refresh(&mut self) -> Result<()> {
-        let app = self.app.upgrade().context("app was released")?;
-        let mut lock = app.lock(); // Need this to compile
+        let app = self
+            .app
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut lock = app.borrow_mut();
         lock.refresh();
         Ok(())
     }
 
-    pub fn executor(&self) -> &Executor {
-        &self.executor
+    pub fn background_executor(&self) -> &BackgroundExecutor {
+        &self.background_executor
+    }
+
+    pub fn foreground_executor(&self) -> &ForegroundExecutor {
+        &self.foreground_executor
     }
 
     pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> Result<R> {
-        let app = self.app.upgrade().context("app was released")?;
-        let mut lock = app.lock();
+        let app = self
+            .app
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut lock = app.borrow_mut();
         Ok(f(&mut *lock))
     }
 
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static) -> Task<R>
-    where
-        Fut: Future<Output = R> + Send + 'static,
-        R: Send + 'static,
-    {
-        let this = self.clone();
-        self.executor.spawn(async move { f(this).await })
+    pub fn update_window<R>(
+        &self,
+        handle: AnyWindowHandle,
+        update: impl FnOnce(&mut WindowContext) -> R,
+    ) -> Result<R> {
+        let app = self
+            .app
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut app_context = app.borrow_mut();
+        app_context.update_window(handle.id, update)
     }
 
-    pub fn spawn_on_main<Fut, R>(
-        &self,
-        f: impl FnOnce(MainThread<AsyncAppContext>) -> Fut + Send + 'static,
-    ) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
-        R: Send + 'static,
+        R: 'static,
     {
-        let this = self.clone();
-        self.executor.spawn_on_main(|| f(MainThread(this)))
-    }
-
-    pub fn run_on_main<R>(
-        &self,
-        f: impl FnOnce(&mut MainThread<AppContext>) -> R + Send + 'static,
-    ) -> Result<Task<R>>
-    where
-        R: Send + 'static,
-    {
-        let app = self.app.upgrade().context("app was released")?;
-        let mut app_context = app.lock();
-        Ok(app_context.run_on_main(f))
+        self.foreground_executor.spawn(f(self.clone()))
     }
 
     pub fn has_global<G: 'static>(&self) -> Result<bool> {
-        let app = self.app.upgrade().context("app was released")?;
-        let lock = app.lock(); // Need this to compile
-        Ok(lock.has_global::<G>())
+        let app = self
+            .app
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = app.borrow_mut();
+        Ok(app.has_global::<G>())
     }
 
     pub fn read_global<G: 'static, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> Result<R> {
-        let app = self.app.upgrade().context("app was released")?;
-        let lock = app.lock(); // Need this to compile
-        Ok(read(lock.global(), &lock))
+        let app = self
+            .app
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = app.borrow_mut(); // Need this to compile
+        Ok(read(app.global(), &app))
     }
 
     pub fn try_read_global<G: 'static, R>(
@@ -118,40 +129,20 @@ impl AsyncAppContext {
         read: impl FnOnce(&G, &AppContext) -> R,
     ) -> Option<R> {
         let app = self.app.upgrade()?;
-        let lock = app.lock(); // Need this to compile
-        Some(read(lock.try_global()?, &lock))
+        let app = app.borrow_mut();
+        Some(read(app.try_global()?, &app))
     }
 
     pub fn update_global<G: 'static, R>(
         &mut self,
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
     ) -> Result<R> {
-        let app = self.app.upgrade().context("app was released")?;
-        let mut lock = app.lock(); // Need this to compile
-        Ok(lock.update_global(update))
-    }
-}
-
-impl MainThread<AsyncAppContext> {
-    pub fn update<R>(&self, f: impl FnOnce(&mut MainThread<AppContext>) -> R) -> Result<R> {
-        let app = self.app.upgrade().context("app was released")?;
-        let cx = &mut *app.lock();
-        let cx = unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) };
-        Ok(f(cx))
-    }
-
-    /// Opens a new window with the given option and the root view returned by the given function.
-    /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
-    /// functionality.
-    pub fn open_window<V: Render>(
-        &mut self,
-        options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut MainThread<WindowContext>) -> View<V> + Send + 'static,
-    ) -> Result<WindowHandle<V>> {
-        let app = self.app.upgrade().context("app was released")?;
-        let cx = &mut *app.lock();
-        let cx = unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) };
-        Ok(cx.open_window(options, build_root_view))
+        let app = self
+            .app
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut app = app.borrow_mut();
+        Ok(app.update_global(update))
     }
 }
 
@@ -177,7 +168,7 @@ impl AsyncWindowContext {
 
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + Send + 'static) {
         self.app
-            .update_window(self.window, |_root, cx| cx.on_next_frame(f))
+            .update_window(self.window, |cx| cx.on_next_frame(f))
             .ok();
     }
 
@@ -186,7 +177,7 @@ impl AsyncWindowContext {
         read: impl FnOnce(&G, &WindowContext) -> R,
     ) -> Result<R> {
         self.app
-            .update_window(self.window, |_, cx| read(cx.global(), cx))
+            .update_window(self.window, |cx| read(cx.global(), cx))
     }
 
     pub fn update_global<G, R>(
@@ -197,7 +188,7 @@ impl AsyncWindowContext {
         G: 'static,
     {
         self.app
-            .update_window(self.window, |_, cx| cx.update_global(update))
+            .update_window(self.window, |cx| cx.update_global(update))
     }
 
     pub fn spawn<Fut, R>(
@@ -209,30 +200,7 @@ impl AsyncWindowContext {
         R: Send + 'static,
     {
         let this = self.clone();
-        self.executor.spawn(async move { f(this).await })
-    }
-
-    pub fn spawn_on_main<Fut, R>(
-        &self,
-        f: impl FnOnce(AsyncWindowContext) -> Fut + Send + 'static,
-    ) -> Task<R>
-    where
-        Fut: Future<Output = R> + 'static,
-        R: Send + 'static,
-    {
-        let this = self.clone();
-        self.executor.spawn_on_main(|| f(this))
-    }
-
-    pub fn run_on_main<R>(
-        &mut self,
-        f: impl FnOnce(&mut MainThread<WindowContext>) -> R + Send + 'static,
-    ) -> Task<Result<R>>
-    where
-        R: Send + 'static,
-    {
-        self.update(|_, cx| cx.run_on_main(f))
-            .unwrap_or_else(|error| Task::ready(Err(error)))
+        self.foreground_executor.spawn(async move { f(this).await })
     }
 }
 
@@ -247,10 +215,10 @@ impl Context for AsyncWindowContext {
         build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
     ) -> Result<Model<T>>
     where
-        T: 'static + Send,
+        T: 'static,
     {
         self.app
-            .update_window(self.window, |_, cx| cx.build_model(build_model))
+            .update_window(self.window, |cx| cx.build_model(build_model))
     }
 
     fn update_model<T: 'static, R>(
@@ -259,7 +227,7 @@ impl Context for AsyncWindowContext {
         update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
     ) -> Result<R> {
         self.app
-            .update_window(self.window, |_, cx| cx.update_model(handle, update))
+            .update_window(self.window, |cx| cx.update_model(handle, update))
     }
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
@@ -278,10 +246,10 @@ impl VisualContext for AsyncWindowContext {
         build_view_state: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static + Send,
+        V: 'static,
     {
         self.app
-            .update_window(self.window, |_, cx| cx.build_view(build_view_state))
+            .update_window(self.window, |cx| cx.build_view(build_view_state))
     }
 
     fn update_view<V: 'static, R>(
@@ -290,7 +258,7 @@ impl VisualContext for AsyncWindowContext {
         update: impl FnOnce(&mut V, &mut Self::ViewContext<'_, V>) -> R,
     ) -> Self::Result<R> {
         self.app
-            .update_window(self.window, |_, cx| cx.update_view(view, update))
+            .update_window(self.window, |cx| cx.update_view(view, update))
     }
 
     fn replace_root_view<V>(
@@ -301,17 +269,6 @@ impl VisualContext for AsyncWindowContext {
         V: 'static + Send + Render,
     {
         self.app
-            .update_window(self.window, |_, cx| cx.replace_root_view(build_view))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_async_app_context_send_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<AsyncAppContext>();
+            .update_window(self.window, |cx| cx.replace_root_view(build_view))
     }
 }

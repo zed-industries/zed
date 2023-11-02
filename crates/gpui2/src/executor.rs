@@ -6,7 +6,11 @@ use std::{
     marker::PhantomData,
     mem,
     pin::Pin,
-    sync::Arc,
+    rc::Rc,
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
     task::{Context, Poll},
     time::Duration,
 };
@@ -14,8 +18,14 @@ use util::TryFutureExt;
 use waker_fn::waker_fn;
 
 #[derive(Clone)]
-pub struct Executor {
+pub struct BackgroundExecutor {
     dispatcher: Arc<dyn PlatformDispatcher>,
+}
+
+#[derive(Clone)]
+pub struct ForegroundExecutor {
+    dispatcher: Arc<dyn PlatformDispatcher>,
+    not_send: PhantomData<Rc<()>>,
 }
 
 #[must_use]
@@ -43,7 +53,7 @@ where
     E: 'static + Send + Debug,
 {
     pub fn detach_and_log_err(self, cx: &mut AppContext) {
-        cx.executor().spawn(self.log_err()).detach();
+        cx.background_executor().spawn(self.log_err()).detach();
     }
 }
 
@@ -58,7 +68,7 @@ impl<T> Future for Task<T> {
     }
 }
 
-impl Executor {
+impl BackgroundExecutor {
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         Self { dispatcher }
     }
@@ -76,68 +86,30 @@ impl Executor {
         Task::Spawned(task)
     }
 
-    /// Enqueues the given closure to run on the application's event loop.
-    /// Returns the result asynchronously.
-    pub fn run_on_main<F, R>(&self, func: F) -> Task<R>
-    where
-        F: FnOnce() -> R + Send + 'static,
-        R: Send + 'static,
-    {
-        if self.dispatcher.is_main_thread() {
-            Task::ready(func())
-        } else {
-            self.spawn_on_main(move || async move { func() })
-        }
-    }
-
-    /// Enqueues the given closure to be run on the application's event loop. The
-    /// closure returns a future which will be run to completion on the main thread.
-    pub fn spawn_on_main<F, R>(&self, func: impl FnOnce() -> F + Send + 'static) -> Task<R>
-    where
-        F: Future<Output = R> + 'static,
-        R: Send + 'static,
-    {
-        let (runnable, task) = async_task::spawn(
-            {
-                let this = self.clone();
-                async move {
-                    let task = this.spawn_on_main_local(func());
-                    task.await
-                }
-            },
-            {
-                let dispatcher = self.dispatcher.clone();
-                move |runnable| dispatcher.dispatch_on_main_thread(runnable)
-            },
-        );
-        runnable.schedule();
-        Task::Spawned(task)
-    }
-
-    /// Enqueues the given closure to be run on the application's event loop. Must
-    /// be called on the main thread.
-    pub fn spawn_on_main_local<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
-    where
-        R: 'static,
-    {
-        assert!(
-            self.dispatcher.is_main_thread(),
-            "must be called on main thread"
-        );
-
-        let dispatcher = self.dispatcher.clone();
-        let (runnable, task) = async_task::spawn_local(future, move |runnable| {
-            dispatcher.dispatch_on_main_thread(runnable)
-        });
-        runnable.schedule();
-        Task::Spawned(task)
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
+        self.block_internal(false, future)
     }
 
     pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
+        self.block_internal(true, future)
+    }
+
+    pub(crate) fn block_internal<R>(
+        &self,
+        background_only: bool,
+        future: impl Future<Output = R>,
+    ) -> R {
         pin_mut!(future);
-        let (parker, unparker) = parking::pair();
-        let waker = waker_fn(move || {
-            unparker.unpark();
+        let unparker = self.dispatcher.unparker();
+        let awoken = Arc::new(AtomicBool::new(false));
+
+        let waker = waker_fn({
+            let awoken = awoken.clone();
+            move || {
+                awoken.store(true, SeqCst);
+                unparker.unpark();
+            }
         });
         let mut cx = std::task::Context::from_waker(&waker);
 
@@ -145,12 +117,24 @@ impl Executor {
             match future.as_mut().poll(&mut cx) {
                 Poll::Ready(result) => return result,
                 Poll::Pending => {
-                    if !self.dispatcher.poll() {
-                        #[cfg(any(test, feature = "test-support"))]
-                        if let Some(_) = self.dispatcher.as_test() {
-                            panic!("blocked with nothing left to run")
+                    if !self.dispatcher.poll(background_only) {
+                        if awoken.swap(false, SeqCst) {
+                            continue;
                         }
-                        parker.park();
+
+                        #[cfg(any(test, feature = "test-support"))]
+                        if let Some(test) = self.dispatcher.as_test() {
+                            if !test.parking_allowed() {
+                                let mut backtrace_message = String::new();
+                                if let Some(backtrace) = test.waiting_backtrace() {
+                                    backtrace_message =
+                                        format!("\nbacktrace of waiting future:\n{:?}", backtrace);
+                                }
+                                panic!("parked with nothing left to run\n{:?}", backtrace_message)
+                            }
+                        }
+
+                        self.dispatcher.park();
                     }
                 }
             }
@@ -206,17 +190,17 @@ impl Executor {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn start_waiting(&self) {
-        todo!("start_waiting")
+        self.dispatcher.as_test().unwrap().start_waiting();
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn finish_waiting(&self) {
-        todo!("finish_waiting")
+        self.dispatcher.as_test().unwrap().finish_waiting();
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_random_delay(&self) -> impl Future<Output = ()> {
-        self.spawn(self.dispatcher.as_test().unwrap().simulate_random_delay())
+        self.dispatcher.as_test().unwrap().simulate_random_delay()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -229,6 +213,11 @@ impl Executor {
         self.dispatcher.as_test().unwrap().run_until_parked()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn allow_parking(&self) {
+        self.dispatcher.as_test().unwrap().allow_parking();
+    }
+
     pub fn num_cpus(&self) -> usize {
         num_cpus::get()
     }
@@ -238,8 +227,31 @@ impl Executor {
     }
 }
 
+impl ForegroundExecutor {
+    pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
+        Self {
+            dispatcher,
+            not_send: PhantomData,
+        }
+    }
+
+    /// Enqueues the given closure to be run on any thread. The closure returns
+    /// a future which will be run to completion on any available thread.
+    pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
+    where
+        R: 'static,
+    {
+        let dispatcher = self.dispatcher.clone();
+        let (runnable, task) = async_task::spawn_local(future, move |runnable| {
+            dispatcher.dispatch_on_main_thread(runnable)
+        });
+        runnable.schedule();
+        Task::Spawned(task)
+    }
+}
+
 pub struct Scope<'a> {
-    executor: Executor,
+    executor: BackgroundExecutor,
     futures: Vec<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     tx: Option<mpsc::Sender<()>>,
     rx: mpsc::Receiver<()>,
@@ -247,7 +259,7 @@ pub struct Scope<'a> {
 }
 
 impl<'a> Scope<'a> {
-    fn new(executor: Executor) -> Self {
+    fn new(executor: BackgroundExecutor) -> Self {
         let (tx, rx) = mpsc::channel(1);
         Self {
             executor,

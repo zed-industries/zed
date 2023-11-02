@@ -3,12 +3,11 @@ use crate::{
     Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect,
     Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId,
     Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
-    MainThread, MainThreadOnly, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow,
-    Point, PolychromeSprite, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams,
-    ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine,
-    Task, Underline, UnderlineStyle, UpdateView, View, VisualContext, WeakView, WindowOptions,
-    SUBPIXEL_VARIANTS,
+    Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad,
+    Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder,
+    Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task, Underline,
+    UnderlineStyle, UpdateView, View, VisualContext, WeakView, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -53,7 +52,7 @@ pub enum DispatchPhase {
     Capture,
 }
 
-type AnyListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + 'static>;
+type AnyListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 type AnyKeyListener = Box<
     dyn Fn(
             &dyn Any,
@@ -61,10 +60,9 @@ type AnyKeyListener = Box<
             DispatchPhase,
             &mut WindowContext,
         ) -> Option<Box<dyn Action>>
-        + Send
         + 'static,
 >;
-type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + Send + 'static>;
+type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + 'static>;
 
 slotmap::new_key_type! { pub struct FocusId; }
 
@@ -160,7 +158,7 @@ impl Drop for FocusHandle {
 // Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
-    platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
+    platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
@@ -195,7 +193,7 @@ impl Window {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         options: WindowOptions,
-        cx: &mut MainThread<AppContext>,
+        cx: &mut AppContext,
     ) -> Self {
         let platform_window = cx.platform().open_window(handle, options);
         let display_id = platform_window.display().id();
@@ -206,20 +204,14 @@ impl Window {
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
             move |content_size, scale_factor| {
-                handle
-                    .update(&mut cx, |_, cx| {
-                        cx.window.scale_factor = scale_factor;
-                        cx.window.scene_builder = SceneBuilder::new();
-                        cx.window.content_size = content_size;
-                        cx.window.display_id = cx
-                            .window
-                            .platform_window
-                            .borrow_on_main_thread()
-                            .display()
-                            .id();
-                        cx.window.dirty = true;
-                    })
-                    .log_err();
+                cx.update_window(handle, |cx| {
+                    cx.window.scale_factor = scale_factor;
+                    cx.window.scene_builder = SceneBuilder::new();
+                    cx.window.content_size = content_size;
+                    cx.window.display_id = cx.window.platform_window.display().id();
+                    cx.window.dirty = true;
+                })
+                .log_err();
             }
         }));
 
@@ -232,8 +224,6 @@ impl Window {
                     .unwrap_or(true)
             })
         });
-
-        let platform_window = MainThreadOnly::new(Arc::new(platform_window), cx.executor.clone());
 
         Window {
             handle,
@@ -408,27 +398,6 @@ impl<'a> WindowContext<'a> {
         )
     }
 
-    /// Schedule the given closure to be run on the main thread. It will be invoked with
-    /// a `MainThread<WindowContext>`, which provides access to platform-specific functionality
-    /// of the window.
-    pub fn run_on_main<R>(
-        &mut self,
-        f: impl FnOnce(&mut MainThread<WindowContext<'_>>) -> R + Send + 'static,
-    ) -> Task<Result<R>>
-    where
-        R: Send + 'static,
-    {
-        if self.executor.is_main_thread() {
-            Task::ready(Ok(f(unsafe {
-                mem::transmute::<&mut Self, &mut MainThread<Self>>(self)
-            })))
-        } else {
-            let handle = self.window.handle;
-            self.app
-                .run_on_main(move |cx| handle.update(cx, |_, cx| f(cx)))
-        }
-    }
-
     /// Create an `AsyncWindowContext`, which has a static lifetime and can be held across
     /// await points in async code.
     pub fn to_async(&self) -> AsyncWindowContext {
@@ -439,44 +408,39 @@ impl<'a> WindowContext<'a> {
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + Send + 'static) {
         let f = Box::new(f);
         let display_id = self.window.display_id;
-        self.run_on_main(move |cx| {
-            if let Some(callbacks) = cx.next_frame_callbacks.get_mut(&display_id) {
-                callbacks.push(f);
-                // If there was already a callback, it means that we already scheduled a frame.
-                if callbacks.len() > 1 {
-                    return;
-                }
-            } else {
-                let mut async_cx = cx.to_async();
-                cx.next_frame_callbacks.insert(display_id, vec![f]);
-                cx.platform().set_display_link_output_callback(
-                    display_id,
-                    Box::new(move |_current_time, _output_time| {
-                        let _ = async_cx.update(|_, cx| {
-                            let callbacks = cx
-                                .next_frame_callbacks
-                                .get_mut(&display_id)
-                                .unwrap()
-                                .drain(..)
-                                .collect::<Vec<_>>();
-                            for callback in callbacks {
-                                callback(cx);
-                            }
 
-                            cx.run_on_main(move |cx| {
-                                if cx.next_frame_callbacks.get(&display_id).unwrap().is_empty() {
-                                    cx.platform().stop_display_link(display_id);
-                                }
-                            })
-                            .detach();
-                        });
-                    }),
-                );
+        if let Some(callbacks) = self.next_frame_callbacks.get_mut(&display_id) {
+            callbacks.push(f);
+            // If there was already a callback, it means that we already scheduled a frame.
+            if callbacks.len() > 1 {
+                return;
             }
+        } else {
+            let async_cx = self.to_async();
+            self.next_frame_callbacks.insert(display_id, vec![f]);
+            self.platform().set_display_link_output_callback(
+                display_id,
+                Box::new(move |_current_time, _output_time| {
+                    let _ = async_cx.update(|_, cx| {
+                        let callbacks = cx
+                            .next_frame_callbacks
+                            .get_mut(&display_id)
+                            .unwrap()
+                            .drain(..)
+                            .collect::<Vec<_>>();
+                        for callback in callbacks {
+                            callback(cx);
+                        }
 
-            cx.platform().start_display_link(display_id);
-        })
-        .detach();
+                        if cx.next_frame_callbacks.get(&display_id).unwrap().is_empty() {
+                            cx.platform().stop_display_link(display_id);
+                        }
+                    });
+                }),
+            );
+        }
+
+        self.platform().start_display_link(display_id);
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
@@ -487,8 +451,8 @@ impl<'a> WindowContext<'a> {
         f: impl FnOnce(AnyWindowHandle, AsyncWindowContext) -> Fut,
     ) -> Task<R>
     where
-        R: Send + 'static,
-        Fut: Future<Output = R> + Send + 'static,
+        R: 'static,
+        Fut: Future<Output = R> + 'static,
     {
         let window = self.window.handle;
         self.app.spawn(move |app| {
@@ -605,7 +569,7 @@ impl<'a> WindowContext<'a> {
     /// a specific need to register a global listener.
     pub fn on_mouse_event<Event: 'static>(
         &mut self,
-        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + Send + 'static,
+        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
         let order = self.window.z_index_stack.clone();
         self.window
@@ -942,14 +906,8 @@ impl<'a> WindowContext<'a> {
         self.window.root_view = Some(root_view);
         let scene = self.window.scene_builder.build();
 
-        self.run_on_main(|cx| {
-            cx.window
-                .platform_window
-                .borrow_on_main_thread()
-                .draw(scene);
-            cx.window.dirty = false;
-        })
-        .detach();
+        self.window.platform_window.draw(scene);
+        self.window.dirty = false;
     }
 
     fn start_frame(&mut self) {
@@ -1283,7 +1241,7 @@ impl Context for WindowContext<'_> {
         build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
     ) -> Model<T>
     where
-        T: 'static + Send,
+        T: 'static,
     {
         let slot = self.app.entities.reserve();
         let model = build_model(&mut ModelContext::new(&mut *self.app, slot.downgrade()));
@@ -1325,7 +1283,7 @@ impl VisualContext for WindowContext<'_> {
         build_view_state: impl FnOnce(&mut Self::ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static + Send,
+        V: 'static,
     {
         let slot = self.app.entities.reserve();
         let view = View {
@@ -1501,7 +1459,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
     ) -> R
     where
-        S: 'static + Send,
+        S: 'static,
     {
         self.with_element_id(id, |global_id, cx| {
             if let Some(any) = cx
@@ -1539,7 +1497,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
     ) -> R
     where
-        S: 'static + Send,
+        S: 'static,
     {
         if let Some(element_id) = element_id {
             self.with_element_state(element_id, f)
@@ -1858,30 +1816,13 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         result
     }
 
-    pub fn run_on_main<R>(
-        &mut self,
-        view: &mut V,
-        f: impl FnOnce(&mut V, &mut MainThread<ViewContext<'_, V>>) -> R + Send + 'static,
-    ) -> Task<Result<R>>
-    where
-        R: Send + 'static,
-    {
-        if self.executor.is_main_thread() {
-            let cx = unsafe { mem::transmute::<&mut Self, &mut MainThread<Self>>(self) };
-            Task::ready(Ok(f(view, cx)))
-        } else {
-            let view = self.view();
-            self.window_cx.run_on_main(move |cx| view.update(cx, f))
-        }
-    }
-
     pub fn spawn<Fut, R>(
         &mut self,
         f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut,
     ) -> Task<R>
     where
-        R: Send + 'static,
-        Fut: Future<Output = R> + Send + 'static,
+        R: 'static,
+        Fut: Future<Output = R> + 'static,
     {
         let view = self.view().downgrade();
         self.window_cx.spawn(move |_, cx| f(view, cx))
@@ -1915,7 +1856,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     pub fn on_mouse_event<Event: 'static>(
         &mut self,
-        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + Send + 'static,
+        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + 'static,
     ) {
         let handle = self.view();
         self.window_cx.on_mouse_event(move |event, phase, cx| {
@@ -1940,28 +1881,15 @@ where
     }
 }
 
-impl<V: 'static> MainThread<ViewContext<'_, V>> {
-    fn platform_window(&self) -> &dyn PlatformWindow {
-        self.window.platform_window.borrow_on_main_thread().as_ref()
-    }
-
-    pub fn activate_window(&self) {
-        self.platform_window().activate();
-    }
-}
-
 impl<V> Context for ViewContext<'_, V> {
     type WindowContext<'a> = WindowContext<'a>;
     type ModelContext<'b, U> = ModelContext<'b, U>;
     type Result<U> = U;
 
-    fn build_model<T>(
+    fn build_model<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
-    ) -> Model<T>
-    where
-        T: 'static + Send,
-    {
+    ) -> Model<T> {
         self.window_cx.build_model(build_model)
     }
 
@@ -1984,7 +1912,7 @@ impl<V> Context for ViewContext<'_, V> {
 impl<V: 'static> VisualContext for ViewContext<'_, V> {
     type ViewContext<'a, W: 'static> = ViewContext<'a, W>;
 
-    fn build_view<W: 'static + Send>(
+    fn build_view<W: 'static>(
         &mut self,
         build_view: impl FnOnce(&mut Self::ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>> {

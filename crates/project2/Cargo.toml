@@ -16,6 +16,7 @@ test-support = [
     "settings2/test-support",
     "text/test-support",
     "prettier2/test-support",
+    "gpui2/test-support",
 ]
 
 [dependencies]

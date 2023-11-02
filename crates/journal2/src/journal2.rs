@@ -77,7 +77,7 @@ pub fn new_journal_entry(_: Arc<AppState>, cx: &mut AppContext) {
     let now = now.time();
     let _entry_heading = heading_entry(now, &settings.hour_format);
 
-    let _create_entry = cx.executor().spawn(async move {
+    let _create_entry = cx.background_executor().spawn(async move {
         std::fs::create_dir_all(month_dir)?;
         OpenOptions::new()
             .create(true)

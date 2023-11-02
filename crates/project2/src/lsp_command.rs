@@ -32,7 +32,7 @@ pub fn lsp_formatting_options(tab_size: u32) -> lsp2::FormattingOptions {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 pub(crate) trait LspCommand: 'static + Sized + Send {
     type Response: 'static + Default + Send;
     type LspRequest: 'static + Send + lsp2::request::Request;
@@ -148,7 +148,7 @@ impl From<lsp2::FormattingOptions> for FormattingOptions {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspCommand for PrepareRename {
     type Response = Option<Range<Anchor>>;
     type LspRequest = lsp2::request::PrepareRenameRequest;
@@ -279,7 +279,7 @@ impl LspCommand for PrepareRename {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspCommand for PerformRename {
     type Response = ProjectTransaction;
     type LspRequest = lsp2::request::Rename;
@@ -398,7 +398,7 @@ impl LspCommand for PerformRename {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspCommand for GetDefinition {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp2::request::GotoDefinition;
@@ -491,7 +491,7 @@ impl LspCommand for GetDefinition {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspCommand for GetTypeDefinition {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp2::request::GotoTypeDefinition;
@@ -783,7 +783,7 @@ fn location_links_to_proto(
         .collect()
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspCommand for GetReferences {
     type Response = Vec<Location>;
     type LspRequest = lsp2::request::References;
@@ -945,7 +945,7 @@ impl LspCommand for GetReferences {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspCommand for GetDocumentHighlights {
     type Response = Vec<DocumentHighlight>;
     type LspRequest = lsp2::request::DocumentHighlightRequest;
@@ -1096,7 +1096,7 @@ impl LspCommand for GetDocumentHighlights {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspCommand for GetHover {
     type Response = Option<Hover>;
     type LspRequest = lsp2::request::HoverRequest;
@@ -1314,7 +1314,7 @@ impl LspCommand for GetHover {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspCommand for GetCompletions {
     type Response = Vec<Completion>;
     type LspRequest = lsp2::request::Completion;
@@ -1545,7 +1545,7 @@ impl LspCommand for GetCompletions {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspCommand for GetCodeActions {
     type Response = Vec<CodeAction>;
     type LspRequest = lsp2::request::CodeActionRequest;
@@ -1684,7 +1684,7 @@ impl LspCommand for GetCodeActions {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspCommand for OnTypeFormatting {
     type Response = Option<Transaction>;
     type LspRequest = lsp2::request::OnTypeFormatting;
@@ -2192,7 +2192,7 @@ impl InlayHints {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspCommand for InlayHints {
     type Response = Vec<InlayHint>;
     type LspRequest = lsp2::InlayHintRequest;

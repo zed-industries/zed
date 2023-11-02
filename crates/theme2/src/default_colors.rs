@@ -1,9 +1,12 @@
-use gpui2::{hsla, Rgba};
+use std::num::ParseIntError;
+
+use gpui2::{hsla, Hsla, Rgba};
 
 use crate::{
     colors::{GitStatusColors, PlayerColor, PlayerColors, StatusColors, SystemColors, ThemeColors},
     scale::{ColorScaleSet, ColorScales},
     syntax::SyntaxTheme,
+    ColorScale,
 };
 
 impl Default for SystemColors {
@@ -20,7 +23,7 @@ impl Default for SystemColors {
 impl Default for StatusColors {
     fn default() -> Self {
         Self {
-            conflict: gpui2::black(),
+            conflict: red().dark().step_11(),
             created: gpui2::black(),
             deleted: gpui2::black(),
             error: gpui2::black(),
@@ -269,31 +272,35 @@ impl ThemeColors {
     }
 }
 
-struct DefaultColorScaleSet {
+type StaticColorScale = [&'static str; 12];
+
+struct StaticColorScaleSet {
     scale: &'static str,
-    light: [&'static str; 12],
-    light_alpha: [&'static str; 12],
-    dark: [&'static str; 12],
-    dark_alpha: [&'static str; 12],
+    light: StaticColorScale,
+    light_alpha: StaticColorScale,
+    dark: StaticColorScale,
+    dark_alpha: StaticColorScale,
 }
 
-impl From<DefaultColorScaleSet> for ColorScaleSet {
-    fn from(default: DefaultColorScaleSet) -> Self {
-        Self::new(
-            default.scale,
-            default
-                .light
-                .map(|color| Rgba::try_from(color).unwrap().into()),
-            default
-                .light_alpha
-                .map(|color| Rgba::try_from(color).unwrap().into()),
-            default
-                .dark
-                .map(|color| Rgba::try_from(color).unwrap().into()),
-            default
-                .dark_alpha
-                .map(|color| Rgba::try_from(color).unwrap().into()),
-        )
+impl TryFrom<StaticColorScaleSet> for ColorScaleSet {
+    type Error = ParseIntError;
+
+    fn try_from(value: StaticColorScaleSet) -> Result<Self, Self::Error> {
+        fn to_color_scale(scale: StaticColorScale) -> Result<ColorScale, ParseIntError> {
+            scale
+                .into_iter()
+                .map(|color| Rgba::try_from(color).map(Hsla::from))
+                .collect::<Result<Vec<_>, _>>()
+                .map(ColorScale::from_iter)
+        }
+
+        Ok(Self::new(
+            value.scale,
+            to_color_scale(value.light)?,
+            to_color_scale(value.light_alpha)?,
+            to_color_scale(value.dark)?,
+            to_color_scale(value.dark_alpha)?,
+        ))
     }
 }
 
@@ -336,7 +343,7 @@ pub fn default_color_scales() -> ColorScales {
 }
 
 fn gray() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Gray",
         light: [
             "#fcfcfcff",
@@ -395,11 +402,12 @@ fn gray() -> ColorScaleSet {
             "#ffffffed",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn mauve() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Mauve",
         light: [
             "#fdfcfdff",
@@ -458,11 +466,12 @@ fn mauve() -> ColorScaleSet {
             "#fdfdffef",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn slate() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Slate",
         light: [
             "#fcfcfdff",
@@ -521,11 +530,12 @@ fn slate() -> ColorScaleSet {
             "#fcfdffef",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn sage() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Sage",
         light: [
             "#fbfdfcff",
@@ -584,11 +594,12 @@ fn sage() -> ColorScaleSet {
             "#fdfffeed",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn olive() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Olive",
         light: [
             "#fcfdfcff",
@@ -647,11 +658,12 @@ fn olive() -> ColorScaleSet {
             "#fdfffded",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn sand() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Sand",
         light: [
             "#fdfdfcff",
@@ -710,11 +722,12 @@ fn sand() -> ColorScaleSet {
             "#fffffded",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn gold() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Gold",
         light: [
             "#fdfdfcff",
@@ -773,11 +786,12 @@ fn gold() -> ColorScaleSet {
             "#fef7ede7",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn bronze() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Bronze",
         light: [
             "#fdfcfcff",
@@ -836,11 +850,12 @@ fn bronze() -> ColorScaleSet {
             "#fff1e9ec",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn brown() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Brown",
         light: [
             "#fefdfcff",
@@ -899,11 +914,12 @@ fn brown() -> ColorScaleSet {
             "#feecd4f2",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn yellow() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Yellow",
         light: [
             "#fdfdf9ff",
@@ -962,11 +978,12 @@ fn yellow() -> ColorScaleSet {
             "#fef6baf6",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn amber() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Amber",
         light: [
             "#fefdfbff",
@@ -1025,11 +1042,12 @@ fn amber() -> ColorScaleSet {
             "#ffe7b3ff",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn orange() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Orange",
         light: [
             "#fefcfbff",
@@ -1088,11 +1106,12 @@ fn orange() -> ColorScaleSet {
             "#ffe0c2ff",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn tomato() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Tomato",
         light: [
             "#fffcfcff",
@@ -1151,11 +1170,12 @@ fn tomato() -> ColorScaleSet {
             "#ffd6cefb",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn red() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Red",
         light: [
             "#fffcfcff",
@@ -1214,11 +1234,12 @@ fn red() -> ColorScaleSet {
             "#ffd1d9ff",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn ruby() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Ruby",
         light: [
             "#fffcfdff",
@@ -1277,11 +1298,12 @@ fn ruby() -> ColorScaleSet {
             "#ffd3e2fe",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn crimson() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Crimson",
         light: [
             "#fffcfdff",
@@ -1340,11 +1362,12 @@ fn crimson() -> ColorScaleSet {
             "#ffd5eafd",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn pink() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Pink",
         light: [
             "#fffcfeff",
@@ -1403,11 +1426,12 @@ fn pink() -> ColorScaleSet {
             "#ffd3ecfd",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn plum() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Plum",
         light: [
             "#fefcffff",
@@ -1466,11 +1490,12 @@ fn plum() -> ColorScaleSet {
             "#feddfef4",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn purple() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Purple",
         light: [
             "#fefcfeff",
@@ -1529,11 +1554,12 @@ fn purple() -> ColorScaleSet {
             "#f1ddfffa",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn violet() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Violet",
         light: [
             "#fdfcfeff",
@@ -1592,11 +1618,12 @@ fn violet() -> ColorScaleSet {
             "#e3defffe",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn iris() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Iris",
         light: [
             "#fdfdffff",
@@ -1655,11 +1682,12 @@ fn iris() -> ColorScaleSet {
             "#e1e0fffe",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn indigo() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Indigo",
         light: [
             "#fdfdfeff",
@@ -1718,11 +1746,12 @@ fn indigo() -> ColorScaleSet {
             "#d6e1ffff",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn blue() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Blue",
         light: [
             "#fbfdffff",
@@ -1781,11 +1810,12 @@ fn blue() -> ColorScaleSet {
             "#c2e6ffff",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn cyan() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Cyan",
         light: [
             "#fafdfeff",
@@ -1844,11 +1874,12 @@ fn cyan() -> ColorScaleSet {
             "#bbf3fef7",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn teal() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Teal",
         light: [
             "#fafefdff",
@@ -1907,11 +1938,12 @@ fn teal() -> ColorScaleSet {
             "#b8ffebef",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn jade() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Jade",
         light: [
             "#fbfefdff",
@@ -1970,11 +2002,12 @@ fn jade() -> ColorScaleSet {
             "#b8ffe1ef",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn green() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Green",
         light: [
             "#fbfefcff",
@@ -2033,11 +2066,12 @@ fn green() -> ColorScaleSet {
             "#bbffd7f0",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn grass() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Grass",
         light: [
             "#fbfefbff",
@@ -2096,11 +2130,12 @@ fn grass() -> ColorScaleSet {
             "#ceffceef",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn lime() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Lime",
         light: [
             "#fcfdfaff",
@@ -2159,11 +2194,12 @@ fn lime() -> ColorScaleSet {
             "#e9febff7",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn mint() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Mint",
         light: [
             "#f9fefdff",
@@ -2222,11 +2258,12 @@ fn mint() -> ColorScaleSet {
             "#cbfee9f5",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn sky() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Sky",
         light: [
             "#f9feffff",
@@ -2285,11 +2322,12 @@ fn sky() -> ColorScaleSet {
             "#c2f3ffff",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn black() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "Black",
         light: [
             "#0000000d",
@@ -2348,11 +2386,12 @@ fn black() -> ColorScaleSet {
             "#000000f2",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }
 
 fn white() -> ColorScaleSet {
-    DefaultColorScaleSet {
+    StaticColorScaleSet {
         scale: "White",
         light: [
             "#ffffff0d",
@@ -2411,5 +2450,6 @@ fn white() -> ColorScaleSet {
             "#fffffff2",
         ],
     }
-    .into()
+    .try_into()
+    .unwrap()
 }

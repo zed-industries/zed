@@ -51,7 +51,7 @@ impl<V: 'static> Pane<V> {
                     .id("drag-target")
                     .drag_over::<ExternalPaths>(|d| d.bg(red()))
                     .on_drop(|_, files: View<ExternalPaths>, cx| {
-                        dbg!("dropped files!", files.read(cx));
+                        eprintln!("dropped files! {:?}", files.read(cx));
                     })
                     .absolute()
                     .inset_0(),

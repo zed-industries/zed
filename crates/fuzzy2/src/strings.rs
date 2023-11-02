@@ -2,7 +2,7 @@ use crate::{
     matcher::{Match, MatchCandidate, Matcher},
     CharBag,
 };
-use gpui2::Executor;
+use gpui2::BackgroundExecutor;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -83,7 +83,7 @@ pub async fn match_strings(
     smart_case: bool,
     max_results: usize,
     cancel_flag: &AtomicBool,
-    executor: Executor,
+    executor: BackgroundExecutor,
 ) -> Vec<StringMatch> {
     if candidates.is_empty() || max_results == 0 {
         return Default::default();

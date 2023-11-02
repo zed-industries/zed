@@ -26,8 +26,8 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui2::{
-    AnyModel, AppContext, AsyncAppContext, Context, Entity, EventEmitter, Executor, Model,
-    ModelContext, Task, WeakModel,
+    AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, Context, Entity, EventEmitter,
+    Model, ModelContext, Task, WeakModel,
 };
 use itertools::Itertools;
 use language2::{
@@ -207,7 +207,7 @@ impl DelayedDebounced {
 
         let previous_task = self.task.take();
         self.task = Some(cx.spawn(move |project, mut cx| async move {
-            let mut timer = cx.executor().timer(delay).fuse();
+            let mut timer = cx.background_executor().timer(delay).fuse();
             if let Some(previous_task) = previous_task {
                 previous_task.await;
             }
@@ -855,39 +855,39 @@ impl Project {
         }
     }
 
-    // #[cfg(any(test, feature = "test-support"))]
-    // pub async fn test(
-    //     fs: Arc<dyn Fs>,
-    //     root_paths: impl IntoIterator<Item = &Path>,
-    //     cx: &mut gpui::TestAppContext,
-    // ) -> Handle<Project> {
-    //     let mut languages = LanguageRegistry::test();
-    //     languages.set_executor(cx.background());
-    //     let http_client = util::http::FakeHttpClient::with_404_response();
-    //     let client = cx.update(|cx| client2::Client::new(http_client.clone(), cx));
-    //     let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-    //     let project = cx.update(|cx| {
-    //         Project::local(
-    //             client,
-    //             node_runtime::FakeNodeRuntime::new(),
-    //             user_store,
-    //             Arc::new(languages),
-    //             fs,
-    //             cx,
-    //         )
-    //     });
-    //     for path in root_paths {
-    //         let (tree, _) = project
-    //             .update(cx, |project, cx| {
-    //                 project.find_or_create_local_worktree(path, true, cx)
-    //             })
-    //             .await
-    //             .unwrap();
-    //         tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
-    //             .await;
-    //     }
-    //     project
-    // }
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn test(
+        fs: Arc<dyn Fs>,
+        root_paths: impl IntoIterator<Item = &Path>,
+        cx: &mut gpui2::TestAppContext,
+    ) -> Model<Project> {
+        let mut languages = LanguageRegistry::test();
+        languages.set_executor(cx.executor().clone());
+        let http_client = util::http::FakeHttpClient::with_404_response();
+        let client = cx.update(|cx| client2::Client::new(http_client.clone(), cx));
+        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let project = cx.update(|cx| {
+            Project::local(
+                client,
+                node_runtime::FakeNodeRuntime::new(),
+                user_store,
+                Arc::new(languages),
+                fs,
+                cx,
+            )
+        });
+        for path in root_paths {
+            let (tree, _) = project
+                .update(cx, |project, cx| {
+                    project.find_or_create_local_worktree(path, true, cx)
+                })
+                .await
+                .unwrap();
+            tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+                .await;
+        }
+        project
+    }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
         let mut language_servers_to_start = Vec::new();
@@ -1453,7 +1453,7 @@ impl Project {
                             };
                             if client.send(initial_state).log_err().is_some() {
                                 let client = client.clone();
-                                cx.executor()
+                                cx.background_executor()
                                     .spawn(async move {
                                         let mut chunks = split_operations(operations).peekable();
                                         while let Some(chunk) = chunks.next() {
@@ -1758,7 +1758,7 @@ impl Project {
             }
         };
 
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             wait_for_loading_buffer(loading_watch)
                 .await
                 .map_err(|error| anyhow!("{}", error))
@@ -2436,7 +2436,7 @@ impl Project {
                                 Duration::from_secs(1);
 
                             let task = cx.spawn(move |this, mut cx| async move {
-                                cx.executor().timer(DISK_BASED_DIAGNOSTICS_DEBOUNCE).await;
+                                cx.background_executor().timer(DISK_BASED_DIAGNOSTICS_DEBOUNCE).await;
                                 if let Some(this) = this.upgrade() {
                                     this.update(&mut cx, |this, cx| {
                                         this.disk_based_diagnostics_finished(
@@ -3477,7 +3477,7 @@ impl Project {
             });
 
             const PROCESS_TIMEOUT: Duration = Duration::from_secs(5);
-            let mut timeout = cx.executor().timer(PROCESS_TIMEOUT).fuse();
+            let mut timeout = cx.background_executor().timer(PROCESS_TIMEOUT).fuse();
 
             let mut errored = false;
             if let Some(mut process) = process {
@@ -5593,7 +5593,7 @@ impl Project {
             })
             .collect::<Vec<_>>();
 
-        let background = cx.executor().clone();
+        let background = cx.background_executor().clone();
         let path_count: usize = snapshots.iter().map(|s| s.visible_file_count()).sum();
         if path_count == 0 {
             let (_, rx) = smol::channel::bounded(1024);
@@ -5616,11 +5616,11 @@ impl Project {
                 }
             })
             .collect();
-        cx.executor()
+        cx.background_executor()
             .spawn(Self::background_search(
                 unnamed_files,
                 opened_buffers,
-                cx.executor().clone(),
+                cx.background_executor().clone(),
                 self.fs.clone(),
                 workers,
                 query.clone(),
@@ -5631,9 +5631,9 @@ impl Project {
             .detach();
 
         let (buffers, buffers_rx) = Self::sort_candidates_and_open_buffers(matching_paths_rx, cx);
-        let background = cx.executor().clone();
+        let background = cx.background_executor().clone();
         let (result_tx, result_rx) = smol::channel::bounded(1024);
-        cx.executor()
+        cx.background_executor()
             .spawn(async move {
                 let Ok(buffers) = buffers.await else {
                     return;
@@ -5741,7 +5741,7 @@ impl Project {
     async fn background_search(
         unnamed_buffers: Vec<Model<Buffer>>,
         opened_buffers: HashMap<Arc<Path>, (Model<Buffer>, BufferSnapshot)>,
-        executor: Executor,
+        executor: BackgroundExecutor,
         fs: Arc<dyn Fs>,
         workers: usize,
         query: SearchQuery,
@@ -5993,7 +5993,7 @@ impl Project {
             Task::ready(Ok((tree, relative_path)))
         } else {
             let worktree = self.create_local_worktree(abs_path, visible, cx);
-            cx.executor()
+            cx.background_executor()
                 .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
         }
     }
@@ -6064,7 +6064,7 @@ impl Project {
                 .shared()
             })
             .clone();
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             match task.await {
                 Ok(worktree) => Ok(worktree),
                 Err(err) => Err(anyhow!("{}", err)),
@@ -6376,7 +6376,7 @@ impl Project {
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
             let diff_bases_by_buffer = cx
-                .executor()
+                .background_executor()
                 .spawn(async move {
                     future_buffers
                         .into_iter()
@@ -6519,7 +6519,7 @@ impl Project {
                 })
                 .collect::<Vec<_>>();
 
-            cx.executor()
+            cx.background_executor()
                 .spawn(async move {
                     for task_result in future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_task)| {
                         async move {
@@ -7358,7 +7358,7 @@ impl Project {
                         })
                         .log_err();
 
-                    cx.executor()
+                    cx.background_executor()
                         .spawn(
                             async move {
                                 let operations = operations.await;
@@ -7960,7 +7960,7 @@ impl Project {
                         if let Some(buffer) = this.buffer_for_id(buffer_id) {
                             let operations =
                                 buffer.read(cx).serialize_ops(Some(remote_version), cx);
-                            cx.executor().spawn(async move {
+                            cx.background_executor().spawn(async move {
                                 let operations = operations.await;
                                 for chunk in split_operations(operations) {
                                     client
@@ -7983,7 +7983,7 @@ impl Project {
             // Any incomplete buffers have open requests waiting. Request that the host sends
             // creates these buffers for us again to unblock any waiting futures.
             for id in incomplete_buffer_ids {
-                cx.executor()
+                cx.background_executor()
                     .spawn(client.request(proto::OpenBufferById { project_id, id }))
                     .detach();
             }
@@ -8198,7 +8198,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx);
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             let snapshot = snapshot?;
             let mut lsp_edits = lsp_edits
                 .into_iter()
@@ -8438,7 +8438,7 @@ impl Project {
             let fs = self.fs.clone();
             cx.spawn(move |this, mut cx| async move {
                 let prettier_dir = match cx
-                    .executor()
+                    .background_executor()
                     .spawn(Prettier::locate(
                         worktree_path.zip(buffer_path).map(
                             |(worktree_root_path, starting_path)| LocateStart {
@@ -8649,7 +8649,7 @@ impl Project {
             .get(&(worktree, default_prettier_dir.to_path_buf()))
             .cloned();
         let fs = Arc::clone(&self.fs);
-        cx.spawn_on_main(move |this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             if let Some(previous_installation_process) = previous_installation_process {
                 previous_installation_process.await;
             }

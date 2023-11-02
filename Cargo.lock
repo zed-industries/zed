@@ -8807,6 +8807,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "text2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clock",
+ "collections",
+ "ctor",
+ "digest 0.9.0",
+ "env_logger 0.9.3",
+ "gpui2",
+ "lazy_static",
+ "log",
+ "parking_lot 0.11.2",
+ "postage",
+ "rand 0.8.5",
+ "regex",
+ "rope",
+ "smallvec",
+ "sum_tree",
+ "util",
+]
+
+[[package]]
 name = "textwrap"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11089,7 +11112,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempdir",
- "text",
+ "text2",
  "theme2",
  "thiserror",
  "tiny_http",
