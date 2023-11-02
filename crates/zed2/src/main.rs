@@ -34,7 +34,7 @@ use std::{
     fs::OpenOptions,
     io::{IsTerminal, Write},
     panic,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -49,7 +49,7 @@ use util::{
     paths, ResultExt,
 };
 use uuid::Uuid;
-use workspace2::{AppState, WorkspaceStore};
+use workspace::{AppState, WorkspaceStore};
 use zed2::{build_window_options, initialize_workspace, languages};
 use zed2::{ensure_only_instance, Assets, IsOnlyInstance};
 
@@ -191,7 +191,7 @@ fn main() {
         // audio::init(Assets, cx);
         // auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
-        workspace2::init(app_state.clone(), cx);
+        workspace::init(app_state.clone(), cx);
         // recent_projects::init(cx);
 
         // journal2::init(app_state.clone(), cx);
@@ -210,6 +210,7 @@ fn main() {
         if stdout_is_a_pty() {
             cx.activate(true);
             let urls = collect_url_args();
+            dbg!(&urls);
             if !urls.is_empty() {
                 listener.open_urls(urls)
             }
@@ -227,11 +228,27 @@ fn main() {
 
         let mut _triggered_authentication = false;
 
+        fn open_paths_and_log_errs(
+            paths: &[PathBuf],
+            app_state: &Arc<AppState>,
+            cx: &mut AppContext,
+        ) {
+            let task = workspace::open_paths(&paths, &app_state, None, cx);
+            cx.spawn(|cx| async move {
+                if let Some((_window, results)) = task.await.log_err() {
+                    for result in results {
+                        if let Some(Err(e)) = result {
+                            log::error!("Error opening path: {}", e);
+                        }
+                    }
+                }
+            })
+            .detach();
+        }
+
         match open_rx.try_next() {
-            Ok(Some(OpenRequest::Paths { paths: _ })) => {
-                // todo!("workspace")
-                // cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
-                //     .detach();
+            Ok(Some(OpenRequest::Paths { paths })) => {
+                open_paths_and_log_errs(&paths, &app_state, cx)
             }
             Ok(Some(OpenRequest::CliConnection { connection })) => {
                 let app_state = app_state.clone();
@@ -263,10 +280,9 @@ fn main() {
             async move {
                 while let Some(request) = open_rx.next().await {
                     match request {
-                        OpenRequest::Paths { paths: _ } => {
-                            // todo!("workspace")
-                            // cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
-                            //     .detach();
+                        OpenRequest::Paths { paths } => {
+                            cx.update(|cx| open_paths_and_log_errs(&paths, &app_state, cx))
+                                .ok();
                         }
                         OpenRequest::CliConnection { connection } => {
                             let app_state = app_state.clone();
@@ -324,8 +340,8 @@ async fn installation_id() -> Result<String> {
 
 async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
     async_maybe!({
-        if let Some(location) = workspace2::last_opened_workspace_paths().await {
-            cx.update(|cx| workspace2::open_paths(location.paths().as_ref(), app_state, None, cx))?
+        if let Some(location) = workspace::last_opened_workspace_paths().await {
+            cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))?
                 .await
                 .log_err();
         } else if matches!(KEY_VALUE_STORE.read_kvp("******* THIS IS A BAD KEY PLEASE UNCOMMENT BELOW TO FIX THIS VERY LONG LINE *******"), Ok(None)) {
@@ -335,7 +351,7 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
             // cx.update(|cx| show_welcome_experience(app_state, cx));
         } else {
             cx.update(|cx| {
-                workspace2::open_new(app_state, cx, |workspace, cx| {
+                workspace::open_new(app_state, cx, |workspace, cx| {
                     // todo!(editor)
                     // Editor::new_file(workspace, &Default::default(), cx)
                 })

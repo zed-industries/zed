@@ -27,7 +27,7 @@ use futures::{
 use std::{path::Path, sync::Arc, thread, time::Duration};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use uuid::Uuid;
-use workspace2::{AppState, Workspace};
+use workspace::{AppState, Workspace};
 
 pub fn connect_to_cli(
     server_name: &str,
@@ -104,7 +104,7 @@ pub async fn handle_cli_connection(
                 let mut errored = false;
 
                 if let Some(open_paths_task) = cx
-                    .update(|cx| workspace2::open_paths(&paths, &app_state, None, cx))
+                    .update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
                     .log_err()
                 {
                     match open_paths_task.await {
@@ -258,7 +258,7 @@ pub fn initialize_workspace(
             let workspace_handle = cx.view();
             cx.subscribe(&workspace_handle, {
                 move |workspace, _, event, cx| {
-                    if let workspace2::Event::PaneAdded(pane) = event {
+                    if let workspace::Event::PaneAdded(pane) = event {
                         pane.update(cx, |pane, cx| {
                             // todo!()
                             // pane.toolbar().update(cx, |toolbar, cx| {

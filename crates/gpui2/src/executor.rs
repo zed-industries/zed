@@ -49,11 +49,11 @@ impl<T> Task<T> {
 
 impl<E, T> Task<Result<T, E>>
 where
-    T: 'static + Send,
-    E: 'static + Send + Debug,
+    T: 'static,
+    E: 'static + Debug,
 {
     pub fn detach_and_log_err(self, cx: &mut AppContext) {
-        cx.background_executor().spawn(self.log_err()).detach();
+        cx.foreground_executor().spawn(self.log_err()).detach();
     }
 }
 
