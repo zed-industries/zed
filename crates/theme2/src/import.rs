@@ -9,6 +9,38 @@ struct ImportedThemeFamily {
     pub themes: Vec<ImportedThemeVariant>,
 }
 
+struct ImportedThemeVariant {
+    pub id: String,
+    pub name: String,
+    pub colors: ThemeColorsRefinement,
+}
+
+macro_rules! gen_vscode_colors_and_enum {
+    ($($name:ident: $type:ty),*) => {
+        #[derive(Debug)]
+        pub struct VSCodeColors {
+            $(
+                pub $name: $type,
+            )*
+        }
+
+        pub enum VSCodeColor {
+            $(
+                $({
+                    let mut s = stringify!($name).to_string();
+                    s.get_mut(0..1).unwrap().make_ascii_uppercase();
+                    s.replace("_", "")
+                }),
+            )*
+        }
+    };
+}
+
+gen_vscode_colors_and_enum! {
+    terminal_background: String,
+    terminal_foreground: String
+}
+
 #[derive(Debug)]
 pub struct VSCodeColors {
     terminal_background: String,
