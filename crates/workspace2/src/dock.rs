@@ -606,6 +606,7 @@ impl Render for PanelButtons {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        // todo!()
         let dock = self.dock.read(cx);
         div().children(
             dock.panel_entries

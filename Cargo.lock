@@ -10831,6 +10831,7 @@ dependencies = [
  "smallvec",
  "terminal2",
  "theme2",
+ "ui2",
  "util",
  "uuid 1.4.1",
 ]

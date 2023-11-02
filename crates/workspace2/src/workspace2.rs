@@ -3803,20 +3803,25 @@ impl Render for Workspace {
                     //     "maxbrunsfeld has requested to add you as a contact.".into(),
                     // ))
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .h_full()
-                            .child(div().flex().flex_1()), // .children(
-                                                           //     Some(
-                                                           //         Panel::new("terminal-panel", cx)
-                                                           //             .child(Terminal::new())
-                                                           //             .allowed_sides(PanelAllowedSides::BottomOnly)
-                                                           //             .side(PanelSide::Bottom),
-                                                           //     )
-                                                           //     .filter(|_| self.is_terminal_open()),
-                                                           // ),
+                        div().flex().flex_col().flex_1().h_full().child(
+                            div().flex().flex_1().child(self.center.render(
+                                project,
+                                follower_states,
+                                active_call,
+                                active_pane,
+                                zoomed,
+                                app_state,
+                                cx,
+                            )),
+                        ), // .children(
+                           //     Some(
+                           //         Panel::new("terminal-panel", cx)
+                           //             .child(Terminal::new())
+                           //             .allowed_sides(PanelAllowedSides::BottomOnly)
+                           //             .side(PanelSide::Bottom),
+                           //     )
+                           //     .filter(|_| self.is_terminal_open()),
+                           // ),
                     ), // .children(
                        //     Some(
                        //         Panel::new("chat-panel-outer", cx)

@@ -12,6 +12,7 @@ use project2::Project;
 use serde::Deserialize;
 use std::sync::Arc;
 use theme2::ThemeVariant;
+use ui::prelude::*;
 
 const HANDLE_HITBOX_SIZE: f32 = 4.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
@@ -124,7 +125,6 @@ impl PaneGroup {
     pub(crate) fn render(
         &self,
         project: &Model<Project>,
-        theme: &ThemeVariant,
         follower_states: &HashMap<View<Pane>, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
@@ -135,7 +135,6 @@ impl PaneGroup {
         self.root.render(
             project,
             0,
-            theme,
             follower_states,
             active_call,
             active_pane,
@@ -187,7 +186,6 @@ impl Member {
         &self,
         project: &Model<Project>,
         basis: usize,
-        theme: &ThemeVariant,
         follower_states: &HashMap<View<Pane>, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
@@ -195,7 +193,40 @@ impl Member {
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
-        todo!()
+        match self {
+            Member::Pane(pane) => {
+                let pane_element = if Some(&**pane) == zoomed {
+                    None
+                } else {
+                    Some(pane)
+                };
+
+                //         Stack::new()
+                //             .with_child(pane_element.contained().with_border(leader_border))
+                //             .with_children(leader_status_box)
+                //             .into_any()
+
+                let el = div()
+                    .flex()
+                    .flex_1()
+                    .gap_px()
+                    .w_full()
+                    .h_full()
+                    .bg(cx.theme().colors().editor)
+                    .children();
+            }
+            Member::Axis(axis) => axis.render(
+                project,
+                basis + 1,
+                theme,
+                follower_states,
+                active_call,
+                active_pane,
+                zoomed,
+                app_state,
+                cx,
+            ),
+        }
 
         // enum FollowIntoExternalProject {}
 
