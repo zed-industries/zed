@@ -8448,7 +8448,8 @@ impl Project {
                         {
                             Ok(None) => {
                                 let new_task = project.update(&mut cx, |project, cx| {
-                                    let new_task = spawn_default_prettier(node, cx);
+                                    let new_task =
+                                        start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), cx);
                                     project
                                         .default_prettier
                                         .get_or_insert_with(|| DefaultPrettier {
@@ -8480,35 +8481,13 @@ impl Project {
                                 }
 
                                 log::info!("Found prettier in {prettier_dir:?}, starting.");
-                                let task_prettier_dir = prettier_dir.clone();
-                                let task_project = project.clone();
-                                let new_server_id = project.update(&mut cx, |this, _| {
-                                    this.languages.next_language_server_id()
-                                });
-                                let new_prettier_task = cx
-                                    .spawn(|mut cx| async move {
-                                        let prettier = Prettier::start(
-                                            new_server_id,
-                                            task_prettier_dir,
-                                            node,
-                                            cx.clone(),
-                                        )
-                                        .await
-                                        .context("prettier start")
-                                        .map_err(Arc::new)?;
-                                        register_new_prettier(
-                                            &task_project,
-                                            &prettier,
-                                            new_server_id,
-                                            &mut cx,
-                                        );
-                                        Ok(Arc::new(prettier)).map_err(Arc::new)
-                                    })
-                                    .shared();
-                                project.update(&mut cx, |project, _| {
+                                let new_prettier_task = project.update(&mut cx, |project, cx| {
+                                    let new_prettier_task =
+                                        start_prettier(node, prettier_dir.clone(), cx);
                                     project
                                         .prettier_instances
                                         .insert(prettier_dir.clone(), new_prettier_task.clone());
+                                    new_prettier_task
                                 });
                                 Some((Some(prettier_dir), new_prettier_task))
                             }
@@ -8516,7 +8495,7 @@ impl Project {
                     });
                 }
                 None => {
-                    let new_task = spawn_default_prettier(node, cx);
+                    let new_task = start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), cx);
                     self.default_prettier
                         .get_or_insert_with(|| DefaultPrettier {
                             instance: None,
@@ -8657,6 +8636,26 @@ impl Project {
     }
 }
 
+fn start_prettier(
+    node: Arc<dyn NodeRuntime>,
+    prettier_dir: PathBuf,
+    cx: &mut ModelContext<'_, Project>,
+) -> Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>> {
+    cx.spawn(|project, mut cx| async move {
+        let new_server_id = project.update(&mut cx, |project, _| {
+            project.languages.next_language_server_id()
+        });
+        let new_prettier = Prettier::start(new_server_id, prettier_dir, node, cx.clone())
+            .await
+            .context("default prettier spawn")
+            .map(Arc::new)
+            .map_err(Arc::new)?;
+        register_new_prettier(&project, &new_prettier, new_server_id, &mut cx);
+        Ok(new_prettier)
+    })
+    .shared()
+}
+
 fn register_new_prettier(
     project: &ModelHandle<Project>,
     prettier: &Prettier,
@@ -8680,32 +8679,6 @@ fn register_new_prettier(
             cx.emit(Event::LanguageServerAdded(new_server_id));
         });
     }
-}
-
-fn spawn_default_prettier(
-    node: Arc<dyn NodeRuntime>,
-    cx: &mut ModelContext<'_, Project>,
-) -> Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>> {
-    cx.spawn(|project, mut cx| async move {
-        let new_server_id = project.update(&mut cx, |project, _| {
-            project.languages.next_language_server_id()
-        });
-        let new_prettier = Prettier::start(
-            new_server_id,
-            DEFAULT_PRETTIER_DIR.clone(),
-            node,
-            cx.clone(),
-        )
-        .await
-        .context("default prettier spawn")
-        .map(Arc::new)
-        .map_err(Arc::new)?;
-
-        register_new_prettier(&project, &new_prettier, new_server_id, &mut cx);
-
-        Ok(new_prettier)
-    })
-    .shared()
 }
 
 #[cfg(not(any(test, feature = "test-support")))]
