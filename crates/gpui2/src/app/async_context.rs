@@ -184,13 +184,12 @@ impl AsyncWindowContext {
         self.window.update(self, |_, cx| cx.update_global(update))
     }
 
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut + 'static) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
         R: 'static,
     {
-        let this = self.clone();
-        self.foreground_executor.spawn(async move { f(this).await })
+        self.foreground_executor.spawn(f(self.clone()))
     }
 }
 
