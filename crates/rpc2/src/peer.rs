@@ -342,7 +342,7 @@ impl Peer {
     pub fn add_test_connection(
         self: &Arc<Self>,
         connection: Connection,
-        executor: gpui2::BackgroundExecutor,
+        executor: gpui::BackgroundExecutor,
     ) -> (
         ConnectionId,
         impl Future<Output = anyhow::Result<()>> + Send,
@@ -557,7 +557,7 @@ mod tests {
     use super::*;
     use crate::TypedEnvelope;
     use async_tungstenite::tungstenite::Message as WebSocketMessage;
-    use gpui2::TestAppContext;
+    use gpui::TestAppContext;
 
     fn init_logger() {
         if std::env::var("RUST_LOG").is_ok() {
@@ -565,7 +565,7 @@ mod tests {
         }
     }
 
-    #[gpui2::test(iterations = 50)]
+    #[gpui::test(iterations = 50)]
     async fn test_request_response(cx: &mut TestAppContext) {
         init_logger();
 
@@ -663,7 +663,7 @@ mod tests {
         }
     }
 
-    #[gpui2::test(iterations = 50)]
+    #[gpui::test(iterations = 50)]
     async fn test_order_of_response_and_incoming(cx: &mut TestAppContext) {
         let executor = cx.executor();
         let server = Peer::new(0);
@@ -761,7 +761,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test(iterations = 50)]
+    #[gpui::test(iterations = 50)]
     async fn test_dropping_request_before_completion(cx: &mut TestAppContext) {
         let executor = cx.executor().clone();
         let server = Peer::new(0);
@@ -873,7 +873,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test(iterations = 50)]
+    #[gpui::test(iterations = 50)]
     async fn test_disconnect(cx: &mut TestAppContext) {
         let executor = cx.executor();
 
@@ -909,7 +909,7 @@ mod tests {
             .is_err());
     }
 
-    #[gpui2::test(iterations = 50)]
+    #[gpui::test(iterations = 50)]
     async fn test_io_error(cx: &mut TestAppContext) {
         let executor = cx.executor();
         let (client_conn, mut server_conn, _kill) = Connection::in_memory(executor.clone());

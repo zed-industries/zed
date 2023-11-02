@@ -1,11 +1,11 @@
 use anyhow::{anyhow, Result};
-use client2::ParticipantIndex;
-use client2::{proto, User};
+use client::ParticipantIndex;
+use client::{proto, User};
 use collections::HashMap;
-use gpui2::WeakModel;
-pub use live_kit_client2::Frame;
-use live_kit_client2::{RemoteAudioTrack, RemoteVideoTrack};
-use project2::Project;
+use gpui::WeakModel;
+pub use live_kit_client::Frame;
+use live_kit_client::{RemoteAudioTrack, RemoteVideoTrack};
+use project::Project;
 use std::sync::Arc;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -47,6 +47,6 @@ pub struct RemoteParticipant {
     pub participant_index: ParticipantIndex,
     pub muted: bool,
     pub speaking: bool,
-    pub video_tracks: HashMap<live_kit_client2::Sid, Arc<RemoteVideoTrack>>,
-    pub audio_tracks: HashMap<live_kit_client2::Sid, Arc<RemoteAudioTrack>>,
+    pub video_tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,
+    pub audio_tracks: HashMap<live_kit_client::Sid, Arc<RemoteAudioTrack>>,
 }

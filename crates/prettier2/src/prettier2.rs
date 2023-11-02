@@ -1,9 +1,9 @@
 use anyhow::Context;
 use collections::HashMap;
-use fs2::Fs;
-use gpui2::{AsyncAppContext, Model};
-use language2::{language_settings::language_settings, Buffer, Diff};
-use lsp2::{LanguageServer, LanguageServerId};
+use fs::Fs;
+use gpui::{AsyncAppContext, Model};
+use language::{language_settings::language_settings, Buffer, Diff};
+use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -141,7 +141,7 @@ impl Prettier {
         node: Arc<dyn NodeRuntime>,
         cx: AsyncAppContext,
     ) -> anyhow::Result<Self> {
-        use lsp2::LanguageServerBinary;
+        use lsp::LanguageServerBinary;
 
         let executor = cx.background_executor().clone();
         anyhow::ensure!(
@@ -453,7 +453,7 @@ struct FormatResult {
     text: String,
 }
 
-impl lsp2::request::Request for Format {
+impl lsp::request::Request for Format {
     type Params = FormatParams;
     type Result = FormatResult;
     const METHOD: &'static str = "prettier/format";
@@ -461,7 +461,7 @@ impl lsp2::request::Request for Format {
 
 enum ClearCache {}
 
-impl lsp2::request::Request for ClearCache {
+impl lsp::request::Request for ClearCache {
     type Params = ();
     type Result = ();
     const METHOD: &'static str = "prettier/clear_cache";

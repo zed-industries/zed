@@ -1,4 +1,4 @@
-use gpui2::AppContext;
+use gpui::AppContext;
 
 #[derive(Clone, Debug)]
 pub enum ProviderCredential {

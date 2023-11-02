@@ -91,7 +91,7 @@ mod tests {
     use rand::prelude::*;
     use std::mem;
 
-    #[gpui2::test(iterations = 100)]
+    #[gpui::test(iterations = 100)]
     fn test_locators(mut rng: StdRng) {
         let mut lhs = Default::default();
         let mut rhs = Default::default();

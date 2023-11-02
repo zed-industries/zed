@@ -3,21 +3,21 @@ pub mod participant;
 pub mod room;
 
 use anyhow::{anyhow, Result};
-use audio2::Audio;
+use audio::Audio;
 use call_settings::CallSettings;
-use client2::{
+use client::{
     proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore,
     ZED_ALWAYS_ACTIVE,
 };
 use collections::HashSet;
 use futures::{future::Shared, FutureExt};
-use gpui2::{
+use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Subscription, Task,
     WeakModel,
 };
 use postage::watch;
-use project2::Project;
-use settings2::Settings;
+use project::Project;
+use settings::Settings;
 use std::sync::Arc;
 
 pub use participant::ParticipantLocation;
@@ -50,7 +50,7 @@ pub struct ActiveCall {
     ),
     client: Arc<Client>,
     user_store: Model<UserStore>,
-    _subscriptions: Vec<client2::Subscription>,
+    _subscriptions: Vec<client::Subscription>,
 }
 
 impl EventEmitter for ActiveCall {

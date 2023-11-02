@@ -4,7 +4,7 @@ pub mod query;
 // Re-export
 pub use anyhow;
 use anyhow::Context;
-use gpui2::AppContext;
+use gpui::AppContext;
 pub use indoc::indoc;
 pub use lazy_static;
 pub use smol;
@@ -201,7 +201,7 @@ mod tests {
     use crate::open_db;
 
     // Test bad migration panics
-    #[gpui2::test]
+    #[gpui::test]
     #[should_panic]
     async fn test_bad_migration_panics() {
         enum BadDB {}
@@ -225,8 +225,8 @@ mod tests {
     }
 
     /// Test that DB exists but corrupted (causing recreate)
-    #[gpui2::test]
-    async fn test_db_corruption(cx: &mut gpui2::TestAppContext) {
+    #[gpui::test]
+    async fn test_db_corruption(cx: &mut gpui::TestAppContext) {
         cx.executor().allow_parking();
 
         enum CorruptedDB {}
@@ -269,8 +269,8 @@ mod tests {
     }
 
     /// Test that DB exists but corrupted (causing recreate)
-    #[gpui2::test(iterations = 30)]
-    async fn test_simultaneous_db_corruption(cx: &mut gpui2::TestAppContext) {
+    #[gpui::test(iterations = 30)]
+    async fn test_simultaneous_db_corruption(cx: &mut gpui::TestAppContext) {
         cx.executor().allow_parking();
 
         enum CorruptedDB {}

@@ -35,7 +35,7 @@ impl KeyValueStore {
 mod tests {
     use crate::kvp::KeyValueStore;
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_kvp() {
         let db = KeyValueStore(crate::open_test_db("test_kvp").await);
 

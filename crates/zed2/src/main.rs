@@ -8,19 +8,19 @@ use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
-use client2::UserStore;
-use db2::kvp::KEY_VALUE_STORE;
-use fs2::RealFs;
+use client::UserStore;
+use db::kvp::KEY_VALUE_STORE;
+use fs::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui2::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
+use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
-use language2::LanguageRegistry;
+use language::LanguageRegistry;
 use log::LevelFilter;
 
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use settings2::{
+use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
@@ -114,7 +114,7 @@ fn main() {
         handle_settings_file_changes(user_settings_file_rx, cx);
         // handle_keymap_file_changes(user_keymap_file_rx, cx);
 
-        let client = client2::Client::new(http.clone(), cx);
+        let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
         languages.set_executor(cx.background_executor().clone());
@@ -122,19 +122,19 @@ fn main() {
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
 
-        language2::init(cx);
+        language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         // let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         cx.set_global(client.clone());
 
-        theme2::init(cx);
+        theme::init(cx);
         // context_menu::init(cx);
-        project2::Project::init(&client, cx);
-        client2::init(&client, cx);
+        project::Project::init(&client, cx);
+        client::init(&client, cx);
         // command_palette::init(cx);
-        language2::init(cx);
+        language::init(cx);
         // editor::init(cx);
         // go_to_line::init(cx);
         // file_finder::init(cx);
@@ -147,7 +147,7 @@ fn main() {
         // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         // vim::init(cx);
         // terminal_view::init(cx);
-        copilot2::init(
+        copilot::init(
             copilot_language_server_id,
             http.clone(),
             node_runtime.clone(),
@@ -197,7 +197,7 @@ fn main() {
         // theme_selector::init(cx);
         // activity_indicator::init(cx);
         // language_tools::init(cx);
-        call2::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         // collab_ui::init(&app_state, cx);
         // feedback::init(cx);
         // welcome::init(cx);
@@ -444,7 +444,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
             std::process::exit(-1);
         }
 
-        let app_version = client2::ZED_APP_VERSION
+        let app_version = client::ZED_APP_VERSION
             .or(app_metadata.app_version)
             .map_or("dev".to_string(), |v| v.to_string());
 
@@ -512,11 +512,11 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
 }
 
 fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
-    let telemetry_settings = *client2::TelemetrySettings::get_global(cx);
+    let telemetry_settings = *client::TelemetrySettings::get_global(cx);
 
     cx.background_executor()
         .spawn(async move {
-            let panic_report_url = format!("{}/api/panic", &*client2::ZED_SERVER_URL);
+            let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
             let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
             while let Some(child) = children.next().await {
                 let child = child?;
@@ -559,7 +559,7 @@ fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
                     if let Some(panic) = panic {
                         let body = serde_json::to_string(&PanicRequest {
                             panic,
-                            token: client2::ZED_SECRET_CLIENT_TOKEN.into(),
+                            token: client::ZED_SECRET_CLIENT_TOKEN.into(),
                         })
                         .unwrap();
 

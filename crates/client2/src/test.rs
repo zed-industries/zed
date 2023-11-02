@@ -1,9 +1,9 @@
 use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
 use anyhow::{anyhow, Result};
 use futures::{stream::BoxStream, StreamExt};
-use gpui2::{BackgroundExecutor, Context, Model, TestAppContext};
+use gpui::{BackgroundExecutor, Context, Model, TestAppContext};
 use parking_lot::Mutex;
-use rpc2::{
+use rpc::{
     proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
     ConnectionId, Peer, Receipt, TypedEnvelope,
 };

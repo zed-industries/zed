@@ -3,7 +3,7 @@ use futures::{
     future::BoxFuture, io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt,
     Stream, StreamExt,
 };
-use gpui2::{AppContext, BackgroundExecutor};
+use gpui::{AppContext, BackgroundExecutor};
 use isahc::{http::StatusCode, Request, RequestExt};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};

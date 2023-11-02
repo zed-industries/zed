@@ -5,7 +5,7 @@ pub use lsp_types::*;
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt};
-use gpui2::{AsyncAppContext, BackgroundExecutor, Task};
+use gpui::{AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -1038,7 +1038,7 @@ impl FakeLanguageServer {
     where
         T: 'static + request::Request,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(T::Params, gpui2::AsyncAppContext) -> Fut,
+        F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext) -> Fut,
         Fut: 'static + Send + Future<Output = Result<T::Result>>,
     {
         let (responded_tx, responded_rx) = futures::channel::mpsc::unbounded();
@@ -1066,7 +1066,7 @@ impl FakeLanguageServer {
     where
         T: 'static + notification::Notification,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(T::Params, gpui2::AsyncAppContext),
+        F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext),
     {
         let (handled_tx, handled_rx) = futures::channel::mpsc::unbounded();
         self.server.remove_notification_handler::<T>();
@@ -1110,7 +1110,7 @@ impl FakeLanguageServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui2::TestAppContext;
+    use gpui::TestAppContext;
 
     #[ctor::ctor]
     fn init_logger() {
@@ -1119,7 +1119,7 @@ mod tests {
         }
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
         let (server, mut fake) =
             LanguageServer::fake("the-lsp".to_string(), Default::default(), cx.to_async());

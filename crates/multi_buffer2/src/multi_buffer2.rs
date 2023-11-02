@@ -6,9 +6,9 @@ use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
 use git::diff::DiffHunk;
-use gpui2::{AppContext, EventEmitter, Model, ModelContext};
-pub use language2::Completion;
-use language2::{
+use gpui::{AppContext, EventEmitter, Model, ModelContext};
+pub use language::Completion;
+use language::{
     char_kind,
     language_settings::{language_settings, LanguageSettings},
     AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
@@ -35,11 +35,11 @@ use text::{
     subscription::{Subscription, Topic},
     Edit, TextSummary,
 };
-use theme2::SyntaxTheme;
+use theme::SyntaxTheme;
 use util::post_inc;
 
 #[cfg(any(test, feature = "test-support"))]
-use gpui2::Context;
+use gpui::Context;
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
@@ -62,7 +62,7 @@ pub enum Event {
     ExcerptsAdded {
         buffer: Model<Buffer>,
         predecessor: ExcerptId,
-        excerpts: Vec<(ExcerptId, ExcerptRange<language2::Anchor>)>,
+        excerpts: Vec<(ExcerptId, ExcerptRange<language::Anchor>)>,
     },
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
@@ -130,7 +130,7 @@ struct BufferState {
     last_file_update_count: usize,
     last_git_diff_update_count: usize,
     excerpts: Vec<Locator>,
-    _subscriptions: [gpui2::Subscription; 2],
+    _subscriptions: [gpui::Subscription; 2],
 }
 
 #[derive(Clone, Default)]
@@ -684,7 +684,7 @@ impl MultiBuffer {
 
     pub fn push_transaction<'a, T>(&mut self, buffer_transactions: T, cx: &mut ModelContext<Self>)
     where
-        T: IntoIterator<Item = (&'a Model<Buffer>, &'a language2::Transaction)>,
+        T: IntoIterator<Item = (&'a Model<Buffer>, &'a language::Transaction)>,
     {
         self.history
             .push_transaction(buffer_transactions, Instant::now(), cx);
@@ -1383,7 +1383,7 @@ impl MultiBuffer {
         &self,
         position: T,
         cx: &AppContext,
-    ) -> Option<(Model<Buffer>, language2::Anchor)> {
+    ) -> Option<(Model<Buffer>, language::Anchor)> {
         let snapshot = self.read(cx);
         let anchor = snapshot.anchor_before(position);
         let buffer = self
@@ -1398,25 +1398,25 @@ impl MultiBuffer {
     fn on_buffer_event(
         &mut self,
         _: Model<Buffer>,
-        event: &language2::Event,
+        event: &language::Event,
         cx: &mut ModelContext<Self>,
     ) {
         cx.emit(match event {
-            language2::Event::Edited => Event::Edited {
+            language::Event::Edited => Event::Edited {
                 sigleton_buffer_edited: true,
             },
-            language2::Event::DirtyChanged => Event::DirtyChanged,
-            language2::Event::Saved => Event::Saved,
-            language2::Event::FileHandleChanged => Event::FileHandleChanged,
-            language2::Event::Reloaded => Event::Reloaded,
-            language2::Event::DiffBaseChanged => Event::DiffBaseChanged,
-            language2::Event::LanguageChanged => Event::LanguageChanged,
-            language2::Event::Reparsed => Event::Reparsed,
-            language2::Event::DiagnosticsUpdated => Event::DiagnosticsUpdated,
-            language2::Event::Closed => Event::Closed,
+            language::Event::DirtyChanged => Event::DirtyChanged,
+            language::Event::Saved => Event::Saved,
+            language::Event::FileHandleChanged => Event::FileHandleChanged,
+            language::Event::Reloaded => Event::Reloaded,
+            language::Event::DiffBaseChanged => Event::DiffBaseChanged,
+            language::Event::LanguageChanged => Event::LanguageChanged,
+            language::Event::Reparsed => Event::Reparsed,
+            language::Event::DiagnosticsUpdated => Event::DiagnosticsUpdated,
+            language::Event::Closed => Event::Closed,
 
             //
-            language2::Event::Operation(_) => return,
+            language::Event::Operation(_) => return,
         });
     }
 
@@ -1648,14 +1648,14 @@ impl MultiBuffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl MultiBuffer {
-    pub fn build_simple(text: &str, cx: &mut gpui2::AppContext) -> Model<Self> {
+    pub fn build_simple(text: &str, cx: &mut gpui::AppContext) -> Model<Self> {
         let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text));
         cx.build_model(|cx| Self::singleton(buffer, cx))
     }
 
     pub fn build_multi<const COUNT: usize>(
         excerpts: [(&str, Vec<Range<Point>>); COUNT],
-        cx: &mut gpui2::AppContext,
+        cx: &mut gpui::AppContext,
     ) -> Model<Self> {
         let multi = cx.build_model(|_| Self::new(0));
         for (text, ranges) in excerpts {
@@ -1672,11 +1672,11 @@ impl MultiBuffer {
         multi
     }
 
-    pub fn build_from_buffer(buffer: Model<Buffer>, cx: &mut gpui2::AppContext) -> Model<Self> {
+    pub fn build_from_buffer(buffer: Model<Buffer>, cx: &mut gpui::AppContext) -> Model<Self> {
         cx.build_model(|cx| Self::singleton(buffer, cx))
     }
 
-    pub fn build_random(rng: &mut impl rand::Rng, cx: &mut gpui2::AppContext) -> Model<Self> {
+    pub fn build_random(rng: &mut impl rand::Rng, cx: &mut gpui::AppContext) -> Model<Self> {
         cx.build_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
             let mutation_count = rng.gen_range(1..=5);
@@ -3409,7 +3409,7 @@ impl History {
         now: Instant,
         cx: &mut ModelContext<MultiBuffer>,
     ) where
-        T: IntoIterator<Item = (&'a Model<Buffer>, &'a language2::Transaction)>,
+        T: IntoIterator<Item = (&'a Model<Buffer>, &'a language::Transaction)>,
     {
         assert_eq!(self.transaction_depth, 0);
         let transaction = Transaction {
@@ -4135,15 +4135,15 @@ where
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use gpui2::{AppContext, Context, TestAppContext};
-    use language2::{Buffer, Rope};
+    use gpui::{AppContext, Context, TestAppContext};
+    use language::{Buffer, Rope};
     use parking_lot::RwLock;
     use rand::prelude::*;
-    use settings2::SettingsStore;
+    use settings::SettingsStore;
     use std::env;
     use util::test::sample_text;
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_singleton(cx: &mut AppContext) {
         let buffer =
             cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(6, 6, 'a')));
@@ -4171,7 +4171,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_remote(cx: &mut AppContext) {
         let host_buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "a"));
         let guest_buffer = cx.build_model(|cx| {
@@ -4183,7 +4183,7 @@ mod tests {
             buffer
                 .apply_ops(
                     ops.into_iter()
-                        .map(|op| language2::proto::deserialize_operation(op).unwrap()),
+                        .map(|op| language::proto::deserialize_operation(op).unwrap()),
                     cx,
                 )
                 .unwrap();
@@ -4202,7 +4202,7 @@ mod tests {
         assert_eq!(snapshot.text(), "abc");
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_excerpt_boundaries_and_clipping(cx: &mut AppContext) {
         let buffer_1 =
             cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(6, 6, 'a')));
@@ -4438,7 +4438,7 @@ mod tests {
         }
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_excerpt_events(cx: &mut AppContext) {
         let buffer_1 =
             cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(10, 3, 'a')));
@@ -4546,7 +4546,7 @@ mod tests {
         assert_eq!(*follower_edit_event_count.read(), 4);
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_push_excerpts_with_context_lines(cx: &mut AppContext) {
         let buffer =
             cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(20, 3, 'a')));
@@ -4583,7 +4583,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_stream_excerpts_with_context_lines(cx: &mut TestAppContext) {
         let buffer =
             cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(20, 3, 'a')));
@@ -4620,7 +4620,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_empty_multibuffer(cx: &mut AppContext) {
         let multibuffer = cx.build_model(|_| MultiBuffer::new(0));
 
@@ -4630,7 +4630,7 @@ mod tests {
         assert_eq!(snapshot.buffer_rows(1).collect::<Vec<_>>(), &[]);
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_singleton_multibuffer_anchors(cx: &mut AppContext) {
         let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abcd"));
         let multibuffer = cx.build_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
@@ -4650,7 +4650,7 @@ mod tests {
         assert_eq!(old_snapshot.anchor_after(4).to_offset(&new_snapshot), 6);
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_multibuffer_anchors(cx: &mut AppContext) {
         let buffer_1 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abcd"));
         let buffer_2 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "efghi"));
@@ -4708,7 +4708,7 @@ mod tests {
         assert_eq!(old_snapshot.anchor_after(10).to_offset(&new_snapshot), 14);
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut AppContext) {
         let buffer_1 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abcd"));
         let buffer_2 =
@@ -4840,7 +4840,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test(iterations = 100)]
+    #[gpui::test(iterations = 100)]
     fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
@@ -5262,7 +5262,7 @@ mod tests {
         }
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_history(cx: &mut AppContext) {
         let test_settings = SettingsStore::test(cx);
         cx.set_global(test_settings);

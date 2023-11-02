@@ -32,7 +32,7 @@ fn test_edit() {
     assert_eq!(buffer.text(), "ghiamnoef");
 }
 
-#[gpui2::test(iterations = 100)]
+#[gpui::test(iterations = 100)]
 fn test_random_edits(mut rng: StdRng) {
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
@@ -687,7 +687,7 @@ fn test_concurrent_edits() {
     assert_eq!(buffer3.text(), "a12c34e56");
 }
 
-#[gpui2::test(iterations = 100)]
+#[gpui::test(iterations = 100)]
 fn test_random_concurrent_edits(mut rng: StdRng) {
     let peers = env::var("PEERS")
         .map(|i| i.parse().expect("invalid `PEERS` variable"))

@@ -256,7 +256,7 @@ mod tests {
     use rand::prelude::*;
     use std::env;
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_one_disjoint_edit() {
         assert_patch_composition(
             Patch(vec![Edit {
@@ -301,7 +301,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_one_overlapping_edit() {
         assert_patch_composition(
             Patch(vec![Edit {
@@ -319,7 +319,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_two_disjoint_and_overlapping() {
         assert_patch_composition(
             Patch(vec![
@@ -355,7 +355,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_two_new_edits_overlapping_one_old_edit() {
         assert_patch_composition(
             Patch(vec![Edit {
@@ -421,7 +421,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_two_new_edits_touching_one_old_edit() {
         assert_patch_composition(
             Patch(vec![
@@ -457,7 +457,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_old_to_new() {
         let patch = Patch(vec![
             Edit {
@@ -481,7 +481,7 @@ mod tests {
         assert_eq!(patch.old_to_new(9), 12);
     }
 
-    #[gpui2::test(iterations = 100)]
+    #[gpui::test(iterations = 100)]
     fn test_random_patch_compositions(mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))

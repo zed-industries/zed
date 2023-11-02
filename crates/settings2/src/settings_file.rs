@@ -1,8 +1,8 @@
 use crate::{settings_store::SettingsStore, Settings};
 use anyhow::Result;
-use fs2::Fs;
+use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui2::{AppContext, BackgroundExecutor};
+use gpui::{AppContext, BackgroundExecutor};
 use std::{io::ErrorKind, path::PathBuf, str, sync::Arc, time::Duration};
 use util::{paths, ResultExt};
 

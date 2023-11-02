@@ -1,6 +1,6 @@
 use anyhow::anyhow;
-use language2::BufferSnapshot;
-use language2::ToOffset;
+use language::BufferSnapshot;
+use language::ToOffset;
 
 use crate::models::LanguageModel;
 use crate::models::TruncationDirection;

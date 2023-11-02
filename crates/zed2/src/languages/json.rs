@@ -1,14 +1,14 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use feature_flags2::FeatureFlagAppExt;
+use feature_flags::FeatureFlagAppExt;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gpui2::AppContext;
-use language2::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
-use lsp2::LanguageServerBinary;
+use gpui::AppContext;
+use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use serde_json::json;
-use settings2::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
+use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::fs;
 use std::{
     any::Any,
