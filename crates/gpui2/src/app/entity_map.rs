@@ -450,6 +450,9 @@ pub struct WeakModel<T> {
     entity_type: PhantomData<T>,
 }
 
+unsafe impl<T> Send for WeakModel<T> {}
+unsafe impl<T> Sync for WeakModel<T> {}
+
 impl<T> Clone for WeakModel<T> {
     fn clone(&self) -> Self {
         Self {
