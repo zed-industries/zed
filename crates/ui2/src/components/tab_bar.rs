@@ -27,6 +27,7 @@ impl TabBar {
         let (can_navigate_back, can_navigate_forward) = self.can_navigate;
 
         div()
+            .group("tab_bar")
             .id(self.id.clone())
             .w_full()
             .flex()
@@ -34,6 +35,7 @@ impl TabBar {
             // Left Side
             .child(
                 div()
+                    .relative()
                     .px_1()
                     .flex()
                     .flex_none()
@@ -41,6 +43,7 @@ impl TabBar {
                     // Nav Buttons
                     .child(
                         div()
+                            .right_0()
                             .flex()
                             .items_center()
                             .gap_px()
@@ -67,10 +70,15 @@ impl TabBar {
             // Right Side
             .child(
                 div()
+                    // We only use absolute here since we don't
+                    // have opacity or `hidden()` yet
+                    .absolute()
+                    .neg_top_7()
                     .px_1()
                     .flex()
                     .flex_none()
                     .gap_2()
+                    .group_hover("tab_bar", |this| this.top_0())
                     // Nav Buttons
                     .child(
                         div()

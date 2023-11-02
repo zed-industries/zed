@@ -1,4 +1,4 @@
-use gpui2::{div, relative, Div};
+use gpui2::{div, px, relative, Div};
 
 use crate::settings::user_settings;
 use crate::{
@@ -15,12 +15,20 @@ pub enum ListItemVariant {
     Inset,
 }
 
+pub enum ListHeaderMeta {
+    // TODO: These should be IconButtons
+    Tools(Vec<Icon>),
+    // TODO: This should be a button
+    Button(Label),
+    Text(Label),
+}
+
 #[derive(Component)]
 pub struct ListHeader {
     label: SharedString,
     left_icon: Option<Icon>,
+    meta: Option<ListHeaderMeta>,
     variant: ListItemVariant,
-    state: InteractionState,
     toggleable: Toggleable,
 }
 
@@ -29,9 +37,9 @@ impl ListHeader {
         Self {
             label: label.into(),
             left_icon: None,
+            meta: None,
             variant: ListItemVariant::default(),
-            state: InteractionState::default(),
-            toggleable: Toggleable::Toggleable(ToggleState::Toggled),
+            toggleable: Toggleable::NotToggleable,
         }
     }
 
@@ -50,8 +58,8 @@ impl ListHeader {
         self
     }
 
-    pub fn state(mut self, state: InteractionState) -> Self {
-        self.state = state;
+    pub fn meta(mut self, meta: Option<ListHeaderMeta>) -> Self {
+        self.meta = meta;
         self
     }
 
@@ -74,34 +82,36 @@ impl ListHeader {
         }
     }
 
-    fn label_color(&self) -> LabelColor {
-        match self.state {
-            InteractionState::Disabled => LabelColor::Disabled,
-            _ => Default::default(),
-        }
-    }
-
-    fn icon_color(&self) -> IconColor {
-        match self.state {
-            InteractionState::Disabled => IconColor::Disabled,
-            _ => Default::default(),
-        }
-    }
-
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = self.toggleable.is_toggled();
 
         let disclosure_control = self.disclosure_control();
 
+        let meta = match self.meta {
+            Some(ListHeaderMeta::Tools(icons)) => div().child(
+                h_stack()
+                    .gap_2()
+                    .items_center()
+                    .children(icons.into_iter().map(|i| {
+                        IconElement::new(i)
+                            .color(IconColor::Muted)
+                            .size(IconSize::Small)
+                    })),
+            ),
+            Some(ListHeaderMeta::Button(label)) => div().child(label),
+            Some(ListHeaderMeta::Text(label)) => div().child(label),
+            None => div(),
+        };
+
         h_stack()
-            .flex_1()
             .w_full()
             .bg(cx.theme().colors().surface)
-            .when(self.state == InteractionState::Focused, |this| {
-                this.border()
-                    .border_color(cx.theme().colors().border_focused)
-            })
+            // TODO: Add focus state
+            // .when(self.state == InteractionState::Focused, |this| {
+            //     this.border()
+            //         .border_color(cx.theme().colors().border_focused)
+            // })
             .relative()
             .child(
                 div()
@@ -109,22 +119,28 @@ impl ListHeader {
                     .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
                     .flex()
                     .flex_1()
+                    .items_center()
+                    .justify_between()
                     .w_full()
                     .gap_1()
-                    .items_center()
                     .child(
-                        div()
-                            .flex()
+                        h_stack()
                             .gap_1()
-                            .items_center()
-                            .children(self.left_icon.map(|i| {
-                                IconElement::new(i)
-                                    .color(IconColor::Muted)
-                                    .size(IconSize::Small)
-                            }))
-                            .child(Label::new(self.label.clone()).color(LabelColor::Muted)),
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1()
+                                    .items_center()
+                                    .children(self.left_icon.map(|i| {
+                                        IconElement::new(i)
+                                            .color(IconColor::Muted)
+                                            .size(IconSize::Small)
+                                    }))
+                                    .child(Label::new(self.label.clone()).color(LabelColor::Muted)),
+                            )
+                            .child(disclosure_control),
                     )
-                    .child(disclosure_control),
+                    .child(meta),
             )
     }
 }
@@ -473,42 +489,63 @@ impl<V: 'static> ListDetailsEntry<V> {
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let settings = user_settings(cx);
 
-        let (item_bg, item_bg_hover, item_bg_active) = match self.seen {
-            true => (
-                cx.theme().colors().ghost_element,
-                cx.theme().colors().ghost_element_hover,
-                cx.theme().colors().ghost_element_active,
-            ),
-            false => (
-                cx.theme().colors().element,
-                cx.theme().colors().element_hover,
-                cx.theme().colors().element_active,
-            ),
-        };
+        let (item_bg, item_bg_hover, item_bg_active) = (
+            cx.theme().colors().ghost_element,
+            cx.theme().colors().ghost_element_hover,
+            cx.theme().colors().ghost_element_active,
+        );
 
         let label_color = match self.seen {
             true => LabelColor::Muted,
             false => LabelColor::Default,
         };
 
-        v_stack()
+        div()
             .relative()
             .group("")
             .bg(item_bg)
-            .px_1()
-            .py_1_5()
+            .px_2()
+            .py_1p5()
             .w_full()
-            .line_height(relative(1.2))
-            .child(Label::new(self.label.clone()).color(label_color))
-            .children(
-                self.meta
-                    .map(|meta| Label::new(meta).color(LabelColor::Muted)),
-            )
+            .z_index(1)
+            .when(!self.seen, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .left(px(3.0))
+                        .top_3()
+                        .rounded_full()
+                        .border_2()
+                        .border_color(cx.theme().colors().surface)
+                        .w(px(9.0))
+                        .h(px(9.0))
+                        .z_index(2)
+                        .bg(cx.theme().status().info),
+                )
+            })
             .child(
-                h_stack()
+                v_stack()
+                    .w_full()
+                    .line_height(relative(1.2))
                     .gap_1()
-                    .justify_end()
-                    .children(self.actions.unwrap_or_default()),
+                    .child(
+                        div()
+                            .w_5()
+                            .h_5()
+                            .rounded_full()
+                            .bg(cx.theme().colors().icon_accent),
+                    )
+                    .child(Label::new(self.label.clone()).color(label_color))
+                    .children(
+                        self.meta
+                            .map(|meta| Label::new(meta).color(LabelColor::Muted)),
+                    )
+                    .child(
+                        h_stack()
+                            .gap_1()
+                            .justify_end()
+                            .children(self.actions.unwrap_or_default()),
+                    ),
             )
     }
 }
@@ -522,7 +559,7 @@ impl ListSeparator {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        div().h_px().w_full().bg(cx.theme().colors().border)
+        div().h_px().w_full().bg(cx.theme().colors().border_variant)
     }
 }
 
@@ -564,14 +601,15 @@ impl<V: 'static> List<V> {
         let is_toggled = Toggleable::is_toggled(&self.toggleable);
 
         let list_content = match (self.items.is_empty(), is_toggled) {
-            (_, false) => div(),
             (false, _) => div().children(self.items),
-            (true, _) => {
+            (true, false) => div(),
+            (true, true) => {
                 div().child(Label::new(self.empty_message.clone()).color(LabelColor::Muted))
             }
         };
 
         v_stack()
+            .w_full()
             .py_1()
             .children(self.header.map(|header| header.toggleable(self.toggleable)))
             .child(list_content)

@@ -10,6 +10,24 @@ pub use theme2::ActiveTheme;
 use gpui2::Hsla;
 use strum::EnumIter;
 
+/// Represents a person with a Zed account's public profile.
+/// All data in this struct should be considered public.
+pub struct PublicActor {
+    pub username: SharedString,
+    pub avatar: SharedString,
+    pub is_contact: bool,
+}
+
+impl PublicActor {
+    pub fn new(username: impl Into<SharedString>, avatar: impl Into<SharedString>) -> Self {
+        Self {
+            username: username.into(),
+            avatar: avatar.into(),
+            is_contact: false,
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum FileSystemStatus {
     #[default]

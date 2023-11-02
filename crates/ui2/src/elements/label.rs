@@ -21,11 +21,11 @@ impl LabelColor {
         match self {
             Self::Default => cx.theme().colors().text,
             Self::Muted => cx.theme().colors().text_muted,
-            Self::Created => gpui2::red(),
-            Self::Modified => gpui2::red(),
-            Self::Deleted => gpui2::red(),
+            Self::Created => cx.theme().status().created,
+            Self::Modified => cx.theme().status().modified,
+            Self::Deleted => cx.theme().status().deleted,
             Self::Disabled => cx.theme().colors().text_disabled,
-            Self::Hidden => gpui2::red(),
+            Self::Hidden => cx.theme().status().hidden,
             Self::Placeholder => cx.theme().colors().text_placeholder,
             Self::Accent => cx.theme().colors().text_accent,
         }
@@ -79,8 +79,7 @@ impl Label {
                 this.relative().child(
                     div()
                         .absolute()
-                        .top_px()
-                        .my_auto()
+                        .top_1_2()
                         .w_full()
                         .h_px()
                         .bg(LabelColor::Hidden.hsla(cx)),
