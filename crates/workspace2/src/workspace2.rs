@@ -33,7 +33,7 @@ use gpui2::{
     Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
     WindowHandle, WindowOptions,
 };
-use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
+use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use language2::LanguageRegistry;
 use lazy_static::lazy_static;
 use node_runtime::NodeRuntime;
@@ -47,6 +47,7 @@ use persistence::{
 use postage::stream::Stream;
 use project2::{Project, ProjectEntryId, ProjectPath, Worktree};
 use serde::Deserialize;
+use settings2::Settings;
 use status_bar::StatusBar;
 use std::{
     any::TypeId,
@@ -59,6 +60,7 @@ use std::{
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
 use uuid::Uuid;
+use workspace_settings::WorkspaceSettings;
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Size<GlobalPixels>> = env::var("ZED_WINDOW_SIZE")
@@ -226,10 +228,10 @@ pub struct Toast {
 
 pub type WorkspaceId = i64;
 
-// pub fn init_settings(cx: &mut AppContext) {
-//     settings::register::<WorkspaceSettings>(cx);
-//     settings::register::<item::ItemSettings>(cx);
-// }
+pub fn init_settings(cx: &mut AppContext) {
+    WorkspaceSettings::register(cx);
+    ItemSettings::register(cx);
+}
 
 // pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
 //     init_settings(cx);
@@ -450,41 +452,42 @@ struct Follower {
     peer_id: PeerId,
 }
 
-// todo!()
-// impl AppState {
-//     #[cfg(any(test, feature = "test-support"))]
-//     pub fn test(cx: &mut AppContext) -> Arc<Self> {
-//         use node_runtime::FakeNodeRuntime;
-//         use settings::SettingsStore;
+impl AppState {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(cx: &mut AppContext) -> Arc<Self> {
+        use gpui2::Context;
+        use node_runtime::FakeNodeRuntime;
+        use settings2::SettingsStore;
 
-//         if !cx.has_global::<SettingsStore>() {
-//             cx.set_global(SettingsStore::test(cx));
-//         }
+        if !cx.has_global::<SettingsStore>() {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        }
 
-//         let fs = fs::FakeFs::new(cx.background().clone());
-//         let languages = Arc::new(LanguageRegistry::test());
-//         let http_client = util::http::FakeHttpClient::with_404_response();
-//         let client = Client::new(http_client.clone(), cx);
-//         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-//         let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let fs = fs2::FakeFs::new(cx.background_executor().clone());
+        let languages = Arc::new(LanguageRegistry::test());
+        let http_client = util::http::FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone(), cx);
+        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let workspace_store = cx.build_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
-//         theme::init((), cx);
-//         client::init(&client, cx);
-//         crate::init_settings(cx);
+        // todo!()
+        // theme::init((), cx);
+        client2::init(&client, cx);
+        crate::init_settings(cx);
 
-//         Arc::new(Self {
-//             client,
-//             fs,
-//             languages,
-//             user_store,
-//             // channel_store,
-//             workspace_store,
-//             node_runtime: FakeNodeRuntime::new(),
-//             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
-//             build_window_options: |_, _, _| Default::default(),
-//         })
-//     }
-// }
+        Arc::new(Self {
+            client,
+            fs,
+            languages,
+            user_store,
+            workspace_store,
+            node_runtime: FakeNodeRuntime::new(),
+            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
+            build_window_options: |_, _, _| Default::default(),
+        })
+    }
+}
 
 struct DelayedDebouncedEditAction {
     task: Option<Task<()>>,
