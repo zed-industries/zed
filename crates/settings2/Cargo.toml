@@ -9,14 +9,14 @@ path = "src/settings2.rs"
 doctest = false
 
 [features]
-test-support = ["gpui2/test-support", "fs/test-support"]
+test-support = ["gpui/test-support", "fs/test-support"]
 
 [dependencies]
 collections = { path = "../collections" }
-gpui2 = { path = "../gpui2" }
+gpui = {package = "gpui2",  path = "../gpui2" }
 sqlez = { path = "../sqlez" }
-fs2 = { path = "../fs2" }
-feature_flags2 = { path = "../feature_flags2" }
+fs = {package = "fs2",  path = "../fs2" }
+feature_flags = {package = "feature_flags2",  path = "../feature_flags2" }
 util = { path = "../util" }
 
 anyhow.workspace = true
@@ -35,8 +35,8 @@ tree-sitter.workspace = true
 tree-sitter-json = "*"
 
 [dev-dependencies]
-gpui2 = { path = "../gpui2", features = ["test-support"] }
-fs = { path = "../fs", features = ["test-support"] }
+gpui = {package = "gpui2",  path = "../gpui2", features = ["test-support"] }
+fs = { package = "fs2", path = "../fs2", features = ["test-support"] }
 indoc.workspace = true
 pretty_assertions.workspace = true
 unindent.workspace = true

@@ -1,8 +1,8 @@
 use anyhow::{anyhow, ensure, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-pub use language2::*;
-use lsp2::{CodeActionKind, LanguageServerBinary};
+pub use language::*;
+use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -148,10 +148,10 @@ impl super::LspAdapter for VueLspAdapter {
 
     async fn label_for_completion(
         &self,
-        item: &lsp2::CompletionItem,
-        language: &Arc<language2::Language>,
-    ) -> Option<language2::CodeLabel> {
-        use lsp2::CompletionItemKind as Kind;
+        item: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        use lsp::CompletionItemKind as Kind;
         let len = item.label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
@@ -171,7 +171,7 @@ impl super::LspAdapter for VueLspAdapter {
             None => item.label.clone(),
         };
 
-        Some(language2::CodeLabel {
+        Some(language::CodeLabel {
             text,
             runs: vec![(0..len, highlight_id)],
             filter_range: 0..len,

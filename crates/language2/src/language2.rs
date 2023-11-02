@@ -17,10 +17,10 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, TryFutureExt as _,
 };
-use gpui2::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
+use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 pub use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
-use lsp2::{CodeActionKind, LanguageServerBinary};
+use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use regex::Regex;
@@ -42,7 +42,7 @@ use std::{
     },
 };
 use syntax_map::SyntaxSnapshot;
-use theme2::{SyntaxTheme, ThemeVariant};
+use theme::{SyntaxTheme, ThemeVariant};
 use tree_sitter::{self, Query};
 use unicase::UniCase;
 use util::{http::HttpClient, paths::PathExt};
@@ -51,7 +51,7 @@ use util::{post_inc, ResultExt, TryFutureExt as _, UnwrapFuture};
 pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::DiagnosticEntry;
-pub use lsp2::LanguageServerId;
+pub use lsp::LanguageServerId;
 pub use outline::{Outline, OutlineItem};
 pub use syntax_map::{OwnedSyntaxLayerInfo, SyntaxLayerInfo};
 pub use text::LineEnding;
@@ -98,7 +98,7 @@ lazy_static! {
 }
 
 pub trait ToLspPosition {
-    fn to_lsp_position(self) -> lsp2::Position;
+    fn to_lsp_position(self) -> lsp::Position;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -203,17 +203,17 @@ impl CachedLspAdapter {
         self.adapter.workspace_configuration(cx)
     }
 
-    pub fn process_diagnostics(&self, params: &mut lsp2::PublishDiagnosticsParams) {
+    pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         self.adapter.process_diagnostics(params)
     }
 
-    pub async fn process_completion(&self, completion_item: &mut lsp2::CompletionItem) {
+    pub async fn process_completion(&self, completion_item: &mut lsp::CompletionItem) {
         self.adapter.process_completion(completion_item).await
     }
 
     pub async fn label_for_completion(
         &self,
-        completion_item: &lsp2::CompletionItem,
+        completion_item: &lsp::CompletionItem,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         self.adapter
@@ -224,7 +224,7 @@ impl CachedLspAdapter {
     pub async fn label_for_symbol(
         &self,
         name: &str,
-        kind: lsp2::SymbolKind,
+        kind: lsp::SymbolKind,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         self.adapter.label_for_symbol(name, kind, language).await
@@ -289,13 +289,13 @@ pub trait LspAdapter: 'static + Send + Sync {
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary>;
 
-    fn process_diagnostics(&self, _: &mut lsp2::PublishDiagnosticsParams) {}
+    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
-    async fn process_completion(&self, _: &mut lsp2::CompletionItem) {}
+    async fn process_completion(&self, _: &mut lsp::CompletionItem) {}
 
     async fn label_for_completion(
         &self,
-        _: &lsp2::CompletionItem,
+        _: &lsp::CompletionItem,
         _: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
@@ -304,7 +304,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn label_for_symbol(
         &self,
         _: &str,
-        _: lsp2::SymbolKind,
+        _: lsp::SymbolKind,
         _: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
@@ -476,8 +476,8 @@ fn deserialize_regex<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Regex>, D
 pub struct FakeLspAdapter {
     pub name: &'static str,
     pub initialization_options: Option<Value>,
-    pub capabilities: lsp2::ServerCapabilities,
-    pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp2::FakeLanguageServer)>>,
+    pub capabilities: lsp::ServerCapabilities,
+    pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
     pub prettier_plugins: Vec<&'static str>,
@@ -532,7 +532,7 @@ pub struct Language {
 
     #[cfg(any(test, feature = "test-support"))]
     fake_adapter: Option<(
-        mpsc::UnboundedSender<lsp2::FakeLanguageServer>,
+        mpsc::UnboundedSender<lsp::FakeLanguageServer>,
         Arc<FakeLspAdapter>,
     )>,
 }
@@ -649,7 +649,7 @@ struct LanguageRegistryState {
 
 pub struct PendingLanguageServer {
     pub server_id: LanguageServerId,
-    pub task: Task<Result<lsp2::LanguageServer>>,
+    pub task: Task<Result<lsp::LanguageServer>>,
     pub container_dir: Option<Arc<Path>>,
 }
 
@@ -905,7 +905,7 @@ impl LanguageRegistry {
         if language.fake_adapter.is_some() {
             let task = cx.spawn(|cx| async move {
                 let (servers_tx, fake_adapter) = language.fake_adapter.as_ref().unwrap();
-                let (server, mut fake_server) = lsp2::LanguageServer::fake(
+                let (server, mut fake_server) = lsp::LanguageServer::fake(
                     fake_adapter.name.to_string(),
                     fake_adapter.capabilities.clone(),
                     cx.clone(),
@@ -919,7 +919,7 @@ impl LanguageRegistry {
                 cx.background_executor()
                     .spawn(async move {
                         if fake_server
-                            .try_receive_notification::<lsp2::notification::Initialized>()
+                            .try_receive_notification::<lsp::notification::Initialized>()
                             .await
                             .is_some()
                         {
@@ -988,7 +988,7 @@ impl LanguageRegistry {
                     task.await?;
                 }
 
-                lsp2::LanguageServer::new(
+                lsp::LanguageServer::new(
                     stderr_capture,
                     server_id,
                     binary,
@@ -1471,7 +1471,7 @@ impl Language {
     pub async fn set_fake_lsp_adapter(
         &mut self,
         fake_lsp_adapter: Arc<FakeLspAdapter>,
-    ) -> mpsc::UnboundedReceiver<lsp2::FakeLanguageServer> {
+    ) -> mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
         let (servers_tx, servers_rx) = mpsc::unbounded();
         self.fake_adapter = Some((servers_tx, fake_lsp_adapter.clone()));
         let adapter = CachedLspAdapter::new(Arc::new(fake_lsp_adapter)).await;
@@ -1501,7 +1501,7 @@ impl Language {
         None
     }
 
-    pub async fn process_completion(self: &Arc<Self>, completion: &mut lsp2::CompletionItem) {
+    pub async fn process_completion(self: &Arc<Self>, completion: &mut lsp::CompletionItem) {
         for adapter in &self.adapters {
             adapter.process_completion(completion).await;
         }
@@ -1509,7 +1509,7 @@ impl Language {
 
     pub async fn label_for_completion(
         self: &Arc<Self>,
-        completion: &lsp2::CompletionItem,
+        completion: &lsp::CompletionItem,
     ) -> Option<CodeLabel> {
         self.adapters
             .first()
@@ -1521,7 +1521,7 @@ impl Language {
     pub async fn label_for_symbol(
         self: &Arc<Self>,
         name: &str,
-        kind: lsp2::SymbolKind,
+        kind: lsp::SymbolKind,
     ) -> Option<CodeLabel> {
         self.adapters
             .first()
@@ -1745,7 +1745,7 @@ impl Default for FakeLspAdapter {
     fn default() -> Self {
         Self {
             name: "the-fake-language-server",
-            capabilities: lsp2::LanguageServer::full_capabilities(),
+            capabilities: lsp::LanguageServer::full_capabilities(),
             initializer: None,
             disk_based_diagnostics_progress_token: None,
             initialization_options: None,
@@ -1794,7 +1794,7 @@ impl LspAdapter for Arc<FakeLspAdapter> {
         unreachable!();
     }
 
-    fn process_diagnostics(&self, _: &mut lsp2::PublishDiagnosticsParams) {}
+    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
     async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         self.disk_based_diagnostics_sources.clone()
@@ -1824,22 +1824,22 @@ fn get_capture_indices(query: &Query, captures: &mut [(&str, &mut Option<u32>)])
     }
 }
 
-pub fn point_to_lsp(point: PointUtf16) -> lsp2::Position {
-    lsp2::Position::new(point.row, point.column)
+pub fn point_to_lsp(point: PointUtf16) -> lsp::Position {
+    lsp::Position::new(point.row, point.column)
 }
 
-pub fn point_from_lsp(point: lsp2::Position) -> Unclipped<PointUtf16> {
+pub fn point_from_lsp(point: lsp::Position) -> Unclipped<PointUtf16> {
     Unclipped(PointUtf16::new(point.line, point.character))
 }
 
-pub fn range_to_lsp(range: Range<PointUtf16>) -> lsp2::Range {
-    lsp2::Range {
+pub fn range_to_lsp(range: Range<PointUtf16>) -> lsp::Range {
+    lsp::Range {
         start: point_to_lsp(range.start),
         end: point_to_lsp(range.end),
     }
 }
 
-pub fn range_from_lsp(range: lsp2::Range) -> Range<Unclipped<PointUtf16>> {
+pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
     let mut start = point_from_lsp(range.start);
     let mut end = point_from_lsp(range.end);
     if start > end {
@@ -1851,9 +1851,9 @@ pub fn range_from_lsp(range: lsp2::Range) -> Range<Unclipped<PointUtf16>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui2::TestAppContext;
+    use gpui::TestAppContext;
 
-    #[gpui2::test(iterations = 10)]
+    #[gpui::test(iterations = 10)]
     async fn test_first_line_pattern(cx: &mut TestAppContext) {
         let mut languages = LanguageRegistry::test();
 
@@ -1891,7 +1891,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test(iterations = 10)]
+    #[gpui::test(iterations = 10)]
     async fn test_language_loading(cx: &mut TestAppContext) {
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.executor().clone());

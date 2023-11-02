@@ -2,8 +2,8 @@ use crate::prompts::base::{PromptArguments, PromptTemplate};
 use std::fmt::Write;
 use std::{ops::Range, path::PathBuf};
 
-use gpui2::{AsyncAppContext, Model};
-use language2::{Anchor, Buffer};
+use gpui::{AsyncAppContext, Model};
+use language::{Anchor, Buffer};
 
 #[derive(Clone)]
 pub struct PromptCodeSnippet {

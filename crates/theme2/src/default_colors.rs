@@ -1,6 +1,6 @@
 use std::num::ParseIntError;
 
-use gpui2::{hsla, Hsla, Rgba};
+use gpui::{hsla, Hsla, Rgba};
 
 use crate::{
     colors::{GitStatusColors, PlayerColor, PlayerColors, StatusColors, SystemColors, ThemeColors},

@@ -1,9 +1,9 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::{Context, Result};
-use client2::proto;
+use client::proto;
 use globset::{Glob, GlobMatcher};
 use itertools::Itertools;
-use language2::{char_kind, BufferSnapshot};
+use language::{char_kind, BufferSnapshot};
 use regex::{Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{

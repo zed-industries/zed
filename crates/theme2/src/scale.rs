@@ -1,4 +1,4 @@
-use gpui2::{AppContext, Hsla, SharedString};
+use gpui::{AppContext, Hsla, SharedString};
 
 use crate::{ActiveTheme, Appearance};
 

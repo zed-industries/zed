@@ -9,17 +9,17 @@ path = "src/client2.rs"
 doctest = false
 
 [features]
-test-support = ["collections/test-support", "gpui2/test-support", "rpc2/test-support"]
+test-support = ["collections/test-support", "gpui/test-support", "rpc/test-support"]
 
 [dependencies]
 collections = { path = "../collections" }
-db2 = { path = "../db2" }
-gpui2 = { path = "../gpui2" }
+db = { package = "db2", path = "../db2" }
+gpui = { package = "gpui2", path = "../gpui2" }
 util = { path = "../util" }
-rpc2 = { path = "../rpc2" }
+rpc = { package = "rpc2", path = "../rpc2" }
 text = { path = "../text" }
-settings2 = { path = "../settings2" }
-feature_flags2 = { path = "../feature_flags2" }
+settings = { package = "settings2", path = "../settings2" }
+feature_flags = { package = "feature_flags2", path = "../feature_flags2" }
 sum_tree = { path = "../sum_tree" }
 
 anyhow.workspace = true
@@ -46,7 +46,7 @@ url = "2.2"
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
-gpui2 = { path = "../gpui2", features = ["test-support"] }
-rpc2 = { path = "../rpc2", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+rpc = { package = "rpc2", path = "../rpc2", features = ["test-support"] }
+settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }

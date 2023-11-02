@@ -1,4 +1,4 @@
-use gpui2::{HighlightStyle, Hsla};
+use gpui::{HighlightStyle, Hsla};
 
 #[derive(Clone, Default)]
 pub struct SyntaxTheme {

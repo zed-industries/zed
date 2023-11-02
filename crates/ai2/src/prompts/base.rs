@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 use std::ops::Range;
 use std::sync::Arc;
 
-use language2::BufferSnapshot;
+use language::BufferSnapshot;
 use util::ResultExt;
 
 use crate::models::LanguageModel;

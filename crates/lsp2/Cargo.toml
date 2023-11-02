@@ -13,7 +13,7 @@ test-support = ["async-pipe"]
 
 [dependencies]
 collections = { path = "../collections" }
-gpui2 = { path = "../gpui2" }
+gpui = { package = "gpui2", path = "../gpui2" }
 util = { path = "../util" }
 
 anyhow.workspace = true
@@ -29,7 +29,7 @@ serde_json.workspace = true
 smol.workspace = true
 
 [dev-dependencies]
-gpui2 = { path = "../gpui2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }

@@ -5,7 +5,7 @@ use std::{
 
 use async_trait::async_trait;
 use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui2::AppContext;
+use gpui::AppContext;
 use parking_lot::Mutex;
 
 use crate::{

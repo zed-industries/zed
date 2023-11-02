@@ -90,7 +90,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                             continue;
                         }
                         Some("BackgroundExecutor") => {
-                            inner_fn_args.extend(quote!(gpui2::BackgroundExecutor::new(
+                            inner_fn_args.extend(quote!(gpui::BackgroundExecutor::new(
                                 std::sync::Arc::new(dispatcher.clone()),
                             ),));
                             continue;
@@ -105,7 +105,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                         {
                             let cx_varname = format_ident!("cx_{}", ix);
                             cx_vars.extend(quote!(
-                                let mut #cx_varname = gpui2::TestAppContext::new(
+                                let mut #cx_varname = gpui::TestAppContext::new(
                                     dispatcher.clone()
                                 );
                             ));
@@ -130,11 +130,11 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             fn #outer_fn_name() {
                 #inner_fn
 
-                gpui2::run_test(
+                gpui::run_test(
                     #num_iterations as u64,
                     #max_retries,
                     &mut |dispatcher, _seed| {
-                        let executor = gpui2::BackgroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
+                        let executor = gpui::BackgroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
                         #cx_vars
                         executor.block_test(#inner_fn_name(#inner_fn_args));
                         #cx_teardowns
@@ -167,7 +167,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 let cx_varname = format_ident!("cx_{}", ix);
                                 let cx_varname_lock = format_ident!("cx_{}_lock", ix);
                                 cx_vars.extend(quote!(
-                                    let mut #cx_varname = gpui2::TestAppContext::new(
+                                    let mut #cx_varname = gpui::TestAppContext::new(
                                        dispatcher.clone()
                                     );
                                     let mut #cx_varname_lock = #cx_varname.app.borrow_mut();
@@ -182,7 +182,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                             Some("TestAppContext") => {
                                 let cx_varname = format_ident!("cx_{}", ix);
                                 cx_vars.extend(quote!(
-                                    let mut #cx_varname = gpui2::TestAppContext::new(
+                                    let mut #cx_varname = gpui::TestAppContext::new(
                                         dispatcher.clone()
                                     );
                                 ));
@@ -209,7 +209,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             fn #outer_fn_name() {
                 #inner_fn
 
-                gpui2::run_test(
+                gpui::run_test(
                     #num_iterations as u64,
                     #max_retries,
                     &mut |dispatcher, _seed| {

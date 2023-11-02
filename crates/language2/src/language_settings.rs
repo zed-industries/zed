@@ -2,13 +2,13 @@ use crate::{File, Language};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use globset::GlobMatcher;
-use gpui2::AppContext;
+use gpui::AppContext;
 use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject},
     JsonSchema,
 };
 use serde::{Deserialize, Serialize};
-use settings2::Settings;
+use settings::Settings;
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 
 pub fn init(cx: &mut AppContext) {
@@ -255,7 +255,7 @@ impl InlayHintKind {
     }
 }
 
-impl settings2::Settings for AllLanguageSettings {
+impl settings::Settings for AllLanguageSettings {
     const KEY: Option<&'static str> = None;
 
     type FileContent = AllLanguageSettingsContent;
@@ -332,7 +332,7 @@ impl settings2::Settings for AllLanguageSettings {
 
     fn json_schema(
         generator: &mut schemars::gen::SchemaGenerator,
-        params: &settings2::SettingsJsonSchemaParams,
+        params: &settings::SettingsJsonSchemaParams,
         _: &AppContext,
     ) -> schemars::schema::RootSchema {
         let mut root_schema = generator.root_schema_for::<Self::FileContent>();

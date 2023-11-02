@@ -8,7 +8,7 @@ pub struct CheckStatusParams {
     pub local_checks_only: bool,
 }
 
-impl lsp2::request::Request for CheckStatus {
+impl lsp::request::Request for CheckStatus {
     type Params = CheckStatusParams;
     type Result = SignInStatus;
     const METHOD: &'static str = "checkStatus";
@@ -33,7 +33,7 @@ pub struct PromptUserDeviceFlow {
     pub verification_uri: String,
 }
 
-impl lsp2::request::Request for SignInInitiate {
+impl lsp::request::Request for SignInInitiate {
     type Params = SignInInitiateParams;
     type Result = SignInInitiateResult;
     const METHOD: &'static str = "signInInitiate";
@@ -66,7 +66,7 @@ pub enum SignInStatus {
     NotSignedIn,
 }
 
-impl lsp2::request::Request for SignInConfirm {
+impl lsp::request::Request for SignInConfirm {
     type Params = SignInConfirmParams;
     type Result = SignInStatus;
     const METHOD: &'static str = "signInConfirm";
@@ -82,7 +82,7 @@ pub struct SignOutParams {}
 #[serde(rename_all = "camelCase")]
 pub struct SignOutResult {}
 
-impl lsp2::request::Request for SignOut {
+impl lsp::request::Request for SignOut {
     type Params = SignOutParams;
     type Result = SignOutResult;
     const METHOD: &'static str = "signOut";
@@ -102,9 +102,9 @@ pub struct GetCompletionsDocument {
     pub tab_size: u32,
     pub indent_size: u32,
     pub insert_spaces: bool,
-    pub uri: lsp2::Url,
+    pub uri: lsp::Url,
     pub relative_path: String,
-    pub position: lsp2::Position,
+    pub position: lsp::Position,
     pub version: usize,
 }
 
@@ -118,13 +118,13 @@ pub struct GetCompletionsResult {
 #[serde(rename_all = "camelCase")]
 pub struct Completion {
     pub text: String,
-    pub position: lsp2::Position,
+    pub position: lsp::Position,
     pub uuid: String,
-    pub range: lsp2::Range,
+    pub range: lsp::Range,
     pub display_text: String,
 }
 
-impl lsp2::request::Request for GetCompletions {
+impl lsp::request::Request for GetCompletions {
     type Params = GetCompletionsParams;
     type Result = GetCompletionsResult;
     const METHOD: &'static str = "getCompletions";
@@ -132,7 +132,7 @@ impl lsp2::request::Request for GetCompletions {
 
 pub enum GetCompletionsCycling {}
 
-impl lsp2::request::Request for GetCompletionsCycling {
+impl lsp::request::Request for GetCompletionsCycling {
     type Params = GetCompletionsParams;
     type Result = GetCompletionsResult;
     const METHOD: &'static str = "getCompletionsCycling";
@@ -149,7 +149,7 @@ pub struct LogMessageParams {
     pub extra: Vec<String>,
 }
 
-impl lsp2::notification::Notification for LogMessage {
+impl lsp::notification::Notification for LogMessage {
     type Params = LogMessageParams;
     const METHOD: &'static str = "LogMessage";
 }
@@ -162,7 +162,7 @@ pub struct StatusNotificationParams {
     pub status: String, // One of Normal/InProgress
 }
 
-impl lsp2::notification::Notification for StatusNotification {
+impl lsp::notification::Notification for StatusNotification {
     type Params = StatusNotificationParams;
     const METHOD: &'static str = "statusNotification";
 }
@@ -176,7 +176,7 @@ pub struct SetEditorInfoParams {
     pub editor_plugin_info: EditorPluginInfo,
 }
 
-impl lsp2::request::Request for SetEditorInfo {
+impl lsp::request::Request for SetEditorInfo {
     type Params = SetEditorInfoParams;
     type Result = String;
     const METHOD: &'static str = "setEditorInfo";
@@ -204,7 +204,7 @@ pub struct NotifyAcceptedParams {
     pub uuid: String,
 }
 
-impl lsp2::request::Request for NotifyAccepted {
+impl lsp::request::Request for NotifyAccepted {
     type Params = NotifyAcceptedParams;
     type Result = String;
     const METHOD: &'static str = "notifyAccepted";
@@ -218,7 +218,7 @@ pub struct NotifyRejectedParams {
     pub uuids: Vec<String>,
 }
 
-impl lsp2::request::Request for NotifyRejected {
+impl lsp::request::Request for NotifyRejected {
     type Params = NotifyRejectedParams;
     type Result = String;
     const METHOD: &'static str = "notifyRejected";

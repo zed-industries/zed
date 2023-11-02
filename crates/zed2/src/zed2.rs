@@ -4,8 +4,8 @@ mod only_instance;
 mod open_listener;
 
 pub use assets::*;
-use client2::{Client, UserStore};
-use gpui2::{AsyncAppContext, Model};
+use client::{Client, UserStore};
+use gpui::{AsyncAppContext, Model};
 pub use only_instance::*;
 pub use open_listener::*;
 

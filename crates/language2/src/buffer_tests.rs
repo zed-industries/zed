@@ -5,13 +5,13 @@ use crate::language_settings::{
 use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
-use gpui2::{AppContext, Model};
-use gpui2::{Context, TestAppContext};
+use gpui::{AppContext, Model};
+use gpui::{Context, TestAppContext};
 use indoc::indoc;
 use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
-use settings2::SettingsStore;
+use settings::SettingsStore;
 use std::{
     env,
     ops::Range,
@@ -38,8 +38,8 @@ fn init_logger() {
     }
 }
 
-#[gpui2::test]
-fn test_line_endings(cx: &mut gpui2::AppContext) {
+#[gpui::test]
+fn test_line_endings(cx: &mut gpui::AppContext) {
     init_settings(cx, |_| {});
 
     cx.build_model(|cx| {
@@ -63,7 +63,7 @@ fn test_line_endings(cx: &mut gpui2::AppContext) {
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_select_language() {
     let registry = Arc::new(LanguageRegistry::test());
     registry.add(Arc::new(Language::new(
@@ -132,8 +132,8 @@ fn test_select_language() {
     );
 }
 
-#[gpui2::test]
-fn test_edit_events(cx: &mut gpui2::AppContext) {
+#[gpui::test]
+fn test_edit_events(cx: &mut gpui::AppContext) {
     let mut now = Instant::now();
     let buffer_1_events = Arc::new(Mutex::new(Vec::new()));
     let buffer_2_events = Arc::new(Mutex::new(Vec::new()));
@@ -215,7 +215,7 @@ fn test_edit_events(cx: &mut gpui2::AppContext) {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 async fn test_apply_diff(cx: &mut TestAppContext) {
     let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
     let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text));
@@ -238,8 +238,8 @@ async fn test_apply_diff(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui2::test(iterations = 10)]
-async fn test_normalize_whitespace(cx: &mut gpui2::TestAppContext) {
+#[gpui::test(iterations = 10)]
+async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
     let text = [
         "zero",     //
         "one  ",    // 2 trailing spaces
@@ -311,8 +311,8 @@ async fn test_normalize_whitespace(cx: &mut gpui2::TestAppContext) {
     });
 }
 
-#[gpui2::test]
-async fn test_reparse(cx: &mut gpui2::TestAppContext) {
+#[gpui::test]
+async fn test_reparse(cx: &mut gpui::TestAppContext) {
     let text = "fn a() {}";
     let buffer = cx.build_model(|cx| {
         Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx)
@@ -440,8 +440,8 @@ async fn test_reparse(cx: &mut gpui2::TestAppContext) {
     );
 }
 
-#[gpui2::test]
-async fn test_resetting_language(cx: &mut gpui2::TestAppContext) {
+#[gpui::test]
+async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
     let buffer = cx.build_model(|cx| {
         let mut buffer =
             Buffer::new(0, cx.entity_id().as_u64(), "{}").with_language(Arc::new(rust_lang()), cx);
@@ -463,8 +463,8 @@ async fn test_resetting_language(cx: &mut gpui2::TestAppContext) {
     assert_eq!(get_tree_sexp(&buffer, cx), "(document (object))");
 }
 
-#[gpui2::test]
-async fn test_outline(cx: &mut gpui2::TestAppContext) {
+#[gpui::test]
+async fn test_outline(cx: &mut gpui::TestAppContext) {
     let text = r#"
         struct Person {
             name: String,
@@ -556,7 +556,7 @@ async fn test_outline(cx: &mut gpui2::TestAppContext) {
     async fn search<'a>(
         outline: &'a Outline<Anchor>,
         query: &'a str,
-        cx: &'a gpui2::TestAppContext,
+        cx: &'a gpui::TestAppContext,
     ) -> Vec<(&'a str, Vec<usize>)> {
         let matches = cx
             .update(|cx| outline.search(query, cx.background_executor().clone()))
@@ -568,8 +568,8 @@ async fn test_outline(cx: &mut gpui2::TestAppContext) {
     }
 }
 
-#[gpui2::test]
-async fn test_outline_nodes_with_newlines(cx: &mut gpui2::TestAppContext) {
+#[gpui::test]
+async fn test_outline_nodes_with_newlines(cx: &mut gpui::TestAppContext) {
     let text = r#"
         impl A for B<
             C
@@ -595,8 +595,8 @@ async fn test_outline_nodes_with_newlines(cx: &mut gpui2::TestAppContext) {
     );
 }
 
-#[gpui2::test]
-async fn test_outline_with_extra_context(cx: &mut gpui2::TestAppContext) {
+#[gpui::test]
+async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
     let language = javascript_lang()
         .with_outline_query(
             r#"
@@ -643,8 +643,8 @@ async fn test_outline_with_extra_context(cx: &mut gpui2::TestAppContext) {
     );
 }
 
-#[gpui2::test]
-async fn test_symbols_containing(cx: &mut gpui2::TestAppContext) {
+#[gpui::test]
+async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
     let text = r#"
         impl Person {
             fn one() {
@@ -731,7 +731,7 @@ async fn test_symbols_containing(cx: &mut gpui2::TestAppContext) {
     }
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_enclosing_bracket_ranges(cx: &mut AppContext) {
     let mut assert = |selection_text, range_markers| {
         assert_bracket_pairs(selection_text, range_markers, rust_lang(), cx)
@@ -847,7 +847,7 @@ fn test_enclosing_bracket_ranges(cx: &mut AppContext) {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(cx: &mut AppContext) {
     let mut assert = |selection_text, bracket_pair_texts| {
         assert_bracket_pairs(selection_text, bracket_pair_texts, javascript_lang(), cx)
@@ -879,7 +879,7 @@ fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(cx: &
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_range_for_syntax_ancestor(cx: &mut AppContext) {
     cx.build_model(|cx| {
         let text = "fn a() { b(|c| {}) }";
@@ -918,7 +918,7 @@ fn test_range_for_syntax_ancestor(cx: &mut AppContext) {
     }
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_autoindent_with_soft_tabs(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -959,7 +959,7 @@ fn test_autoindent_with_soft_tabs(cx: &mut AppContext) {
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_autoindent_with_hard_tabs(cx: &mut AppContext) {
     init_settings(cx, |settings| {
         settings.defaults.hard_tabs = Some(true);
@@ -1002,7 +1002,7 @@ fn test_autoindent_with_hard_tabs(cx: &mut AppContext) {
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -1143,7 +1143,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
     eprintln!("DONE");
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_autoindent_does_not_adjust_lines_within_newly_created_errors(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -1205,7 +1205,7 @@ fn test_autoindent_does_not_adjust_lines_within_newly_created_errors(cx: &mut Ap
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -1262,7 +1262,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut AppContext) {
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -1280,7 +1280,7 @@ fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut AppContext) {
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_autoindent_multi_line_insertion(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -1322,7 +1322,7 @@ fn test_autoindent_multi_line_insertion(cx: &mut AppContext) {
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_autoindent_block_mode(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -1406,7 +1406,7 @@ fn test_autoindent_block_mode(cx: &mut AppContext) {
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -1486,7 +1486,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut AppContex
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_autoindent_language_without_indents_query(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -1530,7 +1530,7 @@ fn test_autoindent_language_without_indents_query(cx: &mut AppContext) {
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_autoindent_with_injected_languages(cx: &mut AppContext) {
     init_settings(cx, |settings| {
         settings.languages.extend([
@@ -1604,7 +1604,7 @@ fn test_autoindent_with_injected_languages(cx: &mut AppContext) {
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_autoindent_query_with_outdent_captures(cx: &mut AppContext) {
     init_settings(cx, |settings| {
         settings.defaults.tab_size = Some(2.try_into().unwrap());
@@ -1649,7 +1649,7 @@ fn test_autoindent_query_with_outdent_captures(cx: &mut AppContext) {
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -1738,7 +1738,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_language_scope_at_with_rust(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -1806,7 +1806,7 @@ fn test_language_scope_at_with_rust(cx: &mut AppContext) {
     });
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -1854,8 +1854,8 @@ fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
     });
 }
 
-#[gpui2::test]
-fn test_serialization(cx: &mut gpui2::AppContext) {
+#[gpui::test]
+fn test_serialization(cx: &mut gpui::AppContext) {
     let mut now = Instant::now();
 
     let buffer1 = cx.build_model(|cx| {
@@ -1895,7 +1895,7 @@ fn test_serialization(cx: &mut gpui2::AppContext) {
     assert_eq!(buffer2.read(cx).text(), "abcDF");
 }
 
-#[gpui2::test(iterations = 100)]
+#[gpui::test(iterations = 100)]
 fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
     let min_peers = env::var("MIN_PEERS")
         .map(|i| i.parse().expect("invalid `MIN_PEERS` variable"))
@@ -2199,7 +2199,7 @@ fn test_contiguous_ranges() {
     );
 }
 
-#[gpui2::test(iterations = 500)]
+#[gpui::test(iterations = 500)]
 fn test_trailing_whitespace_ranges(mut rng: StdRng) {
     // Generate a random multi-line string containing
     // some lines with trailing whitespace.
@@ -2400,7 +2400,7 @@ fn javascript_lang() -> Language {
     .unwrap()
 }
 
-fn get_tree_sexp(buffer: &Model<Buffer>, cx: &mut gpui2::TestAppContext) -> String {
+fn get_tree_sexp(buffer: &Model<Buffer>, cx: &mut gpui::TestAppContext) -> String {
     buffer.update(cx, |buffer, _| {
         let snapshot = buffer.snapshot();
         let layers = snapshot.syntax.layers(buffer.as_text_snapshot());
