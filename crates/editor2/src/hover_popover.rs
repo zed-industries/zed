@@ -9,7 +9,7 @@ use gpui::{
     actions,
     elements::{Flex, MouseEventHandler, Padding, ParentElement, Text},
     platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, Element, ModelHandle, Task, ViewContext, WeakViewHandle,
+    AnyElement, AppContext, Element, Model, Task, ViewContext, WeakViewHandle,
 };
 use language::{
     markdown, Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry, ParsedMarkdown,

@@ -61,7 +61,7 @@ impl BlinkManager {
     }
 
     fn blink_cursors(&mut self, epoch: usize, cx: &mut ModelContext<Self>) {
-        if settings::get::<EditorSettings>(cx).cursor_blink {
+        if EditorSettings::get_global(cx).cursor_blink {
             if epoch == self.blink_epoch && self.enabled && !self.blinking_paused {
                 self.visible = !self.visible;
                 cx.notify();
@@ -106,8 +106,4 @@ impl BlinkManager {
     pub fn visible(&self) -> bool {
         self.visible
     }
-}
-
-impl Entity for BlinkManager {
-    type Event = ();
 }

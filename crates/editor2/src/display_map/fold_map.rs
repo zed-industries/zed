@@ -3,7 +3,7 @@ use super::{
     Highlights,
 };
 use crate::{Anchor, AnchorRangeExt, MultiBufferSnapshot, ToOffset};
-use gpui::{color::Color, fonts::HighlightStyle};
+use gpui::{fonts::HighlightStyle, Hsla};
 use language::{Chunk, Edit, Point, TextSummary};
 use std::{
     any::TypeId,
@@ -174,7 +174,7 @@ impl<'a> FoldMapWriter<'a> {
 
 pub struct FoldMap {
     snapshot: FoldSnapshot,
-    ellipses_color: Option<Color>,
+    ellipses_color: Option<Hsla>,
 }
 
 impl FoldMap {

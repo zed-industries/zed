@@ -1,6 +1,6 @@
+use gpui::Settings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Setting;
 
 #[derive(Deserialize)]
 pub struct EditorSettings {
@@ -47,7 +47,7 @@ pub struct ScrollbarContent {
     pub selections: Option<bool>,
 }
 
-impl Setting for EditorSettings {
+impl Settings for EditorSettings {
     const KEY: Option<&'static str> = None;
 
     type FileContent = EditorSettingsContent;

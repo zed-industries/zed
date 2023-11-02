@@ -6,7 +6,7 @@ use std::{
 };
 
 use collections::HashMap;
-use gpui::{AppContext, ModelHandle};
+use gpui::{AppContext, Model};
 use itertools::Itertools;
 use language::{Bias, Point, Selection, SelectionGoal, TextDimension, ToPoint};
 use util::post_inc;

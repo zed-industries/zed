@@ -1,5 +1,5 @@
 [package]
-name = "editor"
+name = "editor2"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -23,30 +23,30 @@ test-support = [
 ]
 
 [dependencies]
-client = { path = "../client" }
+client = { package = "client2", path = "../client2" }
 clock = { path = "../clock" }
-copilot = { path = "../copilot" }
-db = { path = "../db" }
+copilot = { package="copilot2", path = "../copilot2" }
+db = { package="db2", path = "../db2" }
 drag_and_drop = { path = "../drag_and_drop" }
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
-fuzzy = { path = "../fuzzy" }
+fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
 git = { path = "../git" }
-gpui = { path = "../gpui" }
-language = { path = "../language" }
-lsp = { path = "../lsp" }
+gpui = { package = "gpui2", path = "../gpui2" }
+language = { package = "language2", path = "../language2" }
+lsp = { package = "lsp2", path = "../lsp2" }
 multi_buffer = { path = "../multi_buffer" }
-project = { path = "../project" }
-rpc = { path = "../rpc" }
+project = { package = "project2", path = "../project2" }
+rpc = { package = "rpc2", path = "../rpc2" }
 rich_text = { path = "../rich_text" }
-settings = { path = "../settings" }
+settings = { package="settings2", path = "../settings2" }
 snippet = { path = "../snippet" }
 sum_tree = { path = "../sum_tree" }
-text = { path = "../text" }
-theme = { path = "../theme" }
+text = { package="text2", path = "../text2" }
+theme = { package="theme2", path = "../theme2" }
 util = { path = "../util" }
 sqlez = { path = "../sqlez" }
-workspace = { path = "../workspace" }
+workspace = { package="workspace2", path = "../workspace2" }
 
 aho-corasick = "1.1"
 anyhow.workspace = true
@@ -71,15 +71,15 @@ tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 
 [dev-dependencies]
-copilot = { path = "../copilot", features = ["test-support"] }
-text = { path = "../text", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-lsp = { path = "../lsp", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
+copilot = { package="copilot2", path = "../copilot2", features = ["test-support"] }
+text = { package="text2", path = "../text2", features = ["test-support"] }
+language = { package="language2", path = "../language2", features = ["test-support"] }
+lsp = { package = "lsp2", path = "../lsp2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
+project = { package = "project2", path = "../project2", features = ["test-support"] }
+settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
+workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
 multi_buffer = { path = "../multi_buffer", features = ["test-support"] }
 
 ctor.workspace = true

@@ -7,10 +7,8 @@ use anyhow::{Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    elements::*,
-    geometry::vector::{vec2f, Vector2F},
-    AppContext, AsyncAppContext, Entity, ModelHandle, Subscription, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    point, AnyElement, AppContext, AsyncAppContext, Entity, Model, Pixels, Subscription, Task,
+    View, ViewContext, WeakView,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
@@ -49,12 +47,12 @@ impl FollowableItem for Editor {
     }
 
     fn from_state_proto(
-        pane: ViewHandle<workspace::Pane>,
-        workspace: ViewHandle<Workspace>,
+        pane: View<workspace::Pane>,
+        workspace: View<Workspace>,
         remote_id: ViewId,
         state: &mut Option<proto::view::Variant>,
         cx: &mut AppContext,
-    ) -> Option<Task<Result<ViewHandle<Self>>>> {
+    ) -> Option<Task<Result<View<Self>>>> {
         let project = workspace.read(cx).project().to_owned();
         let Some(proto::view::Variant::Editor(_)) = state else {
             return None;
@@ -286,7 +284,7 @@ impl FollowableItem for Editor {
 
     fn apply_update_proto(
         &mut self,
-        project: &ModelHandle<Project>,
+        project: &Model<Project>,
         message: update_view::Variant,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
@@ -312,8 +310,8 @@ impl FollowableItem for Editor {
 }
 
 async fn update_editor_from_message(
-    this: WeakViewHandle<Editor>,
-    project: ModelHandle<Project>,
+    this: WeakView<Editor>,
+    project: Model<Project>,
     message: proto::update_view::Editor,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
@@ -353,7 +351,7 @@ async fn update_editor_from_message(
                     continue;
                 };
                 let buffer_id = excerpt.buffer_id;
-                let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
+                let Some(buffer) = project.read(cx).buffer_for_id(buffer_id) else {
                     continue;
                 };
 
@@ -430,7 +428,7 @@ async fn update_editor_from_message(
             editor.set_scroll_anchor_remote(
                 ScrollAnchor {
                     anchor: scroll_top_anchor,
-                    offset: vec2f(message.scroll_x, message.scroll_y),
+                    offset: point(message.scroll_x, message.scroll_y),
                 },
                 cx,
             );
@@ -573,29 +571,26 @@ impl Item for Editor {
         }
     }
 
-    fn tab_content<T: 'static>(
-        &self,
-        detail: Option<usize>,
-        style: &theme::Tab,
-        cx: &AppContext,
-    ) -> AnyElement<T> {
-        Flex::row()
-            .with_child(Label::new(self.title(cx).to_string(), style.label.clone()).into_any())
-            .with_children(detail.and_then(|detail| {
-                let path = path_for_buffer(&self.buffer, detail, false, cx)?;
-                let description = path.to_string_lossy();
-                Some(
-                    Label::new(
-                        util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN),
-                        style.description.text.clone(),
-                    )
-                    .contained()
-                    .with_style(style.description.container)
-                    .aligned(),
-                )
-            }))
-            .align_children_center()
-            .into_any()
+    fn tab_content<T: 'static>(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<T> {
+        todo!();
+
+        // Flex::row()
+        //     .with_child(Label::new(self.title(cx).to_string(), style.label.clone()).into_any())
+        //     .with_children(detail.and_then(|detail| {
+        //         let path = path_for_buffer(&self.buffer, detail, false, cx)?;
+        //         let description = path.to_string_lossy();
+        //         Some(
+        //             Label::new(
+        //                 util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN),
+        //                 style.description.text.clone(),
+        //             )
+        //             .contained()
+        //             .with_style(style.description.container)
+        //             .aligned(),
+        //         )
+        //     }))
+        //     .align_children_center()
+        //     .into_any()
     }
 
     fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
@@ -646,11 +641,7 @@ impl Item for Editor {
         }
     }
 
-    fn save(
-        &mut self,
-        project: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
+    fn save(&mut self, project: Model<Project>, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         self.report_editor_event("save", None, cx);
         let format = self.perform_format(project.clone(), FormatTrigger::Save, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
@@ -690,7 +681,7 @@ impl Item for Editor {
 
     fn save_as(
         &mut self,
-        project: ModelHandle<Project>,
+        project: Model<Project>,
         abs_path: PathBuf,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
@@ -710,11 +701,7 @@ impl Item for Editor {
         })
     }
 
-    fn reload(
-        &mut self,
-        project: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
+    fn reload(&mut self, project: Model<Project>, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
         let buffers = self.buffer.read(cx).all_buffers();
         let reload_buffers =
@@ -761,11 +748,11 @@ impl Item for Editor {
         result
     }
 
-    fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
-    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Vector2F> {
+    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<gpui::Point<Pixels>> {
         self.pixel_position_of_newest_cursor
     }
 
@@ -773,35 +760,36 @@ impl Item for Editor {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
-        let cursor = self.selections.newest_anchor().head();
-        let multibuffer = &self.buffer().read(cx);
-        let (buffer_id, symbols) =
-            multibuffer.symbols_containing(cursor, Some(&theme.editor.syntax), cx)?;
-        let buffer = multibuffer.buffer(buffer_id)?;
+    fn breadcrumbs(&self, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+        todo!();
+        // let cursor = self.selections.newest_anchor().head();
+        // let multibuffer = &self.buffer().read(cx);
+        // let (buffer_id, symbols) =
+        //     multibuffer.symbols_containing(cursor, Some(&theme.editor.syntax), cx)?;
+        // let buffer = multibuffer.buffer(buffer_id)?;
 
-        let buffer = buffer.read(cx);
-        let filename = buffer
-            .snapshot()
-            .resolve_file_path(
-                cx,
-                self.project
-                    .as_ref()
-                    .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-                    .unwrap_or_default(),
-            )
-            .map(|path| path.to_string_lossy().to_string())
-            .unwrap_or_else(|| "untitled".to_string());
+        // let buffer = buffer.read(cx);
+        // let filename = buffer
+        //     .snapshot()
+        //     .resolve_file_path(
+        //         cx,
+        //         self.project
+        //             .as_ref()
+        //             .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+        //             .unwrap_or_default(),
+        //     )
+        //     .map(|path| path.to_string_lossy().to_string())
+        //     .unwrap_or_else(|| "untitled".to_string());
 
-        let mut breadcrumbs = vec![BreadcrumbText {
-            text: filename,
-            highlights: None,
-        }];
-        breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
-            text: symbol.text,
-            highlights: Some(symbol.highlight_ranges),
-        }));
-        Some(breadcrumbs)
+        // let mut breadcrumbs = vec![BreadcrumbText {
+        //     text: filename,
+        //     highlights: None,
+        // }];
+        // breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
+        //     text: symbol.text,
+        //     highlights: Some(symbol.highlight_ranges),
+        // }));
+        // Some(breadcrumbs)
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
@@ -810,7 +798,7 @@ impl Item for Editor {
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
 
         fn serialize(
-            buffer: ModelHandle<Buffer>,
+            buffer: Model<Buffer>,
             workspace_id: WorkspaceId,
             item_id: ItemId,
             cx: &mut AppContext,
@@ -847,12 +835,12 @@ impl Item for Editor {
     }
 
     fn deserialize(
-        project: ModelHandle<Project>,
-        _workspace: WeakViewHandle<Workspace>,
+        project: Model<Project>,
+        _workspace: WeakView<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: ItemId,
         cx: &mut ViewContext<Pane>,
-    ) -> Task<Result<ViewHandle<Self>>> {
+    ) -> Task<Result<View<Self>>> {
         let project_item: Result<_> = project.update(cx, |project, cx| {
             // Look up the path with this key associated, create a self with that path
             let path = DB
@@ -894,8 +882,8 @@ impl ProjectItem for Editor {
     type Item = Buffer;
 
     fn for_project_item(
-        project: ModelHandle<Project>,
-        buffer: ModelHandle<Buffer>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self::for_buffer(buffer, Some(project), cx)
@@ -1134,89 +1122,89 @@ pub struct CursorPosition {
     _observe_active_editor: Option<Subscription>,
 }
 
-impl Default for CursorPosition {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// impl Default for CursorPosition {
+//     fn default() -> Self {
+//         Self::new()
+//     }
+// }
 
-impl CursorPosition {
-    pub fn new() -> Self {
-        Self {
-            position: None,
-            selected_count: 0,
-            _observe_active_editor: None,
-        }
-    }
+// impl CursorPosition {
+//     pub fn new() -> Self {
+//         Self {
+//             position: None,
+//             selected_count: 0,
+//             _observe_active_editor: None,
+//         }
+//     }
 
-    fn update_position(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
-        let editor = editor.read(cx);
-        let buffer = editor.buffer().read(cx).snapshot(cx);
+//     fn update_position(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+//         let editor = editor.read(cx);
+//         let buffer = editor.buffer().read(cx).snapshot(cx);
 
-        self.selected_count = 0;
-        let mut last_selection: Option<Selection<usize>> = None;
-        for selection in editor.selections.all::<usize>(cx) {
-            self.selected_count += selection.end - selection.start;
-            if last_selection
-                .as_ref()
-                .map_or(true, |last_selection| selection.id > last_selection.id)
-            {
-                last_selection = Some(selection);
-            }
-        }
-        self.position = last_selection.map(|s| s.head().to_point(&buffer));
+//         self.selected_count = 0;
+//         let mut last_selection: Option<Selection<usize>> = None;
+//         for selection in editor.selections.all::<usize>(cx) {
+//             self.selected_count += selection.end - selection.start;
+//             if last_selection
+//                 .as_ref()
+//                 .map_or(true, |last_selection| selection.id > last_selection.id)
+//             {
+//                 last_selection = Some(selection);
+//             }
+//         }
+//         self.position = last_selection.map(|s| s.head().to_point(&buffer));
 
-        cx.notify();
-    }
-}
+//         cx.notify();
+//     }
+// }
 
-impl Entity for CursorPosition {
-    type Event = ();
-}
+// impl Entity for CursorPosition {
+//     type Event = ();
+// }
 
-impl View for CursorPosition {
-    fn ui_name() -> &'static str {
-        "CursorPosition"
-    }
+// impl View for CursorPosition {
+//     fn ui_name() -> &'static str {
+//         "CursorPosition"
+//     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        if let Some(position) = self.position {
-            let theme = &theme::current(cx).workspace.status_bar;
-            let mut text = format!(
-                "{}{FILE_ROW_COLUMN_DELIMITER}{}",
-                position.row + 1,
-                position.column + 1
-            );
-            if self.selected_count > 0 {
-                write!(text, " ({} selected)", self.selected_count).unwrap();
-            }
-            Label::new(text, theme.cursor_position.clone()).into_any()
-        } else {
-            Empty::new().into_any()
-        }
-    }
-}
+//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+//         if let Some(position) = self.position {
+//             let theme = &theme::current(cx).workspace.status_bar;
+//             let mut text = format!(
+//                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",
+//                 position.row + 1,
+//                 position.column + 1
+//             );
+//             if self.selected_count > 0 {
+//                 write!(text, " ({} selected)", self.selected_count).unwrap();
+//             }
+//             Label::new(text, theme.cursor_position.clone()).into_any()
+//         } else {
+//             Empty::new().into_any()
+//         }
+//     }
+// }
 
-impl StatusItemView for CursorPosition {
-    fn set_active_pane_item(
-        &mut self,
-        active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
-            self._observe_active_editor = Some(cx.observe(&editor, Self::update_position));
-            self.update_position(editor, cx);
-        } else {
-            self.position = None;
-            self._observe_active_editor = None;
-        }
+// impl StatusItemView for CursorPosition {
+//     fn set_active_pane_item(
+//         &mut self,
+//         active_pane_item: Option<&dyn ItemHandle>,
+//         cx: &mut ViewContext<Self>,
+//     ) {
+//         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
+//             self._observe_active_editor = Some(cx.observe(&editor, Self::update_position));
+//             self.update_position(editor, cx);
+//         } else {
+//             self.position = None;
+//             self._observe_active_editor = None;
+//         }
 
-        cx.notify();
-    }
-}
+//         cx.notify();
+//     }
+// }
 
 fn path_for_buffer<'a>(
-    buffer: &ModelHandle<MultiBuffer>,
+    buffer: &Model<MultiBuffer>,
     height: usize,
     include_filename: bool,
     cx: &'a AppContext,

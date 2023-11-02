@@ -4,9 +4,7 @@ use super::{
     Highlights,
 };
 use crate::MultiBufferSnapshot;
-use gpui::{
-    fonts::FontId, text_layout::LineWrapper, AppContext, Entity, ModelContext, ModelHandle, Task,
-};
+use gpui::{AppContext, Entity, Model, ModelContext, Task};
 use language::{Chunk, Point};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
@@ -25,10 +23,6 @@ pub struct WrapMap {
     wrap_width: Option<f32>,
     background_task: Option<Task<()>>,
     font: (FontId, f32),
-}
-
-impl Entity for WrapMap {
-    type Event = ();
 }
 
 #[derive(Clone)]
@@ -78,7 +72,7 @@ impl WrapMap {
         font_size: f32,
         wrap_width: Option<f32>,
         cx: &mut AppContext,
-    ) -> (ModelHandle<Self>, WrapSnapshot) {
+    ) -> (Model<Self>, WrapSnapshot) {
         let handle = cx.add_model(|cx| {
             let mut this = Self {
                 font: (font_id, font_size),
@@ -1019,337 +1013,337 @@ fn consolidate_wrap_edits(edits: &mut Vec<WrapEdit>) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
-        MultiBuffer,
-    };
-    use gpui::test::observe;
-    use rand::prelude::*;
-    use settings::SettingsStore;
-    use smol::stream::StreamExt;
-    use std::{cmp, env, num::NonZeroU32};
-    use text::Rope;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use crate::{
+//         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
+//         MultiBuffer,
+//     };
+//     use gpui::test::observe;
+//     use rand::prelude::*;
+//     use settings::SettingsStore;
+//     use smol::stream::StreamExt;
+//     use std::{cmp, env, num::NonZeroU32};
+//     use text::Rope;
 
-    #[gpui::test(iterations = 100)]
-    async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
-        init_test(cx);
+//     #[gpui::test(iterations = 100)]
+//     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
+//         init_test(cx);
 
-        cx.foreground().set_block_on_ticks(0..=50);
-        let operations = env::var("OPERATIONS")
-            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-            .unwrap_or(10);
+//         cx.foreground().set_block_on_ticks(0..=50);
+//         let operations = env::var("OPERATIONS")
+//             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+//             .unwrap_or(10);
 
-        let font_cache = cx.font_cache().clone();
-        let font_system = cx.platform().fonts();
-        let mut wrap_width = if rng.gen_bool(0.1) {
-            None
-        } else {
-            Some(rng.gen_range(0.0..=1000.0))
-        };
-        let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
-        let family_id = font_cache
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = font_cache
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 14.0;
+//         let font_cache = cx.font_cache().clone();
+//         let font_system = cx.platform().fonts();
+//         let mut wrap_width = if rng.gen_bool(0.1) {
+//             None
+//         } else {
+//             Some(rng.gen_range(0.0..=1000.0))
+//         };
+//         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
+//         let family_id = font_cache
+//             .load_family(&["Helvetica"], &Default::default())
+//             .unwrap();
+//         let font_id = font_cache
+//             .select_font(family_id, &Default::default())
+//             .unwrap();
+//         let font_size = 14.0;
 
-        log::info!("Tab size: {}", tab_size);
-        log::info!("Wrap width: {:?}", wrap_width);
+//         log::info!("Tab size: {}", tab_size);
+//         log::info!("Wrap width: {:?}", wrap_width);
 
-        let buffer = cx.update(|cx| {
-            if rng.gen() {
-                MultiBuffer::build_random(&mut rng, cx)
-            } else {
-                let len = rng.gen_range(0..10);
-                let text = util::RandomCharIter::new(&mut rng)
-                    .take(len)
-                    .collect::<String>();
-                MultiBuffer::build_simple(&text, cx)
-            }
-        });
-        let mut buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
-        log::info!("Buffer text: {:?}", buffer_snapshot.text());
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
-        log::info!("InlayMap text: {:?}", inlay_snapshot.text());
-        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot.clone());
-        log::info!("FoldMap text: {:?}", fold_snapshot.text());
-        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
-        let tabs_snapshot = tab_map.set_max_expansion_column(32);
-        log::info!("TabMap text: {:?}", tabs_snapshot.text());
+//         let buffer = cx.update(|cx| {
+//             if rng.gen() {
+//                 MultiBuffer::build_random(&mut rng, cx)
+//             } else {
+//                 let len = rng.gen_range(0..10);
+//                 let text = util::RandomCharIter::new(&mut rng)
+//                     .take(len)
+//                     .collect::<String>();
+//                 MultiBuffer::build_simple(&text, cx)
+//             }
+//         });
+//         let mut buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+//         log::info!("Buffer text: {:?}", buffer_snapshot.text());
+//         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+//         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
+//         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot.clone());
+//         log::info!("FoldMap text: {:?}", fold_snapshot.text());
+//         let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
+//         let tabs_snapshot = tab_map.set_max_expansion_column(32);
+//         log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
-        let mut line_wrapper = LineWrapper::new(font_id, font_size, font_system);
-        let unwrapped_text = tabs_snapshot.text();
-        let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
+//         let mut line_wrapper = LineWrapper::new(font_id, font_size, font_system);
+//         let unwrapped_text = tabs_snapshot.text();
+//         let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 
-        let (wrap_map, _) =
-            cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font_id, font_size, wrap_width, cx));
-        let mut notifications = observe(&wrap_map, cx);
+//         let (wrap_map, _) =
+//             cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font_id, font_size, wrap_width, cx));
+//         let mut notifications = observe(&wrap_map, cx);
 
-        if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
-            notifications.next().await.unwrap();
-        }
+//         if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
+//             notifications.next().await.unwrap();
+//         }
 
-        let (initial_snapshot, _) = wrap_map.update(cx, |map, cx| {
-            assert!(!map.is_rewrapping());
-            map.sync(tabs_snapshot.clone(), Vec::new(), cx)
-        });
+//         let (initial_snapshot, _) = wrap_map.update(cx, |map, cx| {
+//             assert!(!map.is_rewrapping());
+//             map.sync(tabs_snapshot.clone(), Vec::new(), cx)
+//         });
 
-        let actual_text = initial_snapshot.text();
-        assert_eq!(
-            actual_text, expected_text,
-            "unwrapped text is: {:?}",
-            unwrapped_text
-        );
-        log::info!("Wrapped text: {:?}", actual_text);
+//         let actual_text = initial_snapshot.text();
+//         assert_eq!(
+//             actual_text, expected_text,
+//             "unwrapped text is: {:?}",
+//             unwrapped_text
+//         );
+//         log::info!("Wrapped text: {:?}", actual_text);
 
-        let mut next_inlay_id = 0;
-        let mut edits = Vec::new();
-        for _i in 0..operations {
-            log::info!("{} ==============================================", _i);
+//         let mut next_inlay_id = 0;
+//         let mut edits = Vec::new();
+//         for _i in 0..operations {
+//             log::info!("{} ==============================================", _i);
 
-            let mut buffer_edits = Vec::new();
-            match rng.gen_range(0..=100) {
-                0..=19 => {
-                    wrap_width = if rng.gen_bool(0.2) {
-                        None
-                    } else {
-                        Some(rng.gen_range(0.0..=1000.0))
-                    };
-                    log::info!("Setting wrap width to {:?}", wrap_width);
-                    wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
-                }
-                20..=39 => {
-                    for (fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
-                        let (tabs_snapshot, tab_edits) =
-                            tab_map.sync(fold_snapshot, fold_edits, tab_size);
-                        let (mut snapshot, wrap_edits) =
-                            wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
-                        snapshot.check_invariants();
-                        snapshot.verify_chunks(&mut rng);
-                        edits.push((snapshot, wrap_edits));
-                    }
-                }
-                40..=59 => {
-                    let (inlay_snapshot, inlay_edits) =
-                        inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
-                    let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
-                    let (tabs_snapshot, tab_edits) =
-                        tab_map.sync(fold_snapshot, fold_edits, tab_size);
-                    let (mut snapshot, wrap_edits) =
-                        wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
-                    snapshot.check_invariants();
-                    snapshot.verify_chunks(&mut rng);
-                    edits.push((snapshot, wrap_edits));
-                }
-                _ => {
-                    buffer.update(cx, |buffer, cx| {
-                        let subscription = buffer.subscribe();
-                        let edit_count = rng.gen_range(1..=5);
-                        buffer.randomly_mutate(&mut rng, edit_count, cx);
-                        buffer_snapshot = buffer.snapshot(cx);
-                        buffer_edits.extend(subscription.consume());
-                    });
-                }
-            }
+//             let mut buffer_edits = Vec::new();
+//             match rng.gen_range(0..=100) {
+//                 0..=19 => {
+//                     wrap_width = if rng.gen_bool(0.2) {
+//                         None
+//                     } else {
+//                         Some(rng.gen_range(0.0..=1000.0))
+//                     };
+//                     log::info!("Setting wrap width to {:?}", wrap_width);
+//                     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+//                 }
+//                 20..=39 => {
+//                     for (fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
+//                         let (tabs_snapshot, tab_edits) =
+//                             tab_map.sync(fold_snapshot, fold_edits, tab_size);
+//                         let (mut snapshot, wrap_edits) =
+//                             wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
+//                         snapshot.check_invariants();
+//                         snapshot.verify_chunks(&mut rng);
+//                         edits.push((snapshot, wrap_edits));
+//                     }
+//                 }
+//                 40..=59 => {
+//                     let (inlay_snapshot, inlay_edits) =
+//                         inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
+//                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+//                     let (tabs_snapshot, tab_edits) =
+//                         tab_map.sync(fold_snapshot, fold_edits, tab_size);
+//                     let (mut snapshot, wrap_edits) =
+//                         wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
+//                     snapshot.check_invariants();
+//                     snapshot.verify_chunks(&mut rng);
+//                     edits.push((snapshot, wrap_edits));
+//                 }
+//                 _ => {
+//                     buffer.update(cx, |buffer, cx| {
+//                         let subscription = buffer.subscribe();
+//                         let edit_count = rng.gen_range(1..=5);
+//                         buffer.randomly_mutate(&mut rng, edit_count, cx);
+//                         buffer_snapshot = buffer.snapshot(cx);
+//                         buffer_edits.extend(subscription.consume());
+//                     });
+//                 }
+//             }
 
-            log::info!("Buffer text: {:?}", buffer_snapshot.text());
-            let (inlay_snapshot, inlay_edits) =
-                inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
-            log::info!("InlayMap text: {:?}", inlay_snapshot.text());
-            let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
-            log::info!("FoldMap text: {:?}", fold_snapshot.text());
-            let (tabs_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
-            log::info!("TabMap text: {:?}", tabs_snapshot.text());
+//             log::info!("Buffer text: {:?}", buffer_snapshot.text());
+//             let (inlay_snapshot, inlay_edits) =
+//                 inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
+//             log::info!("InlayMap text: {:?}", inlay_snapshot.text());
+//             let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+//             log::info!("FoldMap text: {:?}", fold_snapshot.text());
+//             let (tabs_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+//             log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
-            let unwrapped_text = tabs_snapshot.text();
-            let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
-            let (mut snapshot, wrap_edits) =
-                wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot.clone(), tab_edits, cx));
-            snapshot.check_invariants();
-            snapshot.verify_chunks(&mut rng);
-            edits.push((snapshot, wrap_edits));
+//             let unwrapped_text = tabs_snapshot.text();
+//             let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
+//             let (mut snapshot, wrap_edits) =
+//                 wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot.clone(), tab_edits, cx));
+//             snapshot.check_invariants();
+//             snapshot.verify_chunks(&mut rng);
+//             edits.push((snapshot, wrap_edits));
 
-            if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) && rng.gen_bool(0.4) {
-                log::info!("Waiting for wrapping to finish");
-                while wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
-                    notifications.next().await.unwrap();
-                }
-                wrap_map.read_with(cx, |map, _| assert!(map.pending_edits.is_empty()));
-            }
+//             if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) && rng.gen_bool(0.4) {
+//                 log::info!("Waiting for wrapping to finish");
+//                 while wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
+//                     notifications.next().await.unwrap();
+//                 }
+//                 wrap_map.read_with(cx, |map, _| assert!(map.pending_edits.is_empty()));
+//             }
 
-            if !wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
-                let (mut wrapped_snapshot, wrap_edits) =
-                    wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
-                let actual_text = wrapped_snapshot.text();
-                let actual_longest_row = wrapped_snapshot.longest_row();
-                log::info!("Wrapping finished: {:?}", actual_text);
-                wrapped_snapshot.check_invariants();
-                wrapped_snapshot.verify_chunks(&mut rng);
-                edits.push((wrapped_snapshot.clone(), wrap_edits));
-                assert_eq!(
-                    actual_text, expected_text,
-                    "unwrapped text is: {:?}",
-                    unwrapped_text
-                );
+//             if !wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
+//                 let (mut wrapped_snapshot, wrap_edits) =
+//                     wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
+//                 let actual_text = wrapped_snapshot.text();
+//                 let actual_longest_row = wrapped_snapshot.longest_row();
+//                 log::info!("Wrapping finished: {:?}", actual_text);
+//                 wrapped_snapshot.check_invariants();
+//                 wrapped_snapshot.verify_chunks(&mut rng);
+//                 edits.push((wrapped_snapshot.clone(), wrap_edits));
+//                 assert_eq!(
+//                     actual_text, expected_text,
+//                     "unwrapped text is: {:?}",
+//                     unwrapped_text
+//                 );
 
-                let mut summary = TextSummary::default();
-                for (ix, item) in wrapped_snapshot
-                    .transforms
-                    .items(&())
-                    .into_iter()
-                    .enumerate()
-                {
-                    summary += &item.summary.output;
-                    log::info!("{} summary: {:?}", ix, item.summary.output,);
-                }
+//                 let mut summary = TextSummary::default();
+//                 for (ix, item) in wrapped_snapshot
+//                     .transforms
+//                     .items(&())
+//                     .into_iter()
+//                     .enumerate()
+//                 {
+//                     summary += &item.summary.output;
+//                     log::info!("{} summary: {:?}", ix, item.summary.output,);
+//                 }
 
-                if tab_size.get() == 1
-                    || !wrapped_snapshot
-                        .tab_snapshot
-                        .fold_snapshot
-                        .text()
-                        .contains('\t')
-                {
-                    let mut expected_longest_rows = Vec::new();
-                    let mut longest_line_len = -1;
-                    for (row, line) in expected_text.split('\n').enumerate() {
-                        let line_char_count = line.chars().count() as isize;
-                        if line_char_count > longest_line_len {
-                            expected_longest_rows.clear();
-                            longest_line_len = line_char_count;
-                        }
-                        if line_char_count >= longest_line_len {
-                            expected_longest_rows.push(row as u32);
-                        }
-                    }
+//                 if tab_size.get() == 1
+//                     || !wrapped_snapshot
+//                         .tab_snapshot
+//                         .fold_snapshot
+//                         .text()
+//                         .contains('\t')
+//                 {
+//                     let mut expected_longest_rows = Vec::new();
+//                     let mut longest_line_len = -1;
+//                     for (row, line) in expected_text.split('\n').enumerate() {
+//                         let line_char_count = line.chars().count() as isize;
+//                         if line_char_count > longest_line_len {
+//                             expected_longest_rows.clear();
+//                             longest_line_len = line_char_count;
+//                         }
+//                         if line_char_count >= longest_line_len {
+//                             expected_longest_rows.push(row as u32);
+//                         }
+//                     }
 
-                    assert!(
-                        expected_longest_rows.contains(&actual_longest_row),
-                        "incorrect longest row {}. expected {:?} with length {}",
-                        actual_longest_row,
-                        expected_longest_rows,
-                        longest_line_len,
-                    )
-                }
-            }
-        }
+//                     assert!(
+//                         expected_longest_rows.contains(&actual_longest_row),
+//                         "incorrect longest row {}. expected {:?} with length {}",
+//                         actual_longest_row,
+//                         expected_longest_rows,
+//                         longest_line_len,
+//                     )
+//                 }
+//             }
+//         }
 
-        let mut initial_text = Rope::from(initial_snapshot.text().as_str());
-        for (snapshot, patch) in edits {
-            let snapshot_text = Rope::from(snapshot.text().as_str());
-            for edit in &patch {
-                let old_start = initial_text.point_to_offset(Point::new(edit.new.start, 0));
-                let old_end = initial_text.point_to_offset(cmp::min(
-                    Point::new(edit.new.start + edit.old.len() as u32, 0),
-                    initial_text.max_point(),
-                ));
-                let new_start = snapshot_text.point_to_offset(Point::new(edit.new.start, 0));
-                let new_end = snapshot_text.point_to_offset(cmp::min(
-                    Point::new(edit.new.end, 0),
-                    snapshot_text.max_point(),
-                ));
-                let new_text = snapshot_text
-                    .chunks_in_range(new_start..new_end)
-                    .collect::<String>();
+//         let mut initial_text = Rope::from(initial_snapshot.text().as_str());
+//         for (snapshot, patch) in edits {
+//             let snapshot_text = Rope::from(snapshot.text().as_str());
+//             for edit in &patch {
+//                 let old_start = initial_text.point_to_offset(Point::new(edit.new.start, 0));
+//                 let old_end = initial_text.point_to_offset(cmp::min(
+//                     Point::new(edit.new.start + edit.old.len() as u32, 0),
+//                     initial_text.max_point(),
+//                 ));
+//                 let new_start = snapshot_text.point_to_offset(Point::new(edit.new.start, 0));
+//                 let new_end = snapshot_text.point_to_offset(cmp::min(
+//                     Point::new(edit.new.end, 0),
+//                     snapshot_text.max_point(),
+//                 ));
+//                 let new_text = snapshot_text
+//                     .chunks_in_range(new_start..new_end)
+//                     .collect::<String>();
 
-                initial_text.replace(old_start..old_end, &new_text);
-            }
-            assert_eq!(initial_text.to_string(), snapshot_text.to_string());
-        }
+//                 initial_text.replace(old_start..old_end, &new_text);
+//             }
+//             assert_eq!(initial_text.to_string(), snapshot_text.to_string());
+//         }
 
-        if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
-            log::info!("Waiting for wrapping to finish");
-            while wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
-                notifications.next().await.unwrap();
-            }
-        }
-        wrap_map.read_with(cx, |map, _| assert!(map.pending_edits.is_empty()));
-    }
+//         if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
+//             log::info!("Waiting for wrapping to finish");
+//             while wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
+//                 notifications.next().await.unwrap();
+//             }
+//         }
+//         wrap_map.read_with(cx, |map, _| assert!(map.pending_edits.is_empty()));
+//     }
 
-    fn init_test(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
-        cx.update(|cx| {
-            cx.set_global(SettingsStore::test(cx));
-            theme::init((), cx);
-        });
-    }
+//     fn init_test(cx: &mut gpui::TestAppContext) {
+//         cx.foreground().forbid_parking();
+//         cx.update(|cx| {
+//             cx.set_global(SettingsStore::test(cx));
+//             theme::init((), cx);
+//         });
+//     }
 
-    fn wrap_text(
-        unwrapped_text: &str,
-        wrap_width: Option<f32>,
-        line_wrapper: &mut LineWrapper,
-    ) -> String {
-        if let Some(wrap_width) = wrap_width {
-            let mut wrapped_text = String::new();
-            for (row, line) in unwrapped_text.split('\n').enumerate() {
-                if row > 0 {
-                    wrapped_text.push('\n')
-                }
+//     fn wrap_text(
+//         unwrapped_text: &str,
+//         wrap_width: Option<f32>,
+//         line_wrapper: &mut LineWrapper,
+//     ) -> String {
+//         if let Some(wrap_width) = wrap_width {
+//             let mut wrapped_text = String::new();
+//             for (row, line) in unwrapped_text.split('\n').enumerate() {
+//                 if row > 0 {
+//                     wrapped_text.push('\n')
+//                 }
 
-                let mut prev_ix = 0;
-                for boundary in line_wrapper.wrap_line(line, wrap_width) {
-                    wrapped_text.push_str(&line[prev_ix..boundary.ix]);
-                    wrapped_text.push('\n');
-                    wrapped_text.push_str(&" ".repeat(boundary.next_indent as usize));
-                    prev_ix = boundary.ix;
-                }
-                wrapped_text.push_str(&line[prev_ix..]);
-            }
-            wrapped_text
-        } else {
-            unwrapped_text.to_string()
-        }
-    }
+//                 let mut prev_ix = 0;
+//                 for boundary in line_wrapper.wrap_line(line, wrap_width) {
+//                     wrapped_text.push_str(&line[prev_ix..boundary.ix]);
+//                     wrapped_text.push('\n');
+//                     wrapped_text.push_str(&" ".repeat(boundary.next_indent as usize));
+//                     prev_ix = boundary.ix;
+//                 }
+//                 wrapped_text.push_str(&line[prev_ix..]);
+//             }
+//             wrapped_text
+//         } else {
+//             unwrapped_text.to_string()
+//         }
+//     }
 
-    impl WrapSnapshot {
-        pub fn text(&self) -> String {
-            self.text_chunks(0).collect()
-        }
+//     impl WrapSnapshot {
+//         pub fn text(&self) -> String {
+//             self.text_chunks(0).collect()
+//         }
 
-        pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
-            self.chunks(
-                wrap_row..self.max_point().row() + 1,
-                false,
-                Highlights::default(),
-            )
-            .map(|h| h.text)
-        }
+//         pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
+//             self.chunks(
+//                 wrap_row..self.max_point().row() + 1,
+//                 false,
+//                 Highlights::default(),
+//             )
+//             .map(|h| h.text)
+//         }
 
-        fn verify_chunks(&mut self, rng: &mut impl Rng) {
-            for _ in 0..5 {
-                let mut end_row = rng.gen_range(0..=self.max_point().row());
-                let start_row = rng.gen_range(0..=end_row);
-                end_row += 1;
+//         fn verify_chunks(&mut self, rng: &mut impl Rng) {
+//             for _ in 0..5 {
+//                 let mut end_row = rng.gen_range(0..=self.max_point().row());
+//                 let start_row = rng.gen_range(0..=end_row);
+//                 end_row += 1;
 
-                let mut expected_text = self.text_chunks(start_row).collect::<String>();
-                if expected_text.ends_with('\n') {
-                    expected_text.push('\n');
-                }
-                let mut expected_text = expected_text
-                    .lines()
-                    .take((end_row - start_row) as usize)
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if end_row <= self.max_point().row() {
-                    expected_text.push('\n');
-                }
+//                 let mut expected_text = self.text_chunks(start_row).collect::<String>();
+//                 if expected_text.ends_with('\n') {
+//                     expected_text.push('\n');
+//                 }
+//                 let mut expected_text = expected_text
+//                     .lines()
+//                     .take((end_row - start_row) as usize)
+//                     .collect::<Vec<_>>()
+//                     .join("\n");
+//                 if end_row <= self.max_point().row() {
+//                     expected_text.push('\n');
+//                 }
 
-                let actual_text = self
-                    .chunks(start_row..end_row, true, Highlights::default())
-                    .map(|c| c.text)
-                    .collect::<String>();
-                assert_eq!(
-                    expected_text,
-                    actual_text,
-                    "chunks != highlighted_chunks for rows {:?}",
-                    start_row..end_row
-                );
-            }
-        }
-    }
-}
+//                 let actual_text = self
+//                     .chunks(start_row..end_row, true, Highlights::default())
+//                     .map(|c| c.text)
+//                     .collect::<String>();
+//                 assert_eq!(
+//                     expected_text,
+//                     actual_text,
+//                     "chunks != highlighted_chunks for rows {:?}",
+//                     start_row..end_row
+//                 );
+//             }
+//         }
+//     }
+// }

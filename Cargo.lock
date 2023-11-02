@@ -2623,6 +2623,60 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor2"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "anyhow",
+ "client2",
+ "clock",
+ "collections",
+ "context_menu",
+ "convert_case 0.6.0",
+ "copilot2",
+ "ctor",
+ "db2",
+ "drag_and_drop",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "fuzzy2",
+ "git",
+ "gpui2",
+ "indoc",
+ "itertools 0.10.5",
+ "language2",
+ "lazy_static",
+ "log",
+ "lsp2",
+ "multi_buffer",
+ "ordered-float 2.10.0",
+ "parking_lot 0.11.2",
+ "postage",
+ "project2",
+ "rand 0.8.5",
+ "rich_text",
+ "rpc2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "settings2",
+ "smallvec",
+ "smol",
+ "snippet",
+ "sqlez",
+ "sum_tree",
+ "text2",
+ "theme2",
+ "tree-sitter",
+ "tree-sitter-html",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "unindent",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "either"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11071,6 +11125,7 @@ dependencies = [
  "copilot2",
  "ctor",
  "db2",
+ "editor2",
  "env_logger 0.9.3",
  "feature_flags2",
  "fs2",

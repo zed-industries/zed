@@ -13,9 +13,12 @@ mod status_bar;
 mod toolbar;
 mod workspace_settings;
 
-use crate::persistence::model::{
-    DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup,
-    SerializedWorkspace,
+pub use crate::persistence::{
+    model::{
+        DockData, DockStructure, ItemId, SerializedItem, SerializedPane, SerializedPaneGroup,
+        SerializedWorkspace,
+    },
+    WorkspaceDb,
 };
 use anyhow::{anyhow, Context as _, Result};
 use call2::ActiveCall;
@@ -44,15 +47,13 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
-use persistence::{
-    model::{ItemId, WorkspaceLocation},
-    DB,
-};
+use persistence::{model::WorkspaceLocation, DB};
 use postage::stream::Stream;
 use project2::{Project, ProjectEntryId, ProjectPath, Worktree};
 use serde::Deserialize;
 use settings2::Settings;
 use status_bar::StatusBar;
+pub use status_bar::StatusItemView;
 use std::{
     any::TypeId,
     borrow::Cow,

@@ -919,7 +919,7 @@ mod tests {
 
     fn init_test(cx: &mut gpui::AppContext) {
         cx.set_global(SettingsStore::test(cx));
-        theme::init((), cx);
+        theme::init(cx);
         language::init(cx);
         crate::init(cx);
         Project::init_settings(cx);

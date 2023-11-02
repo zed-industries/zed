@@ -11,7 +11,7 @@ use crate::{
 use anyhow::Context;
 use clock::Global;
 use futures::future;
-use gpui::{ModelContext, ModelHandle, Task, ViewContext};
+use gpui::{Model, ModelContext, Task, ViewContext};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
@@ -3244,7 +3244,7 @@ all hints should be invalidated and requeried for all of its visible excerpts"
 
         cx.update(|cx| {
             cx.set_global(SettingsStore::test(cx));
-            theme::init((), cx);
+            theme::init(cx);
             client::init_settings(cx);
             language::init(cx);
             Project::init_settings(cx);

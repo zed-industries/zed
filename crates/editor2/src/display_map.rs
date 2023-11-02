@@ -12,10 +12,9 @@ pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{
-    color::Color,
     fonts::{FontId, HighlightStyle, Underline},
     text_layout::{Line, RunStyle},
-    Entity, ModelContext, ModelHandle,
+    Entity, Hsla, Model, ModelContext,
 };
 use inlay_map::InlayMap;
 use language::{
@@ -49,12 +48,12 @@ type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anc
 type InlayHighlights = BTreeMap<TypeId, HashMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 pub struct DisplayMap {
-    buffer: ModelHandle<MultiBuffer>,
+    buffer: Model<MultiBuffer>,
     buffer_subscription: BufferSubscription,
     fold_map: FoldMap,
     inlay_map: InlayMap,
     tab_map: TabMap,
-    wrap_map: ModelHandle<WrapMap>,
+    wrap_map: Model<WrapMap>,
     block_map: BlockMap,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
@@ -67,7 +66,7 @@ impl Entity for DisplayMap {
 
 impl DisplayMap {
     pub fn new(
-        buffer: ModelHandle<MultiBuffer>,
+        buffer: Model<MultiBuffer>,
         font_id: FontId,
         font_size: f32,
         wrap_width: Option<f32>,
@@ -1015,7 +1014,7 @@ pub mod tests {
         movement,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
     };
-    use gpui::{color::Color, elements::*, test::observe, AppContext};
+    use gpui::{elements::*, test::observe, AppContext, Hsla};
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
         Buffer, Language, LanguageConfig, SelectionGoal,
