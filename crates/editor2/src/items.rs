@@ -20,23 +20,18 @@ use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
-    fmt::Write,
     iter,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use text::Selection;
-use util::{
-    paths::{PathExt, FILE_ROW_COLUMN_DELIMITER},
-    ResultExt, TryFutureExt,
-};
+use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-    ItemId, ItemNavHistory, Pane, StatusItemView, ToolbarItemLocation, ViewId, Workspace,
-    WorkspaceId,
+    ItemId, ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
@@ -607,7 +602,7 @@ impl Item for Editor {
     where
         Self: Sized,
     {
-        Some(self.clone(cx))
+        Some(self.clone())
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {

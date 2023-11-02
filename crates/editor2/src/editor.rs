@@ -38,9 +38,8 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    serde_json, AnyElement, AppContext, AsyncAppContext, ClipboardItem,
-    Element, Entity, Hsla, Model, Subscription, Task, View, ViewContext,
-    WindowContext,
+    serde_json, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, Hsla,
+    Model, Quad, Subscription, Task, Text, View, ViewContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -50,10 +49,10 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
-    point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel,
-    Completion, CursorShape, Diagnostic, DiagnosticSeverity, File, IndentKind,
-    IndentSize, Language, LanguageRegistry, LanguageServerName, OffsetRangeExt, OffsetUtf16, Point,
-    Selection, SelectionGoal, TransactionId,
+    point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion,
+    CursorShape, Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language,
+    LanguageRegistry, LanguageServerName, OffsetRangeExt, OffsetUtf16, Point, Selection,
+    SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, GoToDefinitionLink, InlayHighlight,
@@ -113,7 +112,7 @@ pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub fn render_parsed_markdown<Tag: 'static>(
     parsed: &language::ParsedMarkdown,
     editor_style: &EditorStyle,
-    workspace: Option<WeakViewHandle<Workspace>>,
+    workspace: Option<WeakView<Workspace>>,
     cx: &mut ViewContext<Editor>,
 ) -> Text {
     enum RenderedMarkdown {}
@@ -124,51 +123,55 @@ pub fn render_parsed_markdown<Tag: 'static>(
 
     let mut region_id = 0;
 
-    Text::new(parsed.text, editor_style.text.clone())
-        .with_highlights(
-            parsed
-                .highlights
-                .iter()
-                .filter_map(|(range, highlight)| {
-                    let highlight = highlight.to_highlight_style(&editor_style.syntax)?;
-                    Some((range.clone(), highlight))
-                })
-                .collect::<Vec<_>>(),
-        )
-        .with_custom_runs(parsed.region_ranges, move |ix, bounds, cx| {
-            region_id += 1;
-            let region = parsed.regions[ix].clone();
+    todo!()
+    // Text::new(parsed.text, editor_style.text.clone())
+    //     .with_highlights(
+    //         parsed
+    //             .highlights
+    //             .iter()
+    //             .filter_map(|(range, highlight)| {
+    //                 let highlight = highlight.to_highlight_style(&editor_style.syntax)?;
+    //                 Some((range.clone(), highlight))
+    //             })
+    //             .collect::<Vec<_>>(),
+    //     )
+    //     .with_custom_runs(parsed.region_ranges, move |ix, bounds, cx| {
+    //         region_id += 1;
+    //         let region = parsed.regions[ix].clone();
 
-            if let Some(link) = region.link {
-                cx.scene().push_cursor_region(CursorRegion {
-                    bounds,
-                    style: CursorStyle::PointingHand,
-                });
-                cx.scene().push_mouse_region(
-                    MouseRegion::new::<(RenderedMarkdown, Tag)>(view_id, region_id, bounds)
-                        .on_down::<Editor, _>(MouseButton::Left, move |_, _, cx| match &link {
-                            markdown::Link::Web { url } => cx.platform().open_url(url),
-                            markdown::Link::Path { path } => {
-                                if let Some(workspace) = &workspace {
-                                    _ = workspace.update(cx, |workspace, cx| {
-                                        workspace.open_abs_path(path.clone(), false, cx).detach();
-                                    });
-                                }
-                            }
-                        }),
-                );
-            }
+    //         if let Some(link) = region.link {
+    //             cx.scene().push_cursor_region(CursorRegion {
+    //                 bounds,
+    //                 style: CursorStyle::PointingHand,
+    //             });
+    //             cx.scene().push_mouse_region(
+    //                 MouseRegion::new::<(RenderedMarkdown, Tag)>(view_id, region_id, bounds)
+    //                     .on_down::<Editor, _>(MouseButton::Left, move |_, _, cx| match &link {
+    //                         markdown::Link::Web { url } => cx.platform().open_url(url),
+    //                         markdown::Link::Path { path } => {
+    //                             if let Some(workspace) = &workspace {
+    //                                 _ = workspace.update(cx, |workspace, cx| {
+    //                                     workspace.open_abs_path(path.clone(), false, cx).detach();
+    //                                 });
+    //                             }
+    //                         }
+    //                     }),
+    //             );
+    //         }
 
-            if region.code {
-                cx.scene().push_quad(gpui::Quad {
-                    bounds,
-                    background: Some(code_span_background_color),
-                    border: Default::default(),
-                    corner_radii: (2.0).into(),
-                });
-            }
-        })
-        .with_soft_wrap(true)
+    //         if region.code {
+    //             cx.draw_quad(Quad {
+    //                 bounds,
+    //                 background: Some(code_span_background_color),
+    //                 corner_radii: (2.0).into(),
+    //                 order: todo!(),
+    //                 content_mask: todo!(),
+    //                 border_color: todo!(),
+    //                 border_widths: todo!(),
+    //             });
+    //         }
+    //     })
+    //     .with_soft_wrap(true)
 }
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
@@ -416,133 +419,133 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(cx: &mut AppContext) {
     init_settings(cx);
-    cx.add_action(Editor::new_file);
-    cx.add_action(Editor::new_file_in_direction);
-    cx.add_action(Editor::cancel);
-    cx.add_action(Editor::newline);
-    cx.add_action(Editor::newline_above);
-    cx.add_action(Editor::newline_below);
-    cx.add_action(Editor::backspace);
-    cx.add_action(Editor::delete);
-    cx.add_action(Editor::tab);
-    cx.add_action(Editor::tab_prev);
-    cx.add_action(Editor::indent);
-    cx.add_action(Editor::outdent);
-    cx.add_action(Editor::delete_line);
-    cx.add_action(Editor::join_lines);
-    cx.add_action(Editor::sort_lines_case_sensitive);
-    cx.add_action(Editor::sort_lines_case_insensitive);
-    cx.add_action(Editor::reverse_lines);
-    cx.add_action(Editor::shuffle_lines);
-    cx.add_action(Editor::convert_to_upper_case);
-    cx.add_action(Editor::convert_to_lower_case);
-    cx.add_action(Editor::convert_to_title_case);
-    cx.add_action(Editor::convert_to_snake_case);
-    cx.add_action(Editor::convert_to_kebab_case);
-    cx.add_action(Editor::convert_to_upper_camel_case);
-    cx.add_action(Editor::convert_to_lower_camel_case);
-    cx.add_action(Editor::delete_to_previous_word_start);
-    cx.add_action(Editor::delete_to_previous_subword_start);
-    cx.add_action(Editor::delete_to_next_word_end);
-    cx.add_action(Editor::delete_to_next_subword_end);
-    cx.add_action(Editor::delete_to_beginning_of_line);
-    cx.add_action(Editor::delete_to_end_of_line);
-    cx.add_action(Editor::cut_to_end_of_line);
-    cx.add_action(Editor::duplicate_line);
-    cx.add_action(Editor::move_line_up);
-    cx.add_action(Editor::move_line_down);
-    cx.add_action(Editor::transpose);
-    cx.add_action(Editor::cut);
-    cx.add_action(Editor::copy);
-    cx.add_action(Editor::paste);
-    cx.add_action(Editor::undo);
-    cx.add_action(Editor::redo);
-    cx.add_action(Editor::move_up);
-    cx.add_action(Editor::move_page_up);
-    cx.add_action(Editor::move_down);
-    cx.add_action(Editor::move_page_down);
-    cx.add_action(Editor::next_screen);
-    cx.add_action(Editor::move_left);
-    cx.add_action(Editor::move_right);
-    cx.add_action(Editor::move_to_previous_word_start);
-    cx.add_action(Editor::move_to_previous_subword_start);
-    cx.add_action(Editor::move_to_next_word_end);
-    cx.add_action(Editor::move_to_next_subword_end);
-    cx.add_action(Editor::move_to_beginning_of_line);
-    cx.add_action(Editor::move_to_end_of_line);
-    cx.add_action(Editor::move_to_start_of_paragraph);
-    cx.add_action(Editor::move_to_end_of_paragraph);
-    cx.add_action(Editor::move_to_beginning);
-    cx.add_action(Editor::move_to_end);
-    cx.add_action(Editor::select_up);
-    cx.add_action(Editor::select_down);
-    cx.add_action(Editor::select_left);
-    cx.add_action(Editor::select_right);
-    cx.add_action(Editor::select_to_previous_word_start);
-    cx.add_action(Editor::select_to_previous_subword_start);
-    cx.add_action(Editor::select_to_next_word_end);
-    cx.add_action(Editor::select_to_next_subword_end);
-    cx.add_action(Editor::select_to_beginning_of_line);
-    cx.add_action(Editor::select_to_end_of_line);
-    cx.add_action(Editor::select_to_start_of_paragraph);
-    cx.add_action(Editor::select_to_end_of_paragraph);
-    cx.add_action(Editor::select_to_beginning);
-    cx.add_action(Editor::select_to_end);
-    cx.add_action(Editor::select_all);
-    cx.add_action(Editor::select_all_matches);
-    cx.add_action(Editor::select_line);
-    cx.add_action(Editor::split_selection_into_lines);
-    cx.add_action(Editor::add_selection_above);
-    cx.add_action(Editor::add_selection_below);
-    cx.add_action(Editor::select_next);
-    cx.add_action(Editor::select_previous);
-    cx.add_action(Editor::toggle_comments);
-    cx.add_action(Editor::select_larger_syntax_node);
-    cx.add_action(Editor::select_smaller_syntax_node);
-    cx.add_action(Editor::move_to_enclosing_bracket);
-    cx.add_action(Editor::undo_selection);
-    cx.add_action(Editor::redo_selection);
-    cx.add_action(Editor::go_to_diagnostic);
-    cx.add_action(Editor::go_to_prev_diagnostic);
-    cx.add_action(Editor::go_to_hunk);
-    cx.add_action(Editor::go_to_prev_hunk);
-    cx.add_action(Editor::go_to_definition);
-    cx.add_action(Editor::go_to_definition_split);
-    cx.add_action(Editor::go_to_type_definition);
-    cx.add_action(Editor::go_to_type_definition_split);
-    cx.add_action(Editor::fold);
-    cx.add_action(Editor::fold_at);
-    cx.add_action(Editor::unfold_lines);
-    cx.add_action(Editor::unfold_at);
-    cx.add_action(Editor::gutter_hover);
-    cx.add_action(Editor::fold_selected_ranges);
-    cx.add_action(Editor::show_completions);
-    cx.add_action(Editor::toggle_code_actions);
-    cx.add_action(Editor::open_excerpts);
-    cx.add_action(Editor::toggle_soft_wrap);
-    cx.add_action(Editor::toggle_inlay_hints);
-    cx.add_action(Editor::reveal_in_finder);
-    cx.add_action(Editor::copy_path);
-    cx.add_action(Editor::copy_relative_path);
-    cx.add_action(Editor::copy_highlight_json);
-    cx.add_async_action(Editor::format);
-    cx.add_action(Editor::restart_language_server);
-    cx.add_action(Editor::show_character_palette);
-    cx.add_async_action(Editor::confirm_completion);
-    cx.add_async_action(Editor::confirm_code_action);
-    cx.add_async_action(Editor::rename);
-    cx.add_async_action(Editor::confirm_rename);
-    cx.add_async_action(Editor::find_all_references);
-    cx.add_action(Editor::next_copilot_suggestion);
-    cx.add_action(Editor::previous_copilot_suggestion);
-    cx.add_action(Editor::copilot_suggest);
-    cx.add_action(Editor::context_menu_first);
-    cx.add_action(Editor::context_menu_prev);
-    cx.add_action(Editor::context_menu_next);
-    cx.add_action(Editor::context_menu_last);
+    // cx.add_action(Editor::new_file);
+    // cx.add_action(Editor::new_file_in_direction);
+    // cx.add_action(Editor::cancel);
+    // cx.add_action(Editor::newline);
+    // cx.add_action(Editor::newline_above);
+    // cx.add_action(Editor::newline_below);
+    // cx.add_action(Editor::backspace);
+    // cx.add_action(Editor::delete);
+    // cx.add_action(Editor::tab);
+    // cx.add_action(Editor::tab_prev);
+    // cx.add_action(Editor::indent);
+    // cx.add_action(Editor::outdent);
+    // cx.add_action(Editor::delete_line);
+    // cx.add_action(Editor::join_lines);
+    // cx.add_action(Editor::sort_lines_case_sensitive);
+    // cx.add_action(Editor::sort_lines_case_insensitive);
+    // cx.add_action(Editor::reverse_lines);
+    // cx.add_action(Editor::shuffle_lines);
+    // cx.add_action(Editor::convert_to_upper_case);
+    // cx.add_action(Editor::convert_to_lower_case);
+    // cx.add_action(Editor::convert_to_title_case);
+    // cx.add_action(Editor::convert_to_snake_case);
+    // cx.add_action(Editor::convert_to_kebab_case);
+    // cx.add_action(Editor::convert_to_upper_camel_case);
+    // cx.add_action(Editor::convert_to_lower_camel_case);
+    // cx.add_action(Editor::delete_to_previous_word_start);
+    // cx.add_action(Editor::delete_to_previous_subword_start);
+    // cx.add_action(Editor::delete_to_next_word_end);
+    // cx.add_action(Editor::delete_to_next_subword_end);
+    // cx.add_action(Editor::delete_to_beginning_of_line);
+    // cx.add_action(Editor::delete_to_end_of_line);
+    // cx.add_action(Editor::cut_to_end_of_line);
+    // cx.add_action(Editor::duplicate_line);
+    // cx.add_action(Editor::move_line_up);
+    // cx.add_action(Editor::move_line_down);
+    // cx.add_action(Editor::transpose);
+    // cx.add_action(Editor::cut);
+    // cx.add_action(Editor::copy);
+    // cx.add_action(Editor::paste);
+    // cx.add_action(Editor::undo);
+    // cx.add_action(Editor::redo);
+    // cx.add_action(Editor::move_up);
+    // cx.add_action(Editor::move_page_up);
+    // cx.add_action(Editor::move_down);
+    // cx.add_action(Editor::move_page_down);
+    // cx.add_action(Editor::next_screen);
+    // cx.add_action(Editor::move_left);
+    // cx.add_action(Editor::move_right);
+    // cx.add_action(Editor::move_to_previous_word_start);
+    // cx.add_action(Editor::move_to_previous_subword_start);
+    // cx.add_action(Editor::move_to_next_word_end);
+    // cx.add_action(Editor::move_to_next_subword_end);
+    // cx.add_action(Editor::move_to_beginning_of_line);
+    // cx.add_action(Editor::move_to_end_of_line);
+    // cx.add_action(Editor::move_to_start_of_paragraph);
+    // cx.add_action(Editor::move_to_end_of_paragraph);
+    // cx.add_action(Editor::move_to_beginning);
+    // cx.add_action(Editor::move_to_end);
+    // cx.add_action(Editor::select_up);
+    // cx.add_action(Editor::select_down);
+    // cx.add_action(Editor::select_left);
+    // cx.add_action(Editor::select_right);
+    // cx.add_action(Editor::select_to_previous_word_start);
+    // cx.add_action(Editor::select_to_previous_subword_start);
+    // cx.add_action(Editor::select_to_next_word_end);
+    // cx.add_action(Editor::select_to_next_subword_end);
+    // cx.add_action(Editor::select_to_beginning_of_line);
+    // cx.add_action(Editor::select_to_end_of_line);
+    // cx.add_action(Editor::select_to_start_of_paragraph);
+    // cx.add_action(Editor::select_to_end_of_paragraph);
+    // cx.add_action(Editor::select_to_beginning);
+    // cx.add_action(Editor::select_to_end);
+    // cx.add_action(Editor::select_all);
+    // cx.add_action(Editor::select_all_matches);
+    // cx.add_action(Editor::select_line);
+    // cx.add_action(Editor::split_selection_into_lines);
+    // cx.add_action(Editor::add_selection_above);
+    // cx.add_action(Editor::add_selection_below);
+    // cx.add_action(Editor::select_next);
+    // cx.add_action(Editor::select_previous);
+    // cx.add_action(Editor::toggle_comments);
+    // cx.add_action(Editor::select_larger_syntax_node);
+    // cx.add_action(Editor::select_smaller_syntax_node);
+    // cx.add_action(Editor::move_to_enclosing_bracket);
+    // cx.add_action(Editor::undo_selection);
+    // cx.add_action(Editor::redo_selection);
+    // cx.add_action(Editor::go_to_diagnostic);
+    // cx.add_action(Editor::go_to_prev_diagnostic);
+    // cx.add_action(Editor::go_to_hunk);
+    // cx.add_action(Editor::go_to_prev_hunk);
+    // cx.add_action(Editor::go_to_definition);
+    // cx.add_action(Editor::go_to_definition_split);
+    // cx.add_action(Editor::go_to_type_definition);
+    // cx.add_action(Editor::go_to_type_definition_split);
+    // cx.add_action(Editor::fold);
+    // cx.add_action(Editor::fold_at);
+    // cx.add_action(Editor::unfold_lines);
+    // cx.add_action(Editor::unfold_at);
+    // cx.add_action(Editor::gutter_hover);
+    // cx.add_action(Editor::fold_selected_ranges);
+    // cx.add_action(Editor::show_completions);
+    // cx.add_action(Editor::toggle_code_actions);
+    // cx.add_action(Editor::open_excerpts);
+    // cx.add_action(Editor::toggle_soft_wrap);
+    // cx.add_action(Editor::toggle_inlay_hints);
+    // cx.add_action(Editor::reveal_in_finder);
+    // cx.add_action(Editor::copy_path);
+    // cx.add_action(Editor::copy_relative_path);
+    // cx.add_action(Editor::copy_highlight_json);
+    // cx.add_async_action(Editor::format);
+    // cx.add_action(Editor::restart_language_server);
+    // cx.add_action(Editor::show_character_palette);
+    // cx.add_async_action(Editor::confirm_completion);
+    // cx.add_async_action(Editor::confirm_code_action);
+    // cx.add_async_action(Editor::rename);
+    // cx.add_async_action(Editor::confirm_rename);
+    // cx.add_async_action(Editor::find_all_references);
+    // cx.add_action(Editor::next_copilot_suggestion);
+    // cx.add_action(Editor::previous_copilot_suggestion);
+    // cx.add_action(Editor::copilot_suggest);
+    // cx.add_action(Editor::context_menu_first);
+    // cx.add_action(Editor::context_menu_prev);
+    // cx.add_action(Editor::context_menu_next);
+    // cx.add_action(Editor::context_menu_last);
 
     hover_popover::init(cx);
-    /scroll::actions::init(cx);
+    scroll::actions::init(cx);
 
     workspace::register_project_item::<Editor>(cx);
     workspace::register_followable_item::<Editor>(cx);
@@ -571,7 +574,7 @@ pub enum SelectPhase {
     Update {
         position: DisplayPoint,
         goal_column: u32,
-        scroll_position: Vector2F,
+        scroll_position: Point<Pixels>,
     },
     End,
 }
@@ -612,11 +615,11 @@ type CompletionId = usize;
 type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
-type BackgroundHighlight = (fn(&Theme) -> Color, Vec<Range<Anchor>>);
-type InlayBackgroundHighlight = (fn(&Theme) -> Color, Vec<InlayHighlight>);
+type BackgroundHighlight = (fn(&Theme) -> Hsla, Vec<Range<Anchor>>);
+type InlayBackgroundHighlight = (fn(&Theme) -> Hsla, Vec<InlayHighlight>);
 
 pub struct Editor {
-    handle: WeakViewHandle<Self>,
+    handle: WeakView<Self>,
     buffer: Model<MultiBuffer>,
     display_map: Model<DisplayMap>,
     pub selections: SelectionsCollection,
@@ -648,7 +651,7 @@ pub struct Editor {
     inlay_background_highlights: TreeMap<Option<TypeId>, InlayBackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
-    mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
+    mouse_context_menu: View<context_menu::ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     next_completion_id: CompletionId,
     available_code_actions: Option<(Model<Buffer>, Arc<[CodeAction]>)>,
@@ -659,7 +662,7 @@ pub struct Editor {
     cursor_shape: CursorShape,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
-    workspace: Option<(WeakViewHandle<Workspace>, i64)>,
+    workspace: Option<(WeakView<Workspace>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
     read_only: bool,
@@ -672,7 +675,7 @@ pub struct Editor {
     // inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
-    pixel_position_of_newest_cursor: Option<Vector2F>,
+    pixel_position_of_newest_cursor: Option<Point<Pixels>>,
 }
 
 pub struct EditorSnapshot {
@@ -828,7 +831,7 @@ struct SnippetState {
 pub struct RenameState {
     pub range: Range<Anchor>,
     pub old_name: Arc<str>,
-    pub editor: ViewHandle<Editor>,
+    pub editor: View<Editor>,
     block_id: BlockId,
 }
 
@@ -915,7 +918,7 @@ impl ContextMenu {
         &self,
         cursor_position: DisplayPoint,
         style: EditorStyle,
-        workspace: Option<WeakViewHandle<Workspace>>,
+        workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, AnyElement<Editor>) {
         match self {
@@ -938,22 +941,14 @@ struct CompletionsMenu {
 }
 
 impl CompletionsMenu {
-    fn select_first(
-        &mut self,
-        project: Option<&Model<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn select_first(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
         self.selected_item = 0;
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
 
-    fn select_prev(
-        &mut self,
-        project: Option<&Model<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn select_prev(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
         } else {
@@ -964,11 +959,7 @@ impl CompletionsMenu {
         cx.notify();
     }
 
-    fn select_next(
-        &mut self,
-        project: Option<&Model<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn select_next(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
         if self.selected_item + 1 < self.matches.len() {
             self.selected_item += 1;
         } else {
@@ -979,11 +970,7 @@ impl CompletionsMenu {
         cx.notify();
     }
 
-    fn select_last(
-        &mut self,
-        project: Option<&Model<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn select_last(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
         self.selected_item = self.matches.len() - 1;
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         self.attempt_resolve_selected_completion_documentation(project, cx);
@@ -1241,7 +1228,7 @@ impl CompletionsMenu {
     fn render(
         &self,
         style: EditorStyle,
-        workspace: Option<WeakViewHandle<Workspace>>,
+        workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement<Editor> {
         enum CompletionTag {}
@@ -1760,7 +1747,7 @@ pub struct NavigationData {
     scroll_top_row: u32,
 }
 
-pub struct EditorCreated(pub ViewHandle<Editor>);
+pub struct EditorCreated(pub View<Editor>);
 
 enum GotoDefinitionKind {
     Symbol,
@@ -3845,8 +3832,8 @@ impl InlayHintRefreshReason {
 //     }
 
 //     async fn open_project_transaction(
-//         this: &WeakViewHandle<Editor>,
-//         workspace: WeakViewHandle<Workspace>,
+//         this: &WeakViewHandle<Editor
+//         workspace: WeakViewHandle<Workspace
 //         transaction: ProjectTransaction,
 //         title: String,
 //         mut cx: AsyncAppContext,
@@ -9237,7 +9224,7 @@ impl EditorSnapshot {
         self.placeholder_text.as_ref()
     }
 
-    pub fn scroll_position(&self) -> Vector2F {
+    pub fn scroll_position(&self) -> Point<Pixels> {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
     }
 }
@@ -9286,9 +9273,9 @@ pub enum Event {
     Closed,
 }
 
-pub struct EditorFocused(pub ViewHandle<Editor>);
-pub struct EditorBlurred(pub ViewHandle<Editor>);
-pub struct EditorReleased(pub WeakViewHandle<Editor>);
+pub struct EditorFocused(pub View<Editor>);
+pub struct EditorBlurred(pub View<Editor>);
+pub struct EditorReleased(pub WeakView<Editor>);
 
 impl Entity for Editor {
     type Event = Event;
@@ -9323,7 +9310,7 @@ impl View for Editor {
         "Editor"
     }
 
-    fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, focused: AnyView, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             let focused_event = EditorFocused(cx.handle());
             cx.emit(Event::Focused);
@@ -9350,7 +9337,7 @@ impl View for Editor {
         }
     }
 
-    fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _: AnyView, cx: &mut ViewContext<Self>) {
         let blurred_event = EditorBlurred(cx.handle());
         cx.emit_global(blurred_event);
         self.focused = false;
@@ -9649,7 +9636,7 @@ fn build_style(
     settings: &ThemeSettings,
     get_field_editor_theme: Option<&GetFieldEditorTheme>,
     override_text_style: Option<&OverrideTextStyle>,
-    cx: &AppContext,
+    cx: &mut AppContext,
 ) -> EditorStyle {
     let font_cache = cx.font_cache();
     let line_height_scalar = settings.line_height();

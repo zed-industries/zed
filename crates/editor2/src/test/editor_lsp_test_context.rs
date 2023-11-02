@@ -9,7 +9,7 @@ use anyhow::Result;
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
-use gpui::{json, ViewContext, ViewHandle};
+use gpui::{json, View, ViewContext};
 use indoc::indoc;
 use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageQueries};
 use lsp::{notification, request};

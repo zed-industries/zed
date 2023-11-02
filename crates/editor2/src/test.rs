@@ -67,16 +67,13 @@ pub fn assert_text_with_selections(
 // RA thinks this is dead code even though it is used in a whole lot of tests
 #[allow(dead_code)]
 #[cfg(any(test, feature = "test-support"))]
-pub(crate) fn build_editor(
-    buffer: ModelHandle<MultiBuffer>,
-    cx: &mut ViewContext<Editor>,
-) -> Editor {
+pub(crate) fn build_editor(buffer: Model<MultiBuffer>, cx: &mut ViewContext<Editor>) -> Editor {
     Editor::new(EditorMode::Full, buffer, None, None, cx)
 }
 
 pub(crate) fn build_editor_with_project(
-    project: ModelHandle<Project>,
-    buffer: ModelHandle<MultiBuffer>,
+    project: Model<Project>,
+    buffer: Model<MultiBuffer>,
     cx: &mut ViewContext<Editor>,
 ) -> Editor {
     Editor::new(EditorMode::Full, buffer, Some(project), None, cx)

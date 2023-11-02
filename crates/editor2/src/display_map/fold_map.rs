@@ -3,7 +3,7 @@ use super::{
     Highlights,
 };
 use crate::{Anchor, AnchorRangeExt, MultiBufferSnapshot, ToOffset};
-use gpui::{fonts::HighlightStyle, Hsla};
+use gpui::{HighlightStyle, Hsla};
 use language::{Chunk, Edit, Point, TextSummary};
 use std::{
     any::TypeId,
@@ -221,7 +221,7 @@ impl FoldMap {
         (FoldMapWriter(self), snapshot, edits)
     }
 
-    pub fn set_ellipses_color(&mut self, color: Color) -> bool {
+    pub fn set_ellipses_color(&mut self, color: Hsla) -> bool {
         if self.ellipses_color != Some(color) {
             self.ellipses_color = Some(color);
             true
@@ -469,7 +469,7 @@ pub struct FoldSnapshot {
     folds: SumTree<Fold>,
     pub inlay_snapshot: InlaySnapshot,
     pub version: usize,
-    pub ellipses_color: Option<Color>,
+    pub ellipses_color: Option<Hsla>,
 }
 
 impl FoldSnapshot {
@@ -959,7 +959,7 @@ pub struct FoldChunks<'a> {
     inlay_offset: InlayOffset,
     output_offset: usize,
     max_output_offset: usize,
-    ellipses_color: Option<Color>,
+    ellipses_color: Option<Hsla>,
 }
 
 impl<'a> Iterator for FoldChunks<'a> {

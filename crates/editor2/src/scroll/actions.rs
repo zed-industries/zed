@@ -17,7 +17,7 @@ use gpui::AppContext;
 // );
 
 pub fn init(cx: &mut AppContext) {
-    /// todo!()
+    // todo!()
     // cx.add_action(Editor::next_screen);
     // cx.add_action(Editor::scroll_cursor_top);
     // cx.add_action(Editor::scroll_cursor_center);

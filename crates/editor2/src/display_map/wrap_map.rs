@@ -4,7 +4,7 @@ use super::{
     Highlights,
 };
 use crate::MultiBufferSnapshot;
-use gpui::{AppContext, Entity, Model, ModelContext, Task};
+use gpui::{AppContext, FontId, Model, ModelContext, Pixels, Task};
 use language::{Chunk, Point};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
@@ -22,7 +22,7 @@ pub struct WrapMap {
     edits_since_sync: Patch<u32>,
     wrap_width: Option<f32>,
     background_task: Option<Task<()>>,
-    font: (FontId, f32),
+    font: (FontId, Pixels),
 }
 
 #[derive(Clone)]

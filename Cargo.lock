@@ -4408,6 +4408,7 @@ dependencies = [
  "lsp2",
  "parking_lot 0.11.2",
  "postage",
+ "pulldown-cmark",
  "rand 0.8.5",
  "regex",
  "rpc2",

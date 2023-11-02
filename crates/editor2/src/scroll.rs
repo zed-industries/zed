@@ -2,19 +2,6 @@ pub mod actions;
 pub mod autoscroll;
 pub mod scroll_amount;
 
-use std::{
-    cmp::Ordering,
-    time::{Duration, Instant},
-};
-
-use gpui::{
-    geometry::vector::{vec2f, Vector2F},
-    AppContext, Axis, Task, ViewContext,
-};
-use language::{Bias, Point};
-use util::ResultExt;
-use workspace::WorkspaceId;
-
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
@@ -22,6 +9,14 @@ use crate::{
     Anchor, DisplayPoint, Editor, EditorMode, Event, InlayHintRefreshReason, MultiBufferSnapshot,
     ToPoint,
 };
+use gpui::{point, AppContext, Pixels, Task, ViewContext};
+use language::{Bias, Point};
+use std::{
+    cmp::Ordering,
+    time::{Duration, Instant},
+};
+use util::ResultExt;
+use workspace::WorkspaceId;
 
 use self::{
     autoscroll::{Autoscroll, AutoscrollStrategy},
@@ -37,19 +32,19 @@ pub struct ScrollbarAutoHide(pub bool);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScrollAnchor {
-    pub offset: Vector2F,
+    pub offset: gpui::Point<f32>,
     pub anchor: Anchor,
 }
 
 impl ScrollAnchor {
     fn new() -> Self {
         Self {
-            offset: Vector2F::zero(),
+            offset: Point::zero(),
             anchor: Anchor::min(),
         }
     }
 
-    pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> Vector2F {
+    pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> Point<Pixels> {
         let mut scroll_position = self.offset;
         if self.anchor != Anchor::min() {
             let scroll_top = self.anchor.to_display_point(snapshot).row() as f32;
@@ -63,6 +58,12 @@ impl ScrollAnchor {
     pub fn top_row(&self, buffer: &MultiBufferSnapshot) -> u32 {
         self.anchor.to_point(buffer).row
     }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Axis {
+    Vertical,
+    Horizontal,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -79,7 +80,7 @@ impl OngoingScroll {
         }
     }
 
-    pub fn filter(&self, delta: &mut Vector2F) -> Option<Axis> {
+    pub fn filter(&self, delta: &mut Point<Pixels>) -> Option<Axis> {
         const UNLOCK_PERCENT: f32 = 1.9;
         const UNLOCK_LOWER_BOUND: f32 = 6.;
         let mut axis = self.axis;
@@ -114,8 +115,8 @@ impl OngoingScroll {
         }
 
         match axis {
-            Some(Axis::Vertical) => *delta = vec2f(0., delta.y()),
-            Some(Axis::Horizontal) => *delta = vec2f(delta.x(), 0.),
+            Some(Axis::Vertical) => *delta = point(0., delta.y()),
+            Some(Axis::Horizontal) => *delta = point(delta.x(), 0.),
             None => {}
         }
 
@@ -128,7 +129,7 @@ pub struct ScrollManager {
     anchor: ScrollAnchor,
     ongoing: OngoingScroll,
     autoscroll_request: Option<(Autoscroll, bool)>,
-    last_autoscroll: Option<(Vector2F, f32, f32, AutoscrollStrategy)>,
+    last_autoscroll: Option<(gpui::Point<Pixels>, f32, f32, AutoscrollStrategy)>,
     show_scrollbars: bool,
     hide_scrollbar_task: Option<Task<()>>,
     visible_line_count: Option<f32>,
@@ -166,13 +167,13 @@ impl ScrollManager {
         self.ongoing.axis = axis;
     }
 
-    pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> Vector2F {
+    pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> Point<Pixels> {
         self.anchor.scroll_position(snapshot)
     }
 
     fn set_scroll_position(
         &mut self,
-        scroll_position: Vector2F,
+        scroll_position: Point<Pixels>,
         map: &DisplaySnapshot,
         local: bool,
         autoscroll: bool,
@@ -183,7 +184,7 @@ impl ScrollManager {
             (
                 ScrollAnchor {
                     anchor: Anchor::min(),
-                    offset: scroll_position.max(vec2f(0., 0.)),
+                    offset: scroll_position.max(Point::zero()),
                 },
                 0,
             )
@@ -197,7 +198,7 @@ impl ScrollManager {
             (
                 ScrollAnchor {
                     anchor: top_anchor,
-                    offset: vec2f(
+                    offset: point(
                         scroll_position.x(),
                         scroll_position.y() - top_anchor.to_display_point(&map).row() as f32,
                     ),
@@ -310,13 +311,17 @@ impl Editor {
         }
     }
 
-    pub fn set_scroll_position(&mut self, scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
+    pub fn set_scroll_position(
+        &mut self,
+        scroll_position: Point<Pixels>,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.set_scroll_position_internal(scroll_position, true, false, cx);
     }
 
     pub(crate) fn set_scroll_position_internal(
         &mut self,
-        scroll_position: Vector2F,
+        scroll_position: Point<Pixels>,
         local: bool,
         autoscroll: bool,
         cx: &mut ViewContext<Self>,
@@ -337,7 +342,7 @@ impl Editor {
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
     }
 
-    pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Vector2F {
+    pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Point<Pixels> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         self.scroll_manager.anchor.scroll_position(&display_map)
     }
@@ -379,7 +384,7 @@ impl Editor {
         }
 
         let cur_position = self.scroll_position(cx);
-        let new_pos = cur_position + vec2f(0., amount.lines(self));
+        let new_pos = cur_position + point(0., amount.lines(self));
         self.set_scroll_position(new_pos, cx);
     }
 
@@ -427,7 +432,7 @@ impl Editor {
                 .snapshot(cx)
                 .anchor_at(Point::new(top_row as u32, 0), Bias::Left);
             let scroll_anchor = ScrollAnchor {
-                offset: Vector2F::new(x, y),
+                offset: Point::new(x, y),
                 anchor: top_anchor,
             };
             self.set_scroll_anchor(scroll_anchor, cx);

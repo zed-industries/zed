@@ -25,8 +25,8 @@ pub struct PendingSelection {
 
 #[derive(Debug, Clone)]
 pub struct SelectionsCollection {
-    display_map: ModelHandle<DisplayMap>,
-    buffer: ModelHandle<MultiBuffer>,
+    display_map: Model<DisplayMap>,
+    buffer: Model<MultiBuffer>,
     pub next_selection_id: usize,
     pub line_mode: bool,
     disjoint: Arc<[Selection<Anchor>]>,
@@ -34,7 +34,7 @@ pub struct SelectionsCollection {
 }
 
 impl SelectionsCollection {
-    pub fn new(display_map: ModelHandle<DisplayMap>, buffer: ModelHandle<MultiBuffer>) -> Self {
+    pub fn new(display_map: Model<DisplayMap>, buffer: Model<MultiBuffer>) -> Self {
         Self {
             display_map,
             buffer,

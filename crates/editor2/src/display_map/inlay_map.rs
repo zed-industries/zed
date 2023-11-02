@@ -1,6 +1,6 @@
 use crate::{Anchor, InlayId, MultiBufferSnapshot, ToOffset};
 use collections::{BTreeMap, BTreeSet};
-use gpui::fonts::HighlightStyle;
+use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{MultiBufferChunks, MultiBufferRows};
 use std::{

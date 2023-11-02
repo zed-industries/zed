@@ -1,6 +1,6 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, CharKind, EditorStyle, ToOffset, ToPoint};
-use gpui::{FontCache, TextLayoutCache};
+use gpui::TextSystem;
 use language::Point;
 use std::{ops::Range, sync::Arc};
 
@@ -13,8 +13,7 @@ pub enum FindRange {
 /// TextLayoutDetails encompasses everything we need to move vertically
 /// taking into account variable width characters.
 pub struct TextLayoutDetails {
-    pub font_cache: Arc<FontCache>,
-    pub text_layout_cache: Arc<TextLayoutCache>,
+    pub text_system: TextSystem,
     pub editor_style: EditorStyle,
 }
 

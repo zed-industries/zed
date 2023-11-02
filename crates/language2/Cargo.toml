@@ -58,6 +58,7 @@ unicase = "2.6"
 rand = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
+pulldown-cmark = { version = "0.9.2", default-features = false }
 
 [dev-dependencies]
 client = { package = "client2", path = "../client2", features = ["test-support"] }
