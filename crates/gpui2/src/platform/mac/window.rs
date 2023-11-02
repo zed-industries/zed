@@ -3,8 +3,8 @@ use crate::{
     display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, ExternalPaths,
     FileDropEvent, ForegroundExecutor, GlobalPixels, InputEvent, KeyDownEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, Scene,
-    Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions, PromptLevel,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    PromptLevel, Scene, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
 };
 use block::ConcreteBlock;
 use cocoa::{
