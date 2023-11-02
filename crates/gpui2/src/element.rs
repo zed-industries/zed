@@ -206,14 +206,11 @@ pub trait Component<V> {
         f(self)
     }
 
-    fn when(mut self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
+    fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
     where
         Self: Sized,
     {
-        if condition {
-            self = then(self);
-        }
-        self
+        self.map(|this| if condition { then(this) } else { this })
     }
 }
 
