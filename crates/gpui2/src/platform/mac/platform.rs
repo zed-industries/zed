@@ -494,7 +494,7 @@ impl Platform for MacPlatform {
     fn set_display_link_output_callback(
         &self,
         display_id: DisplayId,
-        callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>,
+        callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp) + Send>,
     ) {
         self.0
             .lock()

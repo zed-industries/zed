@@ -1,15 +1,15 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppContext, AsyncAppContext, BackgroundExecutor, Context,
+    AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, BackgroundExecutor, Context,
     EventEmitter, ForegroundExecutor, Model, ModelContext, Result, Task, TestDispatcher,
     TestPlatform, WindowContext,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
-use std::{cell::RefCell, future::Future, rc::Rc, sync::Arc, time::Duration};
+use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
 #[derive(Clone)]
 pub struct TestAppContext {
-    pub app: Rc<RefCell<AppContext>>,
+    pub app: Rc<AppCell>,
     pub background_executor: BackgroundExecutor,
     pub foreground_executor: ForegroundExecutor,
 }
