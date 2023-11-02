@@ -25,8 +25,8 @@ use std::{
         Arc,
     },
 };
+use ui::v_stack;
 use ui::{prelude::*, Icon, IconButton, IconColor, IconElement};
-use ui::{v_stack};
 use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -1897,15 +1897,17 @@ impl Pane {
 
 impl Render for Pane {
     type Element = Div<Self>;
-    // fn ui_name() -> &'static str {
-    //     "Pane"
-    // }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack()
             .child(self.render_tab_bar(cx))
             .child(div() /* toolbar */)
-            .child(div() /* active item */)
+            .child(if let Some(item) = self.active_item() {
+                item.to_any().render()
+            } else {
+                // todo!()
+                div().child("Empty Pane").render()
+            })
 
         // enum MouseNavigationHandler {}
 
