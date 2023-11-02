@@ -1,7 +1,6 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::{Context, Result};
 use client::proto;
-use globset::{Glob, GlobMatcher};
 use itertools::Itertools;
 use language::{char_kind, BufferSnapshot};
 use regex::{Regex, RegexBuilder};
@@ -10,7 +9,7 @@ use std::{
     borrow::Cow,
     io::{BufRead, BufReader, Read},
     ops::Range,
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 use util::paths::PathMatcher;

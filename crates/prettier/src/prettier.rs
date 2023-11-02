@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -20,7 +19,6 @@ pub enum Prettier {
 }
 
 pub struct RealPrettier {
-    worktree_id: Option<usize>,
     default: bool,
     prettier_dir: PathBuf,
     server: Arc<LanguageServer>,
@@ -28,15 +26,8 @@ pub struct RealPrettier {
 
 #[cfg(any(test, feature = "test-support"))]
 pub struct TestPrettier {
-    worktree_id: Option<usize>,
     prettier_dir: PathBuf,
     default: bool,
-}
-
-#[derive(Debug)]
-pub struct LocateStart {
-    pub worktree_root_path: Arc<Path>,
-    pub starting_path: Arc<Path>,
 }
 
 pub const PRETTIER_SERVER_FILE: &str = "prettier_server.js";
@@ -130,75 +121,21 @@ impl Prettier {
         }
     }
 
-    pub async fn locate(
-        starting_path: Option<LocateStart>,
-        fs: Arc<dyn Fs>,
-    ) -> anyhow::Result<PathBuf> {
-        let paths_to_check = match starting_path.as_ref() {
-            Some(starting_path) => {
-                let worktree_root = starting_path
-                    .worktree_root_path
-                    .components()
-                    .into_iter()
-                    .take_while(|path_component| !is_node_modules(path_component))
-                    .collect::<PathBuf>();
-                if worktree_root != starting_path.worktree_root_path.as_ref() {
-                    vec![worktree_root]
-                } else {
-                    if starting_path.starting_path.as_ref() == Path::new("") {
-                        worktree_root
-                            .parent()
-                            .map(|path| vec![path.to_path_buf()])
-                            .unwrap_or_default()
-                    } else {
-                        let file_to_format = starting_path.starting_path.as_ref();
-                        let mut paths_to_check = VecDeque::new();
-                        let mut current_path = worktree_root;
-                        for path_component in file_to_format.components().into_iter() {
-                            let new_path = current_path.join(path_component);
-                            let old_path = std::mem::replace(&mut current_path, new_path);
-                            paths_to_check.push_front(old_path);
-                            if is_node_modules(&path_component) {
-                                break;
-                            }
-                        }
-                        Vec::from(paths_to_check)
-                    }
-                }
-            }
-            None => Vec::new(),
-        };
-
-        match find_closest_prettier_dir(fs.as_ref(), paths_to_check)
-            .await
-            .with_context(|| format!("finding prettier starting with {starting_path:?}"))?
-        {
-            Some(prettier_dir) => Ok(prettier_dir),
-            None => Ok(DEFAULT_PRETTIER_DIR.to_path_buf()),
-        }
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub async fn start(
-        worktree_id: Option<usize>,
         _: LanguageServerId,
         prettier_dir: PathBuf,
         _: Arc<dyn NodeRuntime>,
         _: AsyncAppContext,
     ) -> anyhow::Result<Self> {
-        Ok(
-            #[cfg(any(test, feature = "test-support"))]
-            Self::Test(TestPrettier {
-                worktree_id,
-                default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
-                prettier_dir,
-            }),
-        )
+        Ok(Self::Test(TestPrettier {
+            default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
+            prettier_dir,
+        }))
     }
 
     #[cfg(not(any(test, feature = "test-support")))]
     pub async fn start(
-        worktree_id: Option<usize>,
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
         node: Arc<dyn NodeRuntime>,
@@ -206,7 +143,7 @@ impl Prettier {
     ) -> anyhow::Result<Self> {
         use lsp::LanguageServerBinary;
 
-        let backgroud = cx.background();
+        let background = cx.background();
         anyhow::ensure!(
             prettier_dir.is_dir(),
             "Prettier dir {prettier_dir:?} is not a directory"
@@ -217,7 +154,7 @@ impl Prettier {
             "no prettier server package found at {prettier_server:?}"
         );
 
-        let node_path = backgroud
+        let node_path = background
             .spawn(async move { node.binary_path().await })
             .await?;
         let server = LanguageServer::new(
@@ -232,12 +169,11 @@ impl Prettier {
             cx,
         )
         .context("prettier server creation")?;
-        let server = backgroud
+        let server = background
             .spawn(server.initialize(None))
             .await
             .context("prettier server initialization")?;
         Ok(Self::Real(RealPrettier {
-            worktree_id,
             server,
             default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
             prettier_dir,
@@ -403,14 +339,6 @@ impl Prettier {
             Self::Test(test_prettier) => &test_prettier.prettier_dir,
         }
     }
-
-    pub fn worktree_id(&self) -> Option<usize> {
-        match self {
-            Self::Real(local) => local.worktree_id,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::Test(test_prettier) => test_prettier.worktree_id,
-        }
-    }
 }
 
 async fn has_prettier_in_node_modules(fs: &dyn Fs, path: &Path) -> anyhow::Result<bool> {
@@ -464,54 +392,6 @@ fn has_prettier_in_package_json(
         }
     }
     false
-}
-
-async fn find_closest_prettier_dir(
-    fs: &dyn Fs,
-    paths_to_check: Vec<PathBuf>,
-) -> anyhow::Result<Option<PathBuf>> {
-    for path in paths_to_check {
-        let possible_package_json = path.join("package.json");
-        if let Some(package_json_metadata) = fs
-            .metadata(&possible_package_json)
-            .await
-            .with_context(|| format!("Fetching metadata for {possible_package_json:?}"))?
-        {
-            if !package_json_metadata.is_dir && !package_json_metadata.is_symlink {
-                let package_json_contents = fs
-                    .load(&possible_package_json)
-                    .await
-                    .with_context(|| format!("reading {possible_package_json:?} file contents"))?;
-                if let Ok(json_contents) = serde_json::from_str::<HashMap<String, serde_json::Value>>(
-                    &package_json_contents,
-                ) {
-                    if let Some(serde_json::Value::Object(o)) = json_contents.get("dependencies") {
-                        if o.contains_key(PRETTIER_PACKAGE_NAME) {
-                            return Ok(Some(path));
-                        }
-                    }
-                    if let Some(serde_json::Value::Object(o)) = json_contents.get("devDependencies")
-                    {
-                        if o.contains_key(PRETTIER_PACKAGE_NAME) {
-                            return Ok(Some(path));
-                        }
-                    }
-                }
-            }
-        }
-
-        let possible_node_modules_location = path.join("node_modules").join(PRETTIER_PACKAGE_NAME);
-        if let Some(node_modules_location_metadata) = fs
-            .metadata(&possible_node_modules_location)
-            .await
-            .with_context(|| format!("fetching metadata for {possible_node_modules_location:?}"))?
-        {
-            if node_modules_location_metadata.is_dir {
-                return Ok(Some(path));
-            }
-        }
-    }
-    Ok(None)
 }
 
 enum Format {}
