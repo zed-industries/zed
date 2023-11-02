@@ -1,6 +1,7 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, BackgroundExecutor, Context, ForegroundExecutor, Model,
     ModelContext, Render, Result, Task, View, ViewContext, VisualContext, WindowContext,
+    WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
@@ -82,17 +83,20 @@ impl AsyncAppContext {
         Ok(f(&mut *lock))
     }
 
-    pub fn update_window<R>(
+    pub fn open_window<V>(
         &self,
-        handle: AnyWindowHandle,
-        update: impl FnOnce(AnyView, &mut WindowContext) -> R,
-    ) -> Result<R> {
+        options: crate::WindowOptions,
+        build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,
+    ) -> Result<WindowHandle<V>>
+    where
+        V: Render,
+    {
         let app = self
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let mut app_context = app.borrow_mut();
-        app_context.update_window(handle, update)
+        let mut lock = app.borrow_mut();
+        Ok(lock.open_window(options, build_root_view))
     }
 
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>

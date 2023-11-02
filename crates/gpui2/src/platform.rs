@@ -138,12 +138,7 @@ pub(crate) trait PlatformWindow {
     fn mouse_position(&self) -> Point<Pixels>;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_input_handler(&mut self, input_handler: Box<dyn PlatformInputHandler>);
-    fn prompt(
-        &self,
-        level: WindowPromptLevel,
-        msg: &str,
-        answers: &[&str],
-    ) -> oneshot::Receiver<usize>;
+    fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
     fn activate(&self);
     fn set_title(&mut self, title: &str);
     fn set_edited(&mut self, edited: bool);
@@ -452,14 +447,6 @@ impl Default for WindowAppearance {
     fn default() -> Self {
         Self::Light
     }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
-pub enum WindowPromptLevel {
-    #[default]
-    Info,
-    Warning,
-    Critical,
 }
 
 #[derive(Copy, Clone, Debug)]
