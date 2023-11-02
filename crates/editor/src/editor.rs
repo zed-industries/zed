@@ -1555,6 +1555,106 @@ impl FormatProvider for ModelHandle<Formatter> {
     }
 }
 
+trait InlayHints {
+    fn refresh_inlay_hints(
+        &mut self,
+        reason: InlayHintRefreshReason,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    );
+    fn is_enabled(&self, cx: &AppContext) -> bool;
+}
+
+impl InlayHints for ModelHandle<InlayHintCache> {
+    fn refresh_inlay_hints(
+        &mut self,
+        reason: InlayHintRefreshReason,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        if editor.mode != EditorMode::Full {
+            return;
+        }
+
+        let cache_handle = self.clone();
+        self.update(cx, |this, cx| {
+            let reason_description = reason.description();
+            let (invalidate_cache, required_languages) = match reason {
+                InlayHintRefreshReason::Toggle(enabled) => {
+                    this.enabled = enabled;
+                    if enabled {
+                        (InvalidationStrategy::RefreshRequested, None)
+                    } else {
+                        this.clear();
+                        editor.splice_inlay_hints(
+                            editor
+                                .visible_inlay_hints(cx)
+                                .iter()
+                                .map(|inlay| inlay.id)
+                                .collect(),
+                            Vec::new(),
+                            cx,
+                        );
+                        return;
+                    }
+                }
+                InlayHintRefreshReason::SettingsChange(new_settings) => {
+                    match this.update_settings(
+                        &editor.buffer,
+                        new_settings,
+                        editor.visible_inlay_hints(cx),
+                        cx,
+                    ) {
+                        ControlFlow::Break(Some(InlaySplice {
+                            to_remove,
+                            to_insert,
+                        })) => {
+                            editor.splice_inlay_hints(to_remove, to_insert, cx);
+                            return;
+                        }
+                        ControlFlow::Break(None) => return,
+                        ControlFlow::Continue(()) => (InvalidationStrategy::RefreshRequested, None),
+                    }
+                }
+                InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
+                    if let Some(InlaySplice {
+                        to_remove,
+                        to_insert,
+                    }) = this.remove_excerpts(excerpts_removed)
+                    {
+                        editor.splice_inlay_hints(to_remove, to_insert, cx);
+                    }
+                    return;
+                }
+                InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
+                InlayHintRefreshReason::BufferEdited(buffer_languages) => {
+                    (InvalidationStrategy::BufferEdited, Some(buffer_languages))
+                }
+                InlayHintRefreshReason::RefreshRequested => {
+                    (InvalidationStrategy::RefreshRequested, None)
+                }
+            };
+
+            if let Some(InlaySplice {
+                to_remove,
+                to_insert,
+            }) = this.spawn_hint_refresh(
+                reason_description,
+                editor.excerpt_visible_offsets(required_languages.as_ref(), cx),
+                invalidate_cache,
+                cache_handle,
+                cx,
+            ) {
+                editor.splice_inlay_hints(to_remove, to_insert, cx);
+            }
+        });
+    }
+
+    fn is_enabled(&self, cx: &AppContext) -> bool {
+        self.read(cx).enabled
+    }
+}
+
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
@@ -1604,7 +1704,6 @@ pub struct Editor {
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
     copilot_state: CopilotState,
-    inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<Vector2F>,
@@ -1613,6 +1712,7 @@ pub struct Editor {
     go_to_definition_provider: Option<Box<dyn GoToDefinitionProvider>>,
     rename_provider: Option<Box<dyn RenameProvider>>,
     format_provider: Option<Box<dyn FormatProvider>>,
+    inlay_hints: Option<ModelHandle<InlayHintCache>>,
 }
 
 pub struct EditorSnapshot {
@@ -2881,7 +2981,6 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
-            inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
             _subscriptions: vec![
@@ -2906,6 +3005,9 @@ impl Editor {
             go_to_definition_provider,
             rename_provider,
             format_provider,
+            inlay_hints: project
+                .clone()
+                .map(|project, _| InlayHintCache::new(project, inlay_hint_settings)),
         };
 
         this._subscriptions.extend(project_subscriptions);
@@ -4255,87 +4357,23 @@ impl Editor {
     }
 
     pub fn toggle_inlay_hints(&mut self, _: &ToggleInlayHints, cx: &mut ViewContext<Self>) {
-        self.refresh_inlay_hints(
-            InlayHintRefreshReason::Toggle(!self.inlay_hint_cache.enabled),
-            cx,
-        );
+        if let Some(enabled) = self.inlay_hints.map(|hints| hints.is_enabled(cx)) {
+            self.refresh_inlay_hints(InlayHintRefreshReason::Toggle(!enabled), cx);
+        }
     }
 
     pub fn inlay_hints_enabled(&self) -> bool {
-        self.inlay_hint_cache.enabled
+        self.inlay_hints
+            .map(|hints| hints.is_enabled(cx))
+            .unwrap_or_default()
     }
 
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut ViewContext<Self>) {
-        if self.project.is_none() || self.mode != EditorMode::Full {
-            return;
-        }
-
-        let reason_description = reason.description();
-        let (invalidate_cache, required_languages) = match reason {
-            InlayHintRefreshReason::Toggle(enabled) => {
-                self.inlay_hint_cache.enabled = enabled;
-                if enabled {
-                    (InvalidationStrategy::RefreshRequested, None)
-                } else {
-                    self.inlay_hint_cache.clear();
-                    self.splice_inlay_hints(
-                        self.visible_inlay_hints(cx)
-                            .iter()
-                            .map(|inlay| inlay.id)
-                            .collect(),
-                        Vec::new(),
-                        cx,
-                    );
-                    return;
-                }
-            }
-            InlayHintRefreshReason::SettingsChange(new_settings) => {
-                match self.inlay_hint_cache.update_settings(
-                    &self.buffer,
-                    new_settings,
-                    self.visible_inlay_hints(cx),
-                    cx,
-                ) {
-                    ControlFlow::Break(Some(InlaySplice {
-                        to_remove,
-                        to_insert,
-                    })) => {
-                        self.splice_inlay_hints(to_remove, to_insert, cx);
-                        return;
-                    }
-                    ControlFlow::Break(None) => return,
-                    ControlFlow::Continue(()) => (InvalidationStrategy::RefreshRequested, None),
-                }
-            }
-            InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
-                if let Some(InlaySplice {
-                    to_remove,
-                    to_insert,
-                }) = self.inlay_hint_cache.remove_excerpts(excerpts_removed)
-                {
-                    self.splice_inlay_hints(to_remove, to_insert, cx);
-                }
-                return;
-            }
-            InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
-            InlayHintRefreshReason::BufferEdited(buffer_languages) => {
-                (InvalidationStrategy::BufferEdited, Some(buffer_languages))
-            }
-            InlayHintRefreshReason::RefreshRequested => {
-                (InvalidationStrategy::RefreshRequested, None)
-            }
-        };
-
-        if let Some(InlaySplice {
-            to_remove,
-            to_insert,
-        }) = self.inlay_hint_cache.spawn_hint_refresh(
-            reason_description,
-            self.excerpt_visible_offsets(required_languages.as_ref(), cx),
-            invalidate_cache,
-            cx,
-        ) {
-            self.splice_inlay_hints(to_remove, to_insert, cx);
+        if let Some(inlay_hints) = &self.inlay_hints {
+            cx.spawn(|editor, cx| {
+                inlay_hints.refresh_inlay_hints(reason, editor, cx);
+            })
+            .detach()
         }
     }
 
@@ -9353,10 +9391,6 @@ impl Editor {
         cx.write_to_clipboard(ClipboardItem::new(lines));
     }
 
-    pub fn inlay_hint_cache(&self) -> &InlayHintCache {
-        &self.inlay_hint_cache
-    }
-
     pub fn replay_insert_event(
         &mut self,
         text: &str,
@@ -9414,6 +9448,24 @@ impl Editor {
         });
         supports
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn inlay_hint_cache_version(&self, cx: &mut AppContext) -> usize {
+        self.inlay_hints
+            .expect("test code does not have hints enabled")
+            .update(cx, |hints, _| hints.version)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn inlay_hint_cache_entries(
+        &self,
+        excerpt_id: ExcerptId,
+        cx: &mut AppContext,
+    ) -> Option<&Arc<RwLock<CachedExcerptHints>>> {
+        self.inlay_hints
+            .expect("test code does not have hints enabled")
+            .update(cx, |hints, _| hints.hints.get(&excerpt_id).cloned())
+    }
 }
 
 pub trait CollaborationHub {
@@ -9424,6 +9476,8 @@ pub trait CollaborationHub {
     ) -> &'a HashMap<u64, ParticipantIndex>;
 }
 
+// Option<ModelHandle<Project>>
+// Option<Box<dyn LspBridge>>
 impl CollaborationHub for ModelHandle<Project> {
     fn collaborators<'a>(&self, cx: &'a AppContext) -> &'a HashMap<PeerId, Collaborator> {
         self.read(cx).collaborators()
