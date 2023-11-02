@@ -159,6 +159,7 @@ impl Drop for FocusHandle {
 // Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
+    pub(crate) removed: bool,
     platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -229,6 +230,7 @@ impl Window {
 
         Window {
             handle,
+            removed: false,
             platform_window,
             display_id,
             sprite_atlas,
@@ -318,6 +320,11 @@ impl<'a> WindowContext<'a> {
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn notify(&mut self) {
         self.window.dirty = true;
+    }
+
+    /// Close this window.
+    pub fn remove_window(&mut self) {
+        self.window.removed = true;
     }
 
     /// Obtain a new `FocusHandle`, which allows you to track and manipulate the keyboard focus

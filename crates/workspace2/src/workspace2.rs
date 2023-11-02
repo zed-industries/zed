@@ -621,8 +621,7 @@ impl Workspace {
                 }
 
                 project2::Event::Closed => {
-                    // todo!()
-                    // cx.remove_window();
+                    cx.remove_window();
                 }
 
                 project2::Event::DeletedEntry(entry_id) => {
