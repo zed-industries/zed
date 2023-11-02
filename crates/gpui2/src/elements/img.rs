@@ -125,9 +125,7 @@ where
             } else {
                 cx.spawn(|_, mut cx| async move {
                     if image_future.await.log_err().is_some() {
-                        eprintln!(">>> on_next_frame");
                         cx.on_next_frame(|cx| cx.notify());
-                        eprintln!("<<< on_next_frame")
                     }
                 })
                 .detach()

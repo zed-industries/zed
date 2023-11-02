@@ -28,7 +28,6 @@ impl Context for AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        dbg!("BUILD MODEL A");
         let mut app = app.borrow_mut();
         Ok(app.build_model(build_model))
     }
@@ -42,7 +41,6 @@ impl Context for AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        dbg!("UPDATE MODEL B");
         let mut app = app.borrow_mut();
         Ok(app.update_model(handle, update))
     }
@@ -52,7 +50,6 @@ impl Context for AsyncAppContext {
         F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
     {
         let app = self.app.upgrade().context("app was released")?;
-        dbg!("UPDATE WINDOW C");
         let mut lock = app.borrow_mut();
         lock.update_window(window, f)
     }
@@ -64,7 +61,6 @@ impl AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        dbg!("REFRESH");
         let mut lock = app.borrow_mut();
         lock.refresh();
         Ok(())
@@ -125,7 +121,6 @@ impl AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        dbg!("read global");
         let app = app.borrow_mut();
         Ok(read(app.global(), &app))
     }
@@ -135,7 +130,6 @@ impl AsyncAppContext {
         read: impl FnOnce(&G, &AppContext) -> R,
     ) -> Option<R> {
         let app = self.app.upgrade()?;
-        dbg!("try read global");
         let app = app.borrow_mut();
         Some(read(app.try_global()?, &app))
     }
@@ -148,7 +142,6 @@ impl AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        dbg!("update global");
         let mut app = app.borrow_mut();
         Ok(app.update_global(update))
     }

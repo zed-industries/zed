@@ -1,7 +1,7 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppContext, AsyncAppContext, BackgroundExecutor, Context,
+    AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, BackgroundExecutor, Context,
     EventEmitter, ForegroundExecutor, Model, ModelContext, Result, Task, TestDispatcher,
-    TestPlatform, WindowContext, AppCell,
+    TestPlatform, WindowContext,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};

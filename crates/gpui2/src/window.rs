@@ -410,67 +410,55 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Schedule the given closure to be run directly after the current frame is rendered.
-    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + 'static) {
-        let f = Box::new(f);
+    pub fn on_next_frame(&mut self, callback: impl FnOnce(&mut WindowContext) + 'static) {
+        let handle = self.window.handle;
         let display_id = self.window.display_id;
+
+        if !self.frame_consumers.contains_key(&display_id) {
+            let (tx, mut rx) = mpsc::unbounded::<()>();
+            self.platform.set_display_link_output_callback(
+                display_id,
+                Box::new(move |_current_time, _output_time| _ = tx.unbounded_send(())),
+            );
+
+            let consumer_task = self.app.spawn(|cx| async move {
+                while rx.next().await.is_some() {
+                    cx.update(|cx| {
+                        for callback in cx
+                            .next_frame_callbacks
+                            .get_mut(&display_id)
+                            .unwrap()
+                            .drain(..)
+                            .collect::<SmallVec<[_; 32]>>()
+                        {
+                            callback(cx);
+                        }
+                    })
+                    .ok();
+
+                    // Flush effects, then stop the display link if no new next_frame_callbacks have been added.
+
+                    cx.update(|cx| {
+                        if cx.next_frame_callbacks.is_empty() {
+                            cx.platform.stop_display_link(display_id);
+                        }
+                    })
+                    .ok();
+                }
+            });
+            self.frame_consumers.insert(display_id, consumer_task);
+        }
+
+        if self.next_frame_callbacks.is_empty() {
+            self.platform.start_display_link(display_id);
+        }
 
         self.next_frame_callbacks
             .entry(display_id)
             .or_default()
-            .push(f);
-
-        self.frame_consumers.entry(display_id).or_insert_with(|| {
-            let (tx, rx) = mpsc::unbounded::<()>();
-
-            self.spawn(|cx| async move {
-                while rx.next().await.is_some() {
-                    let _ = cx.update(|_, cx| {
-                        for callback in cx
-                            .app
-                            .next_frame_callbacks
-                            .get_mut(&display_id)
-                            .unwrap()
-                            .drain(..)
-                        {
-                            callback(cx);
-                        }
-                    });
-                }
-            })
-        });
-
-        if let Some(callbacks) = self.next_frame_callbacks.get_mut(&display_id) {
-            callbacks.push(f);
-            // If there was already a callback, it means that we already scheduled a frame.
-            if callbacks.len() > 1 {
-                return;
-            }
-        } else {
-            let mut async_cx = self.to_async();
-            self.next_frame_callbacks.insert(display_id, vec![f]);
-            self.platform.set_display_link_output_callback(
-                display_id,
-                Box::new(move |_current_time, _output_time| {
-                    let _ = async_cx.update(|_, cx| {
-                        let callbacks = cx
-                            .next_frame_callbacks
-                            .get_mut(&display_id)
-                            .unwrap()
-                            .drain(..)
-                            .collect::<Vec<_>>();
-                        for callback in callbacks {
-                            callback(cx);
-                        }
-
-                        if cx.next_frame_callbacks.get(&display_id).unwrap().is_empty() {
-                            cx.platform.stop_display_link(display_id);
-                        }
-                    });
-                }),
-            );
-        }
-
-        self.platform.start_display_link(display_id);
+            .push(Box::new(move |cx: &mut AppContext| {
+                cx.update_window(handle, |_root_view, cx| callback(cx)).ok();
+            }));
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.

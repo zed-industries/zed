@@ -39,18 +39,20 @@ use std::{
 };
 use util::http::{self, HttpClient};
 
+/// Temporary(?) wrapper around RefCell<AppContext> to help us debug any double borrows.
+/// Strongly consider removing after stabilization.
 pub struct AppCell {
     app: RefCell<AppContext>,
 }
+
 impl AppCell {
     pub fn borrow(&self) -> AppRef {
         AppRef(self.app.borrow())
     }
 
     pub fn borrow_mut(&self) -> AppRefMut {
-        let thread_id = std::thread::current().id();
-
-        eprintln!(">>> borrowing {thread_id:?}");
+        // let thread_id = std::thread::current().id();
+        // dbg!("borrowed {thread_id:?}");
         AppRefMut(self.app.borrow_mut())
     }
 }
@@ -84,7 +86,6 @@ impl App {
         let this = self.0.clone();
         let platform = self.0.borrow().platform.clone();
         platform.run(Box::new(move || {
-            dbg!("run callback");
             let cx = &mut *this.borrow_mut();
             on_finish_launching(cx);
         }));
@@ -110,14 +111,11 @@ impl App {
         F: 'static + FnMut(&mut AppContext),
     {
         let this = Rc::downgrade(&self.0);
-        self.0
-            .borrow_mut()
-            .platform
-            .on_reopen(Box::new(move || {
-                if let Some(app) = this.upgrade() {
-                    callback(&mut app.borrow_mut());
-                }
-            }));
+        self.0.borrow_mut().platform.on_reopen(Box::new(move || {
+            if let Some(app) = this.upgrade() {
+                callback(&mut app.borrow_mut());
+            }
+        }));
         self
     }
 
@@ -139,7 +137,7 @@ impl App {
 }
 
 type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
-type FrameCallback = Box<dyn FnOnce(&mut AppContext)>;
+pub(crate) type FrameCallback = Box<dyn FnOnce(&mut AppContext)>;
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
