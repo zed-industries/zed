@@ -98,10 +98,10 @@ impl<V: 'static> Panel<V> {
         v_stack()
             .id(self.id.clone())
             .flex_initial()
-            .when(
-                self.current_side == PanelSide::Left || self.current_side == PanelSide::Right,
-                |this| this.h_full().w(current_size),
-            )
+            .map(|this| match self.current_side {
+                PanelSide::Left | PanelSide::Right => this.h_full().w(current_size),
+                PanelSide::Bottom => this,
+            })
             .map(|this| match self.current_side {
                 PanelSide::Left => this.border_r(),
                 PanelSide::Right => this.border_l(),
