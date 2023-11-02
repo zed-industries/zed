@@ -362,7 +362,7 @@ impl<'a> WindowContext<'a> {
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
     /// that are currently on the stack to be returned to the app.
-    pub fn defer(&mut self, f: impl FnOnce(&mut WindowContext) + 'static + Send) {
+    pub fn defer(&mut self, f: impl FnOnce(&mut WindowContext) + 'static) {
         let handle = self.window.handle;
         self.app.defer(move |cx| {
             handle.update(cx, |_, cx| f(cx)).ok();
@@ -372,7 +372,7 @@ impl<'a> WindowContext<'a> {
     pub fn subscribe<Emitter, E>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(E, &Emitter::Event, &mut WindowContext<'_>) + Send + 'static,
+        mut on_event: impl FnMut(E, &Emitter::Event, &mut WindowContext<'_>) + 'static,
     ) -> Subscription
     where
         Emitter: EventEmitter,
@@ -406,7 +406,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Schedule the given closure to be run directly after the current frame is rendered.
-    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + Send + 'static) {
+    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + 'static) {
         let f = Box::new(f);
         let display_id = self.window.display_id;
 
@@ -1144,7 +1144,7 @@ impl<'a> WindowContext<'a> {
     /// is updated.
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut WindowContext<'_>) + Send + 'static,
+        f: impl Fn(&mut WindowContext<'_>) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         self.global_observers.insert(
@@ -1578,9 +1578,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         result
     }
 
-    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + Send + 'static)
+    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static)
     where
-        V: Any + Send,
+        V: 'static,
     {
         let view = self.view();
         self.window_cx.on_next_frame(move |cx| view.update(cx, f));
@@ -1588,7 +1588,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
     /// that are currently on the stack to be returned to the app.
-    pub fn defer(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static + Send) {
+    pub fn defer(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static) {
         let view = self.view().downgrade();
         self.window_cx.defer(move |cx| {
             view.update(cx, f).ok();
@@ -1602,7 +1602,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription
     where
         V2: 'static,
-        V: 'static + Send,
+        V: 'static,
         E: Entity<V2>,
     {
         let view = self.view().downgrade();

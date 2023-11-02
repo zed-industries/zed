@@ -44,9 +44,6 @@ pub struct Text<V> {
     state_type: PhantomData<V>,
 }
 
-unsafe impl<V> Send for Text<V> {}
-unsafe impl<V> Sync for Text<V> {}
-
 impl<V: 'static> Component<V> for Text<V> {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(self)

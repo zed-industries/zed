@@ -117,7 +117,7 @@ pub trait VisualContext: Context {
 }
 
 pub trait Entity<T>: Sealed {
-    type Weak: 'static + Send;
+    type Weak: 'static;
 
     fn entity_id(&self) -> EntityId;
     fn downgrade(&self) -> Self::Weak;
@@ -137,7 +137,7 @@ pub trait BorrowAppContext {
     where
         F: FnOnce(&mut Self) -> R;
 
-    fn set_global<T: Send + 'static>(&mut self, global: T);
+    fn set_global<T: 'static>(&mut self, global: T);
 }
 
 impl<C> BorrowAppContext for C
@@ -154,7 +154,7 @@ where
         result
     }
 
-    fn set_global<G: 'static + Send>(&mut self, global: G) {
+    fn set_global<G: 'static>(&mut self, global: G) {
         self.borrow_mut().set_global(global)
     }
 }

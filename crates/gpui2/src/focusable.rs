@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 pub type FocusListeners<V> = SmallVec<[FocusListener<V>; 2]>;
 
 pub type FocusListener<V> =
-    Box<dyn Fn(&mut V, &FocusHandle, &FocusEvent, &mut ViewContext<V>) + Send + 'static>;
+    Box<dyn Fn(&mut V, &FocusHandle, &FocusEvent, &mut ViewContext<V>) + 'static>;
 
 pub trait Focusable<V: 'static>: Element<V> {
     fn focus_listeners(&mut self) -> &mut FocusListeners<V>;
@@ -42,7 +42,7 @@ pub trait Focusable<V: 'static>: Element<V> {
 
     fn on_focus(
         mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + 'static,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -58,7 +58,7 @@ pub trait Focusable<V: 'static>: Element<V> {
 
     fn on_blur(
         mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + 'static,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -74,7 +74,7 @@ pub trait Focusable<V: 'static>: Element<V> {
 
     fn on_focus_in(
         mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + 'static,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -99,7 +99,7 @@ pub trait Focusable<V: 'static>: Element<V> {
 
     fn on_focus_out(
         mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + 'static,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -122,7 +122,7 @@ pub trait Focusable<V: 'static>: Element<V> {
     }
 }
 
-pub trait ElementFocus<V: 'static>: 'static + Send {
+pub trait ElementFocus<V: 'static>: 'static {
     fn as_focusable(&self) -> Option<&FocusEnabled<V>>;
     fn as_focusable_mut(&mut self) -> Option<&mut FocusEnabled<V>>;
 

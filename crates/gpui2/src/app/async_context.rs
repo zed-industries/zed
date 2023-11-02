@@ -163,7 +163,7 @@ impl AsyncWindowContext {
         self.app.update_window(self.window, update)
     }
 
-    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + Send + 'static) {
+    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + 'static) {
         self.window.update(self, |_, cx| cx.on_next_frame(f)).ok();
     }
 
@@ -184,13 +184,10 @@ impl AsyncWindowContext {
         self.window.update(self, |_, cx| cx.update_global(update))
     }
 
-    pub fn spawn<Fut, R>(
-        &self,
-        f: impl FnOnce(AsyncWindowContext) -> Fut + Send + 'static,
-    ) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut + 'static) -> Task<R>
     where
-        Fut: Future<Output = R> + Send + 'static,
-        R: Send + 'static,
+        Fut: Future<Output = R> + 'static,
+        R: 'static,
     {
         let this = self.clone();
         self.foreground_executor.spawn(async move { f(this).await })

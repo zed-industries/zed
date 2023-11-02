@@ -7,7 +7,6 @@ use anyhow::{Context, Result};
 use std::{
     any::{Any, TypeId},
     hash::{Hash, Hasher},
-    marker::PhantomData,
 };
 
 pub trait Render: 'static + Sized {
@@ -90,53 +89,7 @@ impl<V> Eq for View<V> {}
 
 impl<V: Render, ParentViewState: 'static> Component<ParentViewState> for View<V> {
     fn render(self) -> AnyElement<ParentViewState> {
-        AnyElement::new(EraseViewState {
-            view: self,
-            parent_view_state_type: PhantomData,
-        })
-    }
-}
-
-impl<V> Element<()> for View<V>
-where
-    V: Render,
-{
-    type ElementState = AnyElement<V>;
-
-    fn id(&self) -> Option<crate::ElementId> {
-        Some(ElementId::View(self.model.entity_id))
-    }
-
-    fn initialize(
-        &mut self,
-        _: &mut (),
-        _: Option<Self::ElementState>,
-        cx: &mut ViewContext<()>,
-    ) -> Self::ElementState {
-        self.update(cx, |state, cx| {
-            let mut any_element = AnyElement::new(state.render(cx));
-            any_element.initialize(state, cx);
-            any_element
-        })
-    }
-
-    fn layout(
-        &mut self,
-        _: &mut (),
-        element: &mut Self::ElementState,
-        cx: &mut ViewContext<()>,
-    ) -> LayoutId {
-        self.update(cx, |state, cx| element.layout(state, cx))
-    }
-
-    fn paint(
-        &mut self,
-        _: Bounds<Pixels>,
-        _: &mut (),
-        element: &mut Self::ElementState,
-        cx: &mut ViewContext<()>,
-    ) {
-        self.update(cx, |state, cx| element.paint(state, cx))
+        AnyElement::new(AnyView::from(self))
     }
 }
 
@@ -184,116 +137,6 @@ impl<V> PartialEq for WeakView<V> {
 }
 
 impl<V> Eq for WeakView<V> {}
-
-struct EraseViewState<V, ParentV> {
-    view: View<V>,
-    parent_view_state_type: PhantomData<ParentV>,
-}
-
-unsafe impl<V, ParentV> Send for EraseViewState<V, ParentV> {}
-
-impl<V: Render, ParentV: 'static> Component<ParentV> for EraseViewState<V, ParentV> {
-    fn render(self) -> AnyElement<ParentV> {
-        AnyElement::new(self)
-    }
-}
-
-impl<V: Render, ParentV: 'static> Element<ParentV> for EraseViewState<V, ParentV> {
-    type ElementState = Box<dyn Any>;
-
-    fn id(&self) -> Option<ElementId> {
-        Element::id(&self.view)
-    }
-
-    fn initialize(
-        &mut self,
-        _: &mut ParentV,
-        _: Option<Self::ElementState>,
-        cx: &mut ViewContext<ParentV>,
-    ) -> Self::ElementState {
-        ViewObject::initialize(&mut self.view, cx)
-    }
-
-    fn layout(
-        &mut self,
-        _: &mut ParentV,
-        element: &mut Self::ElementState,
-        cx: &mut ViewContext<ParentV>,
-    ) -> LayoutId {
-        ViewObject::layout(&mut self.view, element, cx)
-    }
-
-    fn paint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        _: &mut ParentV,
-        element: &mut Self::ElementState,
-        cx: &mut ViewContext<ParentV>,
-    ) {
-        ViewObject::paint(&mut self.view, bounds, element, cx)
-    }
-}
-
-trait ViewObject: Send + Sync {
-    fn entity_type(&self) -> TypeId;
-    fn entity_id(&self) -> EntityId;
-    fn model(&self) -> AnyModel;
-    fn initialize(&self, cx: &mut WindowContext) -> AnyBox;
-    fn layout(&self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId;
-    fn paint(&self, bounds: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext);
-    fn debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
-}
-
-impl<V> ViewObject for View<V>
-where
-    V: Render,
-{
-    fn entity_type(&self) -> TypeId {
-        TypeId::of::<V>()
-    }
-
-    fn entity_id(&self) -> EntityId {
-        Entity::entity_id(self)
-    }
-
-    fn model(&self) -> AnyModel {
-        self.model.clone().into_any()
-    }
-
-    fn initialize(&self, cx: &mut WindowContext) -> AnyBox {
-        cx.with_element_id(ViewObject::entity_id(self), |_global_id, cx| {
-            self.update(cx, |state, cx| {
-                let mut any_element = Box::new(AnyElement::new(state.render(cx)));
-                any_element.initialize(state, cx);
-                any_element
-            })
-        })
-    }
-
-    fn layout(&self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId {
-        cx.with_element_id(ViewObject::entity_id(self), |_global_id, cx| {
-            self.update(cx, |state, cx| {
-                let element = element.downcast_mut::<AnyElement<V>>().unwrap();
-                element.layout(state, cx)
-            })
-        })
-    }
-
-    fn paint(&self, _: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext) {
-        cx.with_element_id(ViewObject::entity_id(self), |_global_id, cx| {
-            self.update(cx, |state, cx| {
-                let element = element.downcast_mut::<AnyElement<V>>().unwrap();
-                element.paint(state, cx);
-            });
-        });
-    }
-
-    fn debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct(&format!("AnyView<{}>", std::any::type_name::<V>()))
-            .field("entity_id", &ViewObject::entity_id(self).as_u64())
-            .finish()
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct AnyView {

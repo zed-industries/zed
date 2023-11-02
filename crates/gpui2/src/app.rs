@@ -685,7 +685,7 @@ impl AppContext {
     pub fn observe_release<E, T>(
         &mut self,
         handle: &E,
-        on_release: impl FnOnce(&mut T, &mut AppContext) + Send + 'static,
+        on_release: impl FnOnce(&mut T, &mut AppContext) + 'static,
     ) -> Subscription
     where
         E: Entity<T>,
