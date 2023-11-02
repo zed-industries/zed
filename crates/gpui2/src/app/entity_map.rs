@@ -169,8 +169,7 @@ impl AnyModel {
         self.entity_id
     }
 
-    // todo!() added for populating `ProjectItemBuilders` in `load_path` method
-    pub fn type_id(&self) -> TypeId {
+    pub fn entity_type(&self) -> TypeId {
         self.entity_type
     }
 

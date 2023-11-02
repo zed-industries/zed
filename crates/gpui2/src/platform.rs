@@ -5,9 +5,10 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlobalPixels, GlyphId, InputEvent, LineLayout, Pixels, Point,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene, SharedString, Size,
+    point, size, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId,
+    FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, InputEvent, LineLayout,
+    Pixels, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene,
+    SharedString, Size,
 };
 use anyhow::{anyhow, bail};
 use async_task::Runnable;
@@ -422,12 +423,15 @@ impl Column for WindowBounds {
             "Fullscreen" => WindowBounds::Fullscreen,
             "Maximized" => WindowBounds::Maximized,
             "Fixed" => {
-                // let ((x, y, width, height), _) = Column::column(statement, next_index)?;
-                // WindowBounds::Fixed(RectF::new(
-                //     Vector2F::new(x, y),
-                //     Vector2F::new(width, height),
-                // ))
-                todo!()
+                let ((x, y, width, height), _) = Column::column(statement, next_index)?;
+                let x: f64 = x;
+                let y: f64 = y;
+                let width: f64 = width;
+                let height: f64 = height;
+                WindowBounds::Fixed(Bounds {
+                    origin: point(x.into(), y.into()),
+                    size: size(width.into(), height.into()),
+                })
             }
             _ => bail!("Window State did not have a valid string"),
         };
