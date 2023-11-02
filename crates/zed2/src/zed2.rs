@@ -1,3 +1,6 @@
+#![allow(unused_variables, dead_code, unused_mut)]
+// todo!() this is to make transition easier.
+
 mod assets;
 pub mod languages;
 mod only_instance;
@@ -5,7 +8,6 @@ mod open_listener;
 
 pub use assets::*;
 use collections::HashMap;
-use client::{Client, UserStore};
 use gpui::{
     point, px, AppContext, AsyncAppContext, AsyncWindowContext, Point, Task, TitlebarOptions,
     WeakView, WindowBounds, WindowKind, WindowOptions,

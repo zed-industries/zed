@@ -1,3 +1,6 @@
+#![allow(unused_variables, dead_code, unused_mut)]
+// todo!() this is to make transition easier.
+
 // Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
 
@@ -24,7 +27,7 @@ use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
-use smol::{future::FutureExt, process::Command};
+use smol::process::Command;
 use std::{
     env,
     ffi::OsStr,

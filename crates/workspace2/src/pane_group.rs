@@ -7,7 +7,7 @@ use db2::sqlez::{
     statement::Statement,
 };
 use gpui2::{
-    point, size, AnyElement, AnyView, AnyWeakView, Bounds, Model, Pixels, Point, View, ViewContext,
+    point, size, AnyElement, AnyWeakView, Bounds, Model, Pixels, Point, View, ViewContext,
 };
 use parking_lot::Mutex;
 use project2::Project;

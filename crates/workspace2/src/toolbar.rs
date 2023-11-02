@@ -1,5 +1,7 @@
 use crate::ItemHandle;
-use gpui2::{AnyView, AppContext, EventEmitter, Render, View, ViewContext, WindowContext};
+use gpui2::{
+    AnyView, AppContext, Entity, EntityId, EventEmitter, Render, View, ViewContext, WindowContext,
+};
 
 pub trait ToolbarItemView: Render + EventEmitter {
     fn set_active_pane_item(
@@ -28,7 +30,7 @@ pub trait ToolbarItemView: Render + EventEmitter {
 }
 
 trait ToolbarItemViewHandle: Send {
-    fn id(&self) -> usize;
+    fn id(&self) -> EntityId;
     fn to_any(&self) -> AnyView;
     fn set_active_pane_item(
         &self,
@@ -258,8 +260,8 @@ impl Toolbar {
 }
 
 impl<T: ToolbarItemView> ToolbarItemViewHandle for View<T> {
-    fn id(&self) -> usize {
-        self.id()
+    fn id(&self) -> EntityId {
+        self.entity_id()
     }
 
     fn to_any(&self) -> AnyView {

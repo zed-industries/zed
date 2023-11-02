@@ -1,3 +1,6 @@
+#![allow(unused_variables, dead_code, unused_mut)]
+// todo!() this is to make transition easier.
+
 pub mod dock;
 pub mod item;
 pub mod notifications;
@@ -2999,7 +3002,7 @@ impl Workspace {
                 }
 
                 Some(())
-            });
+            })?;
         }
         Ok(())
     }
