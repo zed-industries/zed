@@ -198,14 +198,19 @@ impl<V> AnyElement<V> {
 pub trait Component<V> {
     fn render(self) -> AnyElement<V>;
 
-    fn when(mut self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
+    fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
+    where
+        Self: Sized,
+        U: Component<V>,
+    {
+        f(self)
+    }
+
+    fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
     where
         Self: Sized,
     {
-        if condition {
-            self = then(self);
-        }
-        self
+        self.map(|this| if condition { then(this) } else { this })
     }
 }
 

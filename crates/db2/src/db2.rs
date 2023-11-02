@@ -190,138 +190,142 @@ where
         .detach()
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use std::thread;
+#[cfg(test)]
+mod tests {
+    use std::thread;
 
-//     use sqlez::domain::Domain;
-//     use sqlez_macros::sql;
-//     use tempdir::TempDir;
+    use sqlez::domain::Domain;
+    use sqlez_macros::sql;
+    use tempdir::TempDir;
 
-//     use crate::open_db;
+    use crate::open_db;
 
-//     // Test bad migration panics
-//     #[gpui::test]
-//     #[should_panic]
-//     async fn test_bad_migration_panics() {
-//         enum BadDB {}
+    // Test bad migration panics
+    #[gpui2::test]
+    #[should_panic]
+    async fn test_bad_migration_panics() {
+        enum BadDB {}
 
-//         impl Domain for BadDB {
-//             fn name() -> &'static str {
-//                 "db_tests"
-//             }
+        impl Domain for BadDB {
+            fn name() -> &'static str {
+                "db_tests"
+            }
 
-//             fn migrations() -> &'static [&'static str] {
-//                 &[
-//                     sql!(CREATE TABLE test(value);),
-//                     // failure because test already exists
-//                     sql!(CREATE TABLE test(value);),
-//                 ]
-//             }
-//         }
+            fn migrations() -> &'static [&'static str] {
+                &[
+                    sql!(CREATE TABLE test(value);),
+                    // failure because test already exists
+                    sql!(CREATE TABLE test(value);),
+                ]
+            }
+        }
 
-//         let tempdir = TempDir::new("DbTests").unwrap();
-//         let _bad_db = open_db::<BadDB>(tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
-//     }
+        let tempdir = TempDir::new("DbTests").unwrap();
+        let _bad_db = open_db::<BadDB>(tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
+    }
 
-//     /// Test that DB exists but corrupted (causing recreate)
-//     #[gpui::test]
-//     async fn test_db_corruption() {
-//         enum CorruptedDB {}
+    /// Test that DB exists but corrupted (causing recreate)
+    #[gpui2::test]
+    async fn test_db_corruption(cx: &mut gpui2::TestAppContext) {
+        cx.executor().allow_parking();
 
-//         impl Domain for CorruptedDB {
-//             fn name() -> &'static str {
-//                 "db_tests"
-//             }
+        enum CorruptedDB {}
 
-//             fn migrations() -> &'static [&'static str] {
-//                 &[sql!(CREATE TABLE test(value);)]
-//             }
-//         }
+        impl Domain for CorruptedDB {
+            fn name() -> &'static str {
+                "db_tests"
+            }
 
-//         enum GoodDB {}
+            fn migrations() -> &'static [&'static str] {
+                &[sql!(CREATE TABLE test(value);)]
+            }
+        }
 
-//         impl Domain for GoodDB {
-//             fn name() -> &'static str {
-//                 "db_tests" //Notice same name
-//             }
+        enum GoodDB {}
 
-//             fn migrations() -> &'static [&'static str] {
-//                 &[sql!(CREATE TABLE test2(value);)] //But different migration
-//             }
-//         }
+        impl Domain for GoodDB {
+            fn name() -> &'static str {
+                "db_tests" //Notice same name
+            }
 
-//         let tempdir = TempDir::new("DbTests").unwrap();
-//         {
-//             let corrupt_db =
-//                 open_db::<CorruptedDB>(tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
-//             assert!(corrupt_db.persistent());
-//         }
+            fn migrations() -> &'static [&'static str] {
+                &[sql!(CREATE TABLE test2(value);)] //But different migration
+            }
+        }
 
-//         let good_db = open_db::<GoodDB>(tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
-//         assert!(
-//             good_db.select_row::<usize>("SELECT * FROM test2").unwrap()()
-//                 .unwrap()
-//                 .is_none()
-//         );
-//     }
+        let tempdir = TempDir::new("DbTests").unwrap();
+        {
+            let corrupt_db =
+                open_db::<CorruptedDB>(tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
+            assert!(corrupt_db.persistent());
+        }
 
-//     /// Test that DB exists but corrupted (causing recreate)
-//     #[gpui::test(iterations = 30)]
-//     async fn test_simultaneous_db_corruption() {
-//         enum CorruptedDB {}
+        let good_db = open_db::<GoodDB>(tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
+        assert!(
+            good_db.select_row::<usize>("SELECT * FROM test2").unwrap()()
+                .unwrap()
+                .is_none()
+        );
+    }
 
-//         impl Domain for CorruptedDB {
-//             fn name() -> &'static str {
-//                 "db_tests"
-//             }
+    /// Test that DB exists but corrupted (causing recreate)
+    #[gpui2::test(iterations = 30)]
+    async fn test_simultaneous_db_corruption(cx: &mut gpui2::TestAppContext) {
+        cx.executor().allow_parking();
 
-//             fn migrations() -> &'static [&'static str] {
-//                 &[sql!(CREATE TABLE test(value);)]
-//             }
-//         }
+        enum CorruptedDB {}
 
-//         enum GoodDB {}
+        impl Domain for CorruptedDB {
+            fn name() -> &'static str {
+                "db_tests"
+            }
 
-//         impl Domain for GoodDB {
-//             fn name() -> &'static str {
-//                 "db_tests" //Notice same name
-//             }
+            fn migrations() -> &'static [&'static str] {
+                &[sql!(CREATE TABLE test(value);)]
+            }
+        }
 
-//             fn migrations() -> &'static [&'static str] {
-//                 &[sql!(CREATE TABLE test2(value);)] //But different migration
-//             }
-//         }
+        enum GoodDB {}
 
-//         let tempdir = TempDir::new("DbTests").unwrap();
-//         {
-//             // Setup the bad database
-//             let corrupt_db =
-//                 open_db::<CorruptedDB>(tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
-//             assert!(corrupt_db.persistent());
-//         }
+        impl Domain for GoodDB {
+            fn name() -> &'static str {
+                "db_tests" //Notice same name
+            }
 
-//         // Try to connect to it a bunch of times at once
-//         let mut guards = vec![];
-//         for _ in 0..10 {
-//             let tmp_path = tempdir.path().to_path_buf();
-//             let guard = thread::spawn(move || {
-//                 let good_db = smol::block_on(open_db::<GoodDB>(
-//                     tmp_path.as_path(),
-//                     &util::channel::ReleaseChannel::Dev,
-//                 ));
-//                 assert!(
-//                     good_db.select_row::<usize>("SELECT * FROM test2").unwrap()()
-//                         .unwrap()
-//                         .is_none()
-//                 );
-//             });
+            fn migrations() -> &'static [&'static str] {
+                &[sql!(CREATE TABLE test2(value);)] //But different migration
+            }
+        }
 
-//             guards.push(guard);
-//         }
+        let tempdir = TempDir::new("DbTests").unwrap();
+        {
+            // Setup the bad database
+            let corrupt_db =
+                open_db::<CorruptedDB>(tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
+            assert!(corrupt_db.persistent());
+        }
 
-//         for guard in guards.into_iter() {
-//             assert!(guard.join().is_ok());
-//         }
-//     }
-// }
+        // Try to connect to it a bunch of times at once
+        let mut guards = vec![];
+        for _ in 0..10 {
+            let tmp_path = tempdir.path().to_path_buf();
+            let guard = thread::spawn(move || {
+                let good_db = smol::block_on(open_db::<GoodDB>(
+                    tmp_path.as_path(),
+                    &util::channel::ReleaseChannel::Dev,
+                ));
+                assert!(
+                    good_db.select_row::<usize>("SELECT * FROM test2").unwrap()()
+                        .unwrap()
+                        .is_none()
+                );
+            });
+
+            guards.push(guard);
+        }
+
+        for guard in guards.into_iter() {
+            assert!(guard.join().is_ok());
+        }
+    }
+}

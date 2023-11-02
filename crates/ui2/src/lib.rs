@@ -23,6 +23,7 @@ mod elevation;
 pub mod prelude;
 pub mod settings;
 mod static_data;
+pub mod utils;
 
 pub use components::*;
 pub use elements::*;
