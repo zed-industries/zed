@@ -141,7 +141,8 @@ pub async fn handle_cli_connection(
                                                 }),
                                             )
                                             .detach();
-                                        });
+                                        })
+                                        .ok();
                                         item_release_futures.push(released.1);
                                     }
                                     Some(Err(err)) => {
@@ -170,7 +171,6 @@ pub async fn handle_cli_connection(
                                                     let _ = done_tx.send(());
                                                 })
                                             });
-                                        drop(workspace);
                                         let _ = done_rx.await;
                                     } else {
                                         let _ = futures::future::try_join_all(item_release_futures)

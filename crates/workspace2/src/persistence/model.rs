@@ -167,7 +167,7 @@ impl SerializedPaneGroup {
                 let mut items = Vec::new();
                 for child in children {
                     if let Some((new_member, active_pane, new_items)) = child
-                        .deserialize(project, workspace_id, workspace, cx)
+                        .deserialize(project, workspace_id, workspace.clone(), cx)
                         .await
                     {
                         members.push(new_member);
@@ -196,7 +196,7 @@ impl SerializedPaneGroup {
                     .log_err()?;
                 let active = serialized_pane.active;
                 let new_items = serialized_pane
-                    .deserialize_to(project, &pane, workspace_id, workspace, cx)
+                    .deserialize_to(project, &pane, workspace_id, workspace.clone(), cx)
                     .await
                     .log_err()?;
 

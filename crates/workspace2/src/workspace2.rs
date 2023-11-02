@@ -916,10 +916,8 @@ impl Workspace {
             notify_if_database_failed(window, &mut cx);
             let opened_items = window
                 .update(&mut cx, |_workspace, cx| {
-                    let workspace = cx.view().downgrade();
                     open_items(
                         serialized_workspace,
-                        //    &workspace,
                         project_paths,
                         app_state,
                         cx,
@@ -3306,13 +3304,9 @@ impl Workspace {
         ) -> DockStructure {
             let left_dock = this.left_dock.read(cx);
             let left_visible = left_dock.is_open();
-            let left_active_panel = left_dock.visible_panel().and_then(|panel| {
-                todo!()
-                // Some(
-                //     cx.view_ui_name(panel.as_any().window(), panel.id())?
-                //         .to_string(),
-                // )
-            });
+            let left_active_panel = left_dock
+                .visible_panel()
+                .and_then(|panel| Some(panel.persistent_name(cx).to_string()));
             let left_dock_zoom = left_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3320,13 +3314,9 @@ impl Workspace {
 
             let right_dock = this.right_dock.read(cx);
             let right_visible = right_dock.is_open();
-            let right_active_panel = right_dock.visible_panel().and_then(|panel| {
-                todo!()
-                // Some(
-                //     cx.view_ui_name(panel.as_any().window(), panel.id())?
-                //         .to_string(),
-                // )
-            });
+            let right_active_panel = right_dock
+                .visible_panel()
+                .and_then(|panel| Some(panel.persistent_name(cx).to_string()));
             let right_dock_zoom = right_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3334,13 +3324,9 @@ impl Workspace {
 
             let bottom_dock = this.bottom_dock.read(cx);
             let bottom_visible = bottom_dock.is_open();
-            let bottom_active_panel = bottom_dock.visible_panel().and_then(|panel| {
-                todo!()
-                // Some(
-                //     cx.view_ui_name(panel.as_any().window(), panel.id())?
-                //         .to_string(),
-                // )
-            });
+            let bottom_active_panel = bottom_dock
+                .visible_panel()
+                .and_then(|panel| Some(panel.persistent_name(cx).to_string()));
             let bottom_dock_zoom = bottom_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3407,7 +3393,12 @@ impl Workspace {
             // Traverse the splits tree and add to things
             if let Some((group, active_pane, items)) = serialized_workspace
                 .center_group
-                .deserialize(&project, serialized_workspace.id, workspace, &mut cx)
+                .deserialize(
+                    &project,
+                    serialized_workspace.id,
+                    workspace.clone(),
+                    &mut cx,
+                )
                 .await
             {
                 center_items = Some(items);
@@ -3443,7 +3434,7 @@ impl Workspace {
                     workspace.center = PaneGroup::with_root(center_group);
 
                     // Change the focus to the workspace first so that we retrigger focus in on the pane.
-                    todo!()
+                    // todo!()
                     // cx.focus_self();
                     // if let Some(active_pane) = active_pane {
                     //     cx.focus(&active_pane);
@@ -3451,7 +3442,7 @@ impl Workspace {
                     //     cx.focus(workspace.panes.last().unwrap());
                     // }
                 } else {
-                    todo!()
+                    // todo!()
                     // let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade());
                     // if let Some(old_center_handle) = old_center_handle {
                     //     cx.focus(&old_center_handle)
@@ -3471,7 +3462,7 @@ impl Workspace {
                     dock.active_panel()
                         .map(|panel| panel.set_zoomed(docks.left.zoom, cx));
                     if docks.left.visible && docks.left.zoom {
-                        todo!()
+                        // todo!()
                         // cx.focus_self()
                     }
                 });
@@ -3487,7 +3478,7 @@ impl Workspace {
                         .map(|panel| panel.set_zoomed(docks.right.zoom, cx));
 
                     if docks.right.visible && docks.right.zoom {
-                        todo!()
+                        // todo!()
                         // cx.focus_self()
                     }
                 });
@@ -3503,7 +3494,7 @@ impl Workspace {
                         .map(|panel| panel.set_zoomed(docks.bottom.zoom, cx));
 
                     if docks.bottom.visible && docks.bottom.zoom {
-                        todo!()
+                        // todo!()
                         // cx.focus_self()
                     }
                 });
@@ -3587,14 +3578,12 @@ fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<WindowBounds> {
 
 fn open_items(
     serialized_workspace: Option<SerializedWorkspace>,
-    project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
+    mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
     app_state: Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
-) -> impl Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> {
-    let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
-
-    if let Some(serialized_workspace) = serialized_workspace {
-        let restored_items = Workspace::load_workspace(
+) -> impl 'static + Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> {
+    let restored_items = serialized_workspace.map(|serialized_workspace| {
+        Workspace::load_workspace(
             serialized_workspace,
             project_paths_to_open
                 .iter()
@@ -3603,61 +3592,72 @@ fn open_items(
                 .collect(),
             cx,
         )
-        .await?;
+    });
 
-        let restored_project_paths = restored_items
-            .iter()
-            .filter_map(|item| item.as_ref()?.project_path(cx))
-            .collect::<HashSet<_>>();
+    cx.spawn(|workspace, mut cx| async move {
+        let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
 
-        for restored_item in restored_items {
-            opened_items.push(restored_item.map(Ok));
-        }
+        if let Some(restored_items) = restored_items {
+            let restored_items = restored_items.await?;
 
-        project_paths_to_open
-            .iter_mut()
-            .for_each(|(_, project_path)| {
-                if let Some(project_path_to_open) = project_path {
-                    if restored_project_paths.contains(project_path_to_open) {
-                        *project_path = None;
-                    }
-                }
-            });
-    } else {
-        for _ in 0..project_paths_to_open.len() {
-            opened_items.push(None);
-        }
-    }
-    assert!(opened_items.len() == project_paths_to_open.len());
+            let restored_project_paths = restored_items
+                .iter()
+                .filter_map(|item| {
+                    cx.update(|_, cx| item.as_ref()?.project_path(cx))
+                        .ok()
+                        .flatten()
+                })
+                .collect::<HashSet<_>>();
 
-    let tasks =
-        project_paths_to_open
-            .into_iter()
-            .enumerate()
-            .map(|(i, (abs_path, project_path))| {
-                cx.spawn(|workspace, mut cx| {
-                    let fs = app_state.fs.clone();
-                    async move {
-                        let file_project_path = project_path?;
-                        if fs.is_file(&abs_path).await {
-                            Some((
-                                i,
-                                workspace
-                                    .update(&mut cx, |workspace, cx| {
-                                        workspace.open_path(file_project_path, None, true, cx)
-                                    })
-                                    .log_err()?
-                                    .await,
-                            ))
-                        } else {
-                            None
+            for restored_item in restored_items {
+                opened_items.push(restored_item.map(Ok));
+            }
+
+            project_paths_to_open
+                .iter_mut()
+                .for_each(|(_, project_path)| {
+                    if let Some(project_path_to_open) = project_path {
+                        if restored_project_paths.contains(project_path_to_open) {
+                            *project_path = None;
                         }
                     }
-                })
-            });
+                });
+        } else {
+            for _ in 0..project_paths_to_open.len() {
+                opened_items.push(None);
+            }
+        }
+        assert!(opened_items.len() == project_paths_to_open.len());
 
-    let tasks = tasks.collect::<Vec<_>>();
-    async move {
+        let tasks =
+            project_paths_to_open
+                .into_iter()
+                .enumerate()
+                .map(|(i, (abs_path, project_path))| {
+                    let workspace = workspace.clone();
+                    cx.spawn(|mut cx| {
+                        let fs = app_state.fs.clone();
+                        async move {
+                            let file_project_path = project_path?;
+                            if fs.is_file(&abs_path).await {
+                                Some((
+                                    i,
+                                    workspace
+                                        .update(&mut cx, |workspace, cx| {
+                                            workspace.open_path(file_project_path, None, true, cx)
+                                        })
+                                        .log_err()?
+                                        .await,
+                                ))
+                            } else {
+                                None
+                            }
+                        }
+                    })
+                });
+
+        let tasks = tasks.collect::<Vec<_>>();
+
         let tasks = futures::future::join_all(tasks.into_iter());
         for maybe_opened_path in tasks.await.into_iter() {
             if let Some((i, path_open_result)) = maybe_opened_path {
@@ -3666,7 +3666,7 @@ fn open_items(
         }
 
         Ok(opened_items)
-    }
+    })
 }
 
 // fn notify_of_new_dock(workspace: &WeakView<Workspace>, cx: &mut AsyncAppContext) {

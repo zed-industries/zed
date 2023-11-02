@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 pub trait Panel: Render + EventEmitter {
+    fn persistent_name(&self) -> &'static str;
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
@@ -42,6 +43,7 @@ pub trait Panel: Render + EventEmitter {
 
 pub trait PanelHandle: Send + Sync {
     fn id(&self) -> EntityId;
+    fn persistent_name(&self, cx: &WindowContext) -> &'static str;
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool;
     fn set_position(&self, position: DockPosition, cx: &mut WindowContext);
@@ -65,6 +67,10 @@ where
         self.entity_id()
     }
 
+    fn persistent_name(&self, cx: &WindowContext) -> &'static str {
+        self.read(cx).persistent_name()
+    }
+
     fn position(&self, cx: &WindowContext) -> DockPosition {
         self.read(cx).position(cx)
     }
@@ -77,14 +83,6 @@ where
         self.update(cx, |this, cx| this.set_position(position, cx))
     }
 
-    fn size(&self, cx: &WindowContext) -> f32 {
-        self.read(cx).size(cx)
-    }
-
-    fn set_size(&self, size: Option<f32>, cx: &mut WindowContext) {
-        self.update(cx, |this, cx| this.set_size(size, cx))
-    }
-
     fn is_zoomed(&self, cx: &WindowContext) -> bool {
         self.read(cx).is_zoomed(cx)
     }
@@ -95,6 +93,14 @@ where
 
     fn set_active(&self, active: bool, cx: &mut WindowContext) {
         self.update(cx, |this, cx| this.set_active(active, cx))
+    }
+
+    fn size(&self, cx: &WindowContext) -> f32 {
+        self.read(cx).size(cx)
+    }
+
+    fn set_size(&self, size: Option<f32>, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| this.set_size(size, cx))
     }
 
     fn icon_path(&self, cx: &WindowContext) -> Option<&'static str> {
@@ -662,6 +668,10 @@ pub mod test {
     }
 
     impl Panel for TestPanel {
+        fn persistent_name(&self) -> &'static str {
+            "TestPanel"
+        }
+
         fn position(&self, _: &gpui2::WindowContext) -> super::DockPosition {
             self.position
         }
@@ -673,18 +683,6 @@ pub mod test {
         fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
             self.position = position;
             cx.emit(TestPanelEvent::PositionChanged);
-        }
-
-        fn is_zoomed(&self, _: &WindowContext) -> bool {
-            self.zoomed
-        }
-
-        fn set_zoomed(&mut self, zoomed: bool, _cx: &mut ViewContext<Self>) {
-            self.zoomed = zoomed;
-        }
-
-        fn set_active(&mut self, active: bool, _cx: &mut ViewContext<Self>) {
-            self.active = active;
         }
 
         fn size(&self, _: &WindowContext) -> f32 {
@@ -713,6 +711,18 @@ pub mod test {
 
         fn should_zoom_out_on_event(event: &Self::Event) -> bool {
             matches!(event, TestPanelEvent::ZoomOut)
+        }
+
+        fn is_zoomed(&self, _: &WindowContext) -> bool {
+            self.zoomed
+        }
+
+        fn set_zoomed(&mut self, zoomed: bool, _cx: &mut ViewContext<Self>) {
+            self.zoomed = zoomed;
+        }
+
+        fn set_active(&mut self, active: bool, _cx: &mut ViewContext<Self>) {
+            self.active = active;
         }
 
         fn should_activate_on_event(event: &Self::Event) -> bool {
