@@ -367,6 +367,8 @@ fn strip_invalid_spans_from_codeblock(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use ai::test::FakeCompletionProvider;
     use futures::stream::{self};
@@ -437,6 +439,7 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
+            println!("CHUNK: {:?}", &chunk);
             provider.send_completion(chunk);
             new_text = suffix;
             deterministic.run_until_parked();
@@ -569,6 +572,7 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
+            println!("{:?}", &chunk);
             provider.send_completion(chunk);
             new_text = suffix;
             deterministic.run_until_parked();
