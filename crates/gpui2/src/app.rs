@@ -16,13 +16,13 @@ use crate::{
     current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AnyWindowHandle,
     AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
     Entity, FocusEvent, FocusHandle, FocusId, ForegroundExecutor, KeyBinding, Keymap, LayoutId,
-    Pixels, Platform, Point, Render, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextStyle, TextStyleRefinement, TextSystem, View, Window, WindowContext, WindowHandle,
-    WindowId,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem,
+    View, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
-use futures::{future::LocalBoxFuture, Future};
+use futures::{channel::oneshot, future::LocalBoxFuture, Future};
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use std::{
@@ -31,7 +31,7 @@ use std::{
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{atomic::Ordering::SeqCst, Arc},
     time::Duration,
@@ -262,38 +262,13 @@ impl AppContext {
             .collect()
     }
 
-    pub(crate) fn update_window<R>(
-        &mut self,
-        handle: AnyWindowHandle,
-        update: impl FnOnce(AnyView, &mut WindowContext) -> R,
-    ) -> Result<R> {
-        self.update(|cx| {
-            let mut window = cx
-                .windows
-                .get_mut(handle.id)
-                .ok_or_else(|| anyhow!("window not found"))?
-                .take()
-                .unwrap();
-
-            let root_view = window.root_view.clone().unwrap();
-            let result = update(root_view, &mut WindowContext::new(cx, &mut window));
-
-            cx.windows
-                .get_mut(handle.id)
-                .ok_or_else(|| anyhow!("window not found"))?
-                .replace(window);
-
-            Ok(result)
-        })
-    }
-
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
     /// functionality.
     pub fn open_window<V: Render>(
         &mut self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut WindowContext) -> View<V> + 'static,
+        build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,
     ) -> WindowHandle<V> {
         self.update(|cx| {
             let id = cx.windows.insert(None);
@@ -306,47 +281,63 @@ impl AppContext {
         })
     }
 
-    pub(crate) fn platform(&self) -> &Rc<dyn Platform> {
-        &self.platform
-    }
-
     /// Instructs the platform to activate the application by bringing it to the foreground.
     pub fn activate(&self, ignoring_other_apps: bool) {
-        self.platform().activate(ignoring_other_apps);
+        self.platform.activate(ignoring_other_apps);
+    }
+
+    /// Returns the list of currently active displays.
+    pub fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
+        self.platform.displays()
     }
 
     /// Writes data to the platform clipboard.
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
-        self.platform().write_to_clipboard(item)
+        self.platform.write_to_clipboard(item)
     }
 
     /// Reads data from the platform clipboard.
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.platform().read_from_clipboard()
+        self.platform.read_from_clipboard()
     }
 
     /// Writes credentials to the platform keychain.
     pub fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
-        self.platform().write_credentials(url, username, password)
+        self.platform.write_credentials(url, username, password)
     }
 
     /// Reads credentials from the platform keychain.
     pub fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
-        self.platform().read_credentials(url)
+        self.platform.read_credentials(url)
     }
 
     /// Deletes credentials from the platform keychain.
     pub fn delete_credentials(&self, url: &str) -> Result<()> {
-        self.platform().delete_credentials(url)
+        self.platform.delete_credentials(url)
     }
 
     /// Directs the platform's default browser to open the given URL.
     pub fn open_url(&self, url: &str) {
-        self.platform().open_url(url);
+        self.platform.open_url(url);
     }
 
     pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
-        self.platform().path_for_auxiliary_executable(name)
+        self.platform.path_for_auxiliary_executable(name)
+    }
+
+    pub fn prompt_for_paths(
+        &self,
+        options: PathPromptOptions,
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+        self.platform.prompt_for_paths(options)
+    }
+
+    pub fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
+        self.platform.prompt_for_new_path(directory)
+    }
+
+    pub fn reveal_path(&self, path: &Path) {
+        self.platform.reveal_path(path)
     }
 
     pub(crate) fn push_effect(&mut self, effect: Effect) {

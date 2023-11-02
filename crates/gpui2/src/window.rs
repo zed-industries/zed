@@ -4,14 +4,15 @@ use crate::{
     Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId,
     Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
     Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad,
-    Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder,
-    Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task, Underline,
-    UnderlineStyle, View, VisualContext, WeakView, WindowOptions, SUBPIXEL_VARIANTS,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
+    SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task,
+    Underline, UnderlineStyle, View, VisualContext, WeakView, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
+use futures::channel::oneshot;
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -195,7 +196,7 @@ impl Window {
         options: WindowOptions,
         cx: &mut AppContext,
     ) -> Self {
-        let platform_window = cx.platform().open_window(handle, options);
+        let platform_window = cx.platform.open_window(handle, options);
         let display_id = platform_window.display().id();
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
@@ -419,7 +420,7 @@ impl<'a> WindowContext<'a> {
         } else {
             let mut async_cx = self.to_async();
             self.next_frame_callbacks.insert(display_id, vec![f]);
-            self.platform().set_display_link_output_callback(
+            self.platform.set_display_link_output_callback(
                 display_id,
                 Box::new(move |_current_time, _output_time| {
                     let _ = async_cx.update(|_, cx| {
@@ -434,32 +435,26 @@ impl<'a> WindowContext<'a> {
                         }
 
                         if cx.next_frame_callbacks.get(&display_id).unwrap().is_empty() {
-                            cx.platform().stop_display_link(display_id);
+                            cx.platform.stop_display_link(display_id);
                         }
                     });
                 }),
             );
         }
 
-        self.platform().start_display_link(display_id);
+        self.platform.start_display_link(display_id);
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
     /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
     /// use within your future.
-    pub fn spawn<Fut, R>(
-        &mut self,
-        f: impl FnOnce(AnyWindowHandle, AsyncWindowContext) -> Fut,
-    ) -> Task<R>
+    pub fn spawn<Fut, R>(&mut self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
     where
         R: 'static,
         Fut: Future<Output = R> + 'static,
     {
-        let window = self.window.handle;
-        self.app.spawn(move |app| {
-            let cx = AsyncWindowContext::new(app, window);
-            f(window, cx)
-        })
+        self.app
+            .spawn(|app| f(AsyncWindowContext::new(app, self.window.handle)))
     }
 
     /// Update the global of the given type. The given closure is given simultaneous mutable
@@ -1153,6 +1148,19 @@ impl<'a> WindowContext<'a> {
         )
     }
 
+    pub fn activate_window(&self) {
+        self.window.platform_window.activate();
+    }
+
+    pub fn prompt(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
+        self.window.platform_window.prompt(level, msg, answers)
+    }
+
     fn dispatch_action(
         &mut self,
         action: Box<dyn Action>,
@@ -1809,7 +1817,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         Fut: Future<Output = R> + 'static,
     {
         let view = self.view().downgrade();
-        self.window_cx.spawn(move |_, cx| f(view, cx))
+        self.window_cx.spawn(|cx| f(view, cx))
     }
 
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
