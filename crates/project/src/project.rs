@@ -8464,9 +8464,9 @@ impl Project {
                             Err(e) => {
                                 return Some((
                                     None,
-                                    Task::ready(Err(Arc::new(e.context(
-                                        "determining prettier path for worktree {worktree_path:?}",
-                                    ))))
+                                    Task::ready(Err(Arc::new(
+                                        e.context("determining prettier path"),
+                                    )))
                                     .shared(),
                                 ));
                             }
@@ -8481,7 +8481,7 @@ impl Project {
 
                                 log::info!("Found prettier in {prettier_dir:?}, starting.");
                                 let task_prettier_dir = prettier_dir.clone();
-                                let weak_project = project.downgrade();
+                                let task_project = project.clone();
                                 let new_server_id = project.update(&mut cx, |this, _| {
                                     this.languages.next_language_server_id()
                                 });
@@ -8496,33 +8496,12 @@ impl Project {
                                         .await
                                         .context("prettier start")
                                         .map_err(Arc::new)?;
-                                        log::info!(
-                                            "Started prettier in {:?}",
-                                            prettier.prettier_dir()
+                                        register_new_prettier(
+                                            &task_project,
+                                            &prettier,
+                                            new_server_id,
+                                            &mut cx,
                                         );
-
-                                        if let Some((project, prettier_server)) =
-                                            weak_project.upgrade(&mut cx).zip(prettier.server())
-                                        {
-                                            project.update(&mut cx, |project, cx| {
-                                                let name = if prettier.is_default() {
-                                                    LanguageServerName(Arc::from(
-                                                        "prettier (default)",
-                                                    ))
-                                                } else {
-                                                    LanguageServerName(Arc::from(format!(
-                                                        "prettier ({})",
-                                                        prettier.prettier_dir().display(),
-                                                    )))
-                                                };
-
-                                                project.supplementary_language_servers.insert(
-                                                    new_server_id,
-                                                    (name, Arc::clone(prettier_server)),
-                                                );
-                                                cx.emit(Event::LanguageServerAdded(new_server_id));
-                                            });
-                                        }
                                         Ok(Arc::new(prettier)).map_err(Arc::new)
                                     })
                                     .shared();
@@ -8678,6 +8657,31 @@ impl Project {
     }
 }
 
+fn register_new_prettier(
+    project: &ModelHandle<Project>,
+    prettier: &Prettier,
+    new_server_id: LanguageServerId,
+    cx: &mut AsyncAppContext,
+) {
+    log::info!("Started prettier in {:?}", prettier.prettier_dir());
+    if let Some(prettier_server) = prettier.server() {
+        project.update(cx, |project, cx| {
+            let name = if prettier.is_default() {
+                LanguageServerName(Arc::from("prettier (default)"))
+            } else {
+                LanguageServerName(Arc::from(format!(
+                    "prettier ({})",
+                    prettier.prettier_dir().display(),
+                )))
+            };
+            project
+                .supplementary_language_servers
+                .insert(new_server_id, (name, Arc::clone(prettier_server)));
+            cx.emit(Event::LanguageServerAdded(new_server_id));
+        });
+    }
+}
+
 fn spawn_default_prettier(
     node: Arc<dyn NodeRuntime>,
     cx: &mut ModelContext<'_, Project>,
@@ -8686,7 +8690,7 @@ fn spawn_default_prettier(
         let new_server_id = project.update(&mut cx, |project, _| {
             project.languages.next_language_server_id()
         });
-        Prettier::start(
+        let new_prettier = Prettier::start(
             new_server_id,
             DEFAULT_PRETTIER_DIR.clone(),
             node,
@@ -8695,7 +8699,11 @@ fn spawn_default_prettier(
         .await
         .context("default prettier spawn")
         .map(Arc::new)
-        .map_err(Arc::new)
+        .map_err(Arc::new)?;
+
+        register_new_prettier(&project, &new_prettier, new_server_id, &mut cx);
+
+        Ok(new_prettier)
     })
     .shared()
 }

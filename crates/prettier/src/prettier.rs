@@ -63,6 +63,15 @@ impl Prettier {
             .components()
             .take_while(|component| !is_node_modules(component))
             .collect::<PathBuf>();
+        let path_to_check_metadata = fs
+            .metadata(&path_to_check)
+            .await
+            .with_context(|| format!("failed to get metadata for initial path {path_to_check:?}"))?
+            .with_context(|| format!("empty metadata for initial path {path_to_check:?}"))?;
+        if !path_to_check_metadata.is_dir {
+            path_to_check.pop();
+        }
+
         let mut project_path_with_prettier_dependency = None;
         loop {
             if installed_prettiers.contains(&path_to_check) {
@@ -361,7 +370,7 @@ async fn read_package_json(
     if let Some(package_json_metadata) = fs
         .metadata(&possible_package_json)
         .await
-        .with_context(|| format!("Fetching metadata for {possible_package_json:?}"))?
+        .with_context(|| format!("fetching metadata for package json {possible_package_json:?}"))?
     {
         if !package_json_metadata.is_dir && !package_json_metadata.is_symlink {
             let package_json_contents = fs
