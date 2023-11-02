@@ -1,3 +1,6 @@
+mod theme_printer;
+mod vscode;
+
 use std::fs::{self, File};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -7,15 +10,11 @@ use gpui::serde_json;
 use log::LevelFilter;
 use serde::Deserialize;
 use simplelog::SimpleLogger;
-use theme::{
-    default_color_scales, Appearance, GitStatusColors, PlayerColors, StatusColors, SyntaxTheme,
-    SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
-};
+use theme::{default_color_scales, Appearance, ThemeFamily};
 use vscode::VsCodeThemeConverter;
 
+use crate::theme_printer::ThemeFamilyPrinter;
 use crate::vscode::VsCodeTheme;
-
-mod vscode;
 
 pub(crate) fn new_theme_family(name: String, author: String) -> ThemeFamily {
     ThemeFamily {
@@ -36,7 +35,7 @@ struct FamilyMetadata {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum ThemeAppearanceJson {
+pub enum ThemeAppearanceJson {
     Light,
     Dark,
 }
@@ -51,7 +50,7 @@ impl From<ThemeAppearanceJson> for Appearance {
 }
 
 #[derive(Debug, Deserialize)]
-struct ThemeMetadata {
+pub struct ThemeMetadata {
     pub name: String,
     pub file_name: String,
     pub appearance: ThemeAppearanceJson,
@@ -115,6 +114,10 @@ fn main() -> Result<()> {
         };
 
         theme_families.push(theme_family);
+    }
+
+    for theme_family in theme_families {
+        println!("{:#?}", ThemeFamilyPrinter::new(theme_family));
     }
 
     Ok(())
