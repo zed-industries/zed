@@ -132,19 +132,19 @@ impl ColorScaleSet {
     }
 
     pub fn light(&self, step: ColorScaleStep) -> Hsla {
-        self.light[step - 1]
+        self.light[step]
     }
 
     pub fn light_alpha(&self, step: ColorScaleStep) -> Hsla {
-        self.light_alpha[step - 1]
+        self.light_alpha[step]
     }
 
     pub fn dark(&self, step: ColorScaleStep) -> Hsla {
-        self.dark[step - 1]
+        self.dark[step]
     }
 
     pub fn dark_alpha(&self, step: ColorScaleStep) -> Hsla {
-        self.dark_alpha[step - 1]
+        self.dark_alpha[step]
     }
 
     pub fn step(&self, cx: &AppContext, step: ColorScaleStep) -> Hsla {
