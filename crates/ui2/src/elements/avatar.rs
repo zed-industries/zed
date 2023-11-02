@@ -74,10 +74,10 @@ mod stories {
                 //     "https://avatars.githubusercontent.com/u/1486634?v=4",
                 // ))
                 .child(Story::label(cx, "Rounded rectangle"))
-                // .child(
-                //     Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4")
-                //         .shape(Shape::RoundedRectangle),
-                // )
+            // .child(
+            //     Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4")
+            //         .shape(Shape::RoundedRectangle),
+            // )
         }
     }
 }
