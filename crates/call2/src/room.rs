@@ -4,25 +4,25 @@ use crate::{
     IncomingCall,
 };
 use anyhow::{anyhow, Result};
-use audio2::{Audio, Sound};
-use client2::{
+use audio::{Audio, Sound};
+use client::{
     proto::{self, PeerId},
     Client, ParticipantIndex, TypedEnvelope, User, UserStore,
 };
 use collections::{BTreeMap, HashMap, HashSet};
-use fs2::Fs;
+use fs::Fs;
 use futures::{FutureExt, StreamExt};
-use gpui2::{
+use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
-use language2::LanguageRegistry;
-use live_kit_client2::{
+use language::LanguageRegistry;
+use live_kit_client::{
     LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, RemoteAudioTrackUpdate,
     RemoteVideoTrackUpdate,
 };
 use postage::{sink::Sink, stream::Stream, watch};
-use project2::Project;
-use settings2::Settings;
+use project::Project;
+use settings::Settings;
 use std::{future::Future, mem, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt, TryFutureExt};
 
@@ -72,8 +72,8 @@ pub struct Room {
     client: Arc<Client>,
     user_store: Model<UserStore>,
     follows_by_leader_id_project_id: HashMap<(PeerId, u64), Vec<PeerId>>,
-    client_subscriptions: Vec<client2::Subscription>,
-    _subscriptions: Vec<gpui2::Subscription>,
+    client_subscriptions: Vec<client::Subscription>,
+    _subscriptions: Vec<gpui::Subscription>,
     room_update_completed_tx: watch::Sender<Option<()>>,
     room_update_completed_rx: watch::Receiver<Option<()>>,
     pending_room_update: Option<Task<()>>,
@@ -98,7 +98,7 @@ impl Room {
         if let Some(live_kit) = self.live_kit.as_ref() {
             matches!(
                 *live_kit.room.status().borrow(),
-                live_kit_client2::ConnectionState::Connected { .. }
+                live_kit_client::ConnectionState::Connected { .. }
             )
         } else {
             false
@@ -114,7 +114,7 @@ impl Room {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let live_kit_room = if let Some(connection_info) = live_kit_connection_info {
-            let room = live_kit_client2::Room::new();
+            let room = live_kit_client::Room::new();
             let mut status = room.status();
             // Consume the initial status of the room.
             let _ = status.try_recv();
@@ -126,7 +126,7 @@ impl Room {
                         break;
                     };
 
-                    if status == live_kit_client2::ConnectionState::Disconnected {
+                    if status == live_kit_client::ConnectionState::Disconnected {
                         this.update(&mut cx, |this, cx| this.leave(cx).log_err())
                             .ok();
                         break;
@@ -341,7 +341,7 @@ impl Room {
     }
 
     pub fn mute_on_join(cx: &AppContext) -> bool {
-        CallSettings::get_global(cx).mute_on_join || client2::IMPERSONATE_LOGIN.is_some()
+        CallSettings::get_global(cx).mute_on_join || client::IMPERSONATE_LOGIN.is_some()
     }
 
     fn from_join_response(
@@ -1504,7 +1504,7 @@ impl Room {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn set_display_sources(&self, sources: Vec<live_kit_client2::MacOSDisplay>) {
+    pub fn set_display_sources(&self, sources: Vec<live_kit_client::MacOSDisplay>) {
         self.live_kit
             .as_ref()
             .unwrap()
@@ -1514,7 +1514,7 @@ impl Room {
 }
 
 struct LiveKitRoom {
-    room: Arc<live_kit_client2::Room>,
+    room: Arc<live_kit_client::Room>,
     screen_track: LocalTrack,
     microphone_track: LocalTrack,
     /// Tracks whether we're currently in a muted state due to auto-mute from deafening or manual mute performed by user.

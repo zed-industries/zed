@@ -1,7 +1,7 @@
 use crate::{settings_store::parse_json_with_comments, SettingsAssets};
 use anyhow::{anyhow, Context, Result};
 use collections::BTreeMap;
-use gpui2::{AppContext, KeyBinding, SharedString};
+use gpui::{AppContext, KeyBinding, SharedString};
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
     schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation},
@@ -137,7 +137,7 @@ impl KeymapFile {
     }
 }
 
-fn no_action() -> Box<dyn gpui2::Action> {
+fn no_action() -> Box<dyn gpui::Action> {
     todo!()
 }
 

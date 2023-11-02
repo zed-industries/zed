@@ -1,6 +1,6 @@
 use crate::{zed_pro_family, ThemeFamily, ThemeVariant};
 use anyhow::{anyhow, Result};
-use gpui2::SharedString;
+use gpui::SharedString;
 use std::{collections::HashMap, sync::Arc};
 
 pub struct ThemeRegistry {

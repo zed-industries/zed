@@ -33,7 +33,7 @@ use mappings::mouse::{
 
 use procinfo::LocalProcessInfo;
 use serde::{Deserialize, Serialize};
-use settings2::Settings;
+use settings::Settings;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use util::truncate_and_trailoff;
 
@@ -49,7 +49,7 @@ use std::{
 };
 use thiserror::Error;
 
-use gpui2::{
+use gpui::{
     px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla, Keystroke,
     ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Point, ScrollWheelEvent, Size, Task, TouchPhase,
@@ -1409,7 +1409,7 @@ mod tests {
         index::{Column, Line, Point as AlacPoint},
         term::cell::Cell,
     };
-    use gpui2::{point, size, Pixels};
+    use gpui::{point, size, Pixels};
     use rand::{distributions::Alphanumeric, rngs::ThreadRng, thread_rng, Rng};
 
     use crate::{content_index_for_mouse, IndexedCell, TerminalContent, TerminalSize};

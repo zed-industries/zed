@@ -12,12 +12,12 @@ doctest = false
 test-support = []
 
 [dependencies]
-client2 = { path = "../client2" }
+client = { package = "client2", path = "../client2" }
 collections = { path = "../collections"}
-language2 = { path = "../language2" }
-gpui2 = { path = "../gpui2" }
-fs2 = { path = "../fs2" }
-lsp2 = { path = "../lsp2" }
+language = { package = "language2", path = "../language2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+fs = { package = "fs2", path = "../fs2" }
+lsp = { package = "lsp2", path = "../lsp2" }
 node_runtime = { path = "../node_runtime"}
 util = { path = "../util" }
 
@@ -30,6 +30,6 @@ futures.workspace = true
 parking_lot.workspace = true
 
 [dev-dependencies]
-language2 = { path = "../language2", features = ["test-support"] }
-gpui2 = { path = "../gpui2", features = ["test-support"] }
-fs2 = { path = "../fs2",  features = ["test-support"] }
+language = { package = "language2", path = "../language2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+fs = { package = "fs2", path = "../fs2",  features = ["test-support"] }

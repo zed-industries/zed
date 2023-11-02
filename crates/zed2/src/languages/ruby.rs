@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use language2::{LanguageServerName, LspAdapter, LspAdapterDelegate};
-use lsp2::LanguageServerBinary;
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use lsp::LanguageServerBinary;
 use std::{any::Any, path::PathBuf, sync::Arc};
 
 pub struct RubyLanguageServer;
@@ -53,25 +53,25 @@ impl LspAdapter for RubyLanguageServer {
 
     async fn label_for_completion(
         &self,
-        item: &lsp2::CompletionItem,
-        language: &Arc<language2::Language>,
-    ) -> Option<language2::CodeLabel> {
+        item: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
         let label = &item.label;
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
-            lsp2::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
-            lsp2::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
-            lsp2::CompletionItemKind::CLASS | lsp2::CompletionItemKind::MODULE => {
+            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
+            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
+            lsp::CompletionItemKind::CLASS | lsp::CompletionItemKind::MODULE => {
                 grammar.highlight_id_for_name("type")?
             }
-            lsp2::CompletionItemKind::KEYWORD => {
+            lsp::CompletionItemKind::KEYWORD => {
                 if label.starts_with(':') {
                     grammar.highlight_id_for_name("string.special.symbol")?
                 } else {
                     grammar.highlight_id_for_name("keyword")?
                 }
             }
-            lsp2::CompletionItemKind::VARIABLE => {
+            lsp::CompletionItemKind::VARIABLE => {
                 if label.starts_with('@') {
                     grammar.highlight_id_for_name("property")?
                 } else {
@@ -80,7 +80,7 @@ impl LspAdapter for RubyLanguageServer {
             }
             _ => return None,
         };
-        Some(language2::CodeLabel {
+        Some(language::CodeLabel {
             text: label.clone(),
             runs: vec![(0..label.len(), highlight_id)],
             filter_range: 0..label.len(),
@@ -90,12 +90,12 @@ impl LspAdapter for RubyLanguageServer {
     async fn label_for_symbol(
         &self,
         label: &str,
-        kind: lsp2::SymbolKind,
-        language: &Arc<language2::Language>,
-    ) -> Option<language2::CodeLabel> {
+        kind: lsp::SymbolKind,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
         let grammar = language.grammar()?;
         match kind {
-            lsp2::SymbolKind::METHOD => {
+            lsp::SymbolKind::METHOD => {
                 let mut parts = label.split('#');
                 let classes = parts.next()?;
                 let method = parts.next()?;
@@ -120,21 +120,21 @@ impl LspAdapter for RubyLanguageServer {
                 ix += 1;
                 let end_ix = ix + method.len();
                 runs.push((ix..end_ix, method_id));
-                Some(language2::CodeLabel {
+                Some(language::CodeLabel {
                     text: label.to_string(),
                     runs,
                     filter_range: 0..label.len(),
                 })
             }
-            lsp2::SymbolKind::CONSTANT => {
+            lsp::SymbolKind::CONSTANT => {
                 let constant_id = grammar.highlight_id_for_name("constant")?;
-                Some(language2::CodeLabel {
+                Some(language::CodeLabel {
                     text: label.to_string(),
                     runs: vec![(0..label.len(), constant_id)],
                     filter_range: 0..label.len(),
                 })
             }
-            lsp2::SymbolKind::CLASS | lsp2::SymbolKind::MODULE => {
+            lsp::SymbolKind::CLASS | lsp::SymbolKind::MODULE => {
                 let class_id = grammar.highlight_id_for_name("type")?;
 
                 let mut ix = 0;
@@ -148,7 +148,7 @@ impl LspAdapter for RubyLanguageServer {
                     ix = end_ix;
                 }
 
-                Some(language2::CodeLabel {
+                Some(language::CodeLabel {
                     text: label.to_string(),
                     runs,
                     filter_range: 0..label.len(),

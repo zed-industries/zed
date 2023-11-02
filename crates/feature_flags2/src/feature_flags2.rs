@@ -1,4 +1,4 @@
-use gpui2::{AppContext, Subscription, ViewContext};
+use gpui::{AppContext, Subscription, ViewContext};
 
 #[derive(Default)]
 struct FeatureFlags {

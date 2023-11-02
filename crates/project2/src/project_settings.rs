@@ -1,8 +1,8 @@
 use collections::HashMap;
-use gpui2::AppContext;
+use gpui::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings2::Settings;
+use settings::Settings;
 use std::sync::Arc;
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]

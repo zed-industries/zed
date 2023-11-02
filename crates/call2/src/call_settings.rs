@@ -1,8 +1,8 @@
 use anyhow::Result;
-use gpui2::AppContext;
+use gpui::AppContext;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings2::Settings;
+use settings::Settings;
 
 #[derive(Deserialize, Debug)]
 pub struct CallSettings {

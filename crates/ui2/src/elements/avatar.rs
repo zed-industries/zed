@@ -58,11 +58,26 @@ mod stories {
                 .child(Avatar::new(
                     "https://avatars.githubusercontent.com/u/1714999?v=4",
                 ))
+                .child(Avatar::new(
+                    "https://avatars.githubusercontent.com/u/326587?v=4",
+                ))
+                // .child(Avatar::new(
+                //     "https://avatars.githubusercontent.com/u/326587?v=4",
+                // ))
+                // .child(Avatar::new(
+                //     "https://avatars.githubusercontent.com/u/482957?v=4",
+                // ))
+                // .child(Avatar::new(
+                //     "https://avatars.githubusercontent.com/u/1714999?v=4",
+                // ))
+                // .child(Avatar::new(
+                //     "https://avatars.githubusercontent.com/u/1486634?v=4",
+                // ))
                 .child(Story::label(cx, "Rounded rectangle"))
-                .child(
-                    Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4")
-                        .shape(Shape::RoundedRectangle),
-                )
+            // .child(
+            //     Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4")
+            //         .shape(Shape::RoundedRectangle),
+            // )
         }
     }
 }

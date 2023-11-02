@@ -1,15 +1,15 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppContext, BackgroundExecutor, Context, ForegroundExecutor, Model,
-    ModelContext, Render, Result, Task, View, ViewContext, VisualContext, WindowContext,
+    AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, Context, ForegroundExecutor,
+    Model, ModelContext, Render, Result, Task, View, ViewContext, VisualContext, WindowContext,
     WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
-use std::{cell::RefCell, future::Future, rc::Weak};
+use std::{future::Future, rc::Weak};
 
 #[derive(Clone)]
 pub struct AsyncAppContext {
-    pub(crate) app: Weak<RefCell<AppContext>>,
+    pub(crate) app: Weak<AppCell>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
 }
@@ -121,7 +121,7 @@ impl AsyncAppContext {
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
-        let app = app.borrow_mut(); // Need this to compile
+        let app = app.borrow_mut();
         Ok(read(app.global(), &app))
     }
 

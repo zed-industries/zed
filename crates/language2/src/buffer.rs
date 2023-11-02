@@ -16,8 +16,8 @@ use crate::{
 use anyhow::{anyhow, Result};
 pub use clock::ReplicaId;
 use futures::FutureExt as _;
-use gpui2::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task};
-use lsp2::LanguageServerId;
+use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task};
+use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
@@ -40,7 +40,7 @@ use std::{
 use sum_tree::TreeMap;
 use text::operation_queue::OperationQueue;
 pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, *};
-use theme2::SyntaxTheme;
+use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 use util::{RangeExt, TryFutureExt as _};
@@ -48,7 +48,7 @@ use util::{RangeExt, TryFutureExt as _};
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
 
-pub use lsp2::DiagnosticSeverity;
+pub use lsp::DiagnosticSeverity;
 
 pub struct Buffer {
     text: TextBuffer,
@@ -149,14 +149,14 @@ pub struct Completion {
     pub new_text: String,
     pub label: CodeLabel,
     pub server_id: LanguageServerId,
-    pub lsp_completion: lsp2::CompletionItem,
+    pub lsp_completion: lsp::CompletionItem,
 }
 
 #[derive(Clone, Debug)]
 pub struct CodeAction {
     pub server_id: LanguageServerId,
     pub range: Range<Anchor>,
-    pub lsp_action: lsp2::CodeAction,
+    pub lsp_action: lsp::CodeAction,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -226,7 +226,7 @@ pub trait File: Send + Sync {
 
     fn as_any(&self) -> &dyn Any;
 
-    fn to_proto(&self) -> rpc2::proto::File;
+    fn to_proto(&self) -> rpc::proto::File;
 }
 
 pub trait LocalFile: File {
@@ -375,7 +375,7 @@ impl Buffer {
             file,
         );
         this.text.set_line_ending(proto::deserialize_line_ending(
-            rpc2::proto::LineEnding::from_i32(message.line_ending)
+            rpc::proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
@@ -3003,14 +3003,14 @@ impl IndentSize {
 impl Completion {
     pub fn sort_key(&self) -> (usize, &str) {
         let kind_key = match self.lsp_completion.kind {
-            Some(lsp2::CompletionItemKind::VARIABLE) => 0,
+            Some(lsp::CompletionItemKind::VARIABLE) => 0,
             _ => 1,
         };
         (kind_key, &self.label.text[self.label.filter_range.clone()])
     }
 
     pub fn is_snippet(&self) -> bool {
-        self.lsp_completion.insert_text_format == Some(lsp2::InsertTextFormat::SNIPPET)
+        self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
     }
 }
 

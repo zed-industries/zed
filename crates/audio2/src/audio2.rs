@@ -1,5 +1,5 @@
 use assets::SoundRegistry;
-use gpui2::{AppContext, AssetSource};
+use gpui::{AppContext, AssetSource};
 use rodio::{OutputStream, OutputStreamHandle};
 use util::ResultExt;
 

@@ -3,9 +3,9 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt};
-use gpui2::AppContext;
-use language2::{LanguageServerName, LspAdapter, LspAdapterDelegate};
-use lsp2::{CodeActionKind, LanguageServerBinary};
+use gpui::AppContext;
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
 use serde_json::{json, Value};
 use smol::{fs, io::BufReader, stream::StreamExt};
@@ -129,10 +129,10 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn label_for_completion(
         &self,
-        item: &lsp2::CompletionItem,
-        language: &Arc<language2::Language>,
-    ) -> Option<language2::CodeLabel> {
-        use lsp2::CompletionItemKind as Kind;
+        item: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        use lsp::CompletionItemKind as Kind;
         let len = item.label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
@@ -149,7 +149,7 @@ impl LspAdapter for TypeScriptLspAdapter {
             None => item.label.clone(),
         };
 
-        Some(language2::CodeLabel {
+        Some(language::CodeLabel {
             text,
             runs: vec![(0..len, highlight_id)],
             filter_range: 0..len,
@@ -300,9 +300,9 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn label_for_completion(
         &self,
-        _item: &lsp2::CompletionItem,
-        _language: &Arc<language2::Language>,
-    ) -> Option<language2::CodeLabel> {
+        _item: &lsp::CompletionItem,
+        _language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
         None
     }
 
@@ -335,10 +335,10 @@ async fn get_cached_eslint_server_binary(
 
 #[cfg(test)]
 mod tests {
-    use gpui2::{Context, TestAppContext};
+    use gpui::{Context, TestAppContext};
     use unindent::Unindent;
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
         let language = crate::languages::language(
             "typescript",
@@ -363,7 +363,7 @@ mod tests {
         .unindent();
 
         let buffer = cx.build_model(|cx| {
-            language2::Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
+            language::Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
         });
         let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(

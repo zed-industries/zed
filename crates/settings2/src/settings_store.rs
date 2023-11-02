@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
-use gpui2::AppContext;
+use gpui::AppContext;
 use lazy_static::lazy_static;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
@@ -877,7 +877,7 @@ mod tests {
     use serde_derive::Deserialize;
     use unindent::Unindent;
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_settings_store_basic(cx: &mut AppContext) {
         let mut store = SettingsStore::default();
         store.register_setting::<UserSettings>(cx);
@@ -994,7 +994,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_setting_store_assign_json_before_register(cx: &mut AppContext) {
         let mut store = SettingsStore::default();
         store
@@ -1037,7 +1037,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     fn test_setting_store_update(cx: &mut AppContext) {
         let mut store = SettingsStore::default();
         store.register_setting::<MultiKeySettings>(cx);

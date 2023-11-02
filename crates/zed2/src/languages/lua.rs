@@ -3,8 +3,8 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
-use language2::{LanguageServerName, LspAdapterDelegate};
-use lsp2::LanguageServerBinary;
+use language::{LanguageServerName, LspAdapterDelegate};
+use lsp::LanguageServerBinary;
 use smol::fs;
 use std::{any::Any, env::consts, path::PathBuf};
 use util::{

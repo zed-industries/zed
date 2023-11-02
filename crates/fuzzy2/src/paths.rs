@@ -1,4 +1,4 @@
-use gpui2::BackgroundExecutor;
+use gpui::BackgroundExecutor;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},

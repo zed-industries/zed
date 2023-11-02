@@ -81,7 +81,7 @@ impl Platform for TestPlatform {
     fn set_display_link_output_callback(
         &self,
         _display_id: DisplayId,
-        _callback: Box<dyn FnMut(&crate::VideoTimestamp, &crate::VideoTimestamp)>,
+        _callback: Box<dyn FnMut(&crate::VideoTimestamp, &crate::VideoTimestamp) + Send>,
     ) {
         unimplemented!()
     }

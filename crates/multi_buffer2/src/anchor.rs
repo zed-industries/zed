@@ -1,5 +1,5 @@
 use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToOffsetUtf16, ToPoint};
-use language2::{OffsetUtf16, Point, TextDimension};
+use language::{OffsetUtf16, Point, TextDimension};
 use std::{
     cmp::Ordering,
     ops::{Range, Sub},

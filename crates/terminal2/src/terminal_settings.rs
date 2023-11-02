@@ -1,4 +1,4 @@
-use gpui2::{AppContext, FontFeatures};
+use gpui::{AppContext, FontFeatures};
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
@@ -98,7 +98,7 @@ impl TerminalSettings {
     // }
 }
 
-impl settings2::Settings for TerminalSettings {
+impl settings::Settings for TerminalSettings {
     const KEY: Option<&'static str> = Some("terminal");
 
     type FileContent = TerminalSettingsContent;

@@ -2,9 +2,9 @@ use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
-pub use language2::*;
+pub use language::*;
 use lazy_static::lazy_static;
-use lsp2::LanguageServerBinary;
+use lsp::LanguageServerBinary;
 use regex::Regex;
 use smol::fs::{self, File};
 use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
@@ -106,7 +106,7 @@ impl LspAdapter for RustLspAdapter {
         Some("rust-analyzer/flycheck".into())
     }
 
-    fn process_diagnostics(&self, params: &mut lsp2::PublishDiagnosticsParams) {
+    fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         lazy_static! {
             static ref REGEX: Regex = Regex::new("(?m)`([^`]+)\n`$").unwrap();
         }
@@ -128,11 +128,11 @@ impl LspAdapter for RustLspAdapter {
 
     async fn label_for_completion(
         &self,
-        completion: &lsp2::CompletionItem,
+        completion: &lsp::CompletionItem,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         match completion.kind {
-            Some(lsp2::CompletionItemKind::FIELD) if completion.detail.is_some() => {
+            Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
                 let name = &completion.label;
                 let text = format!("{}: {}", name, detail);
@@ -144,9 +144,9 @@ impl LspAdapter for RustLspAdapter {
                     filter_range: 0..name.len(),
                 });
             }
-            Some(lsp2::CompletionItemKind::CONSTANT | lsp2::CompletionItemKind::VARIABLE)
+            Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE)
                 if completion.detail.is_some()
-                    && completion.insert_text_format != Some(lsp2::InsertTextFormat::SNIPPET) =>
+                    && completion.insert_text_format != Some(lsp::InsertTextFormat::SNIPPET) =>
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let name = &completion.label;
@@ -159,7 +159,7 @@ impl LspAdapter for RustLspAdapter {
                     filter_range: 0..name.len(),
                 });
             }
-            Some(lsp2::CompletionItemKind::FUNCTION | lsp2::CompletionItemKind::METHOD)
+            Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD)
                 if completion.detail.is_some() =>
             {
                 lazy_static! {
@@ -188,12 +188,12 @@ impl LspAdapter for RustLspAdapter {
             }
             Some(kind) => {
                 let highlight_name = match kind {
-                    lsp2::CompletionItemKind::STRUCT
-                    | lsp2::CompletionItemKind::INTERFACE
-                    | lsp2::CompletionItemKind::ENUM => Some("type"),
-                    lsp2::CompletionItemKind::ENUM_MEMBER => Some("variant"),
-                    lsp2::CompletionItemKind::KEYWORD => Some("keyword"),
-                    lsp2::CompletionItemKind::VALUE | lsp2::CompletionItemKind::CONSTANT => {
+                    lsp::CompletionItemKind::STRUCT
+                    | lsp::CompletionItemKind::INTERFACE
+                    | lsp::CompletionItemKind::ENUM => Some("type"),
+                    lsp::CompletionItemKind::ENUM_MEMBER => Some("variant"),
+                    lsp::CompletionItemKind::KEYWORD => Some("keyword"),
+                    lsp::CompletionItemKind::VALUE | lsp::CompletionItemKind::CONSTANT => {
                         Some("constant")
                     }
                     _ => None,
@@ -214,47 +214,47 @@ impl LspAdapter for RustLspAdapter {
     async fn label_for_symbol(
         &self,
         name: &str,
-        kind: lsp2::SymbolKind,
+        kind: lsp::SymbolKind,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let (text, filter_range, display_range) = match kind {
-            lsp2::SymbolKind::METHOD | lsp2::SymbolKind::FUNCTION => {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("fn {} () {{}}", name);
                 let filter_range = 3..3 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::STRUCT => {
+            lsp::SymbolKind::STRUCT => {
                 let text = format!("struct {} {{}}", name);
                 let filter_range = 7..7 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::ENUM => {
+            lsp::SymbolKind::ENUM => {
                 let text = format!("enum {} {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::INTERFACE => {
+            lsp::SymbolKind::INTERFACE => {
                 let text = format!("trait {} {{}}", name);
                 let filter_range = 6..6 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::CONSTANT => {
+            lsp::SymbolKind::CONSTANT => {
                 let text = format!("const {}: () = ();", name);
                 let filter_range = 6..6 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::MODULE => {
+            lsp::SymbolKind::MODULE => {
                 let text = format!("mod {} {{}}", name);
                 let filter_range = 4..4 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::TYPE_PARAMETER => {
+            lsp::SymbolKind::TYPE_PARAMETER => {
                 let text = format!("type {} {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
@@ -294,29 +294,29 @@ mod tests {
 
     use super::*;
     use crate::languages::language;
-    use gpui2::{Context, Hsla, TestAppContext};
-    use language2::language_settings::AllLanguageSettings;
-    use settings2::SettingsStore;
-    use theme2::SyntaxTheme;
+    use gpui::{Context, Hsla, TestAppContext};
+    use language::language_settings::AllLanguageSettings;
+    use settings::SettingsStore;
+    use theme::SyntaxTheme;
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_process_rust_diagnostics() {
-        let mut params = lsp2::PublishDiagnosticsParams {
-            uri: lsp2::Url::from_file_path("/a").unwrap(),
+        let mut params = lsp::PublishDiagnosticsParams {
+            uri: lsp::Url::from_file_path("/a").unwrap(),
             version: None,
             diagnostics: vec![
                 // no newlines
-                lsp2::Diagnostic {
+                lsp::Diagnostic {
                     message: "use of moved value `a`".to_string(),
                     ..Default::default()
                 },
                 // newline at the end of a code span
-                lsp2::Diagnostic {
+                lsp::Diagnostic {
                     message: "consider importing this struct: `use b::c;\n`".to_string(),
                     ..Default::default()
                 },
                 // code span starting right after a newline
-                lsp2::Diagnostic {
+                lsp::Diagnostic {
                     message: "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
                         .to_string(),
                     ..Default::default()
@@ -340,7 +340,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_rust_label_for_completion() {
         let language = language(
             "rust",
@@ -365,8 +365,8 @@ mod tests {
 
         assert_eq!(
             language
-                .label_for_completion(&lsp2::CompletionItem {
-                    kind: Some(lsp2::CompletionItemKind::FUNCTION),
+                .label_for_completion(&lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
                     label: "hello(…)".to_string(),
                     detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
                     ..Default::default()
@@ -387,8 +387,8 @@ mod tests {
         );
         assert_eq!(
             language
-                .label_for_completion(&lsp2::CompletionItem {
-                    kind: Some(lsp2::CompletionItemKind::FUNCTION),
+                .label_for_completion(&lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
                     label: "hello(…)".to_string(),
                     detail: Some("async fn(&mut Option<T>) -> Vec<T>".to_string()),
                     ..Default::default()
@@ -409,8 +409,8 @@ mod tests {
         );
         assert_eq!(
             language
-                .label_for_completion(&lsp2::CompletionItem {
-                    kind: Some(lsp2::CompletionItemKind::FIELD),
+                .label_for_completion(&lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FIELD),
                     label: "len".to_string(),
                     detail: Some("usize".to_string()),
                     ..Default::default()
@@ -425,8 +425,8 @@ mod tests {
 
         assert_eq!(
             language
-                .label_for_completion(&lsp2::CompletionItem {
-                    kind: Some(lsp2::CompletionItemKind::FUNCTION),
+                .label_for_completion(&lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
                     label: "hello(…)".to_string(),
                     detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
                     ..Default::default()
@@ -447,7 +447,7 @@ mod tests {
         );
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_rust_label_for_symbol() {
         let language = language(
             "rust",
@@ -471,7 +471,7 @@ mod tests {
 
         assert_eq!(
             language
-                .label_for_symbol("hello", lsp2::SymbolKind::FUNCTION)
+                .label_for_symbol("hello", lsp::SymbolKind::FUNCTION)
                 .await,
             Some(CodeLabel {
                 text: "fn hello".to_string(),
@@ -482,7 +482,7 @@ mod tests {
 
         assert_eq!(
             language
-                .label_for_symbol("World", lsp2::SymbolKind::TYPE_PARAMETER)
+                .label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER)
                 .await,
             Some(CodeLabel {
                 text: "type World".to_string(),
@@ -492,13 +492,13 @@ mod tests {
         );
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_rust_autoindent(cx: &mut TestAppContext) {
         // cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);
-            language2::init(cx);
+            language::init(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |s| {
                     s.defaults.tab_size = NonZeroU32::new(2);

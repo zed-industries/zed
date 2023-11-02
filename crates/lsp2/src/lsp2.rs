@@ -5,7 +5,7 @@ pub use lsp_types::*;
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt};
-use gpui2::{AsyncAppContext, BackgroundExecutor, Task};
+use gpui::{AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -1038,7 +1038,7 @@ impl FakeLanguageServer {
     where
         T: 'static + request::Request,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(T::Params, gpui2::AsyncAppContext) -> Fut,
+        F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext) -> Fut,
         Fut: 'static + Send + Future<Output = Result<T::Result>>,
     {
         let (responded_tx, responded_rx) = futures::channel::mpsc::unbounded();
@@ -1066,7 +1066,7 @@ impl FakeLanguageServer {
     where
         T: 'static + notification::Notification,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(T::Params, gpui2::AsyncAppContext),
+        F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext),
     {
         let (handled_tx, handled_rx) = futures::channel::mpsc::unbounded();
         self.server.remove_notification_handler::<T>();
@@ -1107,74 +1107,74 @@ impl FakeLanguageServer {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use gpui::TestAppContext;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
 
-//     #[ctor::ctor]
-//     fn init_logger() {
-//         if std::env::var("RUST_LOG").is_ok() {
-//             env_logger::init();
-//         }
-//     }
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
+    }
 
-//     #[gpui::test]
-//     async fn test_fake(cx: &mut TestAppContext) {
-//         let (server, mut fake) =
-//             LanguageServer::fake("the-lsp".to_string(), Default::default(), cx.to_async());
+    #[gpui::test]
+    async fn test_fake(cx: &mut TestAppContext) {
+        let (server, mut fake) =
+            LanguageServer::fake("the-lsp".to_string(), Default::default(), cx.to_async());
 
-//         let (message_tx, message_rx) = channel::unbounded();
-//         let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
-//         server
-//             .on_notification::<notification::ShowMessage, _>(move |params, _| {
-//                 message_tx.try_send(params).unwrap()
-//             })
-//             .detach();
-//         server
-//             .on_notification::<notification::PublishDiagnostics, _>(move |params, _| {
-//                 diagnostics_tx.try_send(params).unwrap()
-//             })
-//             .detach();
+        let (message_tx, message_rx) = channel::unbounded();
+        let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
+        server
+            .on_notification::<notification::ShowMessage, _>(move |params, _| {
+                message_tx.try_send(params).unwrap()
+            })
+            .detach();
+        server
+            .on_notification::<notification::PublishDiagnostics, _>(move |params, _| {
+                diagnostics_tx.try_send(params).unwrap()
+            })
+            .detach();
 
-//         let server = server.initialize(None).await.unwrap();
-//         server
-//             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
-//                 text_document: TextDocumentItem::new(
-//                     Url::from_str("file://a/b").unwrap(),
-//                     "rust".to_string(),
-//                     0,
-//                     "".to_string(),
-//                 ),
-//             })
-//             .unwrap();
-//         assert_eq!(
-//             fake.receive_notification::<notification::DidOpenTextDocument>()
-//                 .await
-//                 .text_document
-//                 .uri
-//                 .as_str(),
-//             "file://a/b"
-//         );
+        let server = server.initialize(None).await.unwrap();
+        server
+            .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem::new(
+                    Url::from_str("file://a/b").unwrap(),
+                    "rust".to_string(),
+                    0,
+                    "".to_string(),
+                ),
+            })
+            .unwrap();
+        assert_eq!(
+            fake.receive_notification::<notification::DidOpenTextDocument>()
+                .await
+                .text_document
+                .uri
+                .as_str(),
+            "file://a/b"
+        );
 
-//         fake.notify::<notification::ShowMessage>(ShowMessageParams {
-//             typ: MessageType::ERROR,
-//             message: "ok".to_string(),
-//         });
-//         fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
-//             uri: Url::from_str("file://b/c").unwrap(),
-//             version: Some(5),
-//             diagnostics: vec![],
-//         });
-//         assert_eq!(message_rx.recv().await.unwrap().message, "ok");
-//         assert_eq!(
-//             diagnostics_rx.recv().await.unwrap().uri.as_str(),
-//             "file://b/c"
-//         );
+        fake.notify::<notification::ShowMessage>(ShowMessageParams {
+            typ: MessageType::ERROR,
+            message: "ok".to_string(),
+        });
+        fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
+            uri: Url::from_str("file://b/c").unwrap(),
+            version: Some(5),
+            diagnostics: vec![],
+        });
+        assert_eq!(message_rx.recv().await.unwrap().message, "ok");
+        assert_eq!(
+            diagnostics_rx.recv().await.unwrap().uri.as_str(),
+            "file://b/c"
+        );
 
-//         fake.handle_request::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
+        fake.handle_request::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
 
-//         drop(server);
-//         fake.receive_notification::<notification::Exit>().await;
-//     }
-// }
+        drop(server);
+        fake.receive_notification::<notification::Exit>().await;
+    }
+}

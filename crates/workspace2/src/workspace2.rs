@@ -29,10 +29,10 @@ use futures::{
 };
 use gpui2::{
     div, point, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
-    AsyncWindowContext, Bounds, Component, Div, EntityId, EventEmitter, GlobalPixels,
-    Model, ModelContext, ParentElement, Point, Render, Size, StatefulInteractive, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
-    WindowHandle, WindowOptions,
+    AsyncWindowContext, Bounds, Component, Div, EntityId, EventEmitter, GlobalPixels, Model,
+    ModelContext, ParentElement, Point, Render, Size, StatefulInteractive, Styled, Subscription,
+    Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
+    WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use language2::LanguageRegistry;
@@ -2697,10 +2697,9 @@ impl Workspace {
                 |s| s.pl_20(),
             )
             .id("titlebar")
-            .on_click(|workspace, event, cx| {
+            .on_click(|_, event, cx| {
                 if event.up.click_count == 2 {
-                    // todo!()
-                    // cx.zoom_window();
+                    cx.zoom_window();
                 }
             })
             .child("Collab title bar Item") // self.titlebar_item

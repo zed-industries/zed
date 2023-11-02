@@ -23,7 +23,7 @@ test-support = [
 
 [dependencies]
 collections = { path = "../collections", optional = true }
-gpui2 = { path = "../gpui2", optional = true }
+gpui2 = { package = "gpui2", path = "../gpui2", optional = true }
 live_kit_server = { path = "../live_kit_server", optional = true }
 media = { path = "../media" }
 
@@ -41,7 +41,7 @@ nanoid = { version ="0.4", optional = true}
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
-gpui2 = { path = "../gpui2", features = ["test-support"] }
+gpui2 = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 live_kit_server = { path = "../live_kit_server" }
 media = { path = "../media" }
 nanoid = "0.4"

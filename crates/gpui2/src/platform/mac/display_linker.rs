@@ -26,13 +26,13 @@ impl MacDisplayLinker {
     }
 }
 
-type OutputCallback = Mutex<Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>>;
+type OutputCallback = Mutex<Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp) + Send>>;
 
 impl MacDisplayLinker {
     pub fn set_output_callback(
         &mut self,
         display_id: DisplayId,
-        output_callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>,
+        output_callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp) + Send>,
     ) {
         if let Some(mut system_link) = unsafe { sys::DisplayLink::on_display(display_id.0) } {
             let callback = Arc::new(Mutex::new(output_callback));

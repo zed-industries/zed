@@ -3,10 +3,10 @@ use crate::{
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context as _, Result};
-use client2::{proto, Client};
+use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use fs2::{
+use fs::{
     repository::{GitFileStatus, GitRepository, RepoPath},
     Fs,
 };
@@ -19,20 +19,20 @@ use futures::{
     task::Poll,
     FutureExt as _, Stream, StreamExt,
 };
-use fuzzy2::CharBag;
+use fuzzy::CharBag;
 use git::{DOT_GIT, GITIGNORE};
-use gpui2::{
+use gpui::{
     AppContext, AsyncAppContext, BackgroundExecutor, Context, EventEmitter, Model, ModelContext,
     Task,
 };
-use language2::{
+use language::{
     proto::{
         deserialize_fingerprint, deserialize_version, serialize_fingerprint, serialize_line_ending,
         serialize_version,
     },
     Buffer, DiagnosticEntry, File as _, LineEnding, PointUtf16, Rope, RopeFingerprint, Unclipped,
 };
-use lsp2::LanguageServerId;
+use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use postage::{
     barrier,
@@ -2587,8 +2587,8 @@ pub struct File {
     pub(crate) is_deleted: bool,
 }
 
-impl language2::File for File {
-    fn as_local(&self) -> Option<&dyn language2::LocalFile> {
+impl language::File for File {
+    fn as_local(&self) -> Option<&dyn language::LocalFile> {
         if self.is_local {
             Some(self)
         } else {
@@ -2648,8 +2648,8 @@ impl language2::File for File {
         self
     }
 
-    fn to_proto(&self) -> rpc2::proto::File {
-        rpc2::proto::File {
+    fn to_proto(&self) -> rpc::proto::File {
+        rpc::proto::File {
             worktree_id: self.worktree.entity_id().as_u64(),
             entry_id: self.entry_id.to_proto(),
             path: self.path.to_string_lossy().into(),
@@ -2659,7 +2659,7 @@ impl language2::File for File {
     }
 }
 
-impl language2::LocalFile for File {
+impl language::LocalFile for File {
     fn abs_path(&self, cx: &AppContext) -> PathBuf {
         let worktree_path = &self.worktree.read(cx).as_local().unwrap().abs_path;
         if self.path.as_ref() == Path::new("") {
@@ -2716,7 +2716,7 @@ impl File {
     }
 
     pub fn from_proto(
-        proto: rpc2::proto::File,
+        proto: rpc::proto::File,
         worktree: Model<Worktree>,
         cx: &AppContext,
     ) -> Result<Self> {
@@ -2740,7 +2740,7 @@ impl File {
         })
     }
 
-    pub fn from_dyn(file: Option<&Arc<dyn language2::File>>) -> Option<&Self> {
+    pub fn from_dyn(file: Option<&Arc<dyn language::File>>) -> Option<&Self> {
         file.and_then(|f| f.as_any().downcast_ref())
     }
 
@@ -2818,7 +2818,7 @@ pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
 impl Entry {
     fn new(
         path: Arc<Path>,
-        metadata: &fs2::Metadata,
+        metadata: &fs::Metadata,
         next_entry_id: &AtomicUsize,
         root_char_bag: CharBag,
     ) -> Self {
@@ -4037,7 +4037,7 @@ pub trait WorktreeModelHandle {
     #[cfg(any(test, feature = "test-support"))]
     fn flush_fs_events<'a>(
         &self,
-        cx: &'a mut gpui2::TestAppContext,
+        cx: &'a mut gpui::TestAppContext,
     ) -> futures::future::LocalBoxFuture<'a, ()>;
 }
 
@@ -4051,7 +4051,7 @@ impl WorktreeModelHandle for Model<Worktree> {
     #[cfg(any(test, feature = "test-support"))]
     fn flush_fs_events<'a>(
         &self,
-        cx: &'a mut gpui2::TestAppContext,
+        cx: &'a mut gpui::TestAppContext,
     ) -> futures::future::LocalBoxFuture<'a, ()> {
         let file_name = "fs-event-sentinel";
 

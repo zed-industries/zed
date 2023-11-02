@@ -2,7 +2,7 @@ use std::{io::Cursor, sync::Arc};
 
 use anyhow::Result;
 use collections::HashMap;
-use gpui2::{AppContext, AssetSource};
+use gpui::{AppContext, AssetSource};
 use rodio::{
     source::{Buffered, SamplesConverter},
     Decoder, Source,

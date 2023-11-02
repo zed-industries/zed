@@ -113,7 +113,7 @@ use alacritty_terminal::term::color::Rgb as AlacRgb;
 //     let b = (i % 36) % 6;
 //     (r, g, b)
 // }
-use gpui2::Rgba;
+use gpui::Rgba;
 
 //Convenience method to convert from a GPUI color to an alacritty Rgb
 pub fn to_alac_rgb(color: impl Into<Rgba>) -> AlacRgb {
