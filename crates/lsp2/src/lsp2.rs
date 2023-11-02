@@ -1107,74 +1107,74 @@ impl FakeLanguageServer {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use gpui::TestAppContext;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui2::TestAppContext;
 
-//     #[ctor::ctor]
-//     fn init_logger() {
-//         if std::env::var("RUST_LOG").is_ok() {
-//             env_logger::init();
-//         }
-//     }
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
+    }
 
-//     #[gpui::test]
-//     async fn test_fake(cx: &mut TestAppContext) {
-//         let (server, mut fake) =
-//             LanguageServer::fake("the-lsp".to_string(), Default::default(), cx.to_async());
+    #[gpui2::test]
+    async fn test_fake(cx: &mut TestAppContext) {
+        let (server, mut fake) =
+            LanguageServer::fake("the-lsp".to_string(), Default::default(), cx.to_async());
 
-//         let (message_tx, message_rx) = channel::unbounded();
-//         let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
-//         server
-//             .on_notification::<notification::ShowMessage, _>(move |params, _| {
-//                 message_tx.try_send(params).unwrap()
-//             })
-//             .detach();
-//         server
-//             .on_notification::<notification::PublishDiagnostics, _>(move |params, _| {
-//                 diagnostics_tx.try_send(params).unwrap()
-//             })
-//             .detach();
+        let (message_tx, message_rx) = channel::unbounded();
+        let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
+        server
+            .on_notification::<notification::ShowMessage, _>(move |params, _| {
+                message_tx.try_send(params).unwrap()
+            })
+            .detach();
+        server
+            .on_notification::<notification::PublishDiagnostics, _>(move |params, _| {
+                diagnostics_tx.try_send(params).unwrap()
+            })
+            .detach();
 
-//         let server = server.initialize(None).await.unwrap();
-//         server
-//             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
-//                 text_document: TextDocumentItem::new(
-//                     Url::from_str("file://a/b").unwrap(),
-//                     "rust".to_string(),
-//                     0,
-//                     "".to_string(),
-//                 ),
-//             })
-//             .unwrap();
-//         assert_eq!(
-//             fake.receive_notification::<notification::DidOpenTextDocument>()
-//                 .await
-//                 .text_document
-//                 .uri
-//                 .as_str(),
-//             "file://a/b"
-//         );
+        let server = server.initialize(None).await.unwrap();
+        server
+            .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem::new(
+                    Url::from_str("file://a/b").unwrap(),
+                    "rust".to_string(),
+                    0,
+                    "".to_string(),
+                ),
+            })
+            .unwrap();
+        assert_eq!(
+            fake.receive_notification::<notification::DidOpenTextDocument>()
+                .await
+                .text_document
+                .uri
+                .as_str(),
+            "file://a/b"
+        );
 
-//         fake.notify::<notification::ShowMessage>(ShowMessageParams {
-//             typ: MessageType::ERROR,
-//             message: "ok".to_string(),
-//         });
-//         fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
-//             uri: Url::from_str("file://b/c").unwrap(),
-//             version: Some(5),
-//             diagnostics: vec![],
-//         });
-//         assert_eq!(message_rx.recv().await.unwrap().message, "ok");
-//         assert_eq!(
-//             diagnostics_rx.recv().await.unwrap().uri.as_str(),
-//             "file://b/c"
-//         );
+        fake.notify::<notification::ShowMessage>(ShowMessageParams {
+            typ: MessageType::ERROR,
+            message: "ok".to_string(),
+        });
+        fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
+            uri: Url::from_str("file://b/c").unwrap(),
+            version: Some(5),
+            diagnostics: vec![],
+        });
+        assert_eq!(message_rx.recv().await.unwrap().message, "ok");
+        assert_eq!(
+            diagnostics_rx.recv().await.unwrap().uri.as_str(),
+            "file://b/c"
+        );
 
-//         fake.handle_request::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
+        fake.handle_request::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
 
-//         drop(server);
-//         fake.receive_notification::<notification::Exit>().await;
-//     }
-// }
+        drop(server);
+        fake.receive_notification::<notification::Exit>().await;
+    }
+}
