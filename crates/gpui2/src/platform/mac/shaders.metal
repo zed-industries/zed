@@ -98,10 +98,10 @@ fragment float4 quad_fragment(QuadVertexOutput input [[stage_in]],
     input.border_color.a *= 1. - saturate(0.5 - inset_distance);
 
     // Alpha-blend the border and the background.
-    float output_alpha =
-        quad.border_color.a + quad.background.a * (1. - quad.border_color.a);
+    float output_alpha = input.border_color.a +
+                         input.background_color.a * (1. - input.border_color.a);
     float3 premultiplied_border_rgb =
-        input.border_color.rgb * quad.border_color.a;
+        input.border_color.rgb * input.border_color.a;
     float3 premultiplied_background_rgb =
         input.background_color.rgb * input.background_color.a;
     float3 premultiplied_output_rgb =
