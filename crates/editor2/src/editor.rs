@@ -8981,45 +8981,43 @@ impl Editor {
         file_extension: Option<String>,
         cx: &AppContext,
     ) {
-        todo!("old version below");
+        let Some(project) = &self.project else { return };
+
+        // If None, we are in a file without an extension
+        let file = self
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|b| b.read(cx).file());
+        let file_extension = file_extension.or(file
+            .as_ref()
+            .and_then(|file| Path::new(file.file_name(cx)).extension())
+            .and_then(|e| e.to_str())
+            .map(|a| a.to_string()));
+
+        let vim_mode = cx
+            .global::<SettingsStore>()
+            .raw_user_settings()
+            .get("vim_mode")
+            == Some(&serde_json::Value::Bool(true));
+        let telemetry_settings = *TelemetrySettings::get_global(cx);
+        let copilot_enabled = all_language_settings(file, cx).copilot_enabled(None, None);
+        let copilot_enabled_for_language = self
+            .buffer
+            .read(cx)
+            .settings_at(0, cx)
+            .show_copilot_suggestions;
+
+        let telemetry = project.read(cx).client().telemetry().clone();
+        let event = ClickhouseEvent::Editor {
+            file_extension,
+            vim_mode,
+            operation,
+            copilot_enabled,
+            copilot_enabled_for_language,
+        };
+        telemetry.report_clickhouse_event(event, telemetry_settings)
     }
-    //     let Some(project) = &self.project else { return };
-
-    //     // If None, we are in a file without an extension
-    //     let file = self
-    //         .buffer
-    //         .read(cx)
-    //         .as_singleton()
-    //         .and_then(|b| b.read(cx).file());
-    //     let file_extension = file_extension.or(file
-    //         .as_ref()
-    //         .and_then(|file| Path::new(file.file_name(cx)).extension())
-    //         .and_then(|e| e.to_str())
-    //         .map(|a| a.to_string()));
-
-    //     let vim_mode = cx
-    //         .global::<SettingsStore>()
-    //         .raw_user_settings()
-    //         .get("vim_mode")
-    //         == Some(&serde_json::Value::Bool(true));
-    //     let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
-    //     let copilot_enabled = all_language_settings(file, cx).copilot_enabled(None, None);
-    //     let copilot_enabled_for_language = self
-    //         .buffer
-    //         .read(cx)
-    //         .settings_at(0, cx)
-    //         .show_copilot_suggestions;
-
-    //     let telemetry = project.read(cx).client().telemetry().clone();
-    //     let event = ClickhouseEvent::Editor {
-    //         file_extension,
-    //         vim_mode,
-    //         operation,
-    //         copilot_enabled,
-    //         copilot_enabled_for_language,
-    //     };
-    //     telemetry.report_clickhouse_event(event, telemetry_settings)
-    // }
 
     //     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
     //     /// with each line being an array of {text, highlight} objects.

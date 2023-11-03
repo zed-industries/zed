@@ -62,6 +62,7 @@ postage.workspace = true
 rand.workspace = true
 schemars.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 serde_derive.workspace = true
 smallvec.workspace = true
 smol.workspace = true
