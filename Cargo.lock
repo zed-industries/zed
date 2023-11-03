@@ -1546,7 +1546,7 @@ dependencies = [
  "sum_tree",
  "sysinfo",
  "tempfile",
- "text",
+ "text2",
  "thiserror",
  "time",
  "tiny_http",
