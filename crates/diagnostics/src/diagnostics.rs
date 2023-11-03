@@ -151,6 +151,7 @@ impl ProjectDiagnosticsEditor {
     ) -> Self {
         cx.subscribe(&project_handle, |this, _, event, cx| match event {
             project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
+                log::debug!("Disk based diagnostics finished for server {language_server_id}");
                 this.update_excerpts(Some(*language_server_id), cx);
                 this.update_title(cx);
             }
@@ -158,8 +159,11 @@ impl ProjectDiagnosticsEditor {
                 language_server_id,
                 path,
             } => {
+                log::debug!("Adding path {path:?} to update for server {language_server_id}");
                 this.paths_to_update
                     .insert((path.clone(), *language_server_id));
+                this.update_excerpts(Some(*language_server_id), cx);
+                this.update_title(cx);
             }
             _ => {}
         })
@@ -229,6 +233,7 @@ impl ProjectDiagnosticsEditor {
         language_server_id: Option<LanguageServerId>,
         cx: &mut ViewContext<Self>,
     ) {
+        log::debug!("Updating excerpts for server {language_server_id:?}");
         let mut paths = Vec::new();
         self.paths_to_update.retain(|(path, server_id)| {
             if language_server_id
@@ -1301,25 +1306,6 @@ mod tests {
                     cx,
                 )
                 .unwrap();
-            project
-                .update_diagnostic_entries(
-                    server_id_2,
-                    PathBuf::from("/test/main.js"),
-                    None,
-                    vec![DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(1, 0))..Unclipped(PointUtf16::new(1, 1)),
-                        diagnostic: Diagnostic {
-                            message: "warning 1".to_string(),
-                            severity: DiagnosticSeverity::ERROR,
-                            is_primary: true,
-                            is_disk_based: true,
-                            group_id: 2,
-                            ..Default::default()
-                        },
-                    }],
-                    cx,
-                )
-                .unwrap();
         });
 
         // The first language server finishes
@@ -1353,6 +1339,25 @@ mod tests {
 
         // The second language server finishes
         project.update(cx, |project, cx| {
+            project
+                .update_diagnostic_entries(
+                    server_id_2,
+                    PathBuf::from("/test/main.js"),
+                    None,
+                    vec![DiagnosticEntry {
+                        range: Unclipped(PointUtf16::new(1, 0))..Unclipped(PointUtf16::new(1, 1)),
+                        diagnostic: Diagnostic {
+                            message: "warning 1".to_string(),
+                            severity: DiagnosticSeverity::ERROR,
+                            is_primary: true,
+                            is_disk_based: true,
+                            group_id: 2,
+                            ..Default::default()
+                        },
+                    }],
+                    cx,
+                )
+                .unwrap();
             project.disk_based_diagnostics_finished(server_id_2, cx);
         });
 
