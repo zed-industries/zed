@@ -10,6 +10,7 @@ members = [
     "crates/call",
     "crates/call2",
     "crates/channel",
+    "crates/channel2",
     "crates/cli",
     "crates/client",
     "crates/client2",

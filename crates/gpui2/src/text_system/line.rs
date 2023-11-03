@@ -2,6 +2,7 @@ use crate::{
     black, point, px, size, BorrowWindow, Bounds, Hsla, Pixels, Point, Result, Size,
     UnderlineStyle, WindowContext, WrapBoundary, WrappedLineLayout,
 };
+use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
 use std::sync::Arc;
 
@@ -12,8 +13,10 @@ pub struct DecorationRun {
     pub underline: Option<UnderlineStyle>,
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default, Debug, Deref, DerefMut)]
 pub struct Line {
+    #[deref]
+    #[deref_mut]
     pub(crate) layout: Arc<WrappedLineLayout>,
     pub(crate) decorations: SmallVec<[DecorationRun; 32]>,
 }
@@ -24,6 +27,10 @@ impl Line {
             self.layout.width,
             line_height * (self.layout.wrap_boundaries.len() + 1),
         )
+    }
+
+    pub fn width(&self) -> Pixels {
+        self.layout.width
     }
 
     pub fn wrap_count(&self) -> usize {
