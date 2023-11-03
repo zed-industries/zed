@@ -5115,7 +5115,7 @@ dependencies = [
  "project2",
  "pulldown-cmark",
  "rand 0.8.5",
- "rich_text",
+ "rich_text2",
  "schemars",
  "serde",
  "serde_derive",
@@ -6944,6 +6944,24 @@ dependencies = [
  "smol",
  "sum_tree",
  "theme",
+ "util",
+]
+
+[[package]]
+name = "rich_text2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "lazy_static",
+ "pulldown-cmark",
+ "smallvec",
+ "smol",
+ "sum_tree",
+ "theme2",
  "util",
 ]
 
@@ -8876,7 +8894,7 @@ name = "theme2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "fs",
+ "fs2",
  "gpui2",
  "indexmap 1.9.3",
  "parking_lot 0.11.2",

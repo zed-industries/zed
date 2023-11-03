@@ -2,14 +2,8 @@ use std::{ops::Range, sync::Arc};
 
 use anyhow::bail;
 use futures::FutureExt;
-use gpui::{
-    elements::Text,
-    fonts::{HighlightStyle, Underline, Weight},
-    platform::{CursorStyle, MouseButton},
-    AnyElement, CursorRegion, Element, MouseRegion, ViewContext,
-};
+use gpui::{AnyElement, FontStyle, FontWeight, HighlightStyle, UnderlineStyle};
 use language::{HighlightId, Language, LanguageRegistry};
-use theme::{RichTextStyle, SyntaxTheme};
 use util::RangeExt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,9 +58,9 @@ pub struct Mention {
 impl RichText {
     pub fn element<V: 'static>(
         &self,
-        syntax: Arc<SyntaxTheme>,
-        style: RichTextStyle,
-        cx: &mut ViewContext<V>,
+        // syntax: Arc<SyntaxTheme>,
+        //  style: RichTextStyle,
+        // cx: &mut ViewContext<V>,
     ) -> AnyElement<V> {
         todo!();
 
@@ -203,10 +197,10 @@ pub fn render_markdown_mut(
                     data.text.push_str(t.as_ref());
                     let mut style = HighlightStyle::default();
                     if bold_depth > 0 {
-                        style.weight = Some(Weight::BOLD);
+                        style.font_weight = Some(FontWeight::BOLD);
                     }
                     if italic_depth > 0 {
-                        style.italic = Some(true);
+                        style.font_style = Some(FontStyle::Italic);
                     }
                     if let Some(link_url) = link_url.clone() {
                         data.region_ranges.push(prev_len..data.text.len());
@@ -214,7 +208,7 @@ pub fn render_markdown_mut(
                             link_url: Some(link_url),
                             background_kind: None,
                         });
-                        style.underline = Some(Underline {
+                        style.underline = Some(UnderlineStyle {
                             thickness: 1.0.into(),
                             ..Default::default()
                         });
@@ -244,7 +238,7 @@ pub fn render_markdown_mut(
                     data.highlights.push((
                         prev_len..data.text.len(),
                         Highlight::Highlight(HighlightStyle {
-                            underline: Some(Underline {
+                            underline: Some(UnderlineStyle {
                                 thickness: 1.0.into(),
                                 ..Default::default()
                             }),
