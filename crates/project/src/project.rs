@@ -4157,7 +4157,9 @@ impl Project {
                                     match prettier_task.await
                                     {
                                         Ok(prettier) => {
-                                            let buffer_path = buffer.update(&mut cx, |buffer, cx| File::from_dyn(buffer.file()).map(|f| f.abs_path(cx)));
+                                            let buffer_path = buffer.update(&mut cx, |buffer, cx| {
+                                                File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
+                                            });
                                             format_operation = Some(FormatOperation::Prettier(
                                                 prettier
                                                     .format(buffer, buffer_path, &cx)
@@ -4213,7 +4215,9 @@ impl Project {
                                     match prettier_task.await
                                     {
                                         Ok(prettier) => {
-                                            let buffer_path = buffer.update(&mut cx, |buffer, cx| File::from_dyn(buffer.file()).map(|f| f.abs_path(cx)));
+                                            let buffer_path = buffer.update(&mut cx, |buffer, cx| {
+                                                File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
+                                            });
                                             format_operation = Some(FormatOperation::Prettier(
                                                 prettier
                                                     .format(buffer, buffer_path, &cx)

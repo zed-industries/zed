@@ -61,7 +61,7 @@ impl Prettier {
     ) -> anyhow::Result<Option<PathBuf>> {
         let mut path_to_check = locate_from
             .components()
-            .take_while(|component| !is_node_modules(component))
+            .take_while(|component| component.as_os_str().to_string_lossy() != "node_modules")
             .collect::<PathBuf>();
         let path_to_check_metadata = fs
             .metadata(&path_to_check)
@@ -762,8 +762,4 @@ mod tests {
             },
         };
     }
-}
-
-fn is_node_modules(path_component: &std::path::Component<'_>) -> bool {
-    path_component.as_os_str().to_string_lossy() == "node_modules"
 }
