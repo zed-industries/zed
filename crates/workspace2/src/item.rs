@@ -261,7 +261,7 @@ pub trait ItemHandle: 'static + Send {
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyView>;
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
     fn on_release(
-        &mut self,
+        &self,
         cx: &mut AppContext,
         callback: Box<dyn FnOnce(&mut AppContext) + Send>,
     ) -> gpui2::Subscription;
@@ -578,7 +578,7 @@ impl<T: Item> ItemHandle for View<T> {
     }
 
     fn on_release(
-        &mut self,
+        &self,
         cx: &mut AppContext,
         callback: Box<dyn FnOnce(&mut AppContext) + Send>,
     ) -> gpui2::Subscription {

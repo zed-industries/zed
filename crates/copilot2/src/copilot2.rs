@@ -42,6 +42,11 @@ use util::{
 //     copilot,
 //     [Suggest, NextSuggestion, PreviousSuggestion, Reinstall]
 // );
+//
+pub struct Suggest;
+pub struct NextSuggestion;
+pub struct PreviousSuggestion;
+pub struct Reinstall;
 
 pub fn init(
     new_server_id: LanguageServerId,

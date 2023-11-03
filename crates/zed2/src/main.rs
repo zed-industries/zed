@@ -256,6 +256,7 @@ fn main() {
                     .detach();
             }
             Ok(Some(OpenRequest::JoinChannel { channel_id: _ })) => {
+                todo!()
                 // triggered_authentication = true;
                 // let app_state = app_state.clone();
                 // let client = client.clone();
@@ -267,6 +268,9 @@ fn main() {
                 // })
                 // .detach_and_log_err(cx)
             }
+            Ok(Some(OpenRequest::OpenChannelNotes { channel_id: _ })) => {
+                todo!()
+            }
             Ok(None) | Err(_) => cx
                 .spawn({
                     let app_state = app_state.clone();
@@ -276,28 +280,25 @@ fn main() {
         }
 
         let app_state = app_state.clone();
-        cx.spawn(|cx| {
-            async move {
-                while let Some(request) = open_rx.next().await {
-                    match request {
-                        OpenRequest::Paths { paths } => {
-                            cx.update(|cx| open_paths_and_log_errs(&paths, &app_state, cx))
-                                .ok();
-                        }
-                        OpenRequest::CliConnection { connection } => {
-                            let app_state = app_state.clone();
-                            cx.spawn(move |cx| {
-                                handle_cli_connection(connection, app_state.clone(), cx)
-                            })
-                            .detach();
-                        }
-                        OpenRequest::JoinChannel { channel_id: _ } => {
-                            // cx
-                            // .update(|cx| {
-                            //     workspace::join_channel(channel_id, app_state.clone(), None, cx)
-                            // })
-                            // .detach()
-                        }
+        cx.spawn(|cx| async move {
+            while let Some(request) = open_rx.next().await {
+                match request {
+                    OpenRequest::Paths { paths } => {
+                        cx.update(|cx| open_paths_and_log_errs(&paths, &app_state, cx))
+                            .ok();
+                    }
+                    OpenRequest::CliConnection { connection } => {
+                        let app_state = app_state.clone();
+                        cx.spawn(move |cx| {
+                            handle_cli_connection(connection, app_state.clone(), cx)
+                        })
+                        .detach();
+                    }
+                    OpenRequest::JoinChannel { channel_id: _ } => {
+                        todo!()
+                    }
+                    OpenRequest::OpenChannelNotes { channel_id: _ } => {
+                        todo!()
                     }
                 }
             }
