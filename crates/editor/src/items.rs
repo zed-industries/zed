@@ -33,9 +33,9 @@ use util::{
     paths::{PathExt, FILE_ROW_COLUMN_DELIMITER},
     ResultExt, TryFutureExt,
 };
-use workspace::item::{BreadcrumbText, FollowableItemHandle};
+use workspace::item::{BreadcrumbText, FollowableItemHandle, ItemHandle};
 use workspace::{
-    item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
+    item::{FollowableItem, Item, ItemEvent, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
     ItemId, ItemNavHistory, Pane, StatusItemView, ToolbarItemLocation, ViewId, Workspace,
     WorkspaceId,
