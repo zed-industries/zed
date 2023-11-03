@@ -30,6 +30,7 @@ members = [
     "crates/diagnostics",
     "crates/drag_and_drop",
     "crates/editor",
+    "crates/editor_extensions",
     "crates/feature_flags",
     "crates/feature_flags2",
     "crates/feedback",
