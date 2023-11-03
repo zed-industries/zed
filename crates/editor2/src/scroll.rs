@@ -303,20 +303,20 @@ impl Editor {
         self.scroll_manager.visible_line_count
     }
 
-    //     pub(crate) fn set_visible_line_count(&mut self, lines: f32, cx: &mut ViewContext<Self>) {
-    //         let opened_first_time = self.scroll_manager.visible_line_count.is_none();
-    //         self.scroll_manager.visible_line_count = Some(lines);
-    //         if opened_first_time {
-    //             cx.spawn(|editor, mut cx| async move {
-    //                 editor
-    //                     .update(&mut cx, |editor, cx| {
-    //                         editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
-    //                     })
-    //                     .ok()
-    //             })
-    //             .detach()
-    //         }
-    //     }
+    pub(crate) fn set_visible_line_count(&mut self, lines: f32, cx: &mut ViewContext<Self>) {
+        let opened_first_time = self.scroll_manager.visible_line_count.is_none();
+        self.scroll_manager.visible_line_count = Some(lines);
+        if opened_first_time {
+            cx.spawn(|editor, mut cx| async move {
+                editor
+                    .update(&mut cx, |editor, cx| {
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
+                    })
+                    .ok()
+            })
+            .detach()
+        }
+    }
 
     pub fn set_scroll_position(
         &mut self,

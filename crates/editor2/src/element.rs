@@ -3,17 +3,18 @@ use super::{
 };
 use crate::{
     display_map::{BlockStyle, DisplaySnapshot},
-    EditorStyle,
+    EditorMode, EditorStyle, SoftWrap,
 };
 use anyhow::Result;
 use gpui::{
-    black, px, relative, AnyElement, Bounds, Element, Hsla, Line, Pixels, Size, Style, TextRun,
-    TextSystem,
+    black, point, px, relative, size, AnyElement, Bounds, Element, Hsla, Line, Pixels, Size, Style,
+    TextRun, TextSystem, ViewContext,
 };
 use language::{CursorShape, Selection};
 use smallvec::SmallVec;
-use std::{ops::Range, sync::Arc};
+use std::{cmp, ops::Range, sync::Arc};
 use sum_tree::Bias;
+use theme::ActiveTheme;
 
 enum FoldMarkers {}
 
@@ -1321,29 +1322,31 @@ impl EditorElement {
     //     }
     // }
 
-    // fn column_pixels(&self, column: usize, cx: &ViewContext<Editor>) -> f32 {
-    //     let style = &self.style;
+    fn column_pixels(&self, column: usize, cx: &ViewContext<Editor>) -> Pixels {
+        let style = &self.style;
+        let font_size = style.text.font_size * cx.rem_size();
+        let layout = cx
+            .text_system()
+            .layout_text(
+                " ".repeat(column).as_str(),
+                font_size,
+                &[TextRun {
+                    len: column,
+                    font: style.text.font(),
+                    color: Hsla::default(),
+                    underline: None,
+                }],
+                None,
+            )
+            .unwrap();
 
-    //     cx.text_layout_cache()
-    //         .layout_str(
-    //             " ".repeat(column).as_str(),
-    //             style.text.font_size,
-    //             &[(
-    //                 column,
-    //                 RunStyle {
-    //                     font_id: style.text.font_id,
-    //                     color: Color::black(),
-    //                     underline: Default::default(),
-    //                 },
-    //             )],
-    //         )
-    //         .width()
-    // }
+        layout[0].width
+    }
 
-    // fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &ViewContext<Editor>) -> f32 {
-    //     let digit_count = (snapshot.max_buffer_row() as f32 + 1.).log10().floor() as usize + 1;
-    //     self.column_pixels(digit_count, cx)
-    // }
+    fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &ViewContext<Editor>) -> Pixels {
+        let digit_count = (snapshot.max_buffer_row() as f32 + 1.).log10().floor() as usize + 1;
+        self.column_pixels(digit_count, cx)
+    }
 
     //Folds contained in a hunk are ignored apart from shrinking visual size
     //If a fold contains any hunks then that fold line is marked as modified
@@ -2002,6 +2005,7 @@ impl Element<Editor> for EditorElement {
         element_state: &mut Self::ElementState,
         cx: &mut gpui::ViewContext<Editor>,
     ) -> gpui::LayoutId {
+        let rem_size = cx.rem_size();
         let mut style = Style::default();
         style.size.width = relative(1.).into();
         style.size.height = relative(1.).into();
@@ -2011,18 +2015,125 @@ impl Element<Editor> for EditorElement {
     fn paint(
         &mut self,
         bounds: Bounds<gpui::Pixels>,
-        view_state: &mut Editor,
+        editor: &mut Editor,
         element_state: &mut Self::ElementState,
         cx: &mut gpui::ViewContext<Editor>,
     ) {
-        let text_style = cx.text_style();
+        // let mut size = constraint.max;
+        // if size.x().is_infinite() {
+        //     unimplemented!("we don't yet handle an infinite width constraint on buffer elements");
+        // }
 
-        let layout_text = cx.text_system().layout_text(
-            "hello world",
-            text_style.font_size * cx.rem_size(),
-            &[text_style.to_run("hello world".len())],
-            None,
-        );
+        let snapshot = editor.snapshot(cx);
+        let style = self.style.clone();
+        let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
+        let font_size = style.text.font_size * cx.rem_size();
+        let line_height = (font_size * style.line_height_scalar).round();
+        let em_width = cx
+            .text_system()
+            .typographic_bounds(font_id, font_size, 'm')
+            .unwrap()
+            .size
+            .width;
+        let em_advance = cx
+            .text_system()
+            .advance(font_id, font_size, 'm')
+            .unwrap()
+            .width;
+
+        let gutter_padding;
+        let gutter_width;
+        let gutter_margin;
+        if snapshot.show_gutter {
+            let descent = cx.text_system().descent(font_id, font_size).unwrap();
+
+            let gutter_padding_factor = 3.5;
+            gutter_padding = (em_width * gutter_padding_factor).round();
+            gutter_width = self.max_line_number_width(&snapshot, cx) + gutter_padding * 2.0;
+            gutter_margin = -descent;
+        } else {
+            gutter_padding = px(0.0);
+            gutter_width = px(0.0);
+            gutter_margin = px(0.0);
+        };
+
+        let text_width = bounds.size.width - gutter_width;
+        let overscroll = point(em_width, px(0.));
+        let snapshot = {
+            editor.set_visible_line_count((bounds.size.height / line_height).into(), cx);
+
+            let editor_width = text_width - gutter_margin - overscroll.x - em_width;
+            let wrap_width = match editor.soft_wrap_mode(cx) {
+                SoftWrap::None => (MAX_LINE_LEN / 2) as f32 * em_advance,
+                SoftWrap::EditorWidth => editor_width,
+                SoftWrap::Column(column) => editor_width.min(column as f32 * em_advance),
+            };
+
+            if editor.set_wrap_width(Some(wrap_width), cx) {
+                editor.snapshot(cx)
+            } else {
+                snapshot
+            }
+        };
+
+        let wrap_guides = editor
+            .wrap_guides(cx)
+            .iter()
+            .map(|(guide, active)| (self.column_pixels(*guide, cx), *active))
+            .collect::<SmallVec<[_; 2]>>();
+
+        let scroll_height = Pixels::from(snapshot.max_point().row() + 1) * line_height;
+        // todo!("this should happen during layout")
+        if let EditorMode::AutoHeight { max_lines } = snapshot.mode {
+            todo!()
+            //     size.set_y(
+            //         scroll_height
+            //             .min(constraint.max_along(Axis::Vertical))
+            //             .max(constraint.min_along(Axis::Vertical))
+            //             .max(line_height)
+            //             .min(line_height * max_lines as f32),
+            //     )
+        } else if let EditorMode::SingleLine = snapshot.mode {
+            todo!()
+            //     size.set_y(line_height.max(constraint.min_along(Axis::Vertical)))
+        }
+        // todo!()
+        // else if size.y().is_infinite() {
+        //     //     size.set_y(scroll_height);
+        // }
+        //
+        let gutter_size = size(gutter_width, bounds.size.height);
+        let text_size = size(text_width, bounds.size.height);
+
+        let autoscroll_horizontally =
+            editor.autoscroll_vertically(bounds.size.height, line_height, cx);
+        let mut snapshot = editor.snapshot(cx);
+
+        let scroll_position = snapshot.scroll_position();
+        // The scroll position is a fractional point, the whole number of which represents
+        // the top of the window in terms of display rows.
+        let start_row = scroll_position.y as u32;
+        let height_in_lines = f32::from(bounds.size.height / line_height);
+        let max_row = snapshot.max_point().row();
+
+        // Add 1 to ensure selections bleed off screen
+        let end_row = 1 + cmp::min((scroll_position.y + height_in_lines).ceil() as u32, max_row);
+
+        dbg!(start_row..end_row);
+        // let text_style = cx.text_style();
+        // let layout_text = cx.text_system().layout_text(
+        //     "hello world",
+        //     text_style.font_size * cx.rem_size(),
+        //     &[text_style.to_run("hello world".len())],
+        //     None,
+        // );
+        // let line_height = text_style
+        //     .line_height
+        //     .to_pixels(text_style.font_size.into(), cx.rem_size());
+
+        // layout_text.unwrap()[0]
+        //     .paint(bounds.origin, line_height, cx)
+        //     .unwrap();
     }
 }
 

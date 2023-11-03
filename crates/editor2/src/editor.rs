@@ -37,8 +37,8 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     div, AnyElement, AppContext, BackgroundExecutor, Context, Div, Element, EventEmitter,
-    FocusHandle, Hsla, Model, Pixels, Render, Subscription, Task, TextStyle, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    FocusHandle, Hsla, Model, Pixels, Render, Styled, Subscription, Task, TextStyle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -68,6 +68,7 @@ use scroll::{
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use smallvec::SmallVec;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -8347,51 +8348,51 @@ impl Editor {
     //             .text()
     //     }
 
-    //     pub fn wrap_guides(&self, cx: &AppContext) -> SmallVec<[(usize, bool); 2]> {
-    //         let mut wrap_guides = smallvec::smallvec![];
+    pub fn wrap_guides(&self, cx: &AppContext) -> SmallVec<[(usize, bool); 2]> {
+        let mut wrap_guides = smallvec::smallvec![];
 
-    //         if self.show_wrap_guides == Some(false) {
-    //             return wrap_guides;
-    //         }
+        if self.show_wrap_guides == Some(false) {
+            return wrap_guides;
+        }
 
-    //         let settings = self.buffer.read(cx).settings_at(0, cx);
-    //         if settings.show_wrap_guides {
-    //             if let SoftWrap::Column(soft_wrap) = self.soft_wrap_mode(cx) {
-    //                 wrap_guides.push((soft_wrap as usize, true));
-    //             }
-    //             wrap_guides.extend(settings.wrap_guides.iter().map(|guide| (*guide, false)))
-    //         }
+        let settings = self.buffer.read(cx).settings_at(0, cx);
+        if settings.show_wrap_guides {
+            if let SoftWrap::Column(soft_wrap) = self.soft_wrap_mode(cx) {
+                wrap_guides.push((soft_wrap as usize, true));
+            }
+            wrap_guides.extend(settings.wrap_guides.iter().map(|guide| (*guide, false)))
+        }
 
-    //         wrap_guides
-    //     }
+        wrap_guides
+    }
 
-    //     pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
-    //         let settings = self.buffer.read(cx).settings_at(0, cx);
-    //         let mode = self
-    //             .soft_wrap_mode_override
-    //             .unwrap_or_else(|| settings.soft_wrap);
-    //         match mode {
-    //             language_settings::SoftWrap::None => SoftWrap::None,
-    //             language_settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
-    //             language_settings::SoftWrap::PreferredLineLength => {
-    //                 SoftWrap::Column(settings.preferred_line_length)
-    //             }
-    //         }
-    //     }
+    pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
+        let settings = self.buffer.read(cx).settings_at(0, cx);
+        let mode = self
+            .soft_wrap_mode_override
+            .unwrap_or_else(|| settings.soft_wrap);
+        match mode {
+            language_settings::SoftWrap::None => SoftWrap::None,
+            language_settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
+            language_settings::SoftWrap::PreferredLineLength => {
+                SoftWrap::Column(settings.preferred_line_length)
+            }
+        }
+    }
 
-    //     pub fn set_soft_wrap_mode(
-    //         &mut self,
-    //         mode: language_settings::SoftWrap,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.soft_wrap_mode_override = Some(mode);
-    //         cx.notify();
-    //     }
+    pub fn set_soft_wrap_mode(
+        &mut self,
+        mode: language_settings::SoftWrap,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.soft_wrap_mode_override = Some(mode);
+        cx.notify();
+    }
 
-    //     pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut AppContext) -> bool {
-    //         self.display_map
-    //             .update(cx, |map, cx| map.set_wrap_width(width, cx))
-    //     }
+    pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut AppContext) -> bool {
+        self.display_map
+            .update(cx, |map, cx| map.set_wrap_width(width, cx))
+    }
 
     //     pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, cx: &mut ViewContext<Self>) {
     //         if self.soft_wrap_mode_override.is_some() {
@@ -9321,11 +9322,14 @@ impl EventEmitter for Editor {
 }
 
 impl Render for Editor {
-    type Element = Div<Self>;
+    type Element = EditorElement;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        // todo!()
-        div()
+        EditorElement::new(EditorStyle {
+            text: cx.text_style(),
+            line_height_scalar: 1.,
+            theme_id: 0,
+        })
     }
 }
 

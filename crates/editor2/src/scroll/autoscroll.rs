@@ -48,11 +48,11 @@ impl AutoscrollStrategy {
 impl Editor {
     pub fn autoscroll_vertically(
         &mut self,
-        viewport_height: f32,
-        line_height: f32,
+        viewport_height: Pixels,
+        line_height: Pixels,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
-        let visible_lines = viewport_height / line_height;
+        let visible_lines = f32::from(viewport_height / line_height);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
         let max_scroll_top = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
