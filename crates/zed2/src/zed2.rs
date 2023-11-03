@@ -242,7 +242,7 @@ pub fn build_window_options(
         focus: false,
         show: false,
         kind: WindowKind::Normal,
-        is_movable: false,
+        is_movable: true,
         display_id: display.map(|display| display.id()),
     }
 }
@@ -317,16 +317,16 @@ pub fn initialize_workspace(
             //         feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace)
             //     });
             //     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
-            //     workspace.status_bar().update(cx, |status_bar, cx| {
-            //         status_bar.add_left_item(diagnostic_summary, cx);
-            //         status_bar.add_left_item(activity_indicator, cx);
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                // status_bar.add_left_item(diagnostic_summary, cx);
+                // status_bar.add_left_item(activity_indicator, cx);
 
-            //         status_bar.add_right_item(feedback_button, cx);
-            //         status_bar.add_right_item(copilot, cx);
-            //         status_bar.add_right_item(active_buffer_language, cx);
-            //         status_bar.add_right_item(vim_mode_indicator, cx);
-            //         status_bar.add_right_item(cursor_position, cx);
-            //     });
+                // status_bar.add_right_item(feedback_button, cx);
+                // status_bar.add_right_item(copilot, cx);
+                // status_bar.add_right_item(active_buffer_language, cx);
+                // status_bar.add_right_item(vim_mode_indicator, cx);
+                // status_bar.add_right_item(cursor_position, cx);
+            });
 
             //     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
 

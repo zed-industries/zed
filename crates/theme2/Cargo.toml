@@ -17,7 +17,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-fs = { path = "../fs" }
+fs = { package = "fs2", path = "../fs2" }
 gpui = { package = "gpui2", path = "../gpui2" }
 indexmap = "1.6.2"
 parking_lot.workspace = true
@@ -32,5 +32,5 @@ util = { path = "../util" }
 
 [dev-dependencies]
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
-fs = { path = "../fs", features = ["test-support"] }
+fs = { package = "fs2", path = "../fs2", features = ["test-support"] }
 settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
