@@ -29,7 +29,7 @@ copilot = { package="copilot2", path = "../copilot2" }
 db = { package="db2", path = "../db2" }
 drag_and_drop = { path = "../drag_and_drop" }
 collections = { path = "../collections" }
-context_menu = { path = "../context_menu" }
+# context_menu = { path = "../context_menu" }
 fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
 git = { path = "../git" }
 gpui = { package = "gpui2", path = "../gpui2" }
@@ -38,7 +38,7 @@ lsp = { package = "lsp2", path = "../lsp2" }
 multi_buffer = { package = "multi_buffer2", path = "../multi_buffer2" }
 project = { package = "project2", path = "../project2" }
 rpc = { package = "rpc2", path = "../rpc2" }
-rich_text = { path = "../rich_text" }
+rich_text = { package = "rich_text2", path = "../rich_text2" }
 settings = { package="settings2", path = "../settings2" }
 snippet = { path = "../snippet" }
 sum_tree = { path = "../sum_tree" }
@@ -46,7 +46,7 @@ text = { package="text2", path = "../text2" }
 theme = { package="theme2", path = "../theme2" }
 util = { path = "../util" }
 sqlez = { path = "../sqlez" }
-workspace = { package="workspace2", path = "../workspace2" }
+workspace = { package = "workspace2", path = "../workspace2" }
 
 aho-corasick = "1.1"
 anyhow.workspace = true

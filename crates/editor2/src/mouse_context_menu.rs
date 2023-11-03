@@ -1,5 +1,4 @@
 use crate::{DisplayPoint, Editor, EditorMode, SelectMode};
-use context_menu::ContextMenuItem;
 use gpui::{Pixels, Point, ViewContext};
 
 pub fn deploy_context_menu(

@@ -622,7 +622,7 @@ pub struct Editor {
     // inlay_background_highlights: TreeMap<Option<TypeId>, InlayBackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
-    mouse_context_menu: View<context_menu::ContextMenu>,
+    // mouse_context_menu: View<context_menu::ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     next_completion_id: CompletionId,
     available_code_actions: Option<(Model<Buffer>, Arc<[CodeAction]>)>,
