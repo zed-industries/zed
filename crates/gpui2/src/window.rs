@@ -1664,6 +1664,11 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         self.view.model.clone()
     }
 
+    /// Access the underlying window context.
+    pub fn window_context(&mut self) -> &mut WindowContext<'a> {
+        &mut self.window_cx
+    }
+
     pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
         self.window.z_index_stack.push(order);
         let result = f(self);
