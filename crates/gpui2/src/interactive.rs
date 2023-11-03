@@ -17,7 +17,6 @@ use std::{
     ops::Deref,
     path::PathBuf,
     sync::Arc,
-    time::{Duration, Instant},
 };
 
 const DRAG_THRESHOLD: f64 = 2.;
@@ -602,13 +601,14 @@ pub trait ElementInteraction<V: 'static>: 'static {
 
             if let Some(hover_listener) = stateful.hover_listener.take() {
                 let was_hovered = element_state.hover_state.clone();
-                let has_mouse_down = element_state.pending_mouse_down.lock().is_some();
+                let has_mouse_down = element_state.pending_mouse_down.clone();
 
                 cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
-                    let is_hovered = bounds.contains_point(&event.position) && !has_mouse_down;
+                    let is_hovered =
+                        bounds.contains_point(&event.position) && has_mouse_down.lock().is_none();
                     let mut was_hovered = was_hovered.lock();
 
                     if is_hovered != was_hovered.clone() {
@@ -620,33 +620,30 @@ pub trait ElementInteraction<V: 'static>: 'static {
                 });
             }
 
-            // if we're hovered:
-            //   if no timer, start timer
-            //   if timer hits 1s, call tooltip_builder()
-            //
+            if let Some(tooltip_builder) = stateful.tooltip_builder.take() {
+                let tooltip_view = element_state.tooltip_view.clone();
+                let pending_mouse_down = element_state.pending_mouse_down.clone();
 
-            if let Some(tooltip_builder) = &stateful.tooltip_builder {
-                let mut active_tooltip = element_state.active_tooltip.lock();
-                let is_hovered = bounds.contains_point(&cx.mouse_position())
-                    && !element_state.pending_mouse_down.lock().is_some();
+                cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
+                    if phase != DispatchPhase::Bubble {
+                        return;
+                    }
 
-                if is_hovered {
-                    if let Some(active_tooltip) = active_tooltip {
-                        active_tooltip.view = Some(tooltip_builder(cx))
+                    let is_hovered = bounds.contains_point(&event.position)
+                        && pending_mouse_down.lock().is_none();
+                    let mut tooltip_view = tooltip_view.lock();
+
+                    if is_hovered {
+                        if tooltip_view.is_none() {
+                            *tooltip_view = Some(tooltip_builder(view_state, cx));
+                        }
                     } else {
-                        *active_tooltip = Some(ActiveTooltip {
-                            hover_start: Instant::now(),
-                            view: None,
-                        });
+                        tooltip_view.take();
                     }
-                } else {
-                    active_tooltip.take();
-                }
+                });
 
-                if let Some(active_tooltip) = element_state.active_tooltip.lock().as_ref() {
-                    if *element_state.hover_state.lock() {
-                        cx.active_tooltip = Some(active_tooltip.clone());
-                    }
+                if let Some(active_tooltip) = element_state.tooltip_view.lock().as_ref() {
+                    cx.active_tooltip = Some(active_tooltip.clone());
                 }
             }
 
@@ -837,12 +834,7 @@ pub struct InteractiveElementState {
     hover_state: Arc<Mutex<bool>>,
     pending_mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
     scroll_offset: Option<Arc<Mutex<Point<Pixels>>>>,
-    active_tooltip: Arc<Mutex<Option<ActiveTooltip>>>,
-}
-
-pub struct ActiveTooltip {
-    hover_start: Instant,
-    view: Option<AnyView>,
+    tooltip_view: Arc<Mutex<Option<AnyView>>>,
 }
 
 impl InteractiveElementState {
@@ -1194,7 +1186,7 @@ pub(crate) type DragListener<V> =
 
 pub(crate) type HoverListener<V> = Box<dyn Fn(&mut V, bool, &mut ViewContext<V>) + 'static>;
 
-pub(crate) type TooltipBuilder<V> = Arc<dyn Fn(&mut ViewContext<V>) -> AnyView + 'static>;
+pub(crate) type TooltipBuilder<V> = Arc<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static>;
 
 pub type KeyListener<V> = Box<
     dyn Fn(
