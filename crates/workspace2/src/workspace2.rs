@@ -1999,22 +1999,22 @@ impl Workspace {
     //         }
     //     }
 
-    //     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-    //         self.active_pane
-    //             .update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
-    //     }
+    pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        self.active_pane
+            .update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
+    }
 
-    //     pub fn split_item(
-    //         &mut self,
-    //         split_direction: SplitDirection,
-    //         item: Box<dyn ItemHandle>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         let new_pane = self.split_pane(self.active_pane.clone(), split_direction, cx);
-    //         new_pane.update(cx, move |new_pane, cx| {
-    //             new_pane.add_item(item, true, true, None, cx)
-    //         })
-    //     }
+    pub fn split_item(
+        &mut self,
+        split_direction: SplitDirection,
+        item: Box<dyn ItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let new_pane = self.split_pane(self.active_pane.clone(), split_direction, cx);
+        new_pane.update(cx, move |new_pane, cx| {
+            new_pane.add_item(item, true, true, None, cx)
+        })
+    }
 
     //     pub fn open_abs_path(
     //         &mut self,
@@ -2144,53 +2144,55 @@ impl Workspace {
         })
     }
 
-    //     pub fn open_project_item<T>(
-    //         &mut self,
-    //         project_item: ModelHandle<T::Item>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> View<T>
-    //     where
-    //         T: ProjectItem,
-    //     {
-    //         use project::Item as _;
+    pub fn open_project_item<T>(
+        &mut self,
+        project_item: Model<T::Item>,
+        cx: &mut ViewContext<Self>,
+    ) -> View<T>
+    where
+        T: ProjectItem,
+    {
+        use project2::Item as _;
 
-    //         let entry_id = project_item.read(cx).entry_id(cx);
-    //         if let Some(item) = entry_id
-    //             .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id, cx))
-    //             .and_then(|item| item.downcast())
-    //         {
-    //             self.activate_item(&item, cx);
-    //             return item;
-    //         }
+        let entry_id = project_item.read(cx).entry_id(cx);
+        if let Some(item) = entry_id
+            .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id, cx))
+            .and_then(|item| item.downcast())
+        {
+            self.activate_item(&item, cx);
+            return item;
+        }
 
-    //         let item = cx.build_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
-    //         self.add_item(Box::new(item.clone()), cx);
-    //         item
-    //     }
+        let item =
+            cx.build_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+        self.add_item(Box::new(item.clone()), cx);
+        item
+    }
 
-    //     pub fn split_project_item<T>(
-    //         &mut self,
-    //         project_item: ModelHandle<T::Item>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> View<T>
-    //     where
-    //         T: ProjectItem,
-    //     {
-    //         use project::Item as _;
+    pub fn split_project_item<T>(
+        &mut self,
+        project_item: Model<T::Item>,
+        cx: &mut ViewContext<Self>,
+    ) -> View<T>
+    where
+        T: ProjectItem,
+    {
+        use project2::Item as _;
 
-    //         let entry_id = project_item.read(cx).entry_id(cx);
-    //         if let Some(item) = entry_id
-    //             .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id, cx))
-    //             .and_then(|item| item.downcast())
-    //         {
-    //             self.activate_item(&item, cx);
-    //             return item;
-    //         }
+        let entry_id = project_item.read(cx).entry_id(cx);
+        if let Some(item) = entry_id
+            .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id, cx))
+            .and_then(|item| item.downcast())
+        {
+            self.activate_item(&item, cx);
+            return item;
+        }
 
-    //         let item = cx.build_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
-    //         self.split_item(SplitDirection::Right, Box::new(item.clone()), cx);
-    //         item
-    //     }
+        let item =
+            cx.build_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+        self.split_item(SplitDirection::Right, Box::new(item.clone()), cx);
+        item
+    }
 
     //     pub fn open_shared_screen(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
     //         if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
@@ -2200,19 +2202,19 @@ impl Workspace {
     //         }
     //     }
 
-    //     pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
-    //         let result = self.panes.iter().find_map(|pane| {
-    //             pane.read(cx)
-    //                 .index_for_item(item)
-    //                 .map(|ix| (pane.clone(), ix))
-    //         });
-    //         if let Some((pane, ix)) = result {
-    //             pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, cx));
-    //             true
-    //         } else {
-    //             false
-    //         }
-    //     }
+    pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
+        let result = self.panes.iter().find_map(|pane| {
+            pane.read(cx)
+                .index_for_item(item)
+                .map(|ix| (pane.clone(), ix))
+        });
+        if let Some((pane, ix)) = result {
+            pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, cx));
+            true
+        } else {
+            false
+        }
+    }
 
     //     fn activate_pane_at_index(&mut self, action: &ActivatePane, cx: &mut ViewContext<Self>) {
     //         let panes = self.center.panes();

@@ -2,7 +2,8 @@ use crate::{
     display_map::DisplaySnapshot,
     element::PointForPosition,
     hover_popover::{self, InlayHover},
-    Anchor, DisplayPoint, Editor, EditorSnapshot, InlayId, SelectPhase,
+    Anchor, DisplayPoint, Editor, EditorSnapshot, GoToDefinition, GoToTypeDefinition, InlayId,
+    SelectPhase,
 };
 use gpui::{Task, ViewContext};
 use language::{Bias, ToOffset};
@@ -108,61 +109,59 @@ pub fn update_go_to_definition_link(
     shift_held: bool,
     cx: &mut ViewContext<Editor>,
 ) {
-    todo!("old version below");
+    let pending_nonempty_selection = editor.has_pending_nonempty_selection();
+
+    // Store new mouse point as an anchor
+    let snapshot = editor.snapshot(cx);
+    let trigger_point = match origin {
+        Some(GoToDefinitionTrigger::Text(p)) => {
+            Some(TriggerPoint::Text(snapshot.buffer_snapshot.anchor_before(
+                p.to_offset(&snapshot.display_snapshot, Bias::Left),
+            )))
+        }
+        Some(GoToDefinitionTrigger::InlayHint(p, lsp_location, language_server_id)) => {
+            Some(TriggerPoint::InlayHint(p, lsp_location, language_server_id))
+        }
+        None => None,
+    };
+
+    // If the new point is the same as the previously stored one, return early
+    if let (Some(a), Some(b)) = (
+        &trigger_point,
+        &editor.link_go_to_definition_state.last_trigger_point,
+    ) {
+        match (a, b) {
+            (TriggerPoint::Text(anchor_a), TriggerPoint::Text(anchor_b)) => {
+                if anchor_a.cmp(anchor_b, &snapshot.buffer_snapshot).is_eq() {
+                    return;
+                }
+            }
+            (TriggerPoint::InlayHint(range_a, _, _), TriggerPoint::InlayHint(range_b, _, _)) => {
+                if range_a == range_b {
+                    return;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    editor.link_go_to_definition_state.last_trigger_point = trigger_point.clone();
+
+    if pending_nonempty_selection {
+        hide_link_definition(editor, cx);
+        return;
+    }
+
+    if cmd_held {
+        if let Some(trigger_point) = trigger_point {
+            let kind = trigger_point.definition_kind(shift_held);
+            show_link_definition(kind, editor, trigger_point, snapshot, cx);
+            return;
+        }
+    }
+
+    hide_link_definition(editor, cx);
 }
-//     let pending_nonempty_selection = editor.has_pending_nonempty_selection();
-
-//     // Store new mouse point as an anchor
-//     let snapshot = editor.snapshot(cx);
-//     let trigger_point = match origin {
-//         Some(GoToDefinitionTrigger::Text(p)) => {
-//             Some(TriggerPoint::Text(snapshot.buffer_snapshot.anchor_before(
-//                 p.to_offset(&snapshot.display_snapshot, Bias::Left),
-//             )))
-//         }
-//         Some(GoToDefinitionTrigger::InlayHint(p, lsp_location, language_server_id)) => {
-//             Some(TriggerPoint::InlayHint(p, lsp_location, language_server_id))
-//         }
-//         None => None,
-//     };
-
-//     // If the new point is the same as the previously stored one, return early
-//     if let (Some(a), Some(b)) = (
-//         &trigger_point,
-//         &editor.link_go_to_definition_state.last_trigger_point,
-//     ) {
-//         match (a, b) {
-//             (TriggerPoint::Text(anchor_a), TriggerPoint::Text(anchor_b)) => {
-//                 if anchor_a.cmp(anchor_b, &snapshot.buffer_snapshot).is_eq() {
-//                     return;
-//                 }
-//             }
-//             (TriggerPoint::InlayHint(range_a, _, _), TriggerPoint::InlayHint(range_b, _, _)) => {
-//                 if range_a == range_b {
-//                     return;
-//                 }
-//             }
-//             _ => {}
-//         }
-//     }
-
-//     editor.link_go_to_definition_state.last_trigger_point = trigger_point.clone();
-
-//     if pending_nonempty_selection {
-//         hide_link_definition(editor, cx);
-//         return;
-//     }
-
-//     if cmd_held {
-//         if let Some(trigger_point) = trigger_point {
-//             let kind = trigger_point.definition_kind(shift_held);
-//             show_link_definition(kind, editor, trigger_point, snapshot, cx);
-//             return;
-//         }
-//     }
-
-//     hide_link_definition(editor, cx);
-// }
 
 pub fn update_inlay_link_and_hover_points(
     snapshot: &DisplaySnapshot,
@@ -353,204 +352,202 @@ pub fn show_link_definition(
     snapshot: EditorSnapshot,
     cx: &mut ViewContext<Editor>,
 ) {
-    todo!("old implementation below")
+    let same_kind = editor.link_go_to_definition_state.kind == Some(definition_kind);
+    if !same_kind {
+        hide_link_definition(editor, cx);
+    }
+
+    if editor.pending_rename.is_some() {
+        return;
+    }
+
+    let trigger_anchor = trigger_point.anchor();
+    let (buffer, buffer_position) = if let Some(output) = editor
+        .buffer
+        .read(cx)
+        .text_anchor_for_position(trigger_anchor.clone(), cx)
+    {
+        output
+    } else {
+        return;
+    };
+
+    let excerpt_id = if let Some((excerpt_id, _, _)) = editor
+        .buffer()
+        .read(cx)
+        .excerpt_containing(trigger_anchor.clone(), cx)
+    {
+        excerpt_id
+    } else {
+        return;
+    };
+
+    let project = if let Some(project) = editor.project.clone() {
+        project
+    } else {
+        return;
+    };
+
+    // Don't request again if the location is within the symbol region of a previous request with the same kind
+    if let Some(symbol_range) = &editor.link_go_to_definition_state.symbol_range {
+        if same_kind && symbol_range.point_within_range(&trigger_point, &snapshot) {
+            return;
+        }
+    }
+
+    let task = cx.spawn(|this, mut cx| {
+        async move {
+            let result = match &trigger_point {
+                TriggerPoint::Text(_) => {
+                    // query the LSP for definition info
+                    project
+                        .update(&mut cx, |project, cx| match definition_kind {
+                            LinkDefinitionKind::Symbol => {
+                                project.definition(&buffer, buffer_position, cx)
+                            }
+
+                            LinkDefinitionKind::Type => {
+                                project.type_definition(&buffer, buffer_position, cx)
+                            }
+                        })?
+                        .await
+                        .ok()
+                        .map(|definition_result| {
+                            (
+                                definition_result.iter().find_map(|link| {
+                                    link.origin.as_ref().map(|origin| {
+                                        let start = snapshot.buffer_snapshot.anchor_in_excerpt(
+                                            excerpt_id.clone(),
+                                            origin.range.start,
+                                        );
+                                        let end = snapshot.buffer_snapshot.anchor_in_excerpt(
+                                            excerpt_id.clone(),
+                                            origin.range.end,
+                                        );
+                                        RangeInEditor::Text(start..end)
+                                    })
+                                }),
+                                definition_result
+                                    .into_iter()
+                                    .map(GoToDefinitionLink::Text)
+                                    .collect(),
+                            )
+                        })
+                }
+                TriggerPoint::InlayHint(highlight, lsp_location, server_id) => Some((
+                    Some(RangeInEditor::Inlay(highlight.clone())),
+                    vec![GoToDefinitionLink::InlayHint(
+                        lsp_location.clone(),
+                        *server_id,
+                    )],
+                )),
+            };
+
+            this.update(&mut cx, |this, cx| {
+                // Clear any existing highlights
+                this.clear_highlights::<LinkGoToDefinitionState>(cx);
+                this.link_go_to_definition_state.kind = Some(definition_kind);
+                this.link_go_to_definition_state.symbol_range = result
+                    .as_ref()
+                    .and_then(|(symbol_range, _)| symbol_range.clone());
+
+                if let Some((symbol_range, definitions)) = result {
+                    this.link_go_to_definition_state.definitions = definitions.clone();
+
+                    let buffer_snapshot = buffer.read(cx).snapshot();
+
+                    // Only show highlight if there exists a definition to jump to that doesn't contain
+                    // the current location.
+                    let any_definition_does_not_contain_current_location =
+                        definitions.iter().any(|definition| {
+                            match &definition {
+                                GoToDefinitionLink::Text(link) => {
+                                    if link.target.buffer == buffer {
+                                        let range = &link.target.range;
+                                        // Expand range by one character as lsp definition ranges include positions adjacent
+                                        // but not contained by the symbol range
+                                        let start = buffer_snapshot.clip_offset(
+                                            range
+                                                .start
+                                                .to_offset(&buffer_snapshot)
+                                                .saturating_sub(1),
+                                            Bias::Left,
+                                        );
+                                        let end = buffer_snapshot.clip_offset(
+                                            range.end.to_offset(&buffer_snapshot) + 1,
+                                            Bias::Right,
+                                        );
+                                        let offset = buffer_position.to_offset(&buffer_snapshot);
+                                        !(start <= offset && end >= offset)
+                                    } else {
+                                        true
+                                    }
+                                }
+                                GoToDefinitionLink::InlayHint(_, _) => true,
+                            }
+                        });
+
+                    if any_definition_does_not_contain_current_location {
+                        // todo!()
+                        // // Highlight symbol using theme link definition highlight style
+                        // let style = theme::current(cx).editor.link_definition;
+                        // let highlight_range =
+                        //     symbol_range.unwrap_or_else(|| match &trigger_point {
+                        //         TriggerPoint::Text(trigger_anchor) => {
+                        //             let snapshot = &snapshot.buffer_snapshot;
+                        //             // If no symbol range returned from language server, use the surrounding word.
+                        //             let (offset_range, _) =
+                        //                 snapshot.surrounding_word(*trigger_anchor);
+                        //             RangeInEditor::Text(
+                        //                 snapshot.anchor_before(offset_range.start)
+                        //                     ..snapshot.anchor_after(offset_range.end),
+                        //             )
+                        //         }
+                        //         TriggerPoint::InlayHint(highlight, _, _) => {
+                        //             RangeInEditor::Inlay(highlight.clone())
+                        //         }
+                        //     });
+
+                        // match highlight_range {
+                        //     RangeInEditor::Text(text_range) => this
+                        //         .highlight_text::<LinkGoToDefinitionState>(
+                        //             vec![text_range],
+                        //             style,
+                        //             cx,
+                        //         ),
+                        //     RangeInEditor::Inlay(highlight) => this
+                        //         .highlight_inlays::<LinkGoToDefinitionState>(
+                        //             vec![highlight],
+                        //             style,
+                        //             cx,
+                        //         ),
+                        // }
+                    } else {
+                        hide_link_definition(this, cx);
+                    }
+                }
+            })?;
+
+            Ok::<_, anyhow::Error>(())
+        }
+        .log_err()
+    });
+
+    editor.link_go_to_definition_state.task = Some(task);
 }
-//     let same_kind = editor.link_go_to_definition_state.kind == Some(definition_kind);
-//     if !same_kind {
-//         hide_link_definition(editor, cx);
-//     }
-
-//     if editor.pending_rename.is_some() {
-//         return;
-//     }
-
-//     let trigger_anchor = trigger_point.anchor();
-//     let (buffer, buffer_position) = if let Some(output) = editor
-//         .buffer
-//         .read(cx)
-//         .text_anchor_for_position(trigger_anchor.clone(), cx)
-//     {
-//         output
-//     } else {
-//         return;
-//     };
-
-//     let excerpt_id = if let Some((excerpt_id, _, _)) = editor
-//         .buffer()
-//         .read(cx)
-//         .excerpt_containing(trigger_anchor.clone(), cx)
-//     {
-//         excerpt_id
-//     } else {
-//         return;
-//     };
-
-//     let project = if let Some(project) = editor.project.clone() {
-//         project
-//     } else {
-//         return;
-//     };
-
-//     // Don't request again if the location is within the symbol region of a previous request with the same kind
-//     if let Some(symbol_range) = &editor.link_go_to_definition_state.symbol_range {
-//         if same_kind && symbol_range.point_within_range(&trigger_point, &snapshot) {
-//             return;
-//         }
-//     }
-
-//     let task = cx.spawn(|this, mut cx| {
-//         async move {
-//             let result = match &trigger_point {
-//                 TriggerPoint::Text(_) => {
-//                     // query the LSP for definition info
-//                     cx.update(|cx| {
-//                         project.update(cx, |project, cx| match definition_kind {
-//                             LinkDefinitionKind::Symbol => {
-//                                 project.definition(&buffer, buffer_position, cx)
-//                             }
-
-//                             LinkDefinitionKind::Type => {
-//                                 project.type_definition(&buffer, buffer_position, cx)
-//                             }
-//                         })
-//                     })
-//                     .await
-//                     .ok()
-//                     .map(|definition_result| {
-//                         (
-//                             definition_result.iter().find_map(|link| {
-//                                 link.origin.as_ref().map(|origin| {
-//                                     let start = snapshot
-//                                         .buffer_snapshot
-//                                         .anchor_in_excerpt(excerpt_id.clone(), origin.range.start);
-//                                     let end = snapshot
-//                                         .buffer_snapshot
-//                                         .anchor_in_excerpt(excerpt_id.clone(), origin.range.end);
-//                                     RangeInEditor::Text(start..end)
-//                                 })
-//                             }),
-//                             definition_result
-//                                 .into_iter()
-//                                 .map(GoToDefinitionLink::Text)
-//                                 .collect(),
-//                         )
-//                     })
-//                 }
-//                 TriggerPoint::InlayHint(highlight, lsp_location, server_id) => Some((
-//                     Some(RangeInEditor::Inlay(highlight.clone())),
-//                     vec![GoToDefinitionLink::InlayHint(
-//                         lsp_location.clone(),
-//                         *server_id,
-//                     )],
-//                 )),
-//             };
-
-//             this.update(&mut cx, |this, cx| {
-//                 // Clear any existing highlights
-//                 this.clear_highlights::<LinkGoToDefinitionState>(cx);
-//                 this.link_go_to_definition_state.kind = Some(definition_kind);
-//                 this.link_go_to_definition_state.symbol_range = result
-//                     .as_ref()
-//                     .and_then(|(symbol_range, _)| symbol_range.clone());
-
-//                 if let Some((symbol_range, definitions)) = result {
-//                     this.link_go_to_definition_state.definitions = definitions.clone();
-
-//                     let buffer_snapshot = buffer.read(cx).snapshot();
-
-//                     // Only show highlight if there exists a definition to jump to that doesn't contain
-//                     // the current location.
-//                     let any_definition_does_not_contain_current_location =
-//                         definitions.iter().any(|definition| {
-//                             match &definition {
-//                                 GoToDefinitionLink::Text(link) => {
-//                                     if link.target.buffer == buffer {
-//                                         let range = &link.target.range;
-//                                         // Expand range by one character as lsp definition ranges include positions adjacent
-//                                         // but not contained by the symbol range
-//                                         let start = buffer_snapshot.clip_offset(
-//                                             range
-//                                                 .start
-//                                                 .to_offset(&buffer_snapshot)
-//                                                 .saturating_sub(1),
-//                                             Bias::Left,
-//                                         );
-//                                         let end = buffer_snapshot.clip_offset(
-//                                             range.end.to_offset(&buffer_snapshot) + 1,
-//                                             Bias::Right,
-//                                         );
-//                                         let offset = buffer_position.to_offset(&buffer_snapshot);
-//                                         !(start <= offset && end >= offset)
-//                                     } else {
-//                                         true
-//                                     }
-//                                 }
-//                                 GoToDefinitionLink::InlayHint(_, _) => true,
-//                             }
-//                         });
-
-//                     if any_definition_does_not_contain_current_location {
-//                         // todo!()
-//                         // // Highlight symbol using theme link definition highlight style
-//                         // let style = theme::current(cx).editor.link_definition;
-//                         // let highlight_range =
-//                         //     symbol_range.unwrap_or_else(|| match &trigger_point {
-//                         //         TriggerPoint::Text(trigger_anchor) => {
-//                         //             let snapshot = &snapshot.buffer_snapshot;
-//                         //             // If no symbol range returned from language server, use the surrounding word.
-//                         //             let (offset_range, _) =
-//                         //                 snapshot.surrounding_word(*trigger_anchor);
-//                         //             RangeInEditor::Text(
-//                         //                 snapshot.anchor_before(offset_range.start)
-//                         //                     ..snapshot.anchor_after(offset_range.end),
-//                         //             )
-//                         //         }
-//                         //         TriggerPoint::InlayHint(highlight, _, _) => {
-//                         //             RangeInEditor::Inlay(highlight.clone())
-//                         //         }
-//                         //     });
-
-//                         // match highlight_range {
-//                         //     RangeInEditor::Text(text_range) => this
-//                         //         .highlight_text::<LinkGoToDefinitionState>(
-//                         //             vec![text_range],
-//                         //             style,
-//                         //             cx,
-//                         //         ),
-//                         //     RangeInEditor::Inlay(highlight) => this
-//                         //         .highlight_inlays::<LinkGoToDefinitionState>(
-//                         //             vec![highlight],
-//                         //             style,
-//                         //             cx,
-//                         //         ),
-//                         // }
-//                     } else {
-//                         hide_link_definition(this, cx);
-//                     }
-//                 }
-//             })?;
-
-//             Ok::<_, anyhow::Error>(())
-//         }
-//         .log_err()
-//     });
-
-//     editor.link_go_to_definition_state.task = Some(task);
-// }
 
 pub fn hide_link_definition(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-    todo!()
-    // if editor.link_go_to_definition_state.symbol_range.is_some()
-    //     || !editor.link_go_to_definition_state.definitions.is_empty()
-    // {
-    //     editor.link_go_to_definition_state.symbol_range.take();
-    //     editor.link_go_to_definition_state.definitions.clear();
-    //     cx.notify();
-    // }
+    if editor.link_go_to_definition_state.symbol_range.is_some()
+        || !editor.link_go_to_definition_state.definitions.is_empty()
+    {
+        editor.link_go_to_definition_state.symbol_range.take();
+        editor.link_go_to_definition_state.definitions.clear();
+        cx.notify();
+    }
 
-    // editor.link_go_to_definition_state.task = None;
+    editor.link_go_to_definition_state.task = None;
 
-    // editor.clear_highlights::<LinkGoToDefinitionState>(cx);
+    editor.clear_highlights::<LinkGoToDefinitionState>(cx);
 }
 
 pub fn go_to_fetched_definition(
@@ -578,35 +575,34 @@ fn go_to_fetched_definition_of_kind(
     split: bool,
     cx: &mut ViewContext<Editor>,
 ) {
-    todo!();
-    // let cached_definitions = editor.link_go_to_definition_state.definitions.clone();
-    // hide_link_definition(editor, cx);
-    // let cached_definitions_kind = editor.link_go_to_definition_state.kind;
+    let cached_definitions = editor.link_go_to_definition_state.definitions.clone();
+    hide_link_definition(editor, cx);
+    let cached_definitions_kind = editor.link_go_to_definition_state.kind;
 
-    // let is_correct_kind = cached_definitions_kind == Some(kind);
-    // if !cached_definitions.is_empty() && is_correct_kind {
-    //     if !editor.focused {
-    //         cx.focus_self();
-    //     }
+    let is_correct_kind = cached_definitions_kind == Some(kind);
+    if !cached_definitions.is_empty() && is_correct_kind {
+        if !editor.focused {
+            cx.focus(&editor.focus_handle);
+        }
 
-    //     editor.navigate_to_definitions(cached_definitions, split, cx);
-    // } else {
-    //     editor.select(
-    //         SelectPhase::Begin {
-    //             position: point.next_valid,
-    //             add: false,
-    //             click_count: 1,
-    //         },
-    //         cx,
-    //     );
+        editor.navigate_to_definitions(cached_definitions, split, cx);
+    } else {
+        editor.select(
+            SelectPhase::Begin {
+                position: point.next_valid,
+                add: false,
+                click_count: 1,
+            },
+            cx,
+        );
 
-    //     if point.as_valid().is_some() {
-    //         match kind {
-    //             LinkDefinitionKind::Symbol => editor.go_to_definition(&Default::default(), cx),
-    //             LinkDefinitionKind::Type => editor.go_to_type_definition(&Default::default(), cx),
-    //         }
-    //     }
-    // }
+        if point.as_valid().is_some() {
+            match kind {
+                LinkDefinitionKind::Symbol => editor.go_to_definition(&GoToDefinition, cx),
+                LinkDefinitionKind::Type => editor.go_to_type_definition(&GoToTypeDefinition, cx),
+            }
+        }
+    }
 }
 
 // #[cfg(test)]

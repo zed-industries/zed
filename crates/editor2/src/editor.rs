@@ -21,7 +21,7 @@ mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 use aho_corasick::AhoCorasick;
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use blink_manager::BlinkManager;
 use client::{ClickhouseEvent, Client, Collaborator, ParticipantIndex, TelemetrySettings};
 use clock::ReplicaId;
@@ -36,9 +36,9 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, AppContext, BackgroundExecutor, Context, Element, EventEmitter, FocusHandle, Hsla,
-    Model, Pixels, Render, Subscription, Task, TextStyle, View, ViewContext, WeakView,
-    WindowContext,
+    div, AnyElement, AppContext, BackgroundExecutor, Context, Div, Element, EventEmitter,
+    FocusHandle, Hsla, Model, Pixels, Render, Subscription, Task, TextStyle, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -48,10 +48,11 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
-    AutoindentMode, BracketPair, Buffer, CodeAction, Completion, CursorShape, Diagnostic, Language,
-    LanguageRegistry, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
+    point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, Completion, CursorShape,
+    Diagnostic, Language, LanguageRegistry, LanguageServerName, OffsetRangeExt, Point, Selection,
+    SelectionGoal, TransactionId,
 };
-use link_go_to_definition::{InlayHighlight, LinkGoToDefinitionState};
+use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
 use lsp::{Documentation, LanguageServerId};
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
@@ -59,7 +60,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use parking_lot::RwLock;
-use project::{FormatTrigger, Project};
+use project::{FormatTrigger, Location, Project};
 use rpc::proto::*;
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
@@ -69,6 +70,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{
     any::TypeId,
+    borrow::Cow,
     cmp::{self, Reverse},
     ops::{ControlFlow, Deref, DerefMut, Range},
     path::Path,
@@ -80,7 +82,7 @@ use sum_tree::TreeMap;
 use text::Rope;
 use theme::ThemeColors;
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, ViewId, Workspace};
+use workspace::{ItemNavHistory, SplitDirection, ViewId, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -389,6 +391,10 @@ impl InlayId {
 // todo!(revisit these actions)
 pub struct ShowCompletions;
 pub struct Rename;
+pub struct GoToDefinition;
+pub struct GoToTypeDefinition;
+pub struct GoToDefinitionSplit;
+pub struct GoToTypeDefinitionSplit;
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -561,7 +567,7 @@ pub enum SelectPhase {
     Update {
         position: DisplayPoint,
         goal_column: u32,
-        scroll_position: gpui::Point<Pixels>,
+        scroll_position: gpui::Point<f32>,
     },
     End,
 }
@@ -1836,13 +1842,13 @@ impl Editor {
         Self::new(EditorMode::Full, buffer, project, cx)
     }
 
-    //     pub fn for_multibuffer(
-    //         buffer: Model<MultiBuffer>,
-    //         project: Option<Model<Project>>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Self {
-    //         Self::new(EditorMode::Full, buffer, project, None, cx)
-    //     }
+    pub fn for_multibuffer(
+        buffer: Model<MultiBuffer>,
+        project: Option<Model<Project>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        Self::new(EditorMode::Full, buffer, project, cx)
+    }
 
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
         let mut clone = Self::new(
@@ -2048,9 +2054,9 @@ impl Editor {
     //         }
     //     }
 
-    //     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
-    //         self.buffer.read(cx).replica_id()
-    //     }
+    pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
+        self.buffer.read(cx).replica_id()
+    }
 
     //     pub fn leader_peer_id(&self) -> Option<PeerId> {
     //         self.leader_peer_id
@@ -2060,13 +2066,13 @@ impl Editor {
         &self.buffer
     }
 
-    //     fn workspace(&self, cx: &AppContext) -> Option<ViewHandle<Workspace>> {
-    //         self.workspace.as_ref()?.0.upgrade(cx)
-    //     }
+    fn workspace(&self) -> Option<View<Workspace>> {
+        self.workspace.as_ref()?.0.upgrade()
+    }
 
-    //     pub fn title<'a>(&self, cx: &'a AppContext) -> Cow<'a, str> {
-    //         self.buffer().read(cx).title(cx)
-    //     }
+    pub fn title<'a>(&self, cx: &'a AppContext) -> Cow<'a, str> {
+        self.buffer().read(cx).title(cx)
+    }
 
     pub fn snapshot(&mut self, cx: &mut WindowContext) -> EditorSnapshot {
         EditorSnapshot {
@@ -2140,12 +2146,12 @@ impl Editor {
     //         self.collapse_matches = collapse_matches;
     //     }
 
-    //     pub fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
-    //         if self.collapse_matches {
-    //             return range.start..range.start;
-    //         }
-    //         range.clone()
-    //     }
+    pub fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
+        if self.collapse_matches {
+            return range.start..range.start;
+        }
+        range.clone()
+    }
 
     //     pub fn set_clip_at_line_ends(&mut self, clip: bool, cx: &mut ViewContext<Self>) {
     //         if self.display_map.read(cx).clip_at_line_ends != clip {
@@ -2383,253 +2389,253 @@ impl Editor {
     //         });
     //     }
 
-    //     fn select(&mut self, phase: SelectPhase, cx: &mut ViewContext<Self>) {
-    //         self.hide_context_menu(cx);
+    fn select(&mut self, phase: SelectPhase, cx: &mut ViewContext<Self>) {
+        self.hide_context_menu(cx);
 
-    //         match phase {
-    //             SelectPhase::Begin {
-    //                 position,
-    //                 add,
-    //                 click_count,
-    //             } => self.begin_selection(position, add, click_count, cx),
-    //             SelectPhase::BeginColumnar {
-    //                 position,
-    //                 goal_column,
-    //             } => self.begin_columnar_selection(position, goal_column, cx),
-    //             SelectPhase::Extend {
-    //                 position,
-    //                 click_count,
-    //             } => self.extend_selection(position, click_count, cx),
-    //             SelectPhase::Update {
-    //                 position,
-    //                 goal_column,
-    //                 scroll_position,
-    //             } => self.update_selection(position, goal_column, scroll_position, cx),
-    //             SelectPhase::End => self.end_selection(cx),
-    //         }
-    //     }
+        match phase {
+            SelectPhase::Begin {
+                position,
+                add,
+                click_count,
+            } => self.begin_selection(position, add, click_count, cx),
+            SelectPhase::BeginColumnar {
+                position,
+                goal_column,
+            } => self.begin_columnar_selection(position, goal_column, cx),
+            SelectPhase::Extend {
+                position,
+                click_count,
+            } => self.extend_selection(position, click_count, cx),
+            SelectPhase::Update {
+                position,
+                goal_column,
+                scroll_position,
+            } => self.update_selection(position, goal_column, scroll_position, cx),
+            SelectPhase::End => self.end_selection(cx),
+        }
+    }
 
-    //     fn extend_selection(
-    //         &mut self,
-    //         position: DisplayPoint,
-    //         click_count: usize,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-    //         let tail = self.selections.newest::<usize>(cx).tail();
-    //         self.begin_selection(position, false, click_count, cx);
+    fn extend_selection(
+        &mut self,
+        position: DisplayPoint,
+        click_count: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let tail = self.selections.newest::<usize>(cx).tail();
+        self.begin_selection(position, false, click_count, cx);
 
-    //         let position = position.to_offset(&display_map, Bias::Left);
-    //         let tail_anchor = display_map.buffer_snapshot.anchor_before(tail);
+        let position = position.to_offset(&display_map, Bias::Left);
+        let tail_anchor = display_map.buffer_snapshot.anchor_before(tail);
 
-    //         let mut pending_selection = self
-    //             .selections
-    //             .pending_anchor()
-    //             .expect("extend_selection not called with pending selection");
-    //         if position >= tail {
-    //             pending_selection.start = tail_anchor;
-    //         } else {
-    //             pending_selection.end = tail_anchor;
-    //             pending_selection.reversed = true;
-    //         }
+        let mut pending_selection = self
+            .selections
+            .pending_anchor()
+            .expect("extend_selection not called with pending selection");
+        if position >= tail {
+            pending_selection.start = tail_anchor;
+        } else {
+            pending_selection.end = tail_anchor;
+            pending_selection.reversed = true;
+        }
 
-    //         let mut pending_mode = self.selections.pending_mode().unwrap();
-    //         match &mut pending_mode {
-    //             SelectMode::Word(range) | SelectMode::Line(range) => *range = tail_anchor..tail_anchor,
-    //             _ => {}
-    //         }
+        let mut pending_mode = self.selections.pending_mode().unwrap();
+        match &mut pending_mode {
+            SelectMode::Word(range) | SelectMode::Line(range) => *range = tail_anchor..tail_anchor,
+            _ => {}
+        }
 
-    //         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-    //             s.set_pending(pending_selection, pending_mode)
-    //         });
-    //     }
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.set_pending(pending_selection, pending_mode)
+        });
+    }
 
-    //     fn begin_selection(
-    //         &mut self,
-    //         position: DisplayPoint,
-    //         add: bool,
-    //         click_count: usize,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         if !self.focused {
-    //             cx.focus_self();
-    //         }
+    fn begin_selection(
+        &mut self,
+        position: DisplayPoint,
+        add: bool,
+        click_count: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if !self.focused {
+            cx.focus(&self.focus_handle);
+        }
 
-    //         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-    //         let buffer = &display_map.buffer_snapshot;
-    //         let newest_selection = self.selections.newest_anchor().clone();
-    //         let position = display_map.clip_point(position, Bias::Left);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = &display_map.buffer_snapshot;
+        let newest_selection = self.selections.newest_anchor().clone();
+        let position = display_map.clip_point(position, Bias::Left);
 
-    //         let start;
-    //         let end;
-    //         let mode;
-    //         let auto_scroll;
-    //         match click_count {
-    //             1 => {
-    //                 start = buffer.anchor_before(position.to_point(&display_map));
-    //                 end = start.clone();
-    //                 mode = SelectMode::Character;
-    //                 auto_scroll = true;
-    //             }
-    //             2 => {
-    //                 let range = movement::surrounding_word(&display_map, position);
-    //                 start = buffer.anchor_before(range.start.to_point(&display_map));
-    //                 end = buffer.anchor_before(range.end.to_point(&display_map));
-    //                 mode = SelectMode::Word(start.clone()..end.clone());
-    //                 auto_scroll = true;
-    //             }
-    //             3 => {
-    //                 let position = display_map
-    //                     .clip_point(position, Bias::Left)
-    //                     .to_point(&display_map);
-    //                 let line_start = display_map.prev_line_boundary(position).0;
-    //                 let next_line_start = buffer.clip_point(
-    //                     display_map.next_line_boundary(position).0 + Point::new(1, 0),
-    //                     Bias::Left,
-    //                 );
-    //                 start = buffer.anchor_before(line_start);
-    //                 end = buffer.anchor_before(next_line_start);
-    //                 mode = SelectMode::Line(start.clone()..end.clone());
-    //                 auto_scroll = true;
-    //             }
-    //             _ => {
-    //                 start = buffer.anchor_before(0);
-    //                 end = buffer.anchor_before(buffer.len());
-    //                 mode = SelectMode::All;
-    //                 auto_scroll = false;
-    //             }
-    //         }
+        let start;
+        let end;
+        let mode;
+        let auto_scroll;
+        match click_count {
+            1 => {
+                start = buffer.anchor_before(position.to_point(&display_map));
+                end = start.clone();
+                mode = SelectMode::Character;
+                auto_scroll = true;
+            }
+            2 => {
+                let range = movement::surrounding_word(&display_map, position);
+                start = buffer.anchor_before(range.start.to_point(&display_map));
+                end = buffer.anchor_before(range.end.to_point(&display_map));
+                mode = SelectMode::Word(start.clone()..end.clone());
+                auto_scroll = true;
+            }
+            3 => {
+                let position = display_map
+                    .clip_point(position, Bias::Left)
+                    .to_point(&display_map);
+                let line_start = display_map.prev_line_boundary(position).0;
+                let next_line_start = buffer.clip_point(
+                    display_map.next_line_boundary(position).0 + Point::new(1, 0),
+                    Bias::Left,
+                );
+                start = buffer.anchor_before(line_start);
+                end = buffer.anchor_before(next_line_start);
+                mode = SelectMode::Line(start.clone()..end.clone());
+                auto_scroll = true;
+            }
+            _ => {
+                start = buffer.anchor_before(0);
+                end = buffer.anchor_before(buffer.len());
+                mode = SelectMode::All;
+                auto_scroll = false;
+            }
+        }
 
-    //         self.change_selections(auto_scroll.then(|| Autoscroll::newest()), cx, |s| {
-    //             if !add {
-    //                 s.clear_disjoint();
-    //             } else if click_count > 1 {
-    //                 s.delete(newest_selection.id)
-    //             }
+        self.change_selections(auto_scroll.then(|| Autoscroll::newest()), cx, |s| {
+            if !add {
+                s.clear_disjoint();
+            } else if click_count > 1 {
+                s.delete(newest_selection.id)
+            }
 
-    //             s.set_pending_anchor_range(start..end, mode);
-    //         });
-    //     }
+            s.set_pending_anchor_range(start..end, mode);
+        });
+    }
 
-    //     fn begin_columnar_selection(
-    //         &mut self,
-    //         position: DisplayPoint,
-    //         goal_column: u32,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         if !self.focused {
-    //             cx.focus_self();
-    //         }
+    fn begin_columnar_selection(
+        &mut self,
+        position: DisplayPoint,
+        goal_column: u32,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if !self.focused {
+            cx.focus(&self.focus_handle);
+        }
 
-    //         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-    //         let tail = self.selections.newest::<Point>(cx).tail();
-    //         self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let tail = self.selections.newest::<Point>(cx).tail();
+        self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
 
-    //         self.select_columns(
-    //             tail.to_display_point(&display_map),
-    //             position,
-    //             goal_column,
-    //             &display_map,
-    //             cx,
-    //         );
-    //     }
+        self.select_columns(
+            tail.to_display_point(&display_map),
+            position,
+            goal_column,
+            &display_map,
+            cx,
+        );
+    }
 
-    //     fn update_selection(
-    //         &mut self,
-    //         position: DisplayPoint,
-    //         goal_column: u32,
-    //         scroll_position: Vector2F,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+    fn update_selection(
+        &mut self,
+        position: DisplayPoint,
+        goal_column: u32,
+        scroll_position: gpui::Point<f32>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-    //         if let Some(tail) = self.columnar_selection_tail.as_ref() {
-    //             let tail = tail.to_display_point(&display_map);
-    //             self.select_columns(tail, position, goal_column, &display_map, cx);
-    //         } else if let Some(mut pending) = self.selections.pending_anchor() {
-    //             let buffer = self.buffer.read(cx).snapshot(cx);
-    //             let head;
-    //             let tail;
-    //             let mode = self.selections.pending_mode().unwrap();
-    //             match &mode {
-    //                 SelectMode::Character => {
-    //                     head = position.to_point(&display_map);
-    //                     tail = pending.tail().to_point(&buffer);
-    //                 }
-    //                 SelectMode::Word(original_range) => {
-    //                     let original_display_range = original_range.start.to_display_point(&display_map)
-    //                         ..original_range.end.to_display_point(&display_map);
-    //                     let original_buffer_range = original_display_range.start.to_point(&display_map)
-    //                         ..original_display_range.end.to_point(&display_map);
-    //                     if movement::is_inside_word(&display_map, position)
-    //                         || original_display_range.contains(&position)
-    //                     {
-    //                         let word_range = movement::surrounding_word(&display_map, position);
-    //                         if word_range.start < original_display_range.start {
-    //                             head = word_range.start.to_point(&display_map);
-    //                         } else {
-    //                             head = word_range.end.to_point(&display_map);
-    //                         }
-    //                     } else {
-    //                         head = position.to_point(&display_map);
-    //                     }
+        if let Some(tail) = self.columnar_selection_tail.as_ref() {
+            let tail = tail.to_display_point(&display_map);
+            self.select_columns(tail, position, goal_column, &display_map, cx);
+        } else if let Some(mut pending) = self.selections.pending_anchor() {
+            let buffer = self.buffer.read(cx).snapshot(cx);
+            let head;
+            let tail;
+            let mode = self.selections.pending_mode().unwrap();
+            match &mode {
+                SelectMode::Character => {
+                    head = position.to_point(&display_map);
+                    tail = pending.tail().to_point(&buffer);
+                }
+                SelectMode::Word(original_range) => {
+                    let original_display_range = original_range.start.to_display_point(&display_map)
+                        ..original_range.end.to_display_point(&display_map);
+                    let original_buffer_range = original_display_range.start.to_point(&display_map)
+                        ..original_display_range.end.to_point(&display_map);
+                    if movement::is_inside_word(&display_map, position)
+                        || original_display_range.contains(&position)
+                    {
+                        let word_range = movement::surrounding_word(&display_map, position);
+                        if word_range.start < original_display_range.start {
+                            head = word_range.start.to_point(&display_map);
+                        } else {
+                            head = word_range.end.to_point(&display_map);
+                        }
+                    } else {
+                        head = position.to_point(&display_map);
+                    }
 
-    //                     if head <= original_buffer_range.start {
-    //                         tail = original_buffer_range.end;
-    //                     } else {
-    //                         tail = original_buffer_range.start;
-    //                     }
-    //                 }
-    //                 SelectMode::Line(original_range) => {
-    //                     let original_range = original_range.to_point(&display_map.buffer_snapshot);
+                    if head <= original_buffer_range.start {
+                        tail = original_buffer_range.end;
+                    } else {
+                        tail = original_buffer_range.start;
+                    }
+                }
+                SelectMode::Line(original_range) => {
+                    let original_range = original_range.to_point(&display_map.buffer_snapshot);
 
-    //                     let position = display_map
-    //                         .clip_point(position, Bias::Left)
-    //                         .to_point(&display_map);
-    //                     let line_start = display_map.prev_line_boundary(position).0;
-    //                     let next_line_start = buffer.clip_point(
-    //                         display_map.next_line_boundary(position).0 + Point::new(1, 0),
-    //                         Bias::Left,
-    //                     );
+                    let position = display_map
+                        .clip_point(position, Bias::Left)
+                        .to_point(&display_map);
+                    let line_start = display_map.prev_line_boundary(position).0;
+                    let next_line_start = buffer.clip_point(
+                        display_map.next_line_boundary(position).0 + Point::new(1, 0),
+                        Bias::Left,
+                    );
 
-    //                     if line_start < original_range.start {
-    //                         head = line_start
-    //                     } else {
-    //                         head = next_line_start
-    //                     }
+                    if line_start < original_range.start {
+                        head = line_start
+                    } else {
+                        head = next_line_start
+                    }
 
-    //                     if head <= original_range.start {
-    //                         tail = original_range.end;
-    //                     } else {
-    //                         tail = original_range.start;
-    //                     }
-    //                 }
-    //                 SelectMode::All => {
-    //                     return;
-    //                 }
-    //             };
+                    if head <= original_range.start {
+                        tail = original_range.end;
+                    } else {
+                        tail = original_range.start;
+                    }
+                }
+                SelectMode::All => {
+                    return;
+                }
+            };
 
-    //             if head < tail {
-    //                 pending.start = buffer.anchor_before(head);
-    //                 pending.end = buffer.anchor_before(tail);
-    //                 pending.reversed = true;
-    //             } else {
-    //                 pending.start = buffer.anchor_before(tail);
-    //                 pending.end = buffer.anchor_before(head);
-    //                 pending.reversed = false;
-    //             }
+            if head < tail {
+                pending.start = buffer.anchor_before(head);
+                pending.end = buffer.anchor_before(tail);
+                pending.reversed = true;
+            } else {
+                pending.start = buffer.anchor_before(tail);
+                pending.end = buffer.anchor_before(head);
+                pending.reversed = false;
+            }
 
-    //             self.change_selections(None, cx, |s| {
-    //                 s.set_pending(pending, mode);
-    //             });
-    //         } else {
-    //             error!("update_selection dispatched with no pending selection");
-    //             return;
-    //         }
+            self.change_selections(None, cx, |s| {
+                s.set_pending(pending, mode);
+            });
+        } else {
+            log::error!("update_selection dispatched with no pending selection");
+            return;
+        }
 
-    //         self.set_scroll_position(scroll_position, cx);
-    //         cx.notify();
-    //     }
+        self.set_scroll_position(scroll_position, cx);
+        cx.notify();
+    }
 
     fn end_selection(&mut self, cx: &mut ViewContext<Self>) {
         self.columnar_selection_tail.take();
@@ -7347,239 +7353,233 @@ impl Editor {
     //         }
     //     }
 
-    //     pub fn go_to_definition(&mut self, _: &GoToDefinition, cx: &mut ViewContext<Self>) {
-    //         self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
-    //     }
+    pub fn go_to_definition(&mut self, _: &GoToDefinition, cx: &mut ViewContext<Self>) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
+    }
 
-    //     pub fn go_to_type_definition(&mut self, _: &GoToTypeDefinition, cx: &mut ViewContext<Self>) {
-    //         self.go_to_definition_of_kind(GotoDefinitionKind::Type, false, cx);
-    //     }
+    pub fn go_to_type_definition(&mut self, _: &GoToTypeDefinition, cx: &mut ViewContext<Self>) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Type, false, cx);
+    }
 
-    //     pub fn go_to_definition_split(&mut self, _: &GoToDefinitionSplit, cx: &mut ViewContext<Self>) {
-    //         self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, true, cx);
-    //     }
+    pub fn go_to_definition_split(&mut self, _: &GoToDefinitionSplit, cx: &mut ViewContext<Self>) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, true, cx);
+    }
 
-    //     pub fn go_to_type_definition_split(
-    //         &mut self,
-    //         _: &GoToTypeDefinitionSplit,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.go_to_definition_of_kind(GotoDefinitionKind::Type, true, cx);
-    //     }
+    pub fn go_to_type_definition_split(
+        &mut self,
+        _: &GoToTypeDefinitionSplit,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Type, true, cx);
+    }
 
-    //     fn go_to_definition_of_kind(
-    //         &mut self,
-    //         kind: GotoDefinitionKind,
-    //         split: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         let Some(workspace) = self.workspace(cx) else {
-    //             return;
-    //         };
-    //         let buffer = self.buffer.read(cx);
-    //         let head = self.selections.newest::<usize>(cx).head();
-    //         let (buffer, head) = if let Some(text_anchor) = buffer.text_anchor_for_position(head, cx) {
-    //             text_anchor
-    //         } else {
-    //             return;
-    //         };
+    fn go_to_definition_of_kind(
+        &mut self,
+        kind: GotoDefinitionKind,
+        split: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+        let buffer = self.buffer.read(cx);
+        let head = self.selections.newest::<usize>(cx).head();
+        let (buffer, head) = if let Some(text_anchor) = buffer.text_anchor_for_position(head, cx) {
+            text_anchor
+        } else {
+            return;
+        };
 
-    //         let project = workspace.read(cx).project().clone();
-    //         let definitions = project.update(cx, |project, cx| match kind {
-    //             GotoDefinitionKind::Symbol => project.definition(&buffer, head, cx),
-    //             GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
-    //         });
+        let project = workspace.read(cx).project().clone();
+        let definitions = project.update(cx, |project, cx| match kind {
+            GotoDefinitionKind::Symbol => project.definition(&buffer, head, cx),
+            GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
+        });
 
-    //         cx.spawn_labeled("Fetching Definition...", |editor, mut cx| async move {
-    //             let definitions = definitions.await?;
-    //             editor.update(&mut cx, |editor, cx| {
-    //                 editor.navigate_to_definitions(
-    //                     definitions
-    //                         .into_iter()
-    //                         .map(GoToDefinitionLink::Text)
-    //                         .collect(),
-    //                     split,
-    //                     cx,
-    //                 );
-    //             })?;
-    //             Ok::<(), anyhow::Error>(())
-    //         })
-    //         .detach_and_log_err(cx);
-    //     }
+        cx.spawn(|editor, mut cx| async move {
+            let definitions = definitions.await?;
+            editor.update(&mut cx, |editor, cx| {
+                editor.navigate_to_definitions(
+                    definitions
+                        .into_iter()
+                        .map(GoToDefinitionLink::Text)
+                        .collect(),
+                    split,
+                    cx,
+                );
+            })?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+    }
 
-    //     pub fn navigate_to_definitions(
-    //         &mut self,
-    //         mut definitions: Vec<GoToDefinitionLink>,
-    //         split: bool,
-    //         cx: &mut ViewContext<Editor>,
-    //     ) {
-    //         let Some(workspace) = self.workspace(cx) else {
-    //             return;
-    //         };
-    //         let pane = workspace.read(cx).active_pane().clone();
-    //         // If there is one definition, just open it directly
-    //         if definitions.len() == 1 {
-    //             let definition = definitions.pop().unwrap();
-    //             let target_task = match definition {
-    //                 GoToDefinitionLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
-    //                 GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
-    //                     self.compute_target_location(lsp_location, server_id, cx)
-    //                 }
-    //             };
-    //             cx.spawn(|editor, mut cx| async move {
-    //                 let target = target_task.await.context("target resolution task")?;
-    //                 if let Some(target) = target {
-    //                     editor.update(&mut cx, |editor, cx| {
-    //                         let range = target.range.to_offset(target.buffer.read(cx));
-    //                         let range = editor.range_for_match(&range);
-    //                         if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
-    //                             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-    //                                 s.select_ranges([range]);
-    //                             });
-    //                         } else {
-    //                             cx.window_context().defer(move |cx| {
-    //                                 let target_editor: ViewHandle<Self> =
-    //                                     workspace.update(cx, |workspace, cx| {
-    //                                         if split {
-    //                                             workspace.split_project_item(target.buffer.clone(), cx)
-    //                                         } else {
-    //                                             workspace.open_project_item(target.buffer.clone(), cx)
-    //                                         }
-    //                                     });
-    //                                 target_editor.update(cx, |target_editor, cx| {
-    //                                     // When selecting a definition in a different buffer, disable the nav history
-    //                                     // to avoid creating a history entry at the previous cursor location.
-    //                                     pane.update(cx, |pane, _| pane.disable_history());
-    //                                     target_editor.change_selections(
-    //                                         Some(Autoscroll::fit()),
-    //                                         cx,
-    //                                         |s| {
-    //                                             s.select_ranges([range]);
-    //                                         },
-    //                                     );
-    //                                     pane.update(cx, |pane, _| pane.enable_history());
-    //                                 });
-    //                             });
-    //                         }
-    //                     })
-    //                 } else {
-    //                     Ok(())
-    //                 }
-    //             })
-    //             .detach_and_log_err(cx);
-    //         } else if !definitions.is_empty() {
-    //             let replica_id = self.replica_id(cx);
-    //             cx.spawn(|editor, mut cx| async move {
-    //                 let (title, location_tasks) = editor
-    //                     .update(&mut cx, |editor, cx| {
-    //                         let title = definitions
-    //                             .iter()
-    //                             .find_map(|definition| match definition {
-    //                                 GoToDefinitionLink::Text(link) => {
-    //                                     link.origin.as_ref().map(|origin| {
-    //                                         let buffer = origin.buffer.read(cx);
-    //                                         format!(
-    //                                             "Definitions for {}",
-    //                                             buffer
-    //                                                 .text_for_range(origin.range.clone())
-    //                                                 .collect::<String>()
-    //                                         )
-    //                                     })
-    //                                 }
-    //                                 GoToDefinitionLink::InlayHint(_, _) => None,
-    //                             })
-    //                             .unwrap_or("Definitions".to_string());
-    //                         let location_tasks = definitions
-    //                             .into_iter()
-    //                             .map(|definition| match definition {
-    //                                 GoToDefinitionLink::Text(link) => {
-    //                                     Task::Ready(Some(Ok(Some(link.target))))
-    //                                 }
-    //                                 GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
-    //                                     editor.compute_target_location(lsp_location, server_id, cx)
-    //                                 }
-    //                             })
-    //                             .collect::<Vec<_>>();
-    //                         (title, location_tasks)
-    //                     })
-    //                     .context("location tasks preparation")?;
+    pub fn navigate_to_definitions(
+        &mut self,
+        mut definitions: Vec<GoToDefinitionLink>,
+        split: bool,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+        let pane = workspace.read(cx).active_pane().clone();
+        // If there is one definition, just open it directly
+        if definitions.len() == 1 {
+            let definition = definitions.pop().unwrap();
+            let target_task = match definition {
+                GoToDefinitionLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
+                GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
+                    self.compute_target_location(lsp_location, server_id, cx)
+                }
+            };
+            cx.spawn(|editor, mut cx| async move {
+                let target = target_task.await.context("target resolution task")?;
+                if let Some(target) = target {
+                    editor.update(&mut cx, |editor, cx| {
+                        let range = target.range.to_offset(target.buffer.read(cx));
+                        let range = editor.range_for_match(&range);
+                        if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
+                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                                s.select_ranges([range]);
+                            });
+                        } else {
+                            cx.window_context().defer(move |cx| {
+                                let target_editor: View<Self> =
+                                    workspace.update(cx, |workspace, cx| {
+                                        if split {
+                                            workspace.split_project_item(target.buffer.clone(), cx)
+                                        } else {
+                                            workspace.open_project_item(target.buffer.clone(), cx)
+                                        }
+                                    });
+                                target_editor.update(cx, |target_editor, cx| {
+                                    // When selecting a definition in a different buffer, disable the nav history
+                                    // to avoid creating a history entry at the previous cursor location.
+                                    pane.update(cx, |pane, _| pane.disable_history());
+                                    target_editor.change_selections(
+                                        Some(Autoscroll::fit()),
+                                        cx,
+                                        |s| {
+                                            s.select_ranges([range]);
+                                        },
+                                    );
+                                    pane.update(cx, |pane, _| pane.enable_history());
+                                });
+                            });
+                        }
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+            .detach_and_log_err(cx);
+        } else if !definitions.is_empty() {
+            let replica_id = self.replica_id(cx);
+            cx.spawn(|editor, mut cx| async move {
+                let (title, location_tasks) = editor
+                    .update(&mut cx, |editor, cx| {
+                        let title = definitions
+                            .iter()
+                            .find_map(|definition| match definition {
+                                GoToDefinitionLink::Text(link) => {
+                                    link.origin.as_ref().map(|origin| {
+                                        let buffer = origin.buffer.read(cx);
+                                        format!(
+                                            "Definitions for {}",
+                                            buffer
+                                                .text_for_range(origin.range.clone())
+                                                .collect::<String>()
+                                        )
+                                    })
+                                }
+                                GoToDefinitionLink::InlayHint(_, _) => None,
+                            })
+                            .unwrap_or("Definitions".to_string());
+                        let location_tasks = definitions
+                            .into_iter()
+                            .map(|definition| match definition {
+                                GoToDefinitionLink::Text(link) => {
+                                    Task::Ready(Some(Ok(Some(link.target))))
+                                }
+                                GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
+                                    editor.compute_target_location(lsp_location, server_id, cx)
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        (title, location_tasks)
+                    })
+                    .context("location tasks preparation")?;
 
-    //                 let locations = futures::future::join_all(location_tasks)
-    //                     .await
-    //                     .into_iter()
-    //                     .filter_map(|location| location.transpose())
-    //                     .collect::<Result<_>>()
-    //                     .context("location tasks")?;
-    //                 workspace.update(&mut cx, |workspace, cx| {
-    //                     Self::open_locations_in_multibuffer(
-    //                         workspace, locations, replica_id, title, split, cx,
-    //                     )
-    //                 });
+                let locations = futures::future::join_all(location_tasks)
+                    .await
+                    .into_iter()
+                    .filter_map(|location| location.transpose())
+                    .collect::<Result<_>>()
+                    .context("location tasks")?;
+                workspace.update(&mut cx, |workspace, cx| {
+                    Self::open_locations_in_multibuffer(
+                        workspace, locations, replica_id, title, split, cx,
+                    )
+                });
 
-    //                 anyhow::Ok(())
-    //             })
-    //             .detach_and_log_err(cx);
-    //         }
-    //     }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
+    }
 
-    //     fn compute_target_location(
-    //         &self,
-    //         lsp_location: lsp::Location,
-    //         server_id: LanguageServerId,
-    //         cx: &mut ViewContext<Editor>,
-    //     ) -> Task<anyhow::Result<Option<Location>>> {
-    //         let Some(project) = self.project.clone() else {
-    //             return Task::Ready(Some(Ok(None)));
-    //         };
+    fn compute_target_location(
+        &self,
+        lsp_location: lsp::Location,
+        server_id: LanguageServerId,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<anyhow::Result<Option<Location>>> {
+        let Some(project) = self.project.clone() else {
+            return Task::Ready(Some(Ok(None)));
+        };
 
-    //         cx.spawn(move |editor, mut cx| async move {
-    //             let location_task = editor.update(&mut cx, |editor, cx| {
-    //                 project.update(cx, |project, cx| {
-    //                     let language_server_name =
-    //                         editor.buffer.read(cx).as_singleton().and_then(|buffer| {
-    //                             project
-    //                                 .language_server_for_buffer(buffer.read(cx), server_id, cx)
-    //                                 .map(|(_, lsp_adapter)| {
-    //                                     LanguageServerName(Arc::from(lsp_adapter.name()))
-    //                                 })
-    //                         });
-    //                     language_server_name.map(|language_server_name| {
-    //                         project.open_local_buffer_via_lsp(
-    //                             lsp_location.uri.clone(),
-    //                             server_id,
-    //                             language_server_name,
-    //                             cx,
-    //                         )
-    //                     })
-    //                 })
-    //             })?;
-    //             let location = match location_task {
-    //                 Some(task) => Some({
-    //                     let target_buffer_handle = task.await.context("open local buffer")?;
-    //                     let range = {
-    //                         target_buffer_handle.update(&mut cx, |target_buffer, _| {
-    //                             let target_start = target_buffer.clip_point_utf16(
-    //                                 point_from_lsp(lsp_location.range.start),
-    //                                 Bias::Left,
-    //                             );
-    //                             let target_end = target_buffer.clip_point_utf16(
-    //                                 point_from_lsp(lsp_location.range.end),
-    //                                 Bias::Left,
-    //                             );
-    //                             target_buffer.anchor_after(target_start)
-    //                                 ..target_buffer.anchor_before(target_end)
-    //                         })
-    //                     };
-    //                     Location {
-    //                         buffer: target_buffer_handle,
-    //                         range,
-    //                     }
-    //                 }),
-    //                 None => None,
-    //             };
-    //             Ok(location)
-    //         })
-    //     }
+        cx.spawn(move |editor, mut cx| async move {
+            let location_task = editor.update(&mut cx, |editor, cx| {
+                project.update(cx, |project, cx| {
+                    let language_server_name =
+                        editor.buffer.read(cx).as_singleton().and_then(|buffer| {
+                            project
+                                .language_server_for_buffer(buffer.read(cx), server_id, cx)
+                                .map(|(_, lsp_adapter)| {
+                                    LanguageServerName(Arc::from(lsp_adapter.name()))
+                                })
+                        });
+                    language_server_name.map(|language_server_name| {
+                        project.open_local_buffer_via_lsp(
+                            lsp_location.uri.clone(),
+                            server_id,
+                            language_server_name,
+                            cx,
+                        )
+                    })
+                })
+            })?;
+            let location = match location_task {
+                Some(task) => Some({
+                    let target_buffer_handle = task.await.context("open local buffer")?;
+                    let range = target_buffer_handle.update(&mut cx, |target_buffer, _| {
+                        let target_start = target_buffer
+                            .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
+                        let target_end = target_buffer
+                            .clip_point_utf16(point_from_lsp(lsp_location.range.end), Bias::Left);
+                        target_buffer.anchor_after(target_start)
+                            ..target_buffer.anchor_before(target_end)
+                    })?;
+                    Location {
+                        buffer: target_buffer_handle,
+                        range,
+                    }
+                }),
+                None => None,
+            };
+            Ok(location)
+        })
+    }
 
     //     pub fn find_all_references(
     //         workspace: &mut Workspace,
@@ -7629,65 +7629,65 @@ impl Editor {
     //         ))
     //     }
 
-    //     /// Opens a multibuffer with the given project locations in it
-    //     pub fn open_locations_in_multibuffer(
-    //         workspace: &mut Workspace,
-    //         mut locations: Vec<Location>,
-    //         replica_id: ReplicaId,
-    //         title: String,
-    //         split: bool,
-    //         cx: &mut ViewContext<Workspace>,
-    //     ) {
-    //         // If there are multiple definitions, open them in a multibuffer
-    //         locations.sort_by_key(|location| location.buffer.read(cx).remote_id());
-    //         let mut locations = locations.into_iter().peekable();
-    //         let mut ranges_to_highlight = Vec::new();
+    /// Opens a multibuffer with the given project locations in it
+    pub fn open_locations_in_multibuffer(
+        workspace: &mut Workspace,
+        mut locations: Vec<Location>,
+        replica_id: ReplicaId,
+        title: String,
+        split: bool,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        // If there are multiple definitions, open them in a multibuffer
+        locations.sort_by_key(|location| location.buffer.read(cx).remote_id());
+        let mut locations = locations.into_iter().peekable();
+        let mut ranges_to_highlight = Vec::new();
 
-    //         let excerpt_buffer = cx.build_model(|cx| {
-    //             let mut multibuffer = MultiBuffer::new(replica_id);
-    //             while let Some(location) = locations.next() {
-    //                 let buffer = location.buffer.read(cx);
-    //                 let mut ranges_for_buffer = Vec::new();
-    //                 let range = location.range.to_offset(buffer);
-    //                 ranges_for_buffer.push(range.clone());
+        let excerpt_buffer = cx.build_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(replica_id);
+            while let Some(location) = locations.next() {
+                let buffer = location.buffer.read(cx);
+                let mut ranges_for_buffer = Vec::new();
+                let range = location.range.to_offset(buffer);
+                ranges_for_buffer.push(range.clone());
 
-    //                 while let Some(next_location) = locations.peek() {
-    //                     if next_location.buffer == location.buffer {
-    //                         ranges_for_buffer.push(next_location.range.to_offset(buffer));
-    //                         locations.next();
-    //                     } else {
-    //                         break;
-    //                     }
-    //                 }
+                while let Some(next_location) = locations.peek() {
+                    if next_location.buffer == location.buffer {
+                        ranges_for_buffer.push(next_location.range.to_offset(buffer));
+                        locations.next();
+                    } else {
+                        break;
+                    }
+                }
 
-    //                 ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
-    //                 ranges_to_highlight.extend(multibuffer.push_excerpts_with_context_lines(
-    //                     location.buffer.clone(),
-    //                     ranges_for_buffer,
-    //                     1,
-    //                     cx,
-    //                 ))
-    //             }
+                ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges_to_highlight.extend(multibuffer.push_excerpts_with_context_lines(
+                    location.buffer.clone(),
+                    ranges_for_buffer,
+                    1,
+                    cx,
+                ))
+            }
 
-    //             multibuffer.with_title(title)
-    //         });
+            multibuffer.with_title(title)
+        });
 
-    //         let editor = cx.add_view(|cx| {
-    //             Editor::for_multibuffer(excerpt_buffer, Some(workspace.project().clone()), cx)
-    //         });
-    //         editor.update(cx, |editor, cx| {
-    //             editor.highlight_background::<Self>(
-    //                 ranges_to_highlight,
-    //                 |theme| theme.editor.highlighted_line_background,
-    //                 cx,
-    //             );
-    //         });
-    //         if split {
-    //             workspace.split_item(SplitDirection::Right, Box::new(editor), cx);
-    //         } else {
-    //             workspace.add_item(Box::new(editor), cx);
-    //         }
-    //     }
+        let editor = cx.build_view(|cx| {
+            Editor::for_multibuffer(excerpt_buffer, Some(workspace.project().clone()), cx)
+        });
+        editor.update(cx, |editor, cx| {
+            editor.highlight_background::<Self>(
+                ranges_to_highlight,
+                |theme| todo!("theme.editor.highlighted_line_background"),
+                cx,
+            );
+        });
+        if split {
+            workspace.split_item(SplitDirection::Right, Box::new(editor), cx);
+        } else {
+            workspace.add_item(Box::new(editor), cx);
+        }
+    }
 
     //     pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
     //         use language::ToOffset as _;
@@ -9321,10 +9321,11 @@ impl EventEmitter for Editor {
 }
 
 impl Render for Editor {
-    type Element = EditorElement;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        todo!()
+        // todo!()
+        div()
     }
 }
 

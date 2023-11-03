@@ -639,19 +639,19 @@ impl Pane {
     //             .pixel_position_of_cursor(cx)
     //     }
 
-    //     pub fn item_for_entry(
-    //         &self,
-    //         entry_id: ProjectEntryId,
-    //         cx: &AppContext,
-    //     ) -> Option<Box<dyn ItemHandle>> {
-    //         self.items.iter().find_map(|item| {
-    //             if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
-    //                 Some(item.boxed_clone())
-    //             } else {
-    //                 None
-    //             }
-    //         })
-    //     }
+    pub fn item_for_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        cx: &AppContext,
+    ) -> Option<Box<dyn ItemHandle>> {
+        self.items.iter().find_map(|item| {
+            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
+                Some(item.boxed_clone())
+            } else {
+                None
+            }
+        })
+    }
 
     pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
         self.items.iter().position(|i| i.id() == item.id())

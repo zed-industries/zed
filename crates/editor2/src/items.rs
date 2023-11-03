@@ -7,8 +7,9 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    point, AnyElement, AppContext, AsyncAppContext, Entity, EntityId, FocusHandle, Model, Pixels,
-    SharedString, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    div, point, AnyElement, AppContext, AsyncAppContext, Entity, EntityId, FocusHandle, Model,
+    ParentElement, Pixels, SharedString, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
@@ -26,7 +27,7 @@ use std::{
     sync::Arc,
 };
 use text::Selection;
-use theme::ThemeVariant;
+use theme::{ActiveTheme, ThemeVariant};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
@@ -576,25 +577,21 @@ impl Item for Editor {
     }
 
     fn tab_content<T: 'static>(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<T> {
-        AnyElement::new(gpui::ParentElement::child(gpui::div(), "HEY"))
-
-        // Flex::row()
-        //     .with_child(Label::new(self.title(cx).to_string(), style.label.clone()).into_any())
-        //     .with_children(detail.and_then(|detail| {
-        //         let path = path_for_buffer(&self.buffer, detail, false, cx)?;
-        //         let description = path.to_string_lossy();
-        //         Some(
-        //             Label::new(
-        //                 util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN),
-        //                 style.description.text.clone(),
-        //             )
-        //             .contained()
-        //             .with_style(style.description.container)
-        //             .aligned(),
-        //         )
-        //     }))
-        //     .align_children_center()
-        //     .into_any()
+        let theme = cx.theme();
+        AnyElement::new(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .bg(gpui::white())
+                .text_color(gpui::white())
+                .child(self.title(cx).to_string())
+                .children(detail.and_then(|detail| {
+                    let path = path_for_buffer(&self.buffer, detail, false, cx)?;
+                    let description = path.to_string_lossy();
+                    Some(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN))
+                })),
+        )
     }
 
     fn for_each_project_item(

@@ -346,8 +346,7 @@ impl Editor {
             cx,
         );
 
-        // todo!()
-        // self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+        self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
     }
 
     //     pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> gpui::Point<Pixels> {
