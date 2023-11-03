@@ -254,6 +254,13 @@ where
                 return;
             }
 
+            if let Some(mouse_cursor) = style.mouse_cursor {
+                let hovered = bounds.contains_point(&cx.mouse_position());
+                if hovered {
+                    cx.set_cursor_style(mouse_cursor);
+                }
+            }
+
             if let Some(group) = this.group.clone() {
                 GroupBounds::push(group, bounds, cx);
             }

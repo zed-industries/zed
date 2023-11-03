@@ -1,7 +1,7 @@
 use crate::{
-    self as gpui2, hsla, point, px, relative, rems, AlignItems, DefiniteLength, Display, Fill,
-    FlexDirection, Hsla, JustifyContent, Length, Position, Rems, SharedString, StyleRefinement,
-    Visibility,
+    self as gpui2, hsla, point, px, relative, rems, AlignItems, CursorStyle, DefiniteLength,
+    Display, Fill, FlexDirection, Hsla, JustifyContent, Length, Position, Rems, SharedString,
+    StyleRefinement, Visibility,
 };
 use crate::{BoxShadow, TextStyleRefinement};
 use smallvec::smallvec;
@@ -78,6 +78,34 @@ pub trait Styled {
         Self: Sized,
     {
         self.style().visibility = Some(Visibility::Hidden);
+        self
+    }
+
+    fn cursor(mut self, cursor: CursorStyle) -> Self
+    where
+        Self: Sized,
+    {
+        self.style().mouse_cursor = Some(cursor);
+        self
+    }
+
+    /// Sets the cursor style when hovering an element to `default`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_default(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.style().mouse_cursor = Some(CursorStyle::Arrow);
+        self
+    }
+
+    /// Sets the cursor style when hovering an element to `pointer`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_pointer(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.style().mouse_cursor = Some(CursorStyle::PointingHand);
         self
     }
 

@@ -1,8 +1,8 @@
 use crate::{
     black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
-    Corners, CornersRefinement, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures,
-    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems, Result, Rgba,
-    SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext, WindowContext,
+    Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font,
+    FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems,
+    Result, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext, WindowContext,
 };
 use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
@@ -100,6 +100,9 @@ pub struct Style {
 
     /// TEXT
     pub text: TextStyleRefinement,
+
+    /// The mouse cursor style shown when the mouse pointer is over an element.
+    pub mouse_cursor: Option<CursorStyle>,
 
     pub z_index: Option<u32>,
 }
@@ -339,6 +342,7 @@ impl Default for Style {
             corner_radii: Corners::default(),
             box_shadow: Default::default(),
             text: TextStyleRefinement::default(),
+            mouse_cursor: None,
             z_index: None,
         }
     }

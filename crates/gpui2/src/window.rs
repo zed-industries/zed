@@ -1,14 +1,14 @@
 use crate::{
     px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
-    Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect,
-    Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId,
-    Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
-    Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
-    Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
-    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    Bounds, BoxShadow, Context, Corners, CursorStyle, DevicePixels, DispatchContext, DisplayId,
+    Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId,
+    GlobalElementId, GlyphId, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch,
+    KeyMatcher, Keystroke, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
+    Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
+    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -190,6 +190,7 @@ pub struct Window {
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
+    requested_cursor_style: Option<CursorStyle>,
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
@@ -283,6 +284,7 @@ impl Window {
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             default_prevented: true,
             mouse_position,
+            requested_cursor_style: None,
             scale_factor,
             bounds,
             bounds_observers: SubscriberSet::new(),
@@ -669,6 +671,10 @@ impl<'a> WindowContext<'a> {
         self.window.mouse_position
     }
 
+    pub fn set_cursor_style(&mut self, style: CursorStyle) {
+        self.window.requested_cursor_style = Some(style)
+    }
+
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
     pub fn stack<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -987,6 +993,13 @@ impl<'a> WindowContext<'a> {
         let scene = self.window.scene_builder.build();
 
         self.window.platform_window.draw(scene);
+        let cursor_style = self
+            .window
+            .requested_cursor_style
+            .take()
+            .unwrap_or(CursorStyle::Arrow);
+        self.platform.set_cursor_style(cursor_style);
+
         self.window.dirty = false;
     }
 
