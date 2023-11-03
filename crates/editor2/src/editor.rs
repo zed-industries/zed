@@ -41,7 +41,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use inlay_hint_cache::InlayHintCache;
+use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -60,14 +60,16 @@ use ordered_float::OrderedFloat;
 use parking_lot::RwLock;
 use project::{FormatTrigger, Project};
 use rpc::proto::*;
-use scroll::{autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
+use scroll::{
+    autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
+};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::{
     any::TypeId,
-    cmp::Reverse,
-    ops::{Deref, DerefMut, Range},
+    cmp::{self, Reverse},
+    ops::{ControlFlow, Deref, DerefMut, Range},
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -1793,8 +1795,8 @@ impl Editor {
     //         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
     //         cx: &mut ViewContext<Self>,
     //     ) -> Self {
-    //         let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
-    //         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+    //         let buffer = cx.build_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
+    //         let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
     //         Self::new(EditorMode::SingleLine, buffer, None, field_editor_style, cx)
     //     }
 
@@ -1802,8 +1804,8 @@ impl Editor {
     //         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
     //         cx: &mut ViewContext<Self>,
     //     ) -> Self {
-    //         let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
-    //         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+    //         let buffer = cx.build_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
+    //         let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
     //         Self::new(EditorMode::Full, buffer, None, field_editor_style, cx)
     //     }
 
@@ -1812,8 +1814,8 @@ impl Editor {
     //         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
     //         cx: &mut ViewContext<Self>,
     //     ) -> Self {
-    //         let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
-    //         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+    //         let buffer = cx.build_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
+    //         let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
     //         Self::new(
     //             EditorMode::AutoHeight { max_lines },
     //             buffer,
@@ -1869,145 +1871,140 @@ impl Editor {
         // get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        todo!("old version below")
+        // let editor_view_id = cx.view_id();
+        let style = cx.text_style();
+        let font_size = style.font_size * cx.rem_size();
+        let display_map = cx.build_model(|cx| {
+            // todo!()
+            // let settings = settings::get::<ThemeSettings>(cx);
+            // let style = build_style(settings, get_field_editor_theme.as_deref(), None, cx);
+            DisplayMap::new(buffer.clone(), style.font(), font_size, None, 2, 1, cx)
+        });
+
+        let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
+
+        let blink_manager = cx.build_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
+
+        let soft_wrap_mode_override =
+            (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::None);
+
+        let mut project_subscriptions = Vec::new();
+        if mode == EditorMode::Full {
+            if let Some(project) = project.as_ref() {
+                if buffer.read(cx).is_singleton() {
+                    project_subscriptions.push(cx.observe(project, |_, _, cx| {
+                        cx.emit(Event::TitleChanged);
+                    }));
+                }
+                project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
+                    if let project::Event::RefreshInlayHints = event {
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
+                    };
+                }));
+            }
+        }
+
+        let inlay_hint_settings = inlay_hint_settings(
+            selections.newest_anchor().head(),
+            &buffer.read(cx).snapshot(cx),
+            cx,
+        );
+
+        let mut this = Self {
+            handle: cx.view().downgrade(),
+            buffer: buffer.clone(),
+            display_map: display_map.clone(),
+            selections,
+            scroll_manager: ScrollManager::new(),
+            columnar_selection_tail: None,
+            add_selections_state: None,
+            select_next_state: None,
+            select_prev_state: None,
+            selection_history: Default::default(),
+            autoclose_regions: Default::default(),
+            snippet_stack: Default::default(),
+            select_larger_syntax_node_stack: Vec::new(),
+            ime_transaction: Default::default(),
+            active_diagnostics: None,
+            soft_wrap_mode_override,
+            // get_field_editor_theme,
+            collaboration_hub: project.clone().map(|project| Box::new(project) as _),
+            project,
+            focused: false,
+            blink_manager: blink_manager.clone(),
+            show_local_selections: true,
+            mode,
+            show_gutter: mode == EditorMode::Full,
+            show_wrap_guides: None,
+            placeholder_text: None,
+            highlighted_rows: None,
+            background_highlights: Default::default(),
+            inlay_background_highlights: Default::default(),
+            nav_history: None,
+            context_menu: RwLock::new(None),
+            // mouse_context_menu: cx
+            //     .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
+            completion_tasks: Default::default(),
+            next_completion_id: 0,
+            next_inlay_id: 0,
+            available_code_actions: Default::default(),
+            code_actions_task: Default::default(),
+            document_highlights_task: Default::default(),
+            pending_rename: Default::default(),
+            searchable: true,
+            // override_text_style: None,
+            cursor_shape: Default::default(),
+            autoindent_mode: Some(AutoindentMode::EachLine),
+            collapse_matches: false,
+            workspace: None,
+            // keymap_context_layers: Default::default(),
+            input_enabled: true,
+            read_only: false,
+            leader_peer_id: None,
+            remote_id: None,
+            hover_state: Default::default(),
+            link_go_to_definition_state: Default::default(),
+            copilot_state: Default::default(),
+            inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
+            gutter_hovered: false,
+            pixel_position_of_newest_cursor: None,
+            _subscriptions: vec![
+                cx.observe(&buffer, Self::on_buffer_changed),
+                cx.subscribe(&buffer, Self::on_buffer_event),
+                cx.observe(&display_map, Self::on_display_map_changed),
+                cx.observe(&blink_manager, |_, _, cx| cx.notify()),
+                cx.observe_global::<SettingsStore>(Self::settings_changed),
+                cx.observe_window_activation(|editor, cx| {
+                    let active = cx.is_window_active();
+                    editor.blink_manager.update(cx, |blink_manager, cx| {
+                        if active {
+                            blink_manager.enable(cx);
+                        } else {
+                            blink_manager.show_cursor(cx);
+                            blink_manager.disable(cx);
+                        }
+                    });
+                }),
+            ],
+        };
+
+        this._subscriptions.extend(project_subscriptions);
+
+        this.end_selection(cx);
+        this.scroll_manager.show_scrollbar(cx);
+
+        // todo!("use a different mechanism")
+        // let editor_created_event = EditorCreated(cx.handle());
+        // cx.emit_global(editor_created_event);
+
+        if mode == EditorMode::Full {
+            let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
+            cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
+        }
+
+        this.report_editor_event("open", None, cx);
+        this
     }
-    //     let editor_view_id = cx.view_id();
-    //     let display_map = cx.add_model(|cx| {
-    //         let settings = settings::get::<ThemeSettings>(cx);
-    //         let style = build_style(settings, get_field_editor_theme.as_deref(), None, cx);
-    //         DisplayMap::new(
-    //             buffer.clone(),
-    //             style.text.font_id,
-    //             style.text.font_size,
-    //             None,
-    //             2,
-    //             1,
-    //             cx,
-    //         )
-    //     });
-
-    //     let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
-
-    //     let blink_manager = cx.add_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
-
-    //     let soft_wrap_mode_override =
-    //         (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::None);
-
-    //     let mut project_subscriptions = Vec::new();
-    //     if mode == EditorMode::Full {
-    //         if let Some(project) = project.as_ref() {
-    //             if buffer.read(cx).is_singleton() {
-    //                 project_subscriptions.push(cx.observe(project, |_, _, cx| {
-    //                     cx.emit(Event::TitleChanged);
-    //                 }));
-    //             }
-    //             project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
-    //                 if let project::Event::RefreshInlayHints = event {
-    //                     editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
-    //                 };
-    //             }));
-    //         }
-    //     }
-
-    //     let inlay_hint_settings = inlay_hint_settings(
-    //         selections.newest_anchor().head(),
-    //         &buffer.read(cx).snapshot(cx),
-    //         cx,
-    //     );
-
-    //     let mut this = Self {
-    //         handle: cx.weak_handle(),
-    //         buffer: buffer.clone(),
-    //         display_map: display_map.clone(),
-    //         selections,
-    //         scroll_manager: ScrollManager::new(),
-    //         columnar_selection_tail: None,
-    //         add_selections_state: None,
-    //         select_next_state: None,
-    //         select_prev_state: None,
-    //         selection_history: Default::default(),
-    //         autoclose_regions: Default::default(),
-    //         snippet_stack: Default::default(),
-    //         select_larger_syntax_node_stack: Vec::new(),
-    //         ime_transaction: Default::default(),
-    //         active_diagnostics: None,
-    //         soft_wrap_mode_override,
-    //         get_field_editor_theme,
-    //         collaboration_hub: project.clone().map(|project| Box::new(project) as _),
-    //         project,
-    //         focused: false,
-    //         blink_manager: blink_manager.clone(),
-    //         show_local_selections: true,
-    //         mode,
-    //         show_gutter: mode == EditorMode::Full,
-    //         show_wrap_guides: None,
-    //         placeholder_text: None,
-    //         highlighted_rows: None,
-    //         background_highlights: Default::default(),
-    //         inlay_background_highlights: Default::default(),
-    //         nav_history: None,
-    //         context_menu: RwLock::new(None),
-    //         mouse_context_menu: cx
-    //             .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
-    //         completion_tasks: Default::default(),
-    //         next_completion_id: 0,
-    //         next_inlay_id: 0,
-    //         available_code_actions: Default::default(),
-    //         code_actions_task: Default::default(),
-    //         document_highlights_task: Default::default(),
-    //         pending_rename: Default::default(),
-    //         searchable: true,
-    //         override_text_style: None,
-    //         cursor_shape: Default::default(),
-    //         autoindent_mode: Some(AutoindentMode::EachLine),
-    //         collapse_matches: false,
-    //         workspace: None,
-    //         keymap_context_layers: Default::default(),
-    //         input_enabled: true,
-    //         read_only: false,
-    //         leader_peer_id: None,
-    //         remote_id: None,
-    //         hover_state: Default::default(),
-    //         link_go_to_definition_state: Default::default(),
-    //         copilot_state: Default::default(),
-    //         // inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
-    //         gutter_hovered: false,
-    //         pixel_position_of_newest_cursor: None,
-    //         _subscriptions: vec![
-    //             cx.observe(&buffer, Self::on_buffer_changed),
-    //             cx.subscribe(&buffer, Self::on_buffer_event),
-    //             cx.observe(&display_map, Self::on_display_map_changed),
-    //             cx.observe(&blink_manager, |_, _, cx| cx.notify()),
-    //             cx.observe_global::<SettingsStore, _>(Self::settings_changed),
-    //             cx.observe_window_activation(|editor, active, cx| {
-    //                 editor.blink_manager.update(cx, |blink_manager, cx| {
-    //                     if active {
-    //                         blink_manager.enable(cx);
-    //                     } else {
-    //                         blink_manager.show_cursor(cx);
-    //                         blink_manager.disable(cx);
-    //                     }
-    //                 });
-    //             }),
-    //         ],
-    //     };
-
-    //     this._subscriptions.extend(project_subscriptions);
-
-    //     this.end_selection(cx);
-    //     this.scroll_manager.show_scrollbar(cx);
-
-    //     let editor_created_event = EditorCreated(cx.handle());
-    //     cx.emit_global(editor_created_event);
-
-    //     if mode == EditorMode::Full {
-    //         let should_auto_hide_scrollbars = cx.platform().should_auto_hide_scrollbars();
-    //         cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
-    //     }
-
-    //     this.report_editor_event("open", None, cx);
-    //     this
-    // }
 
     //     pub fn new_file(
     //         workspace: &mut Workspace,
@@ -2635,68 +2632,68 @@ impl Editor {
     //         cx.notify();
     //     }
 
-    //     fn end_selection(&mut self, cx: &mut ViewContext<Self>) {
-    //         self.columnar_selection_tail.take();
-    //         if self.selections.pending_anchor().is_some() {
-    //             let selections = self.selections.all::<usize>(cx);
-    //             self.change_selections(None, cx, |s| {
-    //                 s.select(selections);
-    //                 s.clear_pending();
-    //             });
-    //         }
-    //     }
+    fn end_selection(&mut self, cx: &mut ViewContext<Self>) {
+        self.columnar_selection_tail.take();
+        if self.selections.pending_anchor().is_some() {
+            let selections = self.selections.all::<usize>(cx);
+            self.change_selections(None, cx, |s| {
+                s.select(selections);
+                s.clear_pending();
+            });
+        }
+    }
 
-    //     fn select_columns(
-    //         &mut self,
-    //         tail: DisplayPoint,
-    //         head: DisplayPoint,
-    //         goal_column: u32,
-    //         display_map: &DisplaySnapshot,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         let start_row = cmp::min(tail.row(), head.row());
-    //         let end_row = cmp::max(tail.row(), head.row());
-    //         let start_column = cmp::min(tail.column(), goal_column);
-    //         let end_column = cmp::max(tail.column(), goal_column);
-    //         let reversed = start_column < tail.column();
+    fn select_columns(
+        &mut self,
+        tail: DisplayPoint,
+        head: DisplayPoint,
+        goal_column: u32,
+        display_map: &DisplaySnapshot,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let start_row = cmp::min(tail.row(), head.row());
+        let end_row = cmp::max(tail.row(), head.row());
+        let start_column = cmp::min(tail.column(), goal_column);
+        let end_column = cmp::max(tail.column(), goal_column);
+        let reversed = start_column < tail.column();
 
-    //         let selection_ranges = (start_row..=end_row)
-    //             .filter_map(|row| {
-    //                 if start_column <= display_map.line_len(row) && !display_map.is_block_line(row) {
-    //                     let start = display_map
-    //                         .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
-    //                         .to_point(display_map);
-    //                     let end = display_map
-    //                         .clip_point(DisplayPoint::new(row, end_column), Bias::Right)
-    //                         .to_point(display_map);
-    //                     if reversed {
-    //                         Some(end..start)
-    //                     } else {
-    //                         Some(start..end)
-    //                     }
-    //                 } else {
-    //                     None
-    //                 }
-    //             })
-    //             .collect::<Vec<_>>();
+        let selection_ranges = (start_row..=end_row)
+            .filter_map(|row| {
+                if start_column <= display_map.line_len(row) && !display_map.is_block_line(row) {
+                    let start = display_map
+                        .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
+                        .to_point(display_map);
+                    let end = display_map
+                        .clip_point(DisplayPoint::new(row, end_column), Bias::Right)
+                        .to_point(display_map);
+                    if reversed {
+                        Some(end..start)
+                    } else {
+                        Some(start..end)
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
 
-    //         self.change_selections(None, cx, |s| {
-    //             s.select_ranges(selection_ranges);
-    //         });
-    //         cx.notify();
-    //     }
+        self.change_selections(None, cx, |s| {
+            s.select_ranges(selection_ranges);
+        });
+        cx.notify();
+    }
 
-    //     pub fn has_pending_nonempty_selection(&self) -> bool {
-    //         let pending_nonempty_selection = match self.selections.pending_anchor() {
-    //             Some(Selection { start, end, .. }) => start != end,
-    //             None => false,
-    //         };
-    //         pending_nonempty_selection || self.columnar_selection_tail.is_some()
-    //     }
+    pub fn has_pending_nonempty_selection(&self) -> bool {
+        let pending_nonempty_selection = match self.selections.pending_anchor() {
+            Some(Selection { start, end, .. }) => start != end,
+            None => false,
+        };
+        pending_nonempty_selection || self.columnar_selection_tail.is_some()
+    }
 
-    //     pub fn has_pending_selection(&self) -> bool {
-    //         self.selections.pending_anchor().is_some() || self.columnar_selection_tail.is_some()
-    //     }
+    pub fn has_pending_selection(&self) -> bool {
+        self.selections.pending_anchor().is_some() || self.columnar_selection_tail.is_some()
+    }
 
     //     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
     //         if self.take_rename(false, cx).is_some() {
@@ -3354,79 +3351,79 @@ impl Editor {
     //         self.inlay_hint_cache.enabled
     //     }
 
-    //     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut ViewContext<Self>) {
-    //         if self.project.is_none() || self.mode != EditorMode::Full {
-    //             return;
-    //         }
+    fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut ViewContext<Self>) {
+        if self.project.is_none() || self.mode != EditorMode::Full {
+            return;
+        }
 
-    //         let reason_description = reason.description();
-    //         let (invalidate_cache, required_languages) = match reason {
-    //             InlayHintRefreshReason::Toggle(enabled) => {
-    //                 self.inlay_hint_cache.enabled = enabled;
-    //                 if enabled {
-    //                     (InvalidationStrategy::RefreshRequested, None)
-    //                 } else {
-    //                     self.inlay_hint_cache.clear();
-    //                     self.splice_inlay_hints(
-    //                         self.visible_inlay_hints(cx)
-    //                             .iter()
-    //                             .map(|inlay| inlay.id)
-    //                             .collect(),
-    //                         Vec::new(),
-    //                         cx,
-    //                     );
-    //                     return;
-    //                 }
-    //             }
-    //             InlayHintRefreshReason::SettingsChange(new_settings) => {
-    //                 match self.inlay_hint_cache.update_settings(
-    //                     &self.buffer,
-    //                     new_settings,
-    //                     self.visible_inlay_hints(cx),
-    //                     cx,
-    //                 ) {
-    //                     ControlFlow::Break(Some(InlaySplice {
-    //                         to_remove,
-    //                         to_insert,
-    //                     })) => {
-    //                         self.splice_inlay_hints(to_remove, to_insert, cx);
-    //                         return;
-    //                     }
-    //                     ControlFlow::Break(None) => return,
-    //                     ControlFlow::Continue(()) => (InvalidationStrategy::RefreshRequested, None),
-    //                 }
-    //             }
-    //             InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
-    //                 if let Some(InlaySplice {
-    //                     to_remove,
-    //                     to_insert,
-    //                 }) = self.inlay_hint_cache.remove_excerpts(excerpts_removed)
-    //                 {
-    //                     self.splice_inlay_hints(to_remove, to_insert, cx);
-    //                 }
-    //                 return;
-    //             }
-    //             InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
-    //             InlayHintRefreshReason::BufferEdited(buffer_languages) => {
-    //                 (InvalidationStrategy::BufferEdited, Some(buffer_languages))
-    //             }
-    //             InlayHintRefreshReason::RefreshRequested => {
-    //                 (InvalidationStrategy::RefreshRequested, None)
-    //             }
-    //         };
+        let reason_description = reason.description();
+        let (invalidate_cache, required_languages) = match reason {
+            InlayHintRefreshReason::Toggle(enabled) => {
+                self.inlay_hint_cache.enabled = enabled;
+                if enabled {
+                    (InvalidationStrategy::RefreshRequested, None)
+                } else {
+                    self.inlay_hint_cache.clear();
+                    self.splice_inlay_hints(
+                        self.visible_inlay_hints(cx)
+                            .iter()
+                            .map(|inlay| inlay.id)
+                            .collect(),
+                        Vec::new(),
+                        cx,
+                    );
+                    return;
+                }
+            }
+            InlayHintRefreshReason::SettingsChange(new_settings) => {
+                match self.inlay_hint_cache.update_settings(
+                    &self.buffer,
+                    new_settings,
+                    self.visible_inlay_hints(cx),
+                    cx,
+                ) {
+                    ControlFlow::Break(Some(InlaySplice {
+                        to_remove,
+                        to_insert,
+                    })) => {
+                        self.splice_inlay_hints(to_remove, to_insert, cx);
+                        return;
+                    }
+                    ControlFlow::Break(None) => return,
+                    ControlFlow::Continue(()) => (InvalidationStrategy::RefreshRequested, None),
+                }
+            }
+            InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
+                if let Some(InlaySplice {
+                    to_remove,
+                    to_insert,
+                }) = self.inlay_hint_cache.remove_excerpts(excerpts_removed)
+                {
+                    self.splice_inlay_hints(to_remove, to_insert, cx);
+                }
+                return;
+            }
+            InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
+            InlayHintRefreshReason::BufferEdited(buffer_languages) => {
+                (InvalidationStrategy::BufferEdited, Some(buffer_languages))
+            }
+            InlayHintRefreshReason::RefreshRequested => {
+                (InvalidationStrategy::RefreshRequested, None)
+            }
+        };
 
-    //         if let Some(InlaySplice {
-    //             to_remove,
-    //             to_insert,
-    //         }) = self.inlay_hint_cache.spawn_hint_refresh(
-    //             reason_description,
-    //             self.excerpt_visible_offsets(required_languages.as_ref(), cx),
-    //             invalidate_cache,
-    //             cx,
-    //         ) {
-    //             self.splice_inlay_hints(to_remove, to_insert, cx);
-    //         }
-    //     }
+        if let Some(InlaySplice {
+            to_remove,
+            to_insert,
+        }) = self.inlay_hint_cache.spawn_hint_refresh(
+            reason_description,
+            self.excerpt_visible_offsets(required_languages.as_ref(), cx),
+            invalidate_cache,
+            cx,
+        ) {
+            self.splice_inlay_hints(to_remove, to_insert, cx);
+        }
+    }
 
     fn visible_inlay_hints(&self, cx: &ViewContext<'_, Editor>) -> Vec<Inlay> {
         self.display_map
@@ -3439,47 +3436,47 @@ impl Editor {
             .collect()
     }
 
-    //     pub fn excerpt_visible_offsets(
-    //         &self,
-    //         restrict_to_languages: Option<&HashSet<Arc<Language>>>,
-    //         cx: &mut ViewContext<'_, '_, Editor>,
-    //     ) -> HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)> {
-    //         let multi_buffer = self.buffer().read(cx);
-    //         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-    //         let multi_buffer_visible_start = self
-    //             .scroll_manager
-    //             .anchor()
-    //             .anchor
-    //             .to_point(&multi_buffer_snapshot);
-    //         let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
-    //             multi_buffer_visible_start
-    //                 + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
-    //             Bias::Left,
-    //         );
-    //         let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
-    //         multi_buffer
-    //             .range_to_buffer_ranges(multi_buffer_visible_range, cx)
-    //             .into_iter()
-    //             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
-    //             .filter_map(|(buffer_handle, excerpt_visible_range, excerpt_id)| {
-    //                 let buffer = buffer_handle.read(cx);
-    //                 let language = buffer.language()?;
-    //                 if let Some(restrict_to_languages) = restrict_to_languages {
-    //                     if !restrict_to_languages.contains(language) {
-    //                         return None;
-    //                     }
-    //                 }
-    //                 Some((
-    //                     excerpt_id,
-    //                     (
-    //                         buffer_handle,
-    //                         buffer.version().clone(),
-    //                         excerpt_visible_range,
-    //                     ),
-    //                 ))
-    //             })
-    //             .collect()
-    //     }
+    pub fn excerpt_visible_offsets(
+        &self,
+        restrict_to_languages: Option<&HashSet<Arc<Language>>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> HashMap<ExcerptId, (Model<Buffer>, clock::Global, Range<usize>)> {
+        let multi_buffer = self.buffer().read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let multi_buffer_visible_start = self
+            .scroll_manager
+            .anchor()
+            .anchor
+            .to_point(&multi_buffer_snapshot);
+        let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
+            multi_buffer_visible_start
+                + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
+            Bias::Left,
+        );
+        let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
+        multi_buffer
+            .range_to_buffer_ranges(multi_buffer_visible_range, cx)
+            .into_iter()
+            .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
+            .filter_map(|(buffer_handle, excerpt_visible_range, excerpt_id)| {
+                let buffer = buffer_handle.read(cx);
+                let language = buffer.language()?;
+                if let Some(restrict_to_languages) = restrict_to_languages {
+                    if !restrict_to_languages.contains(language) {
+                        return None;
+                    }
+                }
+                Some((
+                    excerpt_id,
+                    (
+                        buffer_handle,
+                        buffer.version().clone(),
+                        excerpt_visible_range,
+                    ),
+                ))
+            })
+            .collect()
+    }
 
     //     pub fn text_layout_details(&self, cx: &WindowContext) -> TextLayoutDetails {
     //         TextLayoutDetails {
@@ -3489,17 +3486,17 @@ impl Editor {
     //         }
     //     }
 
-    //     fn splice_inlay_hints(
-    //         &self,
-    //         to_remove: Vec<InlayId>,
-    //         to_insert: Vec<Inlay>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.display_map.update(cx, |display_map, cx| {
-    //             display_map.splice_inlays(to_remove, to_insert, cx);
-    //         });
-    //         cx.notify();
-    //     }
+    fn splice_inlay_hints(
+        &self,
+        to_remove: Vec<InlayId>,
+        to_insert: Vec<Inlay>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.splice_inlays(to_remove, to_insert, cx);
+        });
+        cx.notify();
+    }
 
     //     fn trigger_on_type_formatting(
     //         &self,
@@ -3897,7 +3894,7 @@ impl Editor {
     //         }
 
     //         let mut ranges_to_highlight = Vec::new();
-    //         let excerpt_buffer = cx.add_model(|cx| {
+    //         let excerpt_buffer = cx.build_model(|cx| {
     //             let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
     //             for (buffer_handle, transaction) in &entries {
     //                 let buffer = buffer_handle.read(cx);
@@ -7647,7 +7644,7 @@ impl Editor {
     //         let mut locations = locations.into_iter().peekable();
     //         let mut ranges_to_highlight = Vec::new();
 
-    //         let excerpt_buffer = cx.add_model(|cx| {
+    //         let excerpt_buffer = cx.build_model(|cx| {
     //             let mut multibuffer = MultiBuffer::new(replica_id);
     //             while let Some(location) = locations.next() {
     //                 let buffer = location.buffer.read(cx);
@@ -7972,33 +7969,33 @@ impl Editor {
     //         cx.show_character_palette();
     //     }
 
-    //     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
-    //         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
-    //             let buffer = self.buffer.read(cx).snapshot(cx);
-    //             let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
-    //             let is_valid = buffer
-    //                 .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone(), false)
-    //                 .any(|entry| {
-    //                     entry.diagnostic.is_primary
-    //                         && !entry.range.is_empty()
-    //                         && entry.range.start == primary_range_start
-    //                         && entry.diagnostic.message == active_diagnostics.primary_message
-    //                 });
+    fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
+        if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
+            let buffer = self.buffer.read(cx).snapshot(cx);
+            let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
+            let is_valid = buffer
+                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone(), false)
+                .any(|entry| {
+                    entry.diagnostic.is_primary
+                        && !entry.range.is_empty()
+                        && entry.range.start == primary_range_start
+                        && entry.diagnostic.message == active_diagnostics.primary_message
+                });
 
-    //             if is_valid != active_diagnostics.is_valid {
-    //                 active_diagnostics.is_valid = is_valid;
-    //                 let mut new_styles = HashMap::default();
-    //                 for (block_id, diagnostic) in &active_diagnostics.blocks {
-    //                     new_styles.insert(
-    //                         *block_id,
-    //                         diagnostic_block_renderer(diagnostic.clone(), is_valid),
-    //                     );
-    //                 }
-    //                 self.display_map
-    //                     .update(cx, |display_map, _| display_map.replace_blocks(new_styles));
-    //             }
-    //         }
-    //     }
+            if is_valid != active_diagnostics.is_valid {
+                active_diagnostics.is_valid = is_valid;
+                let mut new_styles = HashMap::default();
+                for (block_id, diagnostic) in &active_diagnostics.blocks {
+                    new_styles.insert(
+                        *block_id,
+                        diagnostic_block_renderer(diagnostic.clone(), is_valid),
+                    );
+                }
+                self.display_map
+                    .update(cx, |display_map, _| display_map.replace_blocks(new_styles));
+            }
+        }
+    }
 
     //     fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) -> bool {
     //         self.dismiss_diagnostics(cx);
@@ -8700,101 +8697,101 @@ impl Editor {
     //         self.blink_manager.read(cx).visible() && self.focused
     //     }
 
-    //     fn on_buffer_changed(&mut self, _: Model<MultiBuffer>, cx: &mut ViewContext<Self>) {
-    //         cx.notify();
-    //     }
+    fn on_buffer_changed(&mut self, _: Model<MultiBuffer>, cx: &mut ViewContext<Self>) {
+        cx.notify();
+    }
 
-    //     fn on_buffer_event(
-    //         &mut self,
-    //         multibuffer: Model<MultiBuffer>,
-    //         event: &multi_buffer::Event,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         match event {
-    //             multi_buffer::Event::Edited {
-    //                 sigleton_buffer_edited,
-    //             } => {
-    //                 self.refresh_active_diagnostics(cx);
-    //                 self.refresh_code_actions(cx);
-    //                 if self.has_active_copilot_suggestion(cx) {
-    //                     self.update_visible_copilot_suggestion(cx);
-    //                 }
-    //                 cx.emit(Event::BufferEdited);
+    fn on_buffer_event(
+        &mut self,
+        multibuffer: Model<MultiBuffer>,
+        event: &multi_buffer::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            multi_buffer::Event::Edited {
+                sigleton_buffer_edited,
+            } => {
+                self.refresh_active_diagnostics(cx);
+                self.refresh_code_actions(cx);
+                if self.has_active_copilot_suggestion(cx) {
+                    self.update_visible_copilot_suggestion(cx);
+                }
+                cx.emit(Event::BufferEdited);
 
-    //                 if *sigleton_buffer_edited {
-    //                     if let Some(project) = &self.project {
-    //                         let project = project.read(cx);
-    //                         let languages_affected = multibuffer
-    //                             .read(cx)
-    //                             .all_buffers()
-    //                             .into_iter()
-    //                             .filter_map(|buffer| {
-    //                                 let buffer = buffer.read(cx);
-    //                                 let language = buffer.language()?;
-    //                                 if project.is_local()
-    //                                     && project.language_servers_for_buffer(buffer, cx).count() == 0
-    //                                 {
-    //                                     None
-    //                                 } else {
-    //                                     Some(language)
-    //                                 }
-    //                             })
-    //                             .cloned()
-    //                             .collect::<HashSet<_>>();
-    //                         if !languages_affected.is_empty() {
-    //                             self.refresh_inlay_hints(
-    //                                 InlayHintRefreshReason::BufferEdited(languages_affected),
-    //                                 cx,
-    //                             );
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //             multi_buffer::Event::ExcerptsAdded {
-    //                 buffer,
-    //                 predecessor,
-    //                 excerpts,
-    //             } => {
-    //                 cx.emit(Event::ExcerptsAdded {
-    //                     buffer: buffer.clone(),
-    //                     predecessor: *predecessor,
-    //                     excerpts: excerpts.clone(),
-    //                 });
-    //                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-    //             }
-    //             multi_buffer::Event::ExcerptsRemoved { ids } => {
-    //                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
-    //                 cx.emit(Event::ExcerptsRemoved { ids: ids.clone() })
-    //             }
-    //             multi_buffer::Event::Reparsed => cx.emit(Event::Reparsed),
-    //             multi_buffer::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
-    //             multi_buffer::Event::Saved => cx.emit(Event::Saved),
-    //             multi_buffer::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
-    //             multi_buffer::Event::Reloaded => cx.emit(Event::TitleChanged),
-    //             multi_buffer::Event::DiffBaseChanged => cx.emit(Event::DiffBaseChanged),
-    //             multi_buffer::Event::Closed => cx.emit(Event::Closed),
-    //             multi_buffer::Event::DiagnosticsUpdated => {
-    //                 self.refresh_active_diagnostics(cx);
-    //             }
-    //             _ => {}
-    //         };
-    //     }
+                if *sigleton_buffer_edited {
+                    if let Some(project) = &self.project {
+                        let project = project.read(cx);
+                        let languages_affected = multibuffer
+                            .read(cx)
+                            .all_buffers()
+                            .into_iter()
+                            .filter_map(|buffer| {
+                                let buffer = buffer.read(cx);
+                                let language = buffer.language()?;
+                                if project.is_local()
+                                    && project.language_servers_for_buffer(buffer, cx).count() == 0
+                                {
+                                    None
+                                } else {
+                                    Some(language)
+                                }
+                            })
+                            .cloned()
+                            .collect::<HashSet<_>>();
+                        if !languages_affected.is_empty() {
+                            self.refresh_inlay_hints(
+                                InlayHintRefreshReason::BufferEdited(languages_affected),
+                                cx,
+                            );
+                        }
+                    }
+                }
+            }
+            multi_buffer::Event::ExcerptsAdded {
+                buffer,
+                predecessor,
+                excerpts,
+            } => {
+                cx.emit(Event::ExcerptsAdded {
+                    buffer: buffer.clone(),
+                    predecessor: *predecessor,
+                    excerpts: excerpts.clone(),
+                });
+                self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            }
+            multi_buffer::Event::ExcerptsRemoved { ids } => {
+                self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
+                cx.emit(Event::ExcerptsRemoved { ids: ids.clone() })
+            }
+            multi_buffer::Event::Reparsed => cx.emit(Event::Reparsed),
+            multi_buffer::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
+            multi_buffer::Event::Saved => cx.emit(Event::Saved),
+            multi_buffer::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
+            multi_buffer::Event::Reloaded => cx.emit(Event::TitleChanged),
+            multi_buffer::Event::DiffBaseChanged => cx.emit(Event::DiffBaseChanged),
+            multi_buffer::Event::Closed => cx.emit(Event::Closed),
+            multi_buffer::Event::DiagnosticsUpdated => {
+                self.refresh_active_diagnostics(cx);
+            }
+            _ => {}
+        };
+    }
 
-    //     fn on_display_map_changed(&mut self, _: Model<DisplayMap>, cx: &mut ViewContext<Self>) {
-    //         cx.notify();
-    //     }
+    fn on_display_map_changed(&mut self, _: Model<DisplayMap>, cx: &mut ViewContext<Self>) {
+        cx.notify();
+    }
 
-    //     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
-    //         self.refresh_copilot_suggestions(true, cx);
-    //         self.refresh_inlay_hints(
-    //             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
-    //                 self.selections.newest_anchor().head(),
-    //                 &self.buffer.read(cx).snapshot(cx),
-    //                 cx,
-    //             )),
-    //             cx,
-    //         );
-    //     }
+    fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.refresh_copilot_suggestions(true, cx);
+        self.refresh_inlay_hints(
+            InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
+                self.selections.newest_anchor().head(),
+                &self.buffer.read(cx).snapshot(cx),
+                cx,
+            )),
+            cx,
+        );
+    }
 
     //     pub fn set_searchable(&mut self, searchable: bool) {
     //         self.searchable = searchable;
@@ -9871,60 +9868,61 @@ impl InvalidationRegion for SnippetState {
 //     }
 // }
 
-// pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> RenderBlock {
-//     let mut highlighted_lines = Vec::new();
+pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> RenderBlock {
+    let mut highlighted_lines = Vec::new();
 
-//     for (index, line) in diagnostic.message.lines().enumerate() {
-//         let line = match &diagnostic.source {
-//             Some(source) if index == 0 => {
-//                 let source_highlight = Vec::from_iter(0..source.len());
-//                 highlight_diagnostic_message(source_highlight, &format!("{source}: {line}"))
-//             }
+    for (index, line) in diagnostic.message.lines().enumerate() {
+        let line = match &diagnostic.source {
+            Some(source) if index == 0 => {
+                let source_highlight = Vec::from_iter(0..source.len());
+                highlight_diagnostic_message(source_highlight, &format!("{source}: {line}"))
+            }
 
-//             _ => highlight_diagnostic_message(Vec::new(), line),
-//         };
-//         highlighted_lines.push(line);
-//     }
-//     let message = diagnostic.message;
-//     Arc::new(move |cx: &mut BlockContext| {
-//         let message = message.clone();
-//         let settings = ThemeSettings::get_global(cx);
-//         let tooltip_style = settings.theme.tooltip.clone();
-//         let theme = &settings.theme.editor;
-//         let style = diagnostic_style(diagnostic.severity, is_valid, theme);
-//         let font_size = (style.text_scale_factor * settings.buffer_font_size(cx)).round();
-//         let anchor_x = cx.anchor_x;
-//         enum BlockContextToolip {}
-//         MouseEventHandler::new::<BlockContext, _>(cx.block_id, cx, |_, _| {
-//             Flex::column()
-//                 .with_children(highlighted_lines.iter().map(|(line, highlights)| {
-//                     Label::new(
-//                         line.clone(),
-//                         style.message.clone().with_font_size(font_size),
-//                     )
-//                     .with_highlights(highlights.clone())
-//                     .contained()
-//                     .with_margin_left(anchor_x)
-//                 }))
-//                 .aligned()
-//                 .left()
-//                 .into_any()
-//         })
-//         .with_cursor_style(CursorStyle::PointingHand)
-//         .on_click(MouseButton::Left, move |_, _, cx| {
-//             cx.write_to_clipboard(ClipboardItem::new(message.clone()));
-//         })
-//         // We really need to rethink this ID system...
-//         .with_tooltip::<BlockContextToolip>(
-//             cx.block_id,
-//             "Copy diagnostic message",
-//             None,
-//             tooltip_style,
-//             cx,
-//         )
-//         .into_any()
-//     })
-// }
+            _ => highlight_diagnostic_message(Vec::new(), line),
+        };
+        highlighted_lines.push(line);
+    }
+    let message = diagnostic.message;
+    Arc::new(move |cx: &mut BlockContext| {
+        todo!()
+        // let message = message.clone();
+        // let settings = ThemeSettings::get_global(cx);
+        // let tooltip_style = settings.theme.tooltip.clone();
+        // let theme = &settings.theme.editor;
+        // let style = diagnostic_style(diagnostic.severity, is_valid, theme);
+        // let font_size = (style.text_scale_factor * settings.buffer_font_size(cx)).round();
+        // let anchor_x = cx.anchor_x;
+        // enum BlockContextToolip {}
+        // MouseEventHandler::new::<BlockContext, _>(cx.block_id, cx, |_, _| {
+        //     Flex::column()
+        //         .with_children(highlighted_lines.iter().map(|(line, highlights)| {
+        //             Label::new(
+        //                 line.clone(),
+        //                 style.message.clone().with_font_size(font_size),
+        //             )
+        //             .with_highlights(highlights.clone())
+        //             .contained()
+        //             .with_margin_left(anchor_x)
+        //         }))
+        //         .aligned()
+        //         .left()
+        //         .into_any()
+        // })
+        // .with_cursor_style(CursorStyle::PointingHand)
+        // .on_click(MouseButton::Left, move |_, _, cx| {
+        //     cx.write_to_clipboard(ClipboardItem::new(message.clone()));
+        // })
+        // // We really need to rethink this ID system...
+        // .with_tooltip::<BlockContextToolip>(
+        //     cx.block_id,
+        //     "Copy diagnostic message",
+        //     None,
+        //     tooltip_style,
+        //     cx,
+        // )
+        // .into_any()
+    })
+}
 
 pub fn highlight_diagnostic_message(
     initial_highlights: Vec<usize>,

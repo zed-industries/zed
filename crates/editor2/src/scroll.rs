@@ -299,9 +299,9 @@ impl Editor {
     //         cx.notify();
     //     }
 
-    //     pub fn visible_line_count(&self) -> Option<f32> {
-    //         self.scroll_manager.visible_line_count
-    //     }
+    pub fn visible_line_count(&self) -> Option<f32> {
+        self.scroll_manager.visible_line_count
+    }
 
     //     pub(crate) fn set_visible_line_count(&mut self, lines: f32, cx: &mut ViewContext<Self>) {
     //         let opened_first_time = self.scroll_manager.visible_line_count.is_none();

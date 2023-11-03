@@ -373,6 +373,10 @@ impl AppContext {
         self.platform.reveal_path(path)
     }
 
+    pub fn should_auto_hide_scrollbars(&self) -> bool {
+        self.platform.should_auto_hide_scrollbars()
+    }
+
     pub(crate) fn push_effect(&mut self, effect: Effect) {
         match &effect {
             Effect::Notify { emitter } => {
