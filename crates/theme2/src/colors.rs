@@ -48,7 +48,7 @@ pub struct GitStatusColors {
     pub renamed: Hsla,
 }
 
-#[derive(Refineable, Clone, Debug, Default)]
+#[derive(Refineable, Clone, Debug)]
 #[refineable(debug)]
 pub struct ThemeColors {
     pub border: Hsla,
@@ -94,6 +94,8 @@ pub struct ThemeColors {
 #[derive(Refineable, Clone)]
 pub struct ThemeStyles {
     pub system: SystemColors,
+
+    #[refineable]
     pub colors: ThemeColors,
     pub status: StatusColors,
     pub git: GitStatusColors,
