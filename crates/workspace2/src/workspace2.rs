@@ -414,18 +414,17 @@ type ItemDeserializers = HashMap<
     ) -> Task<Result<Box<dyn ItemHandle>>>,
 >;
 pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
-    cx.update_global(|deserializers: &mut ItemDeserializers, _cx| {
-        if let Some(serialized_item_kind) = I::serialized_item_kind() {
-            deserializers.insert(
-                Arc::from(serialized_item_kind),
-                |project, workspace, workspace_id, item_id, cx| {
-                    let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
-                    cx.foreground_executor()
-                        .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
-                },
-            );
-        }
-    });
+    if let Some(serialized_item_kind) = I::serialized_item_kind() {
+        let deserializers = cx.default_global::<ItemDeserializers>();
+        deserializers.insert(
+            Arc::from(serialized_item_kind),
+            |project, workspace, workspace_id, item_id, cx| {
+                let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
+                cx.foreground_executor()
+                    .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
+            },
+        );
+    }
 }
 
 pub struct AppState {
@@ -627,7 +626,7 @@ impl Workspace {
                 }
 
                 project2::Event::Closed => {
-                    // cx.remove_window();
+                    cx.remove_window();
                 }
 
                 project2::Event::DeletedEntry(entry_id) => {
