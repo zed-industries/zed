@@ -18,17 +18,17 @@
 #![allow(dead_code, unused_variables)]
 
 mod components;
-mod elements;
 mod elevation;
 pub mod prelude;
 pub mod settings;
 mod static_data;
+mod to_extract;
 pub mod utils;
 
 pub use components::*;
-pub use elements::*;
 pub use prelude::*;
 pub use static_data::*;
+pub use to_extract::*;
 
 // This needs to be fully qualified with `crate::` otherwise we get a panic
 // at:
