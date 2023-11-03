@@ -553,17 +553,18 @@ impl InlayHintCache {
                             let mut resolved_hint =
                                 resolved_hint_task.await.context("hint resolve task")?;
                             editor.update(&mut cx, |editor, _| {
-                                if let Some(excerpt_hints) =
-                                    editor.inlay_hint_cache.hints.get(&excerpt_id)
-                                {
-                                    let mut guard = excerpt_hints.write();
-                                    if let Some(cached_hint) = guard.hints_by_id.get_mut(&id) {
-                                        if cached_hint.resolve_state == ResolveState::Resolving {
-                                            resolved_hint.resolve_state = ResolveState::Resolved;
-                                            *cached_hint = resolved_hint;
-                                        }
-                                    }
-                                }
+                                todo!()
+                                // if let Some(excerpt_hints) =
+                                //     editor.inlay_hint_cache.hints.get(&excerpt_id)
+                                // {
+                                //     let mut guard = excerpt_hints.write();
+                                //     if let Some(cached_hint) = guard.hints_by_id.get_mut(&id) {
+                                //         if cached_hint.resolve_state == ResolveState::Resolving {
+                                //             resolved_hint.resolve_state = ResolveState::Resolved;
+                                //             *cached_hint = resolved_hint;
+                                //         }
+                                //     }
+                                // }
                             })?;
                         }
 
@@ -584,89 +585,91 @@ fn spawn_new_update_tasks(
     update_cache_version: usize,
     cx: &mut ViewContext<'_, Editor>,
 ) {
-    let visible_hints = Arc::new(editor.visible_inlay_hints(cx));
-    for (excerpt_id, (excerpt_buffer, new_task_buffer_version, excerpt_visible_range)) in
-        excerpts_to_query
-    {
-        if excerpt_visible_range.is_empty() {
-            continue;
-        }
-        let buffer = excerpt_buffer.read(cx);
-        let buffer_id = buffer.remote_id();
-        let buffer_snapshot = buffer.snapshot();
-        if buffer_snapshot
-            .version()
-            .changed_since(&new_task_buffer_version)
-        {
-            continue;
-        }
-
-        let cached_excerpt_hints = editor.inlay_hint_cache.hints.get(&excerpt_id).cloned();
-        if let Some(cached_excerpt_hints) = &cached_excerpt_hints {
-            let cached_excerpt_hints = cached_excerpt_hints.read();
-            let cached_buffer_version = &cached_excerpt_hints.buffer_version;
-            if cached_excerpt_hints.version > update_cache_version
-                || cached_buffer_version.changed_since(&new_task_buffer_version)
-            {
-                continue;
-            }
-        };
-
-        let (multi_buffer_snapshot, Some(query_ranges)) =
-            editor.buffer.update(cx, |multi_buffer, cx| {
-                (
-                    multi_buffer.snapshot(cx),
-                    determine_query_ranges(
-                        multi_buffer,
-                        excerpt_id,
-                        &excerpt_buffer,
-                        excerpt_visible_range,
-                        cx,
-                    ),
-                )
-            })
-        else {
-            return;
-        };
-        let query = ExcerptQuery {
-            buffer_id,
-            excerpt_id,
-            cache_version: update_cache_version,
-            invalidate,
-            reason,
-        };
-
-        let new_update_task = |query_ranges| {
-            new_update_task(
-                query,
-                query_ranges,
-                multi_buffer_snapshot,
-                buffer_snapshot.clone(),
-                Arc::clone(&visible_hints),
-                cached_excerpt_hints,
-                Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter),
-                cx,
-            )
-        };
-
-        match editor.inlay_hint_cache.update_tasks.entry(excerpt_id) {
-            hash_map::Entry::Occupied(mut o) => {
-                o.get_mut().update_cached_tasks(
-                    &buffer_snapshot,
-                    query_ranges,
-                    invalidate,
-                    new_update_task,
-                );
-            }
-            hash_map::Entry::Vacant(v) => {
-                v.insert(TasksForRanges::new(
-                    query_ranges.clone(),
-                    new_update_task(query_ranges),
-                ));
-            }
-        }
-    }
+    todo!("old version below");
 }
+//     let visible_hints = Arc::new(editor.visible_inlay_hints(cx));
+//     for (excerpt_id, (excerpt_buffer, new_task_buffer_version, excerpt_visible_range)) in
+//         excerpts_to_query
+//     {
+//         if excerpt_visible_range.is_empty() {
+//             continue;
+//         }
+//         let buffer = excerpt_buffer.read(cx);
+//         let buffer_id = buffer.remote_id();
+//         let buffer_snapshot = buffer.snapshot();
+//         if buffer_snapshot
+//             .version()
+//             .changed_since(&new_task_buffer_version)
+//         {
+//             continue;
+//         }
+
+//         let cached_excerpt_hints = editor.inlay_hint_cache.hints.get(&excerpt_id).cloned();
+//         if let Some(cached_excerpt_hints) = &cached_excerpt_hints {
+//             let cached_excerpt_hints = cached_excerpt_hints.read();
+//             let cached_buffer_version = &cached_excerpt_hints.buffer_version;
+//             if cached_excerpt_hints.version > update_cache_version
+//                 || cached_buffer_version.changed_since(&new_task_buffer_version)
+//             {
+//                 continue;
+//             }
+//         };
+
+//         let (multi_buffer_snapshot, Some(query_ranges)) =
+//             editor.buffer.update(cx, |multi_buffer, cx| {
+//                 (
+//                     multi_buffer.snapshot(cx),
+//                     determine_query_ranges(
+//                         multi_buffer,
+//                         excerpt_id,
+//                         &excerpt_buffer,
+//                         excerpt_visible_range,
+//                         cx,
+//                     ),
+//                 )
+//             })
+//         else {
+//             return;
+//         };
+//         let query = ExcerptQuery {
+//             buffer_id,
+//             excerpt_id,
+//             cache_version: update_cache_version,
+//             invalidate,
+//             reason,
+//         };
+
+//         let new_update_task = |query_ranges| {
+//             new_update_task(
+//                 query,
+//                 query_ranges,
+//                 multi_buffer_snapshot,
+//                 buffer_snapshot.clone(),
+//                 Arc::clone(&visible_hints),
+//                 cached_excerpt_hints,
+//                 Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter),
+//                 cx,
+//             )
+//         };
+
+//         match editor.inlay_hint_cache.update_tasks.entry(excerpt_id) {
+//             hash_map::Entry::Occupied(mut o) => {
+//                 o.get_mut().update_cached_tasks(
+//                     &buffer_snapshot,
+//                     query_ranges,
+//                     invalidate,
+//                     new_update_task,
+//                 );
+//             }
+//             hash_map::Entry::Vacant(v) => {
+//                 v.insert(TasksForRanges::new(
+//                     query_ranges.clone(),
+//                     new_update_task(query_ranges),
+//                 ));
+//             }
+//         }
+//     }
+// }
 
 #[derive(Debug, Clone)]
 struct QueryRanges {
@@ -762,78 +765,79 @@ fn new_update_task(
     lsp_request_limiter: Arc<Semaphore>,
     cx: &mut ViewContext<'_, Editor>,
 ) -> Task<()> {
-    cx.spawn(|editor, mut cx| async move {
-        let closure_cx = cx.clone();
-        let fetch_and_update_hints = |invalidate, range| {
-            fetch_and_update_hints(
-                editor.clone(),
-                multi_buffer_snapshot.clone(),
-                buffer_snapshot.clone(),
-                Arc::clone(&visible_hints),
-                cached_excerpt_hints.as_ref().map(Arc::clone),
-                query,
-                invalidate,
-                range,
-                Arc::clone(&lsp_request_limiter),
-                closure_cx.clone(),
-            )
-        };
-        let visible_range_update_results = future::join_all(query_ranges.visible.into_iter().map(
-            |visible_range| async move {
-                (
-                    visible_range.clone(),
-                    fetch_and_update_hints(query.invalidate.should_invalidate(), visible_range)
-                        .await,
-                )
-            },
-        ))
-        .await;
+    todo!()
+    // cx.spawn(|editor, mut cx| async move {
+    //     let closure_cx = cx.clone();
+    //     let fetch_and_update_hints = |invalidate, range| {
+    //         fetch_and_update_hints(
+    //             editor.clone(),
+    //             multi_buffer_snapshot.clone(),
+    //             buffer_snapshot.clone(),
+    //             Arc::clone(&visible_hints),
+    //             cached_excerpt_hints.as_ref().map(Arc::clone),
+    //             query,
+    //             invalidate,
+    //             range,
+    //             Arc::clone(&lsp_request_limiter),
+    //             closure_cx.clone(),
+    //         )
+    //     };
+    //     let visible_range_update_results = future::join_all(query_ranges.visible.into_iter().map(
+    //         |visible_range| async move {
+    //             (
+    //                 visible_range.clone(),
+    //                 fetch_and_update_hints(query.invalidate.should_invalidate(), visible_range)
+    //                     .await,
+    //             )
+    //         },
+    //     ))
+    //     .await;
 
-        let hint_delay = cx.background().timer(Duration::from_millis(
-            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS,
-        ));
+    //     let hint_delay = cx.background().timer(Duration::from_millis(
+    //         INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS,
+    //     ));
 
-        let mut query_range_failed = |range: &Range<language::Anchor>, e: anyhow::Error| {
-            log::error!("inlay hint update task for range {range:?} failed: {e:#}");
-            editor
-                .update(&mut cx, |editor, _| {
-                    if let Some(task_ranges) = editor
-                        .inlay_hint_cache
-                        .update_tasks
-                        .get_mut(&query.excerpt_id)
-                    {
-                        task_ranges.invalidate_range(&buffer_snapshot, &range);
-                    }
-                })
-                .ok()
-        };
+    //     let mut query_range_failed = |range: &Range<language::Anchor>, e: anyhow::Error| {
+    //         log::error!("inlay hint update task for range {range:?} failed: {e:#}");
+    //         editor
+    //             .update(&mut cx, |editor, _| {
+    //                 if let Some(task_ranges) = editor
+    //                     .inlay_hint_cache
+    //                     .update_tasks
+    //                     .get_mut(&query.excerpt_id)
+    //                 {
+    //                     task_ranges.invalidate_range(&buffer_snapshot, &range);
+    //                 }
+    //             })
+    //             .ok()
+    //     };
 
-        for (range, result) in visible_range_update_results {
-            if let Err(e) = result {
-                query_range_failed(&range, e);
-            }
-        }
+    //     for (range, result) in visible_range_update_results {
+    //         if let Err(e) = result {
+    //             query_range_failed(&range, e);
+    //         }
+    //     }
 
-        hint_delay.await;
-        let invisible_range_update_results = future::join_all(
-            query_ranges
-                .before_visible
-                .into_iter()
-                .chain(query_ranges.after_visible.into_iter())
-                .map(|invisible_range| async move {
-                    (
-                        invisible_range.clone(),
-                        fetch_and_update_hints(false, invisible_range).await,
-                    )
-                }),
-        )
-        .await;
-        for (range, result) in invisible_range_update_results {
-            if let Err(e) = result {
-                query_range_failed(&range, e);
-            }
-        }
-    })
+    //     hint_delay.await;
+    //     let invisible_range_update_results = future::join_all(
+    //         query_ranges
+    //             .before_visible
+    //             .into_iter()
+    //             .chain(query_ranges.after_visible.into_iter())
+    //             .map(|invisible_range| async move {
+    //                 (
+    //                     invisible_range.clone(),
+    //                     fetch_and_update_hints(false, invisible_range).await,
+    //                 )
+    //             }),
+    //     )
+    //     .await;
+    //     for (range, result) in invisible_range_update_results {
+    //         if let Err(e) = result {
+    //             query_range_failed(&range, e);
+    //         }
+    //     }
+    // })
 }
 
 // async fn fetch_and_update_hints(
@@ -1073,126 +1077,128 @@ fn apply_hint_update(
     multi_buffer_snapshot: MultiBufferSnapshot,
     cx: &mut ViewContext<'_, Editor>,
 ) {
-    let cached_excerpt_hints = editor
-        .inlay_hint_cache
-        .hints
-        .entry(new_update.excerpt_id)
-        .or_insert_with(|| {
-            Arc::new(RwLock::new(CachedExcerptHints {
-                version: query.cache_version,
-                buffer_version: buffer_snapshot.version().clone(),
-                buffer_id: query.buffer_id,
-                ordered_hints: Vec::new(),
-                hints_by_id: HashMap::default(),
-            }))
-        });
-    let mut cached_excerpt_hints = cached_excerpt_hints.write();
-    match query.cache_version.cmp(&cached_excerpt_hints.version) {
-        cmp::Ordering::Less => return,
-        cmp::Ordering::Greater | cmp::Ordering::Equal => {
-            cached_excerpt_hints.version = query.cache_version;
-        }
-    }
-
-    let mut cached_inlays_changed = !new_update.remove_from_cache.is_empty();
-    cached_excerpt_hints
-        .ordered_hints
-        .retain(|hint_id| !new_update.remove_from_cache.contains(hint_id));
-    cached_excerpt_hints
-        .hints_by_id
-        .retain(|hint_id, _| !new_update.remove_from_cache.contains(hint_id));
-    let mut splice = InlaySplice {
-        to_remove: new_update.remove_from_visible,
-        to_insert: Vec::new(),
-    };
-    for new_hint in new_update.add_to_cache {
-        let insert_position = match cached_excerpt_hints
-            .ordered_hints
-            .binary_search_by(|probe| {
-                cached_excerpt_hints.hints_by_id[probe]
-                    .position
-                    .cmp(&new_hint.position, &buffer_snapshot)
-            }) {
-            Ok(i) => {
-                let mut insert_position = Some(i);
-                for id in &cached_excerpt_hints.ordered_hints[i..] {
-                    let cached_hint = &cached_excerpt_hints.hints_by_id[id];
-                    if new_hint
-                        .position
-                        .cmp(&cached_hint.position, &buffer_snapshot)
-                        .is_gt()
-                    {
-                        break;
-                    }
-                    if cached_hint.text() == new_hint.text() {
-                        insert_position = None;
-                        break;
-                    }
-                }
-                insert_position
-            }
-            Err(i) => Some(i),
-        };
-
-        if let Some(insert_position) = insert_position {
-            let new_inlay_id = post_inc(&mut editor.next_inlay_id);
-            if editor
-                .inlay_hint_cache
-                .allowed_hint_kinds
-                .contains(&new_hint.kind)
-            {
-                let new_hint_position =
-                    multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_hint.position);
-                splice
-                    .to_insert
-                    .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
-            }
-            let new_id = InlayId::Hint(new_inlay_id);
-            cached_excerpt_hints.hints_by_id.insert(new_id, new_hint);
-            cached_excerpt_hints
-                .ordered_hints
-                .insert(insert_position, new_id);
-            cached_inlays_changed = true;
-        }
-    }
-    cached_excerpt_hints.buffer_version = buffer_snapshot.version().clone();
-    drop(cached_excerpt_hints);
-
-    if invalidate {
-        let mut outdated_excerpt_caches = HashSet::default();
-        for (excerpt_id, excerpt_hints) in &editor.inlay_hint_cache().hints {
-            let excerpt_hints = excerpt_hints.read();
-            if excerpt_hints.buffer_id == query.buffer_id
-                && excerpt_id != &query.excerpt_id
-                && buffer_snapshot
-                    .version()
-                    .changed_since(&excerpt_hints.buffer_version)
-            {
-                outdated_excerpt_caches.insert(*excerpt_id);
-                splice
-                    .to_remove
-                    .extend(excerpt_hints.ordered_hints.iter().copied());
-            }
-        }
-        cached_inlays_changed |= !outdated_excerpt_caches.is_empty();
-        editor
-            .inlay_hint_cache
-            .hints
-            .retain(|excerpt_id, _| !outdated_excerpt_caches.contains(excerpt_id));
-    }
-
-    let InlaySplice {
-        to_remove,
-        to_insert,
-    } = splice;
-    let displayed_inlays_changed = !to_remove.is_empty() || !to_insert.is_empty();
-    if cached_inlays_changed || displayed_inlays_changed {
-        editor.inlay_hint_cache.version += 1;
-    }
-    if displayed_inlays_changed {
-        editor.splice_inlay_hints(to_remove, to_insert, cx)
-    }
+    todo!("old implementation commented below")
 }
+//     let cached_excerpt_hints = editor
+//         .inlay_hint_cache
+//         .hints
+//         .entry(new_update.excerpt_id)
+//         .or_insert_with(|| {
+//             Arc::new(RwLock::new(CachedExcerptHints {
+//                 version: query.cache_version,
+//                 buffer_version: buffer_snapshot.version().clone(),
+//                 buffer_id: query.buffer_id,
+//                 ordered_hints: Vec::new(),
+//                 hints_by_id: HashMap::default(),
+//             }))
+//         });
+//     let mut cached_excerpt_hints = cached_excerpt_hints.write();
+//     match query.cache_version.cmp(&cached_excerpt_hints.version) {
+//         cmp::Ordering::Less => return,
+//         cmp::Ordering::Greater | cmp::Ordering::Equal => {
+//             cached_excerpt_hints.version = query.cache_version;
+//         }
+//     }
+
+//     let mut cached_inlays_changed = !new_update.remove_from_cache.is_empty();
+//     cached_excerpt_hints
+//         .ordered_hints
+//         .retain(|hint_id| !new_update.remove_from_cache.contains(hint_id));
+//     cached_excerpt_hints
+//         .hints_by_id
+//         .retain(|hint_id, _| !new_update.remove_from_cache.contains(hint_id));
+//     let mut splice = InlaySplice {
+//         to_remove: new_update.remove_from_visible,
+//         to_insert: Vec::new(),
+//     };
+//     for new_hint in new_update.add_to_cache {
+//         let insert_position = match cached_excerpt_hints
+//             .ordered_hints
+//             .binary_search_by(|probe| {
+//                 cached_excerpt_hints.hints_by_id[probe]
+//                     .position
+//                     .cmp(&new_hint.position, &buffer_snapshot)
+//             }) {
+//             Ok(i) => {
+//                 let mut insert_position = Some(i);
+//                 for id in &cached_excerpt_hints.ordered_hints[i..] {
+//                     let cached_hint = &cached_excerpt_hints.hints_by_id[id];
+//                     if new_hint
+//                         .position
+//                         .cmp(&cached_hint.position, &buffer_snapshot)
+//                         .is_gt()
+//                     {
+//                         break;
+//                     }
+//                     if cached_hint.text() == new_hint.text() {
+//                         insert_position = None;
+//                         break;
+//                     }
+//                 }
+//                 insert_position
+//             }
+//             Err(i) => Some(i),
+//         };
+
+//         if let Some(insert_position) = insert_position {
+//             let new_inlay_id = post_inc(&mut editor.next_inlay_id);
+//             if editor
+//                 .inlay_hint_cache
+//                 .allowed_hint_kinds
+//                 .contains(&new_hint.kind)
+//             {
+//                 let new_hint_position =
+//                     multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_hint.position);
+//                 splice
+//                     .to_insert
+//                     .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
+//             }
+//             let new_id = InlayId::Hint(new_inlay_id);
+//             cached_excerpt_hints.hints_by_id.insert(new_id, new_hint);
+//             cached_excerpt_hints
+//                 .ordered_hints
+//                 .insert(insert_position, new_id);
+//             cached_inlays_changed = true;
+//         }
+//     }
+//     cached_excerpt_hints.buffer_version = buffer_snapshot.version().clone();
+//     drop(cached_excerpt_hints);
+
+//     if invalidate {
+//         let mut outdated_excerpt_caches = HashSet::default();
+//         for (excerpt_id, excerpt_hints) in &editor.inlay_hint_cache().hints {
+//             let excerpt_hints = excerpt_hints.read();
+//             if excerpt_hints.buffer_id == query.buffer_id
+//                 && excerpt_id != &query.excerpt_id
+//                 && buffer_snapshot
+//                     .version()
+//                     .changed_since(&excerpt_hints.buffer_version)
+//             {
+//                 outdated_excerpt_caches.insert(*excerpt_id);
+//                 splice
+//                     .to_remove
+//                     .extend(excerpt_hints.ordered_hints.iter().copied());
+//             }
+//         }
+//         cached_inlays_changed |= !outdated_excerpt_caches.is_empty();
+//         editor
+//             .inlay_hint_cache
+//             .hints
+//             .retain(|excerpt_id, _| !outdated_excerpt_caches.contains(excerpt_id));
+//     }
+
+//     let InlaySplice {
+//         to_remove,
+//         to_insert,
+//     } = splice;
+//     let displayed_inlays_changed = !to_remove.is_empty() || !to_insert.is_empty();
+//     if cached_inlays_changed || displayed_inlays_changed {
+//         editor.inlay_hint_cache.version += 1;
+//     }
+//     if displayed_inlays_changed {
+//         editor.splice_inlay_hints(to_remove, to_insert, cx)
+//     }
+// }
 
 // #[cfg(test)]
 // pub mod tests {

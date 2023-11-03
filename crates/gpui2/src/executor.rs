@@ -29,6 +29,7 @@ pub struct ForegroundExecutor {
 }
 
 #[must_use]
+#[derive(Debug)]
 pub enum Task<T> {
     Ready(Option<T>),
     Spawned(async_task::Task<T>),

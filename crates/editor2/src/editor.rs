@@ -1,3 +1,4 @@
+#![allow(unused)]
 mod blink_manager;
 pub mod display_map;
 mod editor_settings;
@@ -20,8 +21,9 @@ mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 use aho_corasick::AhoCorasick;
+use anyhow::Result;
 use blink_manager::BlinkManager;
-use client::{Collaborator, ParticipantIndex};
+use client::{Client, Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
 pub use display_map::DisplayPoint;
@@ -33,8 +35,8 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, AppContext, Element, EventEmitter, Model, Pixels, Render, Subscription, Task, View,
-    ViewContext, WeakView,
+    AnyElement, AppContext, BackgroundExecutor, Element, EventEmitter, Model, Pixels, Render,
+    Subscription, Task, TextStyle, View, ViewContext, WeakView, WindowContext,
 };
 use hover_popover::HoverState;
 pub use items::MAX_TAB_TITLE_LEN;
@@ -42,27 +44,30 @@ pub use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
     AutoindentMode, BracketPair, Buffer, CodeAction, Completion, CursorShape, Diagnostic, Language,
-    OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
+    LanguageRegistry, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::LinkGoToDefinitionState;
+use lsp::{Documentation, LanguageServerId};
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
 };
+use ordered_float::OrderedFloat;
 use parking_lot::RwLock;
-use project::Project;
+use project::{FormatTrigger, Project};
 use rpc::proto::*;
 use scroll::{autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::SelectionsCollection;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{
+    cmp::Reverse,
     ops::{Deref, DerefMut, Range},
     sync::Arc,
     time::Duration,
 };
 pub use sum_tree::Bias;
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, ViewId, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -569,7 +574,7 @@ pub enum SoftWrap {
 
 #[derive(Clone)]
 pub struct EditorStyle {
-    //  pub text: TextStyle,
+    pub text: TextStyle,
     pub line_height_scalar: f32,
     // pub placeholder_text: Option<TextStyle>,
     //  pub theme: theme::Editor,
@@ -887,10 +892,11 @@ impl ContextMenu {
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, AnyElement<Editor>) {
-        match self {
-            ContextMenu::Completions(menu) => (cursor_position, menu.render(style, workspace, cx)),
-            ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
-        }
+        todo!()
+        // match self {
+        //     ContextMenu::Completions(menu) => (cursor_position, menu.render(style, workspace, cx)),
+        //     ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
+        // }
     }
 }
 
@@ -903,688 +909,715 @@ struct CompletionsMenu {
     match_candidates: Arc<[StringMatchCandidate]>,
     matches: Arc<[StringMatch]>,
     selected_item: usize,
-    // list: UniformListState,
+    list: UniformListState,
 }
 
-// impl CompletionsMenu {
-//     fn select_first(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
-//         self.selected_item = 0;
-//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-//         self.attempt_resolve_selected_completion_documentation(project, cx);
-//         cx.notify();
-//     }
+// todo!(this is fake)
+#[derive(Clone)]
+struct UniformListState;
 
-//     fn select_prev(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
-//         if self.selected_item > 0 {
-//             self.selected_item -= 1;
-//         } else {
-//             self.selected_item = self.matches.len() - 1;
-//         }
-//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-//         self.attempt_resolve_selected_completion_documentation(project, cx);
-//         cx.notify();
-//     }
+// todo!(this is fake)
+impl UniformListState {
+    pub fn scroll_to(&mut self, target: ScrollTarget) {}
+}
 
-//     fn select_next(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
-//         if self.selected_item + 1 < self.matches.len() {
-//             self.selected_item += 1;
-//         } else {
-//             self.selected_item = 0;
-//         }
-//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-//         self.attempt_resolve_selected_completion_documentation(project, cx);
-//         cx.notify();
-//     }
+// todo!(this is somewhat fake)
+#[derive(Debug)]
+pub enum ScrollTarget {
+    Show(usize),
+    Center(usize),
+}
 
-//     fn select_last(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
-//         self.selected_item = self.matches.len() - 1;
-//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-//         self.attempt_resolve_selected_completion_documentation(project, cx);
-//         cx.notify();
-//     }
+impl CompletionsMenu {
+    fn select_first(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
+        self.selected_item = 0;
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.attempt_resolve_selected_completion_documentation(project, cx);
+        cx.notify();
+    }
 
-//     fn pre_resolve_completion_documentation(
-//         &self,
-//         project: Option<Model<Project>>,
-//         cx: &mut ViewContext<Editor>,
-//     ) {
-//         let settings = settings::get::<EditorSettings>(cx);
-//         if !settings.show_completion_documentation {
-//             return;
-//         }
+    fn select_prev(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
+        if self.selected_item > 0 {
+            self.selected_item -= 1;
+        } else {
+            self.selected_item = self.matches.len() - 1;
+        }
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.attempt_resolve_selected_completion_documentation(project, cx);
+        cx.notify();
+    }
 
-//         let Some(project) = project else {
-//             return;
-//         };
-//         let client = project.read(cx).client();
-//         let language_registry = project.read(cx).languages().clone();
+    fn select_next(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
+        if self.selected_item + 1 < self.matches.len() {
+            self.selected_item += 1;
+        } else {
+            self.selected_item = 0;
+        }
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.attempt_resolve_selected_completion_documentation(project, cx);
+        cx.notify();
+    }
 
-//         let is_remote = project.read(cx).is_remote();
-//         let project_id = project.read(cx).remote_id();
+    fn select_last(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
+        self.selected_item = self.matches.len() - 1;
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.attempt_resolve_selected_completion_documentation(project, cx);
+        cx.notify();
+    }
 
-//         let completions = self.completions.clone();
-//         let completion_indices: Vec<_> = self.matches.iter().map(|m| m.candidate_id).collect();
+    fn pre_resolve_completion_documentation(
+        &self,
+        project: Option<Model<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        todo!("implementation below ");
+    }
+    // ) {
+    //     let settings = EditorSettings::get_global(cx);
+    //     if !settings.show_completion_documentation {
+    //         return;
+    //     }
 
-//         cx.spawn(move |this, mut cx| async move {
-//             if is_remote {
-//                 let Some(project_id) = project_id else {
-//                     log::error!("Remote project without remote_id");
-//                     return;
-//                 };
+    //     let Some(project) = project else {
+    //         return;
+    //     };
+    //     let client = project.read(cx).client();
+    //     let language_registry = project.read(cx).languages().clone();
 
-//                 for completion_index in completion_indices {
-//                     let completions_guard = completions.read();
-//                     let completion = &completions_guard[completion_index];
-//                     if completion.documentation.is_some() {
-//                         continue;
-//                     }
+    //     let is_remote = project.read(cx).is_remote();
+    //     let project_id = project.read(cx).remote_id();
 
-//                     let server_id = completion.server_id;
-//                     let completion = completion.lsp_completion.clone();
-//                     drop(completions_guard);
+    //     let completions = self.completions.clone();
+    //     let completion_indices: Vec<_> = self.matches.iter().map(|m| m.candidate_id).collect();
 
-//                     Self::resolve_completion_documentation_remote(
-//                         project_id,
-//                         server_id,
-//                         completions.clone(),
-//                         completion_index,
-//                         completion,
-//                         client.clone(),
-//                         language_registry.clone(),
-//                     )
-//                     .await;
+    //     cx.spawn(move |this, mut cx| async move {
+    //         if is_remote {
+    //             let Some(project_id) = project_id else {
+    //                 log::error!("Remote project without remote_id");
+    //                 return;
+    //             };
 
-//                     _ = this.update(&mut cx, |_, cx| cx.notify());
-//                 }
-//             } else {
-//                 for completion_index in completion_indices {
-//                     let completions_guard = completions.read();
-//                     let completion = &completions_guard[completion_index];
-//                     if completion.documentation.is_some() {
-//                         continue;
-//                     }
+    //             for completion_index in completion_indices {
+    //                 let completions_guard = completions.read();
+    //                 let completion = &completions_guard[completion_index];
+    //                 if completion.documentation.is_some() {
+    //                     continue;
+    //                 }
 
-//                     let server_id = completion.server_id;
-//                     let completion = completion.lsp_completion.clone();
-//                     drop(completions_guard);
+    //                 let server_id = completion.server_id;
+    //                 let completion = completion.lsp_completion.clone();
+    //                 drop(completions_guard);
 
-//                     let server = project.read_with(&mut cx, |project, _| {
-//                         project.language_server_for_id(server_id)
-//                     });
-//                     let Some(server) = server else {
-//                         return;
-//                     };
+    //                 Self::resolve_completion_documentation_remote(
+    //                     project_id,
+    //                     server_id,
+    //                     completions.clone(),
+    //                     completion_index,
+    //                     completion,
+    //                     client.clone(),
+    //                     language_registry.clone(),
+    //                 )
+    //                 .await;
 
-//                     Self::resolve_completion_documentation_local(
-//                         server,
-//                         completions.clone(),
-//                         completion_index,
-//                         completion,
-//                         language_registry.clone(),
-//                     )
-//                     .await;
+    //                 _ = this.update(&mut cx, |_, cx| cx.notify());
+    //             }
+    //         } else {
+    //             for completion_index in completion_indices {
+    //                 let completions_guard = completions.read();
+    //                 let completion = &completions_guard[completion_index];
+    //                 if completion.documentation.is_some() {
+    //                     continue;
+    //                 }
 
-//                     _ = this.update(&mut cx, |_, cx| cx.notify());
-//                 }
-//             }
-//         })
-//         .detach();
-//     }
+    //                 let server_id = completion.server_id;
+    //                 let completion = completion.lsp_completion.clone();
+    //                 drop(completions_guard);
 
-//     fn attempt_resolve_selected_completion_documentation(
-//         &mut self,
-//         project: Option<&Model<Project>>,
-//         cx: &mut ViewContext<Editor>,
-//     ) {
-//         let settings = settings::get::<EditorSettings>(cx);
-//         if !settings.show_completion_documentation {
-//             return;
-//         }
+    //                 let server = project.read_with(&mut cx, |project, _| {
+    //                     project.language_server_for_id(server_id)
+    //                 });
+    //                 let Some(server) = server else {
+    //                     return;
+    //                 };
 
-//         let completion_index = self.matches[self.selected_item].candidate_id;
-//         let Some(project) = project else {
-//             return;
-//         };
-//         let language_registry = project.read(cx).languages().clone();
+    //                 Self::resolve_completion_documentation_local(
+    //                     server,
+    //                     completions.clone(),
+    //                     completion_index,
+    //                     completion,
+    //                     language_registry.clone(),
+    //                 )
+    //                 .await;
 
-//         let completions = self.completions.clone();
-//         let completions_guard = completions.read();
-//         let completion = &completions_guard[completion_index];
-//         if completion.documentation.is_some() {
-//             return;
-//         }
+    //                 _ = this.update(&mut cx, |_, cx| cx.notify());
+    //             }
+    //         }
+    //     })
+    //     .detach();
+    // }
 
-//         let server_id = completion.server_id;
-//         let completion = completion.lsp_completion.clone();
-//         drop(completions_guard);
+    fn attempt_resolve_selected_completion_documentation(
+        &mut self,
+        project: Option<&Model<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let settings = EditorSettings::get_global(cx);
+        if !settings.show_completion_documentation {
+            return;
+        }
 
-//         if project.read(cx).is_remote() {
-//             let Some(project_id) = project.read(cx).remote_id() else {
-//                 log::error!("Remote project without remote_id");
-//                 return;
-//             };
+        let completion_index = self.matches[self.selected_item].candidate_id;
+        let Some(project) = project else {
+            return;
+        };
+        let language_registry = project.read(cx).languages().clone();
 
-//             let client = project.read(cx).client();
+        let completions = self.completions.clone();
+        let completions_guard = completions.read();
+        let completion = &completions_guard[completion_index];
+        // todo!()
+        // if completion.documentation.is_some() {
+        //     return;
+        // }
 
-//             cx.spawn(move |this, mut cx| async move {
-//                 Self::resolve_completion_documentation_remote(
-//                     project_id,
-//                     server_id,
-//                     completions.clone(),
-//                     completion_index,
-//                     completion,
-//                     client,
-//                     language_registry.clone(),
-//                 )
-//                 .await;
+        let server_id = completion.server_id;
+        let completion = completion.lsp_completion.clone();
+        drop(completions_guard);
 
-//                 _ = this.update(&mut cx, |_, cx| cx.notify());
-//             })
-//             .detach();
-//         } else {
-//             let Some(server) = project.read(cx).language_server_for_id(server_id) else {
-//                 return;
-//             };
+        if project.read(cx).is_remote() {
+            let Some(project_id) = project.read(cx).remote_id() else {
+                log::error!("Remote project without remote_id");
+                return;
+            };
 
-//             cx.spawn(move |this, mut cx| async move {
-//                 Self::resolve_completion_documentation_local(
-//                     server,
-//                     completions,
-//                     completion_index,
-//                     completion,
-//                     language_registry,
-//                 )
-//                 .await;
+            let client = project.read(cx).client();
 
-//                 _ = this.update(&mut cx, |_, cx| cx.notify());
-//             })
-//             .detach();
-//         }
-//     }
+            cx.spawn(move |this, mut cx| async move {
+                Self::resolve_completion_documentation_remote(
+                    project_id,
+                    server_id,
+                    completions.clone(),
+                    completion_index,
+                    completion,
+                    client,
+                    language_registry.clone(),
+                )
+                .await;
 
-//     async fn resolve_completion_documentation_remote(
-//         project_id: u64,
-//         server_id: LanguageServerId,
-//         completions: Arc<RwLock<Box<[Completion]>>>,
-//         completion_index: usize,
-//         completion: lsp::CompletionItem,
-//         client: Arc<Client>,
-//         language_registry: Arc<LanguageRegistry>,
-//     ) {
-//         let request = proto::ResolveCompletionDocumentation {
-//             project_id,
-//             language_server_id: server_id.0 as u64,
-//             lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
-//         };
+                _ = this.update(&mut cx, |_, cx| cx.notify());
+            })
+            .detach();
+        } else {
+            let Some(server) = project.read(cx).language_server_for_id(server_id) else {
+                return;
+            };
 
-//         let Some(response) = client
-//             .request(request)
-//             .await
-//             .context("completion documentation resolve proto request")
-//             .log_err()
-//         else {
-//             return;
-//         };
+            cx.spawn(move |this, mut cx| async move {
+                Self::resolve_completion_documentation_local(
+                    server,
+                    completions,
+                    completion_index,
+                    completion,
+                    language_registry,
+                )
+                .await;
 
-//         if response.text.is_empty() {
-//             let mut completions = completions.write();
-//             let completion = &mut completions[completion_index];
-//             completion.documentation = Some(Documentation::Undocumented);
-//         }
+                _ = this.update(&mut cx, |_, cx| cx.notify());
+            })
+            .detach();
+        }
+    }
 
-//         let documentation = if response.is_markdown {
-//             Documentation::MultiLineMarkdown(
-//                 markdown::parse_markdown(&response.text, &language_registry, None).await,
-//             )
-//         } else if response.text.lines().count() <= 1 {
-//             Documentation::SingleLine(response.text)
-//         } else {
-//             Documentation::MultiLinePlainText(response.text)
-//         };
+    async fn resolve_completion_documentation_remote(
+        project_id: u64,
+        server_id: LanguageServerId,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        completion_index: usize,
+        completion: lsp::CompletionItem,
+        client: Arc<Client>,
+        language_registry: Arc<LanguageRegistry>,
+    ) {
+        todo!()
+        // let request = proto::ResolveCompletionDocumentation {
+        //     project_id,
+        //     language_server_id: server_id.0 as u64,
+        //     lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
+        // };
 
-//         let mut completions = completions.write();
-//         let completion = &mut completions[completion_index];
-//         completion.documentation = Some(documentation);
-//     }
+        // let Some(response) = client
+        //     .request(request)
+        //     .await
+        //     .context("completion documentation resolve proto request")
+        //     .log_err()
+        // else {
+        //     return;
+        // };
 
-//     async fn resolve_completion_documentation_local(
-//         server: Arc<lsp::LanguageServer>,
-//         completions: Arc<RwLock<Box<[Completion]>>>,
-//         completion_index: usize,
-//         completion: lsp::CompletionItem,
-//         language_registry: Arc<LanguageRegistry>,
-//     ) {
-//         let can_resolve = server
-//             .capabilities()
-//             .completion_provider
-//             .as_ref()
-//             .and_then(|options| options.resolve_provider)
-//             .unwrap_or(false);
-//         if !can_resolve {
-//             return;
-//         }
+        // if response.text.is_empty() {
+        //     let mut completions = completions.write();
+        //     let completion = &mut completions[completion_index];
+        //     completion.documentation = Some(Documentation::Undocumented);
+        // }
 
-//         let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
-//         let Some(completion_item) = request.await.log_err() else {
-//             return;
-//         };
+        // let documentation = if response.is_markdown {
+        //     Documentation::MultiLineMarkdown(
+        //         markdown::parse_markdown(&response.text, &language_registry, None).await,
+        //     )
+        // } else if response.text.lines().count() <= 1 {
+        //     Documentation::SingleLine(response.text)
+        // } else {
+        //     Documentation::MultiLinePlainText(response.text)
+        // };
 
-//         if let Some(lsp_documentation) = completion_item.documentation {
-//             let documentation = language::prepare_completion_documentation(
-//                 &lsp_documentation,
-//                 &language_registry,
-//                 None, // TODO: Try to reasonably work out which language the completion is for
-//             )
-//             .await;
+        // let mut completions = completions.write();
+        // let completion = &mut completions[completion_index];
+        // completion.documentation = Some(documentation);
+    }
 
-//             let mut completions = completions.write();
-//             let completion = &mut completions[completion_index];
-//             completion.documentation = Some(documentation);
-//         } else {
-//             let mut completions = completions.write();
-//             let completion = &mut completions[completion_index];
-//             completion.documentation = Some(Documentation::Undocumented);
-//         }
-//     }
+    async fn resolve_completion_documentation_local(
+        server: Arc<lsp::LanguageServer>,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        completion_index: usize,
+        completion: lsp::CompletionItem,
+        language_registry: Arc<LanguageRegistry>,
+    ) {
+        todo!()
+        // let can_resolve = server
+        //     .capabilities()
+        //     .completion_provider
+        //     .as_ref()
+        //     .and_then(|options| options.resolve_provider)
+        //     .unwrap_or(false);
+        // if !can_resolve {
+        //     return;
+        // }
 
-//     fn visible(&self) -> bool {
-//         !self.matches.is_empty()
-//     }
+        // let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
+        // let Some(completion_item) = request.await.log_err() else {
+        //     return;
+        // };
 
-//     fn render(
-//         &self,
-//         style: EditorStyle,
-//         workspace: Option<WeakView<Workspace>>,
-//         cx: &mut ViewContext<Editor>,
-//     ) -> AnyElement<Editor> {
-//         enum CompletionTag {}
+        // if let Some(lsp_documentation) = completion_item.documentation {
+        //     let documentation = language::prepare_completion_documentation(
+        //         &lsp_documentation,
+        //         &language_registry,
+        //         None, // TODO: Try to reasonably work out which language the completion is for
+        //     )
+        //     .await;
 
-//         let settings = settings::get::<EditorSettings>(cx);
-//         let show_completion_documentation = settings.show_completion_documentation;
+        //     let mut completions = completions.write();
+        //     let completion = &mut completions[completion_index];
+        //     completion.documentation = Some(documentation);
+        // } else {
+        //     let mut completions = completions.write();
+        //     let completion = &mut completions[completion_index];
+        //     completion.documentation = Some(Documentation::Undocumented);
+        // }
+    }
 
-//         let widest_completion_ix = self
-//             .matches
-//             .iter()
-//             .enumerate()
-//             .max_by_key(|(_, mat)| {
-//                 let completions = self.completions.read();
-//                 let completion = &completions[mat.candidate_id];
-//                 let documentation = &completion.documentation;
+    fn visible(&self) -> bool {
+        !self.matches.is_empty()
+    }
 
-//                 let mut len = completion.label.text.chars().count();
-//                 if let Some(Documentation::SingleLine(text)) = documentation {
-//                     if show_completion_documentation {
-//                         len += text.chars().count();
-//                     }
-//                 }
+    fn render(
+        &self,
+        style: EditorStyle,
+        workspace: Option<WeakView<Workspace>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        todo!("old implementation below")
+    }
+    // ) -> AnyElement<Editor> {
+    //     enum CompletionTag {}
 
-//                 len
-//             })
-//             .map(|(ix, _)| ix);
+    //     let settings = EditorSettings>(cx);
+    //     let show_completion_documentation = settings.show_completion_documentation;
 
-//         let completions = self.completions.clone();
-//         let matches = self.matches.clone();
-//         let selected_item = self.selected_item;
+    //     let widest_completion_ix = self
+    //         .matches
+    //         .iter()
+    //         .enumerate()
+    //         .max_by_key(|(_, mat)| {
+    //             let completions = self.completions.read();
+    //             let completion = &completions[mat.candidate_id];
+    //             let documentation = &completion.documentation;
 
-//         let list = UniformList::new(self.list.clone(), matches.len(), cx, {
-//             let style = style.clone();
-//             move |_, range, items, cx| {
-//                 let start_ix = range.start;
-//                 let completions_guard = completions.read();
+    //             let mut len = completion.label.text.chars().count();
+    //             if let Some(Documentation::SingleLine(text)) = documentation {
+    //                 if show_completion_documentation {
+    //                     len += text.chars().count();
+    //                 }
+    //             }
 
-//                 for (ix, mat) in matches[range].iter().enumerate() {
-//                     let item_ix = start_ix + ix;
-//                     let candidate_id = mat.candidate_id;
-//                     let completion = &completions_guard[candidate_id];
+    //             len
+    //         })
+    //         .map(|(ix, _)| ix);
 
-//                     let documentation = if show_completion_documentation {
-//                         &completion.documentation
-//                     } else {
-//                         &None
-//                     };
+    //     let completions = self.completions.clone();
+    //     let matches = self.matches.clone();
+    //     let selected_item = self.selected_item;
 
-//                     items.push(
-//                         MouseEventHandler::new::<CompletionTag, _>(
-//                             mat.candidate_id,
-//                             cx,
-//                             |state, _| {
-//                                 let item_style = if item_ix == selected_item {
-//                                     style.autocomplete.selected_item
-//                                 } else if state.hovered() {
-//                                     style.autocomplete.hovered_item
-//                                 } else {
-//                                     style.autocomplete.item
-//                                 };
+    //     let list = UniformList::new(self.list.clone(), matches.len(), cx, {
+    //         let style = style.clone();
+    //         move |_, range, items, cx| {
+    //             let start_ix = range.start;
+    //             let completions_guard = completions.read();
 
-//                                 let completion_label =
-//                                     Text::new(completion.label.text.clone(), style.text.clone())
-//                                         .with_soft_wrap(false)
-//                                         .with_highlights(
-//                                             combine_syntax_and_fuzzy_match_highlights(
-//                                                 &completion.label.text,
-//                                                 style.text.color.into(),
-//                                                 styled_runs_for_code_label(
-//                                                     &completion.label,
-//                                                     &style.syntax,
-//                                                 ),
-//                                                 &mat.positions,
-//                                             ),
-//                                         );
+    //             for (ix, mat) in matches[range].iter().enumerate() {
+    //                 let item_ix = start_ix + ix;
+    //                 let candidate_id = mat.candidate_id;
+    //                 let completion = &completions_guard[candidate_id];
 
-//                                 if let Some(Documentation::SingleLine(text)) = documentation {
-//                                     Flex::row()
-//                                         .with_child(completion_label)
-//                                         .with_children((|| {
-//                                             let text_style = TextStyle {
-//                                                 color: style.autocomplete.inline_docs_color,
-//                                                 font_size: style.text.font_size
-//                                                     * style.autocomplete.inline_docs_size_percent,
-//                                                 ..style.text.clone()
-//                                             };
+    //                 let documentation = if show_completion_documentation {
+    //                     &completion.documentation
+    //                 } else {
+    //                     &None
+    //                 };
 
-//                                             let label = Text::new(text.clone(), text_style)
-//                                                 .aligned()
-//                                                 .constrained()
-//                                                 .dynamically(move |constraint, _, _| {
-//                                                     gpui::SizeConstraint {
-//                                                         min: constraint.min,
-//                                                         max: vec2f(
-//                                                             constraint.max.x(),
-//                                                             constraint.min.y(),
-//                                                         ),
-//                                                     }
-//                                                 });
+    //                 items.push(
+    //                     MouseEventHandler::new::<CompletionTag, _>(
+    //                         mat.candidate_id,
+    //                         cx,
+    //                         |state, _| {
+    //                             let item_style = if item_ix == selected_item {
+    //                                 style.autocomplete.selected_item
+    //                             } else if state.hovered() {
+    //                                 style.autocomplete.hovered_item
+    //                             } else {
+    //                                 style.autocomplete.item
+    //                             };
 
-//                                             if Some(item_ix) == widest_completion_ix {
-//                                                 Some(
-//                                                     label
-//                                                         .contained()
-//                                                         .with_style(
-//                                                             style
-//                                                                 .autocomplete
-//                                                                 .inline_docs_container,
-//                                                         )
-//                                                         .into_any(),
-//                                                 )
-//                                             } else {
-//                                                 Some(label.flex_float().into_any())
-//                                             }
-//                                         })())
-//                                         .into_any()
-//                                 } else {
-//                                     completion_label.into_any()
-//                                 }
-//                                 .contained()
-//                                 .with_style(item_style)
-//                                 .constrained()
-//                                 .dynamically(
-//                                     move |constraint, _, _| {
-//                                         if Some(item_ix) == widest_completion_ix {
-//                                             constraint
-//                                         } else {
-//                                             gpui::SizeConstraint {
-//                                                 min: constraint.min,
-//                                                 max: constraint.min,
-//                                             }
-//                                         }
-//                                     },
-//                                 )
-//                             },
-//                         )
-//                         .with_cursor_style(CursorStyle::PointingHand)
-//                         .on_down(MouseButton::Left, move |_, this, cx| {
-//                             this.confirm_completion(
-//                                 &ConfirmCompletion {
-//                                     item_ix: Some(item_ix),
-//                                 },
-//                                 cx,
-//                             )
-//                             .map(|task| task.detach());
-//                         })
-//                         .constrained()
-//                         .with_min_width(style.autocomplete.completion_min_width)
-//                         .with_max_width(style.autocomplete.completion_max_width)
-//                         .into_any(),
-//                     );
-//                 }
-//             }
-//         })
-//         .with_width_from_item(widest_completion_ix);
+    //                             let completion_label =
+    //                                 Text::new(completion.label.text.clone(), style.text.clone())
+    //                                     .with_soft_wrap(false)
+    //                                     .with_highlights(
+    //                                         combine_syntax_and_fuzzy_match_highlights(
+    //                                             &completion.label.text,
+    //                                             style.text.color.into(),
+    //                                             styled_runs_for_code_label(
+    //                                                 &completion.label,
+    //                                                 &style.syntax,
+    //                                             ),
+    //                                             &mat.positions,
+    //                                         ),
+    //                                     );
 
-//         enum MultiLineDocumentation {}
+    //                             if let Some(Documentation::SingleLine(text)) = documentation {
+    //                                 Flex::row()
+    //                                     .with_child(completion_label)
+    //                                     .with_children((|| {
+    //                                         let text_style = TextStyle {
+    //                                             color: style.autocomplete.inline_docs_color,
+    //                                             font_size: style.text.font_size
+    //                                                 * style.autocomplete.inline_docs_size_percent,
+    //                                             ..style.text.clone()
+    //                                         };
 
-//         Flex::row()
-//             .with_child(list.flex(1., false))
-//             .with_children({
-//                 let mat = &self.matches[selected_item];
-//                 let completions = self.completions.read();
-//                 let completion = &completions[mat.candidate_id];
-//                 let documentation = &completion.documentation;
+    //                                         let label = Text::new(text.clone(), text_style)
+    //                                             .aligned()
+    //                                             .constrained()
+    //                                             .dynamically(move |constraint, _, _| {
+    //                                                 gpui::SizeConstraint {
+    //                                                     min: constraint.min,
+    //                                                     max: vec2f(
+    //                                                         constraint.max.x(),
+    //                                                         constraint.min.y(),
+    //                                                     ),
+    //                                                 }
+    //                                             });
 
-//                 match documentation {
-//                     Some(Documentation::MultiLinePlainText(text)) => Some(
-//                         Flex::column()
-//                             .scrollable::<MultiLineDocumentation>(0, None, cx)
-//                             .with_child(
-//                                 Text::new(text.clone(), style.text.clone()).with_soft_wrap(true),
-//                             )
-//                             .contained()
-//                             .with_style(style.autocomplete.alongside_docs_container)
-//                             .constrained()
-//                             .with_max_width(style.autocomplete.alongside_docs_max_width)
-//                             .flex(1., false),
-//                     ),
+    //                                         if Some(item_ix) == widest_completion_ix {
+    //                                             Some(
+    //                                                 label
+    //                                                     .contained()
+    //                                                     .with_style(
+    //                                                         style
+    //                                                             .autocomplete
+    //                                                             .inline_docs_container,
+    //                                                     )
+    //                                                     .into_any(),
+    //                                             )
+    //                                         } else {
+    //                                             Some(label.flex_float().into_any())
+    //                                         }
+    //                                     })())
+    //                                     .into_any()
+    //                             } else {
+    //                                 completion_label.into_any()
+    //                             }
+    //                             .contained()
+    //                             .with_style(item_style)
+    //                             .constrained()
+    //                             .dynamically(
+    //                                 move |constraint, _, _| {
+    //                                     if Some(item_ix) == widest_completion_ix {
+    //                                         constraint
+    //                                     } else {
+    //                                         gpui::SizeConstraint {
+    //                                             min: constraint.min,
+    //                                             max: constraint.min,
+    //                                         }
+    //                                     }
+    //                                 },
+    //                             )
+    //                         },
+    //                     )
+    //                     .with_cursor_style(CursorStyle::PointingHand)
+    //                     .on_down(MouseButton::Left, move |_, this, cx| {
+    //                         this.confirm_completion(
+    //                             &ConfirmCompletion {
+    //                                 item_ix: Some(item_ix),
+    //                             },
+    //                             cx,
+    //                         )
+    //                         .map(|task| task.detach());
+    //                     })
+    //                     .constrained()
+    //                     .with_min_width(style.autocomplete.completion_min_width)
+    //                     .with_max_width(style.autocomplete.completion_max_width)
+    //                     .into_any(),
+    //                 );
+    //             }
+    //         }
+    //     })
+    //     .with_width_from_item(widest_completion_ix);
 
-//                     Some(Documentation::MultiLineMarkdown(parsed)) => Some(
-//                         Flex::column()
-//                             .scrollable::<MultiLineDocumentation>(0, None, cx)
-//                             .with_child(render_parsed_markdown::<MultiLineDocumentation>(
-//                                 parsed, &style, workspace, cx,
-//                             ))
-//                             .contained()
-//                             .with_style(style.autocomplete.alongside_docs_container)
-//                             .constrained()
-//                             .with_max_width(style.autocomplete.alongside_docs_max_width)
-//                             .flex(1., false),
-//                     ),
+    //     enum MultiLineDocumentation {}
 
-//                     _ => None,
-//                 }
-//             })
-//             .contained()
-//             .with_style(style.autocomplete.container)
-//             .into_any()
-//     }
+    //     Flex::row()
+    //         .with_child(list.flex(1., false))
+    //         .with_children({
+    //             let mat = &self.matches[selected_item];
+    //             let completions = self.completions.read();
+    //             let completion = &completions[mat.candidate_id];
+    //             let documentation = &completion.documentation;
 
-//     pub async fn filter(&mut self, query: Option<&str>, executor: Arc<executor::Background>) {
-//         let mut matches = if let Some(query) = query {
-//             fuzzy::match_strings(
-//                 &self.match_candidates,
-//                 query,
-//                 query.chars().any(|c| c.is_uppercase()),
-//                 100,
-//                 &Default::default(),
-//                 executor,
-//             )
-//             .await
-//         } else {
-//             self.match_candidates
-//                 .iter()
-//                 .enumerate()
-//                 .map(|(candidate_id, candidate)| StringMatch {
-//                     candidate_id,
-//                     score: Default::default(),
-//                     positions: Default::default(),
-//                     string: candidate.string.clone(),
-//                 })
-//                 .collect()
-//         };
+    //             match documentation {
+    //                 Some(Documentation::MultiLinePlainText(text)) => Some(
+    //                     Flex::column()
+    //                         .scrollable::<MultiLineDocumentation>(0, None, cx)
+    //                         .with_child(
+    //                             Text::new(text.clone(), style.text.clone()).with_soft_wrap(true),
+    //                         )
+    //                         .contained()
+    //                         .with_style(style.autocomplete.alongside_docs_container)
+    //                         .constrained()
+    //                         .with_max_width(style.autocomplete.alongside_docs_max_width)
+    //                         .flex(1., false),
+    //                 ),
 
-//         // Remove all candidates where the query's start does not match the start of any word in the candidate
-//         if let Some(query) = query {
-//             if let Some(query_start) = query.chars().next() {
-//                 matches.retain(|string_match| {
-//                     split_words(&string_match.string).any(|word| {
-//                         // Check that the first codepoint of the word as lowercase matches the first
-//                         // codepoint of the query as lowercase
-//                         word.chars()
-//                             .flat_map(|codepoint| codepoint.to_lowercase())
-//                             .zip(query_start.to_lowercase())
-//                             .all(|(word_cp, query_cp)| word_cp == query_cp)
-//                     })
-//                 });
-//             }
-//         }
+    //                 Some(Documentation::MultiLineMarkdown(parsed)) => Some(
+    //                     Flex::column()
+    //                         .scrollable::<MultiLineDocumentation>(0, None, cx)
+    //                         .with_child(render_parsed_markdown::<MultiLineDocumentation>(
+    //                             parsed, &style, workspace, cx,
+    //                         ))
+    //                         .contained()
+    //                         .with_style(style.autocomplete.alongside_docs_container)
+    //                         .constrained()
+    //                         .with_max_width(style.autocomplete.alongside_docs_max_width)
+    //                         .flex(1., false),
+    //                 ),
 
-//         let completions = self.completions.read();
-//         matches.sort_unstable_by_key(|mat| {
-//             let completion = &completions[mat.candidate_id];
-//             (
-//                 completion.lsp_completion.sort_text.as_ref(),
-//                 Reverse(OrderedFloat(mat.score)),
-//                 completion.sort_key(),
-//             )
-//         });
-//         drop(completions);
+    //                 _ => None,
+    //             }
+    //         })
+    //         .contained()
+    //         .with_style(style.autocomplete.container)
+    //         .into_any()
+    // }
 
-//         for mat in &mut matches {
-//             let completions = self.completions.read();
-//             let filter_start = completions[mat.candidate_id].label.filter_range.start;
-//             for position in &mut mat.positions {
-//                 *position += filter_start;
-//             }
-//         }
+    pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
+        let mut matches = if let Some(query) = query {
+            fuzzy::match_strings(
+                &self.match_candidates,
+                query,
+                query.chars().any(|c| c.is_uppercase()),
+                100,
+                &Default::default(),
+                executor,
+            )
+            .await
+        } else {
+            self.match_candidates
+                .iter()
+                .enumerate()
+                .map(|(candidate_id, candidate)| StringMatch {
+                    candidate_id,
+                    score: Default::default(),
+                    positions: Default::default(),
+                    string: candidate.string.clone(),
+                })
+                .collect()
+        };
 
-//         self.matches = matches.into();
-//         self.selected_item = 0;
-//     }
-// }
+        // Remove all candidates where the query's start does not match the start of any word in the candidate
+        if let Some(query) = query {
+            if let Some(query_start) = query.chars().next() {
+                matches.retain(|string_match| {
+                    split_words(&string_match.string).any(|word| {
+                        // Check that the first codepoint of the word as lowercase matches the first
+                        // codepoint of the query as lowercase
+                        word.chars()
+                            .flat_map(|codepoint| codepoint.to_lowercase())
+                            .zip(query_start.to_lowercase())
+                            .all(|(word_cp, query_cp)| word_cp == query_cp)
+                    })
+                });
+            }
+        }
+
+        let completions = self.completions.read();
+        matches.sort_unstable_by_key(|mat| {
+            let completion = &completions[mat.candidate_id];
+            (
+                completion.lsp_completion.sort_text.as_ref(),
+                Reverse(OrderedFloat(mat.score)),
+                completion.sort_key(),
+            )
+        });
+        drop(completions);
+
+        for mat in &mut matches {
+            let completions = self.completions.read();
+            let filter_start = completions[mat.candidate_id].label.filter_range.start;
+            for position in &mut mat.positions {
+                *position += filter_start;
+            }
+        }
+
+        self.matches = matches.into();
+        self.selected_item = 0;
+    }
+}
 
 #[derive(Clone)]
 struct CodeActionsMenu {
     actions: Arc<[CodeAction]>,
     buffer: Model<Buffer>,
     selected_item: usize,
-    // list: UniformListState,
+    list: UniformListState,
     deployed_from_indicator: bool,
 }
 
-// impl CodeActionsMenu {
-//     fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
-//         self.selected_item = 0;
-//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-//         cx.notify()
-//     }
+impl CodeActionsMenu {
+    fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
+        self.selected_item = 0;
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        cx.notify()
+    }
 
-//     fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
-//         if self.selected_item > 0 {
-//             self.selected_item -= 1;
-//         } else {
-//             self.selected_item = self.actions.len() - 1;
-//         }
-//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-//         cx.notify();
-//     }
+    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
+        if self.selected_item > 0 {
+            self.selected_item -= 1;
+        } else {
+            self.selected_item = self.actions.len() - 1;
+        }
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        cx.notify();
+    }
 
-//     fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
-//         if self.selected_item + 1 < self.actions.len() {
-//             self.selected_item += 1;
-//         } else {
-//             self.selected_item = 0;
-//         }
-//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-//         cx.notify();
-//     }
+    fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
+        if self.selected_item + 1 < self.actions.len() {
+            self.selected_item += 1;
+        } else {
+            self.selected_item = 0;
+        }
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        cx.notify();
+    }
 
-//     fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
-//         self.selected_item = self.actions.len() - 1;
-//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-//         cx.notify()
-//     }
+    fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
+        self.selected_item = self.actions.len() - 1;
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        cx.notify()
+    }
 
-//     fn visible(&self) -> bool {
-//         !self.actions.is_empty()
-//     }
+    fn visible(&self) -> bool {
+        !self.actions.is_empty()
+    }
 
-//     fn render(
-//         &self,
-//         mut cursor_position: DisplayPoint,
-//         style: EditorStyle,
-//         cx: &mut ViewContext<Editor>,
-//     ) -> (DisplayPoint, AnyElement<Editor>) {
-//         enum ActionTag {}
+    fn render(
+        &self,
+        mut cursor_position: DisplayPoint,
+        style: EditorStyle,
+        cx: &mut ViewContext<Editor>,
+    ) -> (DisplayPoint, AnyElement<Editor>) {
+        todo!("old version below")
+    }
+    //     enum ActionTag {}
 
-//         let container_style = style.autocomplete.container;
-//         let actions = self.actions.clone();
-//         let selected_item = self.selected_item;
-//         let element = UniformList::new(
-//             self.list.clone(),
-//             actions.len(),
-//             cx,
-//             move |_, range, items, cx| {
-//                 let start_ix = range.start;
-//                 for (ix, action) in actions[range].iter().enumerate() {
-//                     let item_ix = start_ix + ix;
-//                     items.push(
-//                         MouseEventHandler::new::<ActionTag, _>(item_ix, cx, |state, _| {
-//                             let item_style = if item_ix == selected_item {
-//                                 style.autocomplete.selected_item
-//                             } else if state.hovered() {
-//                                 style.autocomplete.hovered_item
-//                             } else {
-//                                 style.autocomplete.item
-//                             };
+    //     let container_style = style.autocomplete.container;
+    //     let actions = self.actions.clone();
+    //     let selected_item = self.selected_item;
+    //     let element = UniformList::new(
+    //         self.list.clone(),
+    //         actions.len(),
+    //         cx,
+    //         move |_, range, items, cx| {
+    //             let start_ix = range.start;
+    //             for (ix, action) in actions[range].iter().enumerate() {
+    //                 let item_ix = start_ix + ix;
+    //                 items.push(
+    //                     MouseEventHandler::new::<ActionTag, _>(item_ix, cx, |state, _| {
+    //                         let item_style = if item_ix == selected_item {
+    //                             style.autocomplete.selected_item
+    //                         } else if state.hovered() {
+    //                             style.autocomplete.hovered_item
+    //                         } else {
+    //                             style.autocomplete.item
+    //                         };
 
-//                             Text::new(action.lsp_action.title.clone(), style.text.clone())
-//                                 .with_soft_wrap(false)
-//                                 .contained()
-//                                 .with_style(item_style)
-//                         })
-//                         .with_cursor_style(CursorStyle::PointingHand)
-//                         .on_down(MouseButton::Left, move |_, this, cx| {
-//                             let workspace = this
-//                                 .workspace
-//                                 .as_ref()
-//                                 .and_then(|(workspace, _)| workspace.upgrade(cx));
-//                             cx.window_context().defer(move |cx| {
-//                                 if let Some(workspace) = workspace {
-//                                     workspace.update(cx, |workspace, cx| {
-//                                         if let Some(task) = Editor::confirm_code_action(
-//                                             workspace,
-//                                             &ConfirmCodeAction {
-//                                                 item_ix: Some(item_ix),
-//                                             },
-//                                             cx,
-//                                         ) {
-//                                             task.detach_and_log_err(cx);
-//                                         }
-//                                     });
-//                                 }
-//                             });
-//                         })
-//                         .into_any(),
-//                     );
-//                 }
-//             },
-//         )
-//         .with_width_from_item(
-//             self.actions
-//                 .iter()
-//                 .enumerate()
-//                 .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
-//                 .map(|(ix, _)| ix),
-//         )
-//         .contained()
-//         .with_style(container_style)
-//         .into_any();
+    //                         Text::new(action.lsp_action.title.clone(), style.text.clone())
+    //                             .with_soft_wrap(false)
+    //                             .contained()
+    //                             .with_style(item_style)
+    //                     })
+    //                     .with_cursor_style(CursorStyle::PointingHand)
+    //                     .on_down(MouseButton::Left, move |_, this, cx| {
+    //                         let workspace = this
+    //                             .workspace
+    //                             .as_ref()
+    //                             .and_then(|(workspace, _)| workspace.upgrade(cx));
+    //                         cx.window_context().defer(move |cx| {
+    //                             if let Some(workspace) = workspace {
+    //                                 workspace.update(cx, |workspace, cx| {
+    //                                     if let Some(task) = Editor::confirm_code_action(
+    //                                         workspace,
+    //                                         &ConfirmCodeAction {
+    //                                             item_ix: Some(item_ix),
+    //                                         },
+    //                                         cx,
+    //                                     ) {
+    //                                         task.detach_and_log_err(cx);
+    //                                     }
+    //                                 });
+    //                             }
+    //                         });
+    //                     })
+    //                     .into_any(),
+    //                 );
+    //             }
+    //         },
+    //     )
+    //     .with_width_from_item(
+    //         self.actions
+    //             .iter()
+    //             .enumerate()
+    //             .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
+    //             .map(|(ix, _)| ix),
+    //     )
+    //     .contained()
+    //     .with_style(container_style)
+    //     .into_any();
 
-//         if self.deployed_from_indicator {
-//             *cursor_position.column_mut() = 0;
-//         }
+    //     if self.deployed_from_indicator {
+    //         *cursor_position.column_mut() = 0;
+    //     }
 
-//         (cursor_position, element)
-//     }
-// }
+    //     (cursor_position, element)
+    // }
+}
 
 pub struct CopilotState {
     excerpt_id: Option<ExcerptId>,
@@ -2018,20 +2051,21 @@ impl Editor {
     //         self.buffer().read(cx).title(cx)
     //     }
 
-    //     pub fn snapshot(&mut self, cx: &mut WindowContext) -> EditorSnapshot {
-    //         EditorSnapshot {
-    //             mode: self.mode,
-    //             show_gutter: self.show_gutter,
-    //             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
-    //             scroll_anchor: self.scroll_manager.anchor(),
-    //             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
-    //             placeholder_text: self.placeholder_text.clone(),
-    //             is_focused: self
-    //                 .handle
-    //                 .upgrade(cx)
-    //                 .map_or(false, |handle| handle.is_focused(cx)),
-    //         }
-    //     }
+    pub fn snapshot(&mut self, cx: &mut WindowContext) -> EditorSnapshot {
+        todo!()
+        // EditorSnapshot {
+        //     mode: self.mode,
+        //     show_gutter: self.show_gutter,
+        //     display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
+        //     scroll_anchor: self.scroll_manager.anchor(),
+        //     ongoing_scroll: self.scroll_manager.ongoing_scroll(),
+        //     placeholder_text: self.placeholder_text.clone(),
+        //     is_focused: self
+        //         .handle
+        //         .upgrade(cx)
+        //         .map_or(false, |handle| handle.is_focused(cx)),
+        // }
+    }
 
     //     pub fn language_at<'a, T: ToOffset>(
     //         &self,
@@ -2854,7 +2888,7 @@ impl Editor {
     //             let had_active_copilot_suggestion = this.has_active_copilot_suggestion(cx);
     //             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
-    //             if !brace_inserted && settings::get::<EditorSettings>(cx).use_on_type_format {
+    //             if !brace_inserted && EditorSettings>(cx).use_on_type_format {
     //                 if let Some(on_type_format_task) =
     //                     this.trigger_on_type_formatting(text.to_string(), cx)
     //                 {
@@ -3173,7 +3207,7 @@ impl Editor {
     //     }
 
     //     fn trigger_completion_on_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-    //         if !settings::get::<EditorSettings>(cx).show_completions_on_input {
+    //         if !EditorSettings>(cx).show_completions_on_input {
     //             return;
     //         }
 
@@ -3377,16 +3411,16 @@ impl Editor {
     //         }
     //     }
 
-    //     fn visible_inlay_hints(&self, cx: &ViewContext<'_, '_, Editor>) -> Vec<Inlay> {
-    //         self.display_map
-    //             .read(cx)
-    //             .current_inlays()
-    //             .filter(move |inlay| {
-    //                 Some(inlay.id) != self.copilot_state.suggestion.as_ref().map(|h| h.id)
-    //             })
-    //             .cloned()
-    //             .collect()
-    //     }
+    fn visible_inlay_hints(&self, cx: &ViewContext<'_, Editor>) -> Vec<Inlay> {
+        self.display_map
+            .read(cx)
+            .current_inlays()
+            .filter(move |inlay| {
+                Some(inlay.id) != self.copilot_state.suggestion.as_ref().map(|h| h.id)
+            })
+            .cloned()
+            .collect()
+    }
 
     //     pub fn excerpt_visible_offsets(
     //         &self,
@@ -7856,40 +7890,40 @@ impl Editor {
     //         Some(self.perform_format(project, FormatTrigger::Manual, cx))
     //     }
 
-    //     fn perform_format(
-    //         &mut self,
-    //         project: Model<Project>,
-    //         trigger: FormatTrigger,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<Result<()>> {
-    //         let buffer = self.buffer().clone();
-    //         let buffers = buffer.read(cx).all_buffers();
+    fn perform_format(
+        &mut self,
+        project: Model<Project>,
+        trigger: FormatTrigger,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let buffer = self.buffer().clone();
+        let buffers = buffer.read(cx).all_buffers();
 
-    //         let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
-    //         let format = project.update(cx, |project, cx| project.format(buffers, true, trigger, cx));
+        let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
+        let format = project.update(cx, |project, cx| project.format(buffers, true, trigger, cx));
 
-    //         cx.spawn(|_, mut cx| async move {
-    //             let transaction = futures::select_biased! {
-    //                 _ = timeout => {
-    //                     log::warn!("timed out waiting for formatting");
-    //                     None
-    //                 }
-    //                 transaction = format.log_err().fuse() => transaction,
-    //             };
+        cx.spawn(|_, mut cx| async move {
+            let transaction = futures::select_biased! {
+                _ = timeout => {
+                    log::warn!("timed out waiting for formatting");
+                    None
+                }
+                transaction = format.log_err().fuse() => transaction,
+            };
 
-    //             buffer.update(&mut cx, |buffer, cx| {
-    //                 if let Some(transaction) = transaction {
-    //                     if !buffer.is_singleton() {
-    //                         buffer.push_transaction(&transaction.0, cx);
-    //                     }
-    //                 }
+            buffer.update(&mut cx, |buffer, cx| {
+                if let Some(transaction) = transaction {
+                    if !buffer.is_singleton() {
+                        buffer.push_transaction(&transaction.0, cx);
+                    }
+                }
 
-    //                 cx.notify();
-    //             });
+                cx.notify();
+            });
 
-    //             Ok(())
-    //         })
-    //     }
+            Ok(())
+        })
+    }
 
     //     fn restart_language_server(&mut self, _: &RestartLanguageServer, cx: &mut ViewContext<Self>) {
     //         if let Some(project) = self.project.clone() {
@@ -8162,42 +8196,42 @@ impl Editor {
     //         self.fold_ranges(ranges, true, cx);
     //     }
 
-    //     pub fn fold_ranges<T: ToOffset + Clone>(
-    //         &mut self,
-    //         ranges: impl IntoIterator<Item = Range<T>>,
-    //         auto_scroll: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         let mut ranges = ranges.into_iter().peekable();
-    //         if ranges.peek().is_some() {
-    //             self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
+    pub fn fold_ranges<T: ToOffset + Clone>(
+        &mut self,
+        ranges: impl IntoIterator<Item = Range<T>>,
+        auto_scroll: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let mut ranges = ranges.into_iter().peekable();
+        if ranges.peek().is_some() {
+            self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
 
-    //             if auto_scroll {
-    //                 self.request_autoscroll(Autoscroll::fit(), cx);
-    //             }
+            if auto_scroll {
+                self.request_autoscroll(Autoscroll::fit(), cx);
+            }
 
-    //             cx.notify();
-    //         }
-    //     }
+            cx.notify();
+        }
+    }
 
-    //     pub fn unfold_ranges<T: ToOffset + Clone>(
-    //         &mut self,
-    //         ranges: impl IntoIterator<Item = Range<T>>,
-    //         inclusive: bool,
-    //         auto_scroll: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         let mut ranges = ranges.into_iter().peekable();
-    //         if ranges.peek().is_some() {
-    //             self.display_map
-    //                 .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
-    //             if auto_scroll {
-    //                 self.request_autoscroll(Autoscroll::fit(), cx);
-    //             }
+    pub fn unfold_ranges<T: ToOffset + Clone>(
+        &mut self,
+        ranges: impl IntoIterator<Item = Range<T>>,
+        inclusive: bool,
+        auto_scroll: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let mut ranges = ranges.into_iter().peekable();
+        if ranges.peek().is_some() {
+            self.display_map
+                .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
+            if auto_scroll {
+                self.request_autoscroll(Autoscroll::fit(), cx);
+            }
 
-    //             cx.notify();
-    //         }
-    //     }
+            cx.notify();
+        }
+    }
 
     //     pub fn gutter_hover(
     //         &mut self,
@@ -8900,59 +8934,61 @@ impl Editor {
     //         telemetry.report_clickhouse_event(event, telemetry_settings);
     //     }
 
-    //     #[cfg(any(test, feature = "test-support"))]
-    //     fn report_editor_event(
-    //         &self,
-    //         _operation: &'static str,
-    //         _file_extension: Option<String>,
-    //         _cx: &AppContext,
-    //     ) {
-    //     }
+    #[cfg(any(test, feature = "test-support"))]
+    fn report_editor_event(
+        &self,
+        _operation: &'static str,
+        _file_extension: Option<String>,
+        _cx: &AppContext,
+    ) {
+    }
 
-    //     #[cfg(not(any(test, feature = "test-support")))]
-    //     fn report_editor_event(
-    //         &self,
-    //         operation: &'static str,
-    //         file_extension: Option<String>,
-    //         cx: &AppContext,
-    //     ) {
-    //         let Some(project) = &self.project else { return };
+    #[cfg(not(any(test, feature = "test-support")))]
+    fn report_editor_event(
+        &self,
+        operation: &'static str,
+        file_extension: Option<String>,
+        cx: &AppContext,
+    ) {
+        todo!("old version below");
+    }
+    //     let Some(project) = &self.project else { return };
 
-    //         // If None, we are in a file without an extension
-    //         let file = self
-    //             .buffer
-    //             .read(cx)
-    //             .as_singleton()
-    //             .and_then(|b| b.read(cx).file());
-    //         let file_extension = file_extension.or(file
-    //             .as_ref()
-    //             .and_then(|file| Path::new(file.file_name(cx)).extension())
-    //             .and_then(|e| e.to_str())
-    //             .map(|a| a.to_string()));
+    //     // If None, we are in a file without an extension
+    //     let file = self
+    //         .buffer
+    //         .read(cx)
+    //         .as_singleton()
+    //         .and_then(|b| b.read(cx).file());
+    //     let file_extension = file_extension.or(file
+    //         .as_ref()
+    //         .and_then(|file| Path::new(file.file_name(cx)).extension())
+    //         .and_then(|e| e.to_str())
+    //         .map(|a| a.to_string()));
 
-    //         let vim_mode = cx
-    //             .global::<SettingsStore>()
-    //             .raw_user_settings()
-    //             .get("vim_mode")
-    //             == Some(&serde_json::Value::Bool(true));
-    //         let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
-    //         let copilot_enabled = all_language_settings(file, cx).copilot_enabled(None, None);
-    //         let copilot_enabled_for_language = self
-    //             .buffer
-    //             .read(cx)
-    //             .settings_at(0, cx)
-    //             .show_copilot_suggestions;
+    //     let vim_mode = cx
+    //         .global::<SettingsStore>()
+    //         .raw_user_settings()
+    //         .get("vim_mode")
+    //         == Some(&serde_json::Value::Bool(true));
+    //     let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+    //     let copilot_enabled = all_language_settings(file, cx).copilot_enabled(None, None);
+    //     let copilot_enabled_for_language = self
+    //         .buffer
+    //         .read(cx)
+    //         .settings_at(0, cx)
+    //         .show_copilot_suggestions;
 
-    //         let telemetry = project.read(cx).client().telemetry().clone();
-    //         let event = ClickhouseEvent::Editor {
-    //             file_extension,
-    //             vim_mode,
-    //             operation,
-    //             copilot_enabled,
-    //             copilot_enabled_for_language,
-    //         };
-    //         telemetry.report_clickhouse_event(event, telemetry_settings)
-    //     }
+    //     let telemetry = project.read(cx).client().telemetry().clone();
+    //     let event = ClickhouseEvent::Editor {
+    //         file_extension,
+    //         vim_mode,
+    //         operation,
+    //         copilot_enabled,
+    //         copilot_enabled_for_language,
+    //     };
+    //     telemetry.report_clickhouse_event(event, telemetry_settings)
+    // }
 
     //     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
     //     /// with each line being an array of {text, highlight} objects.
@@ -9190,7 +9226,7 @@ impl EditorSnapshot {
         self.placeholder_text.as_ref()
     }
 
-    pub fn scroll_position(&self) -> gpui::Point<Pixels> {
+    pub fn scroll_position(&self) -> gpui::Point<f32> {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
     }
 }

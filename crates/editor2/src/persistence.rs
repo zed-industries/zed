@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
 
+use gpui::EntityId;
 use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
 define_connection!(
@@ -66,7 +67,7 @@ impl EditorDb {
 
     query! {
         pub async fn save_scroll_position(
-            item_id: ItemId,
+            item_id: EntityId,
             workspace_id: WorkspaceId,
             top_row: u32,
             vertical_offset: f32,

@@ -60,7 +60,7 @@ impl DisplayMap {
         buffer: Model<MultiBuffer>,
         font: Font,
         font_size: Pixels,
-        wrap_width: Option<f32>,
+        wrap_width: Option<Pixels>,
         buffer_header_height: u8,
         excerpt_header_height: u8,
         cx: &mut ModelContext<Self>,
@@ -241,7 +241,7 @@ impl DisplayMap {
 
     pub fn set_font(&self, font: Font, font_size: Pixels, cx: &mut ModelContext<Self>) -> bool {
         self.wrap_map
-            .update(cx, |map, cx| map.set_font(font_id, font_size, cx))
+            .update(cx, |map, cx| map.set_font(font, font_size, cx))
     }
 
     pub fn set_fold_ellipses_color(&mut self, color: Hsla) -> bool {
@@ -621,7 +621,7 @@ impl DisplaySnapshot {
     pub fn column_for_x(
         &self,
         display_row: u32,
-        x_coordinate: f32,
+        x_coordinate: Pixels,
         text_layout_details: &TextLayoutDetails,
     ) -> u32 {
         let layout_line = self.lay_out_line_for_row(display_row, text_layout_details);

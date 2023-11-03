@@ -819,6 +819,18 @@ impl From<Pixels> for f64 {
     }
 }
 
+impl From<Pixels> for u32 {
+    fn from(pixels: Pixels) -> Self {
+        pixels.0 as u32
+    }
+}
+
+impl From<Pixels> for usize {
+    fn from(pixels: Pixels) -> Self {
+        pixels.0 as usize
+    }
+}
+
 #[derive(
     Add, AddAssign, Clone, Copy, Default, Div, Eq, Hash, Ord, PartialEq, PartialOrd, Sub, SubAssign,
 )]

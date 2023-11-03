@@ -5,10 +5,13 @@ use crate::{
     display_map::{BlockStyle, DisplaySnapshot},
     EditorStyle,
 };
+use anyhow::Result;
 use gpui::{
-    px, relative, AnyElement, Bounds, Element, Hsla, Line, Pixels, Size, Style, TextRun, TextSystem,
+    black, px, relative, AnyElement, Bounds, Element, Hsla, Line, Pixels, Size, Style, TextRun,
+    TextSystem,
 };
 use language::{CursorShape, Selection};
+use smallvec::SmallVec;
 use std::{ops::Range, sync::Arc};
 use sum_tree::Bias;
 
@@ -2700,16 +2703,16 @@ impl PositionMap {
         let position = position - text_bounds.origin;
         let y = position.y.max(px(0.)).min(self.size.width);
         let x = position.x + (scroll_position.x * self.em_width);
-        let row = (y / self.line_height + scroll_position.y).into();
+        let row = (f32::from(y / self.line_height) + scroll_position.y) as u32;
         let (column, x_overshoot_after_line_end) = if let Some(line) = self
             .line_layouts
             .get(row as usize - scroll_position.y.into())
-            .map(|line_with_spaces| &line_with_spaces.line)
+            .map(|LineWithInvisibles { line, .. }| line)
         {
             if let Some(ix) = line.index_for_x(x) {
-                (ix as u32, 0.0)
+                (ix as u32, px(0.))
             } else {
-                (line.len() as u32, px(0.).max(x - line.width()))
+                (line.len as u32, px(0.).max(x - line.width()))
             }
         } else {
             (0, x)
@@ -2719,7 +2722,7 @@ impl PositionMap {
         let previous_valid = self.snapshot.clip_point(exact_unclipped, Bias::Left);
         let next_valid = self.snapshot.clip_point(exact_unclipped, Bias::Right);
 
-        let column_overshoot_after_line_end = (x_overshoot_after_line_end / self.em_advance) as u32;
+        let column_overshoot_after_line_end = (x_overshoot_after_line_end / self.em_advance).into();
         *exact_unclipped.column_mut() += column_overshoot_after_line_end;
         PointForPosition {
             previous_valid,
@@ -2740,8 +2743,9 @@ fn layout_line(
     row: u32,
     snapshot: &EditorSnapshot,
     style: &EditorStyle,
+    rem_size: Pixels,
     text_system: &TextSystem,
-) -> Line {
+) -> Result<SmallVec<[Line; 1]>> {
     let mut line = snapshot.line(row);
 
     if line.len() > MAX_LINE_LEN {
@@ -2753,15 +2757,16 @@ fn layout_line(
         line.truncate(len);
     }
 
-    text_system.layout_str(
+    text_system.layout_text(
         &line,
-        style.text.font_size,
+        style.text.font_size * rem_size,
         &[TextRun {
             len: snapshot.line_len(row) as usize,
-            font: style.text.font.clone(),
-            color: Hsla::black(),
+            font: style.text.font(),
+            color: black(),
             underline: Default::default(),
         }],
+        None,
     )
 }
 

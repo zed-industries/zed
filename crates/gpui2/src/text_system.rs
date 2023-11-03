@@ -151,7 +151,7 @@ impl TextSystem {
 
     pub fn layout_text(
         &self,
-        text: &SharedString,
+        text: &str,
         font_size: Pixels,
         runs: &[TextRun],
         wrap_width: Option<Pixels>,

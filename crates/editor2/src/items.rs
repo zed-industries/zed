@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    point, AnyElement, AppContext, AsyncAppContext, Entity, Model, Pixels, SharedString,
+    point, AnyElement, AppContext, AsyncAppContext, Entity, EntityId, Model, Pixels, SharedString,
     Subscription, Task, View, ViewContext, WeakView,
 };
 use language::{
@@ -26,6 +26,7 @@ use std::{
     sync::Arc,
 };
 use text::Selection;
+use theme::ThemeVariant;
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
@@ -306,12 +307,15 @@ impl FollowableItem for Editor {
     }
 }
 
-// async fn update_editor_from_message(
-//     this: WeakView<Editor>,
-//     project: Model<Project>,
-//     message: proto::update_view::Editor,
-//     cx: &mut AsyncAppContext,
-// ) -> Result<()> {
+async fn update_editor_from_message(
+    this: WeakView<Editor>,
+    project: Model<Project>,
+    message: proto::update_view::Editor,
+    cx: &mut AsyncAppContext,
+) -> Result<()> {
+    todo!()
+}
+// Previous implementation of the above
 //     // Open all of the buffers of which excerpts were added to the editor.
 //     let inserted_excerpt_buffer_ids = message
 //         .inserted_excerpts
@@ -512,38 +516,39 @@ fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor)
 
 impl Item for Editor {
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
-        if let Ok(data) = data.downcast::<NavigationData>() {
-            let newest_selection = self.selections.newest::<Point>(cx);
-            let buffer = self.buffer.read(cx).read(cx);
-            let offset = if buffer.can_resolve(&data.cursor_anchor) {
-                data.cursor_anchor.to_point(&buffer)
-            } else {
-                buffer.clip_point(data.cursor_position, Bias::Left)
-            };
+        todo!();
+        // if let Ok(data) = data.downcast::<NavigationData>() {
+        //     let newest_selection = self.selections.newest::<Point>(cx);
+        //     let buffer = self.buffer.read(cx).read(cx);
+        //     let offset = if buffer.can_resolve(&data.cursor_anchor) {
+        //         data.cursor_anchor.to_point(&buffer)
+        //     } else {
+        //         buffer.clip_point(data.cursor_position, Bias::Left)
+        //     };
 
-            let mut scroll_anchor = data.scroll_anchor;
-            if !buffer.can_resolve(&scroll_anchor.anchor) {
-                scroll_anchor.anchor = buffer.anchor_before(
-                    buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left),
-                );
-            }
+        //     let mut scroll_anchor = data.scroll_anchor;
+        //     if !buffer.can_resolve(&scroll_anchor.anchor) {
+        //         scroll_anchor.anchor = buffer.anchor_before(
+        //             buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left),
+        //         );
+        //     }
 
-            drop(buffer);
+        //     drop(buffer);
 
-            if newest_selection.head() == offset {
-                false
-            } else {
-                let nav_history = self.nav_history.take();
-                self.set_scroll_anchor(scroll_anchor, cx);
-                self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    s.select_ranges([offset..offset])
-                });
-                self.nav_history = nav_history;
-                true
-            }
-        } else {
-            false
-        }
+        //     if newest_selection.head() == offset {
+        //         false
+        //     } else {
+        //         let nav_history = self.nav_history.take();
+        //         self.set_scroll_anchor(scroll_anchor, cx);
+        //         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+        //             s.select_ranges([offset..offset])
+        //         });
+        //         self.nav_history = nav_history;
+        //         true
+        //     }
+        // } else {
+        //     false
+        // }
     }
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
@@ -563,8 +568,8 @@ impl Item for Editor {
 
     fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<SharedString> {
         match path_for_buffer(&self.buffer, detail, true, cx)? {
-            Cow::Borrowed(path) => Some(path.to_string_lossy),
-            Cow::Owned(path) => Some(path.to_string_lossy.to_string().into()),
+            Cow::Borrowed(path) => Some(path.to_string_lossy().into()),
+            Cow::Owned(path) => Some(path.to_string_lossy().to_string().into()),
         }
     }
 
@@ -590,10 +595,14 @@ impl Item for Editor {
         //     .into_any()
     }
 
-    fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
+    fn for_each_project_item(
+        &self,
+        cx: &AppContext,
+        f: &mut dyn FnMut(EntityId, &dyn project::Item),
+    ) {
         self.buffer
             .read(cx)
-            .for_each_buffer(|buffer| f(buffer.id(), buffer.read(cx)));
+            .for_each_buffer(|buffer| f(buffer.entity_id(), buffer.read(cx)));
     }
 
     fn is_singleton(&self, cx: &AppContext) -> bool {
@@ -652,20 +661,24 @@ impl Item for Editor {
 
             if buffers.len() == 1 {
                 project
-                    .update(&mut cx, |project, cx| project.save_buffers(buffers, cx))
+                    .update(&mut cx, |project, cx| project.save_buffers(buffers, cx))?
                     .await?;
             } else {
                 // For multi-buffers, only save those ones that contain changes. For clean buffers
                 // we simulate saving by calling `Buffer::did_save`, so that language servers or
                 // other downstream listeners of save events get notified.
                 let (dirty_buffers, clean_buffers) = buffers.into_iter().partition(|buffer| {
-                    buffer.read_with(&cx, |buffer, _| buffer.is_dirty || buffer.has_conflict())
+                    buffer
+                        .update(&mut cx, |buffer, _| {
+                            buffer.is_dirty() || buffer.has_conflict()
+                        })
+                        .unwrap_or(false)
                 });
 
                 project
                     .update(&mut cx, |project, cx| {
                         project.save_buffers(dirty_buffers, cx)
-                    })
+                    })?
                     .await?;
                 for buffer in clean_buffers {
                     buffer.update(&mut cx, |buffer, cx| {
@@ -760,7 +773,7 @@ impl Item for Editor {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
-    fn breadcrumbs(&self, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, variant: &ThemeVariant, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         todo!();
         // let cursor = self.selections.newest_anchor().head();
         // let multibuffer = &self.buffer().read(cx);
@@ -806,7 +819,7 @@ impl Item for Editor {
             if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
                 let path = file.abs_path(cx);
 
-                cx.background()
+                cx.background_executor()
                     .spawn(async move {
                         DB.save_path(item_id, workspace_id, path.clone())
                             .await
@@ -913,15 +926,17 @@ impl SearchableItem for Editor {
     }
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-        self.clear_background_highlights::<BufferSearchHighlights>(cx);
+        todo!()
+        // self.clear_background_highlights::<BufferSearchHighlights>(cx);
     }
 
     fn update_matches(&mut self, matches: Vec<Range<Anchor>>, cx: &mut ViewContext<Self>) {
-        self.highlight_background::<BufferSearchHighlights>(
-            matches,
-            |theme| theme.search.match_background,
-            cx,
-        );
+        todo!()
+        // self.highlight_background::<BufferSearchHighlights>(
+        //     matches,
+        //     |theme| theme.search.match_background,
+        //     cx,
+        // );
     }
 
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
@@ -952,20 +967,22 @@ impl SearchableItem for Editor {
         matches: Vec<Range<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.unfold_ranges([matches[index].clone()], false, true, cx);
-        let range = self.range_for_match(&matches[index]);
-        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            s.select_ranges([range]);
-        })
+        todo!()
+        // self.unfold_ranges([matches[index].clone()], false, true, cx);
+        // let range = self.range_for_match(&matches[index]);
+        // self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+        //     s.select_ranges([range]);
+        // })
     }
 
     fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
-        self.unfold_ranges(matches.clone(), false, false, cx);
-        let mut ranges = Vec::new();
-        for m in &matches {
-            ranges.push(self.range_for_match(&m))
-        }
-        self.change_selections(None, cx, |s| s.select_ranges(ranges));
+        todo!()
+        // self.unfold_ranges(matches.clone(), false, false, cx);
+        // let mut ranges = Vec::new();
+        // for m in &matches {
+        //     ranges.push(self.range_for_match(&m))
+        // }
+        // self.change_selections(None, cx, |s| s.select_ranges(ranges));
     }
     fn replace(
         &mut self,
@@ -1044,7 +1061,7 @@ impl SearchableItem for Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Range<Anchor>>> {
         let buffer = self.buffer().read(cx).snapshot(cx);
-        cx.background().spawn(async move {
+        cx.background_executor().spawn(async move {
             let mut ranges = Vec::new();
             if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
                 ranges.extend(

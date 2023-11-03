@@ -1,6 +1,6 @@
-use std::cmp;
+use std::{cmp, f32};
 
-use gpui::ViewContext;
+use gpui::{px, Pixels, ViewContext};
 use language::Point;
 
 use crate::{display_map::ToDisplayPoint, Editor, EditorMode, LineWithInvisibles};
@@ -61,7 +61,7 @@ impl Editor {
             display_map.max_point().row() as f32
         };
         if scroll_position.y > max_scroll_top {
-            scroll_position.set_y(max_scroll_top);
+            scroll_position.y = (max_scroll_top);
             self.set_scroll_position(scroll_position, cx);
         }
 
@@ -143,24 +143,24 @@ impl Editor {
                 let needs_scroll_down = target_bottom >= end_row;
 
                 if needs_scroll_up && !needs_scroll_down {
-                    scroll_position.set_y(target_top);
+                    scroll_position.y = (target_top);
                     self.set_scroll_position_internal(scroll_position, local, true, cx);
                 }
                 if !needs_scroll_up && needs_scroll_down {
-                    scroll_position.set_y(target_bottom - visible_lines);
+                    scroll_position.y = (target_bottom - visible_lines);
                     self.set_scroll_position_internal(scroll_position, local, true, cx);
                 }
             }
             AutoscrollStrategy::Center => {
-                scroll_position.set_y((target_top - margin).max(0.0));
+                scroll_position.y = ((target_top - margin).max(0.0));
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Top => {
-                scroll_position.set_y((target_top).max(0.0));
+                scroll_position.y = ((target_top).max(0.0));
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Bottom => {
-                scroll_position.set_y((target_bottom - visible_lines).max(0.0));
+                scroll_position.y = ((target_bottom - visible_lines).max(0.0));
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
         }
@@ -178,9 +178,9 @@ impl Editor {
     pub fn autoscroll_horizontally(
         &mut self,
         start_row: u32,
-        viewport_width: f32,
-        scroll_width: f32,
-        max_glyph_width: f32,
+        viewport_width: Pixels,
+        scroll_width: Pixels,
+        max_glyph_width: Pixels,
         layouts: &[LineWithInvisibles],
         cx: &mut ViewContext<Self>,
     ) -> bool {
@@ -191,11 +191,11 @@ impl Editor {
         let mut target_right;
 
         if self.highlighted_rows.is_some() {
-            target_left = 0.0_f32;
-            target_right = 0.0_f32;
+            target_left = px(0.);
+            target_right = px(0.);
         } else {
-            target_left = std::f32::INFINITY;
-            target_right = 0.0_f32;
+            target_left = px(f32::INFINITY);
+            target_right = px(0.);
             for selection in selections {
                 let head = selection.head().to_display_point(&display_map);
                 if head.row() >= start_row && head.row() < start_row + layouts.len() as u32 {
@@ -226,11 +226,11 @@ impl Editor {
         let scroll_right = scroll_left + viewport_width;
 
         if target_left < scroll_left {
-            self.scroll_manager.anchor.offset.x = (target_left / max_glyph_width);
+            self.scroll_manager.anchor.offset.x = (target_left / max_glyph_width).into();
             true
         } else if target_right > scroll_right {
             self.scroll_manager.anchor.offset.x =
-                ((target_right - viewport_width) / max_glyph_width);
+                ((target_right - viewport_width) / max_glyph_width).into();
             true
         } else {
             false

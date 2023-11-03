@@ -1,3 +1,5 @@
+use gpui::Pixels;
+
 use crate::{Anchor, BufferSnapshot, TextDimension};
 use std::cmp::Ordering;
 use std::ops::Range;
@@ -5,8 +7,8 @@ use std::ops::Range;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SelectionGoal {
     None,
-    HorizontalPosition(f32),
-    HorizontalRange { start: f32, end: f32 },
+    HorizontalPosition(Pixels),
+    HorizontalRange { start: Pixels, end: Pixels },
     WrappedHorizontalPosition((u32, f32)),
 }
 

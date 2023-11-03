@@ -16,6 +16,7 @@ pub struct LineLayout {
     pub ascent: Pixels,
     pub descent: Pixels,
     pub runs: Vec<ShapedRun>,
+    pub len: usize,
 }
 
 #[derive(Debug)]

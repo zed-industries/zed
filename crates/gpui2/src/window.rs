@@ -1655,6 +1655,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         }
     }
 
+    // todo!("change this to return a reference");
     pub fn view(&self) -> View<V> {
         self.view.clone()
     }

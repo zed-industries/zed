@@ -29,6 +29,10 @@ impl Line {
         )
     }
 
+    pub fn width(&self) -> Pixels {
+        self.layout.width
+    }
+
     pub fn wrap_count(&self) -> usize {
         self.layout.wrap_boundaries.len()
     }

@@ -411,6 +411,7 @@ impl MacTextSystemState {
             descent: typographic_bounds.descent.into(),
             runs,
             font_size,
+            len: text.len(),
         }
     }
 

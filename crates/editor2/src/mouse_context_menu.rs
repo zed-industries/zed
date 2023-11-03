@@ -8,27 +8,28 @@ pub fn deploy_context_menu(
     point: DisplayPoint,
     cx: &mut ViewContext<Editor>,
 ) {
-    if !editor.focused {
-        cx.focus_self();
-    }
+    todo!();
 
-    // Don't show context menu for inline editors
-    if editor.mode() != EditorMode::Full {
-        return;
-    }
+    // if !editor.focused {
+    //     cx.focus_self();
+    // }
 
-    // Don't show the context menu if there isn't a project associated with this editor
-    if editor.project.is_none() {
-        return;
-    }
+    // // Don't show context menu for inline editors
+    // if editor.mode() != EditorMode::Full {
+    //     return;
+    // }
 
-    // Move the cursor to the clicked location so that dispatched actions make sense
-    editor.change_selections(None, cx, |s| {
-        s.clear_disjoint();
-        s.set_pending_display_range(point..point, SelectMode::Character);
-    });
+    // // Don't show the context menu if there isn't a project associated with this editor
+    // if editor.project.is_none() {
+    //     return;
+    // }
 
-    // todo!()
+    // // Move the cursor to the clicked location so that dispatched actions make sense
+    // editor.change_selections(None, cx, |s| {
+    //     s.clear_disjoint();
+    //     s.set_pending_display_range(point..point, SelectMode::Character);
+    // });
+
     // editor.mouse_context_menu.update(cx, |menu, cx| {
     //     menu.show(
     //         position,
@@ -50,7 +51,7 @@ pub fn deploy_context_menu(
     //         cx,
     //     );
     // });
-    cx.notify();
+    // cx.notify();
 }
 
 // #[cfg(test)]

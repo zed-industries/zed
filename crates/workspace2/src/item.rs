@@ -104,7 +104,11 @@ pub trait Item: Render + EventEmitter {
     }
     fn tab_content<V: 'static>(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<V>;
 
-    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project2::Item)) {
+    fn for_each_project_item(
+        &self,
+        _: &AppContext,
+        _: &mut dyn FnMut(EntityId, &dyn project2::Item),
+    ) {
     } // (model id, Item)
     fn is_singleton(&self, _cx: &AppContext) -> bool {
         false
@@ -219,8 +223,12 @@ pub trait ItemHandle: 'static + Send {
     fn dragged_tab_content(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<Workspace>;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
-    fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[usize; 3]>;
-    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project2::Item));
+    fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]>;
+    fn for_each_project_item(
+        &self,
+        _: &AppContext,
+        _: &mut dyn FnMut(EntityId, &dyn project2::Item),
+    );
     fn is_singleton(&self, cx: &AppContext) -> bool;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn clone_on_split(
@@ -331,7 +339,7 @@ impl<T: Item> ItemHandle for View<T> {
         result
     }
 
-    fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[usize; 3]> {
+    fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]> {
         let mut result = SmallVec::new();
         self.read(cx).for_each_project_item(cx, &mut |id, _| {
             result.push(id);
@@ -342,7 +350,7 @@ impl<T: Item> ItemHandle for View<T> {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(usize, &dyn project2::Item),
+        f: &mut dyn FnMut(EntityId, &dyn project2::Item),
     ) {
         self.read(cx).for_each_project_item(cx, f)
     }
