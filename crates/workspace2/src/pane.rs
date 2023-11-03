@@ -1891,13 +1891,14 @@ impl Render for Pane {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack()
+            .size_full()
             .child(self.render_tab_bar(cx))
-            .child(div() /* toolbar */)
+            .child(div() /* todo!(toolbar) */)
             .child(if let Some(item) = self.active_item() {
-                item.to_any().render()
+                div().flex_1().child(item.to_any())
             } else {
                 // todo!()
-                div().child("Empty Pane").render()
+                div().child("Empty Pane")
             })
 
         // enum MouseNavigationHandler {}
