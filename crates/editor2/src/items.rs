@@ -48,106 +48,108 @@ impl FollowableItem for Editor {
         state: &mut Option<proto::view::Variant>,
         cx: &mut AppContext,
     ) -> Option<Task<Result<View<Self>>>> {
-        let project = workspace.read(cx).project().to_owned();
-        let Some(proto::view::Variant::Editor(_)) = state else {
-            return None;
-        };
-        let Some(proto::view::Variant::Editor(state)) = state.take() else {
-            unreachable!()
-        };
-
-        let client = project.read(cx).client();
-        let replica_id = project.read(cx).replica_id();
-        let buffer_ids = state
-            .excerpts
-            .iter()
-            .map(|excerpt| excerpt.buffer_id)
-            .collect::<HashSet<_>>();
-        let buffers = project.update(cx, |project, cx| {
-            buffer_ids
-                .iter()
-                .map(|id| project.open_buffer_by_id(*id, cx))
-                .collect::<Vec<_>>()
-        });
-
-        let pane = pane.downgrade();
-        Some(cx.spawn(|mut cx| async move {
-            let mut buffers = futures::future::try_join_all(buffers).await?;
-            let editor = pane.read_with(&cx, |pane, cx| {
-                let mut editors = pane.items_of_type::<Self>();
-                editors.find(|editor| {
-                    let ids_match = editor.remote_id(&client, cx) == Some(remote_id);
-                    let singleton_buffer_matches = state.singleton
-                        && buffers.first()
-                            == editor.read(cx).buffer.read(cx).as_singleton().as_ref();
-                    ids_match || singleton_buffer_matches
-                })
-            })?;
-
-            let editor = if let Some(editor) = editor {
-                editor
-            } else {
-                pane.update(&mut cx, |_, cx| {
-                    let multibuffer = cx.add_model(|cx| {
-                        let mut multibuffer;
-                        if state.singleton && buffers.len() == 1 {
-                            multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
-                        } else {
-                            multibuffer = MultiBuffer::new(replica_id);
-                            let mut excerpts = state.excerpts.into_iter().peekable();
-                            while let Some(excerpt) = excerpts.peek() {
-                                let buffer_id = excerpt.buffer_id;
-                                let buffer_excerpts = iter::from_fn(|| {
-                                    let excerpt = excerpts.peek()?;
-                                    (excerpt.buffer_id == buffer_id)
-                                        .then(|| excerpts.next().unwrap())
-                                });
-                                let buffer =
-                                    buffers.iter().find(|b| b.read(cx).remote_id() == buffer_id);
-                                if let Some(buffer) = buffer {
-                                    multibuffer.push_excerpts(
-                                        buffer.clone(),
-                                        buffer_excerpts.filter_map(deserialize_excerpt_range),
-                                        cx,
-                                    );
-                                }
-                            }
-                        };
-
-                        if let Some(title) = &state.title {
-                            multibuffer = multibuffer.with_title(title.clone())
-                        }
-
-                        multibuffer
-                    });
-
-                    cx.add_view(|cx| {
-                        let mut editor =
-                            Editor::for_multibuffer(multibuffer, Some(project.clone()), cx);
-                        editor.remote_id = Some(remote_id);
-                        editor
-                    })
-                })?
-            };
-
-            update_editor_from_message(
-                editor.downgrade(),
-                project,
-                proto::update_view::Editor {
-                    selections: state.selections,
-                    pending_selection: state.pending_selection,
-                    scroll_top_anchor: state.scroll_top_anchor,
-                    scroll_x: state.scroll_x,
-                    scroll_y: state.scroll_y,
-                    ..Default::default()
-                },
-                &mut cx,
-            )
-            .await?;
-
-            Ok(editor)
-        }))
+        todo!()
     }
+    //     let project = workspace.read(cx).project().to_owned();
+    //     let Some(proto::view::Variant::Editor(_)) = state else {
+    //         return None;
+    //     };
+    //     let Some(proto::view::Variant::Editor(state)) = state.take() else {
+    //         unreachable!()
+    //     };
+
+    //     let client = project.read(cx).client();
+    //     let replica_id = project.read(cx).replica_id();
+    //     let buffer_ids = state
+    //         .excerpts
+    //         .iter()
+    //         .map(|excerpt| excerpt.buffer_id)
+    //         .collect::<HashSet<_>>();
+    //     let buffers = project.update(cx, |project, cx| {
+    //         buffer_ids
+    //             .iter()
+    //             .map(|id| project.open_buffer_by_id(*id, cx))
+    //             .collect::<Vec<_>>()
+    //     });
+
+    //     let pane = pane.downgrade();
+    //     Some(cx.spawn(|mut cx| async move {
+    //         let mut buffers = futures::future::try_join_all(buffers).await?;
+    //         let editor = pane.read_with(&cx, |pane, cx| {
+    //             let mut editors = pane.items_of_type::<Self>();
+    //             editors.find(|editor| {
+    //                 let ids_match = editor.remote_id(&client, cx) == Some(remote_id);
+    //                 let singleton_buffer_matches = state.singleton
+    //                     && buffers.first()
+    //                         == editor.read(cx).buffer.read(cx).as_singleton().as_ref();
+    //                 ids_match || singleton_buffer_matches
+    //             })
+    //         })?;
+
+    //         let editor = if let Some(editor) = editor {
+    //             editor
+    //         } else {
+    //             pane.update(&mut cx, |_, cx| {
+    //                 let multibuffer = cx.add_model(|cx| {
+    //                     let mut multibuffer;
+    //                     if state.singleton && buffers.len() == 1 {
+    //                         multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
+    //                     } else {
+    //                         multibuffer = MultiBuffer::new(replica_id);
+    //                         let mut excerpts = state.excerpts.into_iter().peekable();
+    //                         while let Some(excerpt) = excerpts.peek() {
+    //                             let buffer_id = excerpt.buffer_id;
+    //                             let buffer_excerpts = iter::from_fn(|| {
+    //                                 let excerpt = excerpts.peek()?;
+    //                                 (excerpt.buffer_id == buffer_id)
+    //                                     .then(|| excerpts.next().unwrap())
+    //                             });
+    //                             let buffer =
+    //                                 buffers.iter().find(|b| b.read(cx).remote_id() == buffer_id);
+    //                             if let Some(buffer) = buffer {
+    //                                 multibuffer.push_excerpts(
+    //                                     buffer.clone(),
+    //                                     buffer_excerpts.filter_map(deserialize_excerpt_range),
+    //                                     cx,
+    //                                 );
+    //                             }
+    //                         }
+    //                     };
+
+    //                     if let Some(title) = &state.title {
+    //                         multibuffer = multibuffer.with_title(title.clone())
+    //                     }
+
+    //                     multibuffer
+    //                 });
+
+    //                 cx.add_view(|cx| {
+    //                     let mut editor =
+    //                         Editor::for_multibuffer(multibuffer, Some(project.clone()), cx);
+    //                     editor.remote_id = Some(remote_id);
+    //                     editor
+    //                 })
+    //             })?
+    //         };
+
+    //         update_editor_from_message(
+    //             editor.downgrade(),
+    //             project,
+    //             proto::update_view::Editor {
+    //                 selections: state.selections,
+    //                 pending_selection: state.pending_selection,
+    //                 scroll_top_anchor: state.scroll_top_anchor,
+    //                 scroll_x: state.scroll_x,
+    //                 scroll_y: state.scroll_y,
+    //                 ..Default::default()
+    //             },
+    //             &mut cx,
+    //         )
+    //         .await?;
+
+    //         Ok(editor)
+    //     }))
+    // }
 
     fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>) {
         self.leader_peer_id = leader_peer_id;
@@ -197,8 +199,8 @@ impl FollowableItem for Editor {
             title: (!buffer.is_singleton()).then(|| buffer.title(cx).into()),
             excerpts,
             scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.anchor)),
-            scroll_x: scroll_anchor.offset.x(),
-            scroll_y: scroll_anchor.offset.y(),
+            scroll_x: scroll_anchor.offset.x,
+            scroll_y: scroll_anchor.offset.y,
             selections: self
                 .selections
                 .disjoint_anchors()
@@ -254,8 +256,8 @@ impl FollowableItem for Editor {
                 Event::ScrollPositionChanged { .. } => {
                     let scroll_anchor = self.scroll_manager.anchor();
                     update.scroll_top_anchor = Some(serialize_anchor(&scroll_anchor.anchor));
-                    update.scroll_x = scroll_anchor.offset.x();
-                    update.scroll_y = scroll_anchor.offset.y();
+                    update.scroll_x = scroll_anchor.offset.x;
+                    update.scroll_y = scroll_anchor.offset.y;
                     true
                 }
                 Event::SelectionsChanged { .. } => {
@@ -561,8 +563,8 @@ impl Item for Editor {
 
     fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<SharedString> {
         match path_for_buffer(&self.buffer, detail, true, cx)? {
-            Cow::Borrowed(path) => Some(path.to_string_lossy()),
-            Cow::Owned(path) => Some(path.to_string_lossy().to_string().into()),
+            Cow::Borrowed(path) => Some(path.to_string_lossy),
+            Cow::Owned(path) => Some(path.to_string_lossy.to_string().into()),
         }
     }
 
@@ -598,7 +600,11 @@ impl Item for Editor {
         self.buffer.read(cx).is_singleton()
     }
 
-    fn clone_on_split(&self, _workspace_id: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<Self>
+    fn clone_on_split(
+        &self,
+        _workspace_id: WorkspaceId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<View<Self>>
     where
         Self: Sized,
     {
@@ -611,7 +617,8 @@ impl Item for Editor {
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         let selection = self.selections.newest_anchor();
-        self.push_to_nav_history(selection.head(), None, cx);
+        todo!()
+        // self.push_to_nav_history(selection.head(), None, cx);
     }
 
     fn workspace_deactivated(&mut self, cx: &mut ViewContext<Self>) {
@@ -652,7 +659,7 @@ impl Item for Editor {
                 // we simulate saving by calling `Buffer::did_save`, so that language servers or
                 // other downstream listeners of save events get notified.
                 let (dirty_buffers, clean_buffers) = buffers.into_iter().partition(|buffer| {
-                    buffer.read_with(&cx, |buffer, _| buffer.is_dirty() || buffer.has_conflict())
+                    buffer.read_with(&cx, |buffer, _| buffer.is_dirty || buffer.has_conflict())
                 });
 
                 project
@@ -686,9 +693,7 @@ impl Item for Editor {
             .as_singleton()
             .expect("cannot call save_as on an excerpt list");
 
-        let file_extension = abs_path
-            .extension()
-            .map(|a| a.to_string_lossy().to_string());
+        let file_extension = abs_path.extension().map(|a| a.to_string_lossy.to_string());
         self.report_editor_event("save", file_extension, cx);
 
         project.update(cx, |project, cx| {

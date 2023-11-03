@@ -2648,7 +2648,7 @@ dependencies = [
  "lazy_static",
  "log",
  "lsp2",
- "multi_buffer",
+ "multi_buffer2",
  "ordered-float 2.10.0",
  "parking_lot 0.11.2",
  "postage",

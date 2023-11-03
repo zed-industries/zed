@@ -39,7 +39,7 @@ pub struct ScrollAnchor {
 impl ScrollAnchor {
     fn new() -> Self {
         Self {
-            offset: Point::zero(),
+            offset: gpui::Point::zero(),
             anchor: Anchor::min(),
         }
     }
@@ -48,7 +48,7 @@ impl ScrollAnchor {
         let mut scroll_position = self.offset;
         if self.anchor != Anchor::min() {
             let scroll_top = self.anchor.to_display_point(snapshot).row() as f32;
-            scroll_position.set_y(scroll_top + scroll_position.y());
+            scroll_position.set_y(scroll_top + scroll_position.y);
         } else {
             scroll_position.set_y(0.);
         }
@@ -82,7 +82,7 @@ impl OngoingScroll {
 
     pub fn filter(&self, delta: &mut gpui::Point<Pixels>) -> Option<Axis> {
         const UNLOCK_PERCENT: f32 = 1.9;
-        const UNLOCK_LOWER_BOUND: f32 = 6.;
+        const UNLOCK_LOWER_BOUND: Pixels = px(6.);
         let mut axis = self.axis;
 
         let x = delta.x.abs();
@@ -116,10 +116,10 @@ impl OngoingScroll {
 
         match axis {
             Some(Axis::Vertical) => {
-                *delta = point(pk(0.), delta.y());
+                *delta = point(px(0.), delta.y);
             }
             Some(Axis::Horizontal) => {
-                *delta = point(delta.x(), px(0.));
+                *delta = point(delta.x, px(0.));
             }
             None => {}
         }
@@ -177,14 +177,14 @@ impl ScrollManager {
 
     fn set_scroll_position(
         &mut self,
-        scroll_position: gpui::Point<Pixels>,
+        scroll_position: gpui::Point<f32>,
         map: &DisplaySnapshot,
         local: bool,
         autoscroll: bool,
         workspace_id: Option<i64>,
         cx: &mut ViewContext<Editor>,
     ) {
-        let (new_anchor, top_row) = if scroll_position.y() <= 0. {
+        let (new_anchor, top_row) = if scroll_position.y <= 0. {
             (
                 ScrollAnchor {
                     anchor: Anchor::min(),
@@ -194,7 +194,7 @@ impl ScrollManager {
             )
         } else {
             let scroll_top_buffer_point =
-                DisplayPoint::new(scroll_position.y() as u32, 0).to_point(&map);
+                DisplayPoint::new(scroll_position.y as u32, 0).to_point(&map);
             let top_anchor = map
                 .buffer_snapshot
                 .anchor_at(scroll_top_buffer_point, Bias::Right);
@@ -203,8 +203,8 @@ impl ScrollManager {
                 ScrollAnchor {
                     anchor: top_anchor,
                     offset: point(
-                        scroll_position.x(),
-                        scroll_position.y() - top_anchor.to_display_point(&map).row() as f32,
+                        scroll_position.x,
+                        scroll_position.y - top_anchor.to_display_point(&map).row() as f32,
                     ),
                 },
                 scroll_top_buffer_point.row,
@@ -236,8 +236,8 @@ impl ScrollManager {
                         item_id,
                         workspace_id,
                         top_row,
-                        anchor.offset.x(),
-                        anchor.offset.y(),
+                        anchor.offset.x,
+                        anchor.offset.y,
                     )
                     .await
                     .log_err()
@@ -277,8 +277,8 @@ impl ScrollManager {
     }
 
     pub fn clamp_scroll_left(&mut self, max: f32) -> bool {
-        if max < self.anchor.offset.x() {
-            self.anchor.offset.set_x(max);
+        if max < self.anchor.offset.x {
+            self.anchor.offset.x = max;
             true
         } else {
             false

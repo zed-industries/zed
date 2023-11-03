@@ -315,17 +315,17 @@ use util::{
 //     }
 // }
 // }
+//
+// impl<'a> Deref for EditorTestContext<'a> {
+//     type Target = gpui::TestAppContext;
 
-impl<'a> Deref for EditorTestContext<'a> {
-    type Target = gpui::TestAppContext;
+//     fn deref(&self) -> &Self::Target {
+//         self.cx
+//     }
+// }
 
-    fn deref(&self) -> &Self::Target {
-        self.cx
-    }
-}
-
-impl<'a> DerefMut for EditorTestContext<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.cx
-    }
-}
+// impl<'a> DerefMut for EditorTestContext<'a> {
+//     fn deref_mut(&mut self) -> &mut Self::Target {
+//         &mut self.cx
+//     }
+// }

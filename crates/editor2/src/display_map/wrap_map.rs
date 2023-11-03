@@ -73,7 +73,7 @@ impl WrapMap {
         wrap_width: Option<f32>,
         cx: &mut AppContext,
     ) -> (Model<Self>, WrapSnapshot) {
-        let handle = cx.add_model(|cx| {
+        let handle = cx.build_model(|cx| {
             let mut this = Self {
                 font: (font_id, font_size),
                 wrap_width: None,

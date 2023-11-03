@@ -60,7 +60,7 @@ impl Editor {
         } else {
             display_map.max_point().row() as f32
         };
-        if scroll_position.y() > max_scroll_top {
+        if scroll_position.y > max_scroll_top {
             scroll_position.set_y(max_scroll_top);
             self.set_scroll_position(scroll_position, cx);
         }
@@ -136,7 +136,7 @@ impl Editor {
                 let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
                 let target_top = (target_top - margin).max(0.0);
                 let target_bottom = target_bottom + margin;
-                let start_row = scroll_position.y();
+                let start_row = scroll_position.y;
                 let end_row = start_row + visible_lines;
 
                 let needs_scroll_up = target_top < start_row;
@@ -222,20 +222,15 @@ impl Editor {
             return false;
         }
 
-        let scroll_left = self.scroll_manager.anchor.offset.x() * max_glyph_width;
+        let scroll_left = self.scroll_manager.anchor.offset.x * max_glyph_width;
         let scroll_right = scroll_left + viewport_width;
 
         if target_left < scroll_left {
-            self.scroll_manager
-                .anchor
-                .offset
-                .set_x(target_left / max_glyph_width);
+            self.scroll_manager.anchor.offset.x = (target_left / max_glyph_width);
             true
         } else if target_right > scroll_right {
-            self.scroll_manager
-                .anchor
-                .offset
-                .set_x((target_right - viewport_width) / max_glyph_width);
+            self.scroll_manager.anchor.offset.x =
+                ((target_right - viewport_width) / max_glyph_width);
             true
         } else {
             false
