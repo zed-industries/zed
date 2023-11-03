@@ -114,7 +114,7 @@ pub async fn handle_cli_connection(
                                 match item {
                                     Some(Ok(mut item)) => {
                                         if let Some(point) = caret_positions.remove(path) {
-                                            todo!()
+                                            todo!("editor")
                                             // if let Some(active_editor) = item.downcast::<Editor>() {
                                             //     active_editor
                                             //         .downgrade()

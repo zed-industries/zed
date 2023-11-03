@@ -416,17 +416,17 @@ impl Pane {
         }
     }
 
-    //     pub(crate) fn workspace(&self) -> &WeakView<Workspace> {
-    //         &self.workspace
-    //     }
+    pub(crate) fn workspace(&self) -> &WeakView<Workspace> {
+        &self.workspace
+    }
 
     pub fn has_focus(&self) -> bool {
         self.has_focus
     }
 
-    //     pub fn active_item_index(&self) -> usize {
-    //         self.active_item_index
-    //     }
+    pub fn active_item_index(&self) -> usize {
+        self.active_item_index
+    }
 
     //     pub fn on_can_drop<F>(&mut self, can_drop: F)
     //     where
@@ -1865,14 +1865,14 @@ impl Pane {
     //             .into_any()
     //     }
 
-    //     pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
-    //         self.zoomed = zoomed;
-    //         cx.notify();
-    //     }
+    pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
+        self.zoomed = zoomed;
+        cx.notify();
+    }
 
-    //     pub fn is_zoomed(&self) -> bool {
-    //         self.zoomed
-    //     }
+    pub fn is_zoomed(&self) -> bool {
+        self.zoomed
+    }
 }
 
 // impl Entity for Pane {

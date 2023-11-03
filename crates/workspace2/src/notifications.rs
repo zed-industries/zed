@@ -220,36 +220,36 @@ pub mod simple_message_notification {
             }
         }
 
+        pub fn new_element(
+            message: fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>,
+        ) -> MessageNotification {
+            Self {
+                message: NotificationMessage::Element(message),
+                on_click: None,
+                click_message: None,
+            }
+        }
+
+        pub fn with_click_message<S>(mut self, message: S) -> Self
+        where
+            S: Into<Cow<'static, str>>,
+        {
+            self.click_message = Some(message.into());
+            self
+        }
+
+        pub fn on_click<F>(mut self, on_click: F) -> Self
+        where
+            F: 'static + Send + Sync + Fn(&mut ViewContext<Self>),
+        {
+            self.on_click = Some(Arc::new(on_click));
+            self
+        }
+
         // todo!()
-        //         pub fn new_element(
-        //             message: fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>,
-        //         ) -> MessageNotification {
-        //             Self {
-        //                 message: NotificationMessage::Element(message),
-        //                 on_click: None,
-        //                 click_message: None,
-        //             }
-        //         }
-
-        //         pub fn with_click_message<S>(mut self, message: S) -> Self
-        //         where
-        //             S: Into<Cow<'static, str>>,
-        //         {
-        //             self.click_message = Some(message.into());
-        //             self
-        //         }
-
-        //         pub fn on_click<F>(mut self, on_click: F) -> Self
-        //         where
-        //             F: 'static + Fn(&mut ViewContext<Self>),
-        //         {
-        //             self.on_click = Some(Arc::new(on_click));
-        //             self
-        //         }
-
-        //         pub fn dismiss(&mut self, _: &CancelMessageNotification, cx: &mut ViewContext<Self>) {
-        //             cx.emit(MessageNotificationEvent::Dismiss);
-        //         }
+        // pub fn dismiss(&mut self, _: &CancelMessageNotification, cx: &mut ViewContext<Self>) {
+        //     cx.emit(MessageNotificationEvent::Dismiss);
+        // }
     }
 
     impl Render for MessageNotification {
