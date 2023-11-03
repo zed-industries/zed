@@ -189,3 +189,22 @@ impl TestAppContext {
         .unwrap();
     }
 }
+
+impl<T: Send + EventEmitter> Model<T> {
+    pub fn next_event(&self, cx: &mut TestAppContext) -> T::Event
+    where
+        T::Event: Send + Clone,
+    {
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        let _subscription = self.update(cx, |_, cx| {
+            cx.subscribe(self, move |_, _, event, _| {
+                tx.unbounded_send(event.clone()).ok();
+            })
+        });
+
+        cx.executor().run_until_parked();
+        rx.try_next()
+            .expect("no event received")
+            .expect("model was dropped")
+    }
+}
