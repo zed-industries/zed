@@ -1,4 +1,4 @@
-use crate::{search::PathMatcher, worktree::WorktreeModelHandle, Event, *};
+use crate::{worktree::WorktreeModelHandle, Event, *};
 use fs::{FakeFs, RealFs};
 use futures::{future, StreamExt};
 use gpui::{executor::Deterministic, test::subscribe, AppContext};
@@ -13,7 +13,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::{cell::RefCell, os::unix, rc::Rc, task::Poll};
 use unindent::Unindent as _;
-use util::{assert_set_eq, test::temp_tree};
+use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
 
 #[cfg(test)]
 #[ctor::ctor]

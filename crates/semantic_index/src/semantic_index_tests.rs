@@ -10,13 +10,13 @@ use gpui::{executor::Deterministic, Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry, ToOffset};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
-use project::{project_settings::ProjectSettings, search::PathMatcher, FakeFs, Fs, Project};
+use project::{project_settings::ProjectSettings, FakeFs, Fs, Project};
 use rand::{rngs::StdRng, Rng};
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc, time::SystemTime};
 use unindent::Unindent;
-use util::RandomCharIter;
+use util::{paths::PathMatcher, RandomCharIter};
 
 #[ctor::ctor]
 fn init_logger() {

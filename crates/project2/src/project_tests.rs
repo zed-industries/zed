@@ -1,19 +1,24 @@
-// use crate::{search::PathMatcher, worktree::WorktreeModelHandle, Event, *};
-// use fs::{FakeFs, RealFs};
+// use crate::{Event, *};
+// use fs::FakeFs;
 // use futures::{future, StreamExt};
-// use gpui::{executor::Deterministic, test::subscribe, AppContext};
-// use language2::{
+// use gpui::AppContext;
+// use language::{
 //     language_settings::{AllLanguageSettings, LanguageSettingsContent},
 //     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
 //     LineEnding, OffsetRangeExt, Point, ToPoint,
 // };
-// use lsp2::Url;
+// use lsp::Url;
 // use parking_lot::Mutex;
 // use pretty_assertions::assert_eq;
 // use serde_json::json;
-// use std::{cell::RefCell, os::unix, rc::Rc, task::Poll};
+// use std::{os, task::Poll};
 // use unindent::Unindent as _;
-// use util::{assert_set_eq, test::temp_tree};
+// use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
+
+// #[gpui::test]
+// async fn test_block_via_channel(cx: &mut gpui2::TestAppContext) {
+//     cx.executor().allow_parking();
+// }
 
 // #[cfg(test)]
 // #[ctor::ctor]
