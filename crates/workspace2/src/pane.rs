@@ -1361,13 +1361,15 @@ impl Pane {
         let label = item.tab_content(Some(detail), cx);
         let close_icon = || IconElement::new(Icon::Close).color(IconColor::Muted);
 
-        let (tab_bg, tab_hover_bg, tab_active_bg) = match ix == self.active_item_index {
+        let (text_color, tab_bg, tab_hover_bg, tab_active_bg) = match ix == self.active_item_index {
             false => (
+                cx.theme().colors().text_muted,
                 cx.theme().colors().tab_inactive,
                 cx.theme().colors().ghost_element_hover,
                 cx.theme().colors().ghost_element_active,
             ),
             true => (
+                cx.theme().colors().text,
                 cx.theme().colors().tab_active,
                 cx.theme().colors().element_hover,
                 cx.theme().colors().element_active,
@@ -1397,6 +1399,7 @@ impl Pane {
                     .flex()
                     .items_center()
                     .gap_1p5()
+                    .text_color(text_color)
                     .children(if item.has_conflict(cx) {
                         Some(
                             IconElement::new(Icon::ExclamationTriangle)

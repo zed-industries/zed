@@ -584,12 +584,18 @@ impl Item for Editor {
                 .flex()
                 .flex_row()
                 .items_center()
-                .text_color(gpui::white())
+                .gap_2()
                 .child(self.title(cx).to_string())
                 .children(detail.and_then(|detail| {
                     let path = path_for_buffer(&self.buffer, detail, false, cx)?;
                     let description = path.to_string_lossy();
-                    Some(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN))
+
+                    Some(
+                        div()
+                            .text_color(theme.colors().text_muted)
+                            .text_xs()
+                            .child(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN)),
+                    )
                 })),
         )
     }
