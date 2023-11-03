@@ -1,6 +1,6 @@
 use crate::{Toast, Workspace};
 use collections::HashMap;
-use gpui2::{AnyView, AppContext, Entity, EntityId, EventEmitter, Render, View, ViewContext};
+use gpui::{AnyView, AppContext, Entity, EntityId, EventEmitter, Render, View, ViewContext};
 use std::{any::TypeId, ops::DerefMut};
 
 pub fn init(cx: &mut AppContext) {
@@ -160,7 +160,7 @@ impl Workspace {
 
 pub mod simple_message_notification {
     use super::Notification;
-    use gpui2::{AnyElement, AppContext, Div, EventEmitter, Render, TextStyle, ViewContext};
+    use gpui::{AnyElement, AppContext, Div, EventEmitter, Render, TextStyle, ViewContext};
     use serde::Deserialize;
     use std::{borrow::Cow, sync::Arc};
 
@@ -265,7 +265,7 @@ pub mod simple_message_notification {
     //             "MessageNotification"
     //         }
 
-    //         fn render(&mut self, cx: &mut gpui2::ViewContext<Self>) -> gpui::AnyElement<Self> {
+    //         fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
     //             let theme = theme2::current(cx).clone();
     //             let theme = &theme.simple_message_notification;
 

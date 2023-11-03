@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
-use gpui2::{
+use gpui::{
     AppContext, AsyncWindowContext, Component, Div, EntityId, EventEmitter, Model, PromptLevel,
     Render, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -2907,6 +2907,6 @@ impl Render for DraggedTab {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        div().w_8().h_4().bg(gpui2::red())
+        div().w_8().h_4().bg(gpui::red())
     }
 }

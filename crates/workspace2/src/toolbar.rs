@@ -1,5 +1,5 @@
 use crate::ItemHandle;
-use gpui2::{
+use gpui::{
     AnyView, AppContext, Entity, EntityId, EventEmitter, Render, View, ViewContext, WindowContext,
 };
 

@@ -69,11 +69,10 @@ pub async fn handle_cli_connection(
                 let mut caret_positions = HashMap::default();
 
                 let paths = if paths.is_empty() {
-                    todo!()
-                    //     workspace::last_opened_workspace_paths()
-                    //         .await
-                    //         .map(|location| location.paths().to_vec())
-                    //         .unwrap_or_default()
+                    workspace2::last_opened_workspace_paths()
+                        .await
+                        .map(|location| location.paths().to_vec())
+                        .unwrap_or_default()
                 } else {
                     paths
                         .into_iter()
@@ -260,33 +259,33 @@ pub fn initialize_workspace(
                 move |workspace, _, event, cx| {
                     if let workspace2::Event::PaneAdded(pane) = event {
                         pane.update(cx, |pane, cx| {
-                            // todo!()
-                            // pane.toolbar().update(cx, |toolbar, cx| {
-                            //     let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
-                            //     toolbar.add_item(breadcrumbs, cx);
-                            //     let buffer_search_bar = cx.add_view(BufferSearchBar::new);
-                            //     toolbar.add_item(buffer_search_bar.clone(), cx);
-                            //     let quick_action_bar = cx.add_view(|_| {
-                            //         QuickActionBar::new(buffer_search_bar, workspace)
-                            //     });
-                            //     toolbar.add_item(quick_action_bar, cx);
-                            //     let diagnostic_editor_controls =
-                            //         cx.add_view(|_| diagnostics2::ToolbarControls::new());
-                            //     toolbar.add_item(diagnostic_editor_controls, cx);
-                            //     let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
-                            //     toolbar.add_item(project_search_bar, cx);
-                            //     let submit_feedback_button =
-                            //         cx.add_view(|_| SubmitFeedbackButton::new());
-                            //     toolbar.add_item(submit_feedback_button, cx);
-                            //     let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
-                            //     toolbar.add_item(feedback_info_text, cx);
-                            //     let lsp_log_item =
-                            //         cx.add_view(|_| language_tools::LspLogToolbarItemView::new());
-                            //     toolbar.add_item(lsp_log_item, cx);
-                            //     let syntax_tree_item = cx
-                            //         .add_view(|_| language_tools::SyntaxTreeToolbarItemView::new());
-                            //     toolbar.add_item(syntax_tree_item, cx);
-                            // })
+                            pane.toolbar().update(cx, |toolbar, cx| {
+                                // todo!()
+                                //     let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
+                                //     toolbar.add_item(breadcrumbs, cx);
+                                //     let buffer_search_bar = cx.add_view(BufferSearchBar::new);
+                                //     toolbar.add_item(buffer_search_bar.clone(), cx);
+                                //     let quick_action_bar = cx.add_view(|_| {
+                                //         QuickActionBar::new(buffer_search_bar, workspace)
+                                //     });
+                                //     toolbar.add_item(quick_action_bar, cx);
+                                //     let diagnostic_editor_controls =
+                                //         cx.add_view(|_| diagnostics2::ToolbarControls::new());
+                                //     toolbar.add_item(diagnostic_editor_controls, cx);
+                                //     let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
+                                //     toolbar.add_item(project_search_bar, cx);
+                                //     let submit_feedback_button =
+                                //         cx.add_view(|_| SubmitFeedbackButton::new());
+                                //     toolbar.add_item(submit_feedback_button, cx);
+                                //     let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
+                                //     toolbar.add_item(feedback_info_text, cx);
+                                //     let lsp_log_item =
+                                //         cx.add_view(|_| language_tools::LspLogToolbarItemView::new());
+                                //     toolbar.add_item(lsp_log_item, cx);
+                                //     let syntax_tree_item = cx
+                                //         .add_view(|_| language_tools::SyntaxTreeToolbarItemView::new());
+                                //     toolbar.add_item(syntax_tree_item, cx);
+                            })
                         });
                     }
                 }

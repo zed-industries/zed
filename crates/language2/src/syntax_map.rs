@@ -234,7 +234,6 @@ impl SyntaxMap {
         self.snapshot.interpolate(text);
     }
 
-    #[allow(dead_code)] // todo!()
     #[cfg(test)]
     pub fn reparse(&mut self, language: Arc<Language>, text: &BufferSnapshot) {
         self.snapshot
@@ -786,7 +785,6 @@ impl SyntaxSnapshot {
         )
     }
 
-    #[allow(dead_code)] // todo!()
     #[cfg(test)]
     pub fn layers<'a>(&'a self, buffer: &'a BufferSnapshot) -> Vec<SyntaxLayerInfo> {
         self.layers_for_range(0..buffer.len(), buffer).collect()

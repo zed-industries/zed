@@ -6,7 +6,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
 use db2::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui2::WindowBounds;
+use gpui::WindowBounds;
 
 use util::{unzip_option, ResultExt};
 use uuid::Uuid;
@@ -549,425 +549,425 @@ impl WorkspaceDb {
     }
 }
 
-// todo!()
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use db::open_test_db;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use db2::open_test_db;
+    use gpui;
 
-//     #[gpui::test]
-//     async fn test_next_id_stability() {
-//         env_logger::try_init().ok();
+    #[gpui::test]
+    async fn test_next_id_stability() {
+        env_logger::try_init().ok();
 
-//         let db = WorkspaceDb(open_test_db("test_next_id_stability").await);
+        let db = WorkspaceDb(open_test_db("test_next_id_stability").await);
 
-//         db.write(|conn| {
-//             conn.migrate(
-//                 "test_table",
-//                 &[sql!(
-//                     CREATE TABLE test_table(
-//                         text TEXT,
-//                         workspace_id INTEGER,
-//                         FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-//                         ON DELETE CASCADE
-//                     ) STRICT;
-//                 )],
-//             )
-//             .unwrap();
-//         })
-//         .await;
+        db.write(|conn| {
+            conn.migrate(
+                "test_table",
+                &[sql!(
+                    CREATE TABLE test_table(
+                        text TEXT,
+                        workspace_id INTEGER,
+                        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                        ON DELETE CASCADE
+                    ) STRICT;
+                )],
+            )
+            .unwrap();
+        })
+        .await;
 
-//         let id = db.next_id().await.unwrap();
-//         // Assert the empty row got inserted
-//         assert_eq!(
-//             Some(id),
-//             db.select_row_bound::<WorkspaceId, WorkspaceId>(sql!(
-//                 SELECT workspace_id FROM workspaces WHERE workspace_id = ?
-//             ))
-//             .unwrap()(id)
-//             .unwrap()
-//         );
+        let id = db.next_id().await.unwrap();
+        // Assert the empty row got inserted
+        assert_eq!(
+            Some(id),
+            db.select_row_bound::<WorkspaceId, WorkspaceId>(sql!(
+                SELECT workspace_id FROM workspaces WHERE workspace_id = ?
+            ))
+            .unwrap()(id)
+            .unwrap()
+        );
 
-//         db.write(move |conn| {
-//             conn.exec_bound(sql!(INSERT INTO test_table(text, workspace_id) VALUES (?, ?)))
-//                 .unwrap()(("test-text-1", id))
-//             .unwrap()
-//         })
-//         .await;
+        db.write(move |conn| {
+            conn.exec_bound(sql!(INSERT INTO test_table(text, workspace_id) VALUES (?, ?)))
+                .unwrap()(("test-text-1", id))
+            .unwrap()
+        })
+        .await;
 
-//         let test_text_1 = db
-//             .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
-//             .unwrap()(1)
-//         .unwrap()
-//         .unwrap();
-//         assert_eq!(test_text_1, "test-text-1");
-//     }
+        let test_text_1 = db
+            .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
+            .unwrap()(1)
+        .unwrap()
+        .unwrap();
+        assert_eq!(test_text_1, "test-text-1");
+    }
 
-//     #[gpui::test]
-//     async fn test_workspace_id_stability() {
-//         env_logger::try_init().ok();
+    #[gpui::test]
+    async fn test_workspace_id_stability() {
+        env_logger::try_init().ok();
 
-//         let db = WorkspaceDb(open_test_db("test_workspace_id_stability").await);
+        let db = WorkspaceDb(open_test_db("test_workspace_id_stability").await);
 
-//         db.write(|conn| {
-//             conn.migrate(
-//                 "test_table",
-//                 &[sql!(
-//                     CREATE TABLE test_table(
-//                         text TEXT,
-//                         workspace_id INTEGER,
-//                         FOREIGN KEY(workspace_id)
-//                             REFERENCES workspaces(workspace_id)
-//                         ON DELETE CASCADE
-//                     ) STRICT;)],
-//             )
-//         })
-//         .await
-//         .unwrap();
+        db.write(|conn| {
+            conn.migrate(
+                "test_table",
+                &[sql!(
+                        CREATE TABLE test_table(
+                            text TEXT,
+                            workspace_id INTEGER,
+                            FOREIGN KEY(workspace_id)
+                                REFERENCES workspaces(workspace_id)
+                            ON DELETE CASCADE
+                        ) STRICT;)],
+            )
+        })
+        .await
+        .unwrap();
 
-//         let mut workspace_1 = SerializedWorkspace {
-//             id: 1,
-//             location: (["/tmp", "/tmp2"]).into(),
-//             center_group: Default::default(),
-//             bounds: Default::default(),
-//             display: Default::default(),
-//             docks: Default::default(),
-//         };
+        let mut workspace_1 = SerializedWorkspace {
+            id: 1,
+            location: (["/tmp", "/tmp2"]).into(),
+            center_group: Default::default(),
+            bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+        };
 
-//         let workspace_2 = SerializedWorkspace {
-//             id: 2,
-//             location: (["/tmp"]).into(),
-//             center_group: Default::default(),
-//             bounds: Default::default(),
-//             display: Default::default(),
-//             docks: Default::default(),
-//         };
+        let workspace_2 = SerializedWorkspace {
+            id: 2,
+            location: (["/tmp"]).into(),
+            center_group: Default::default(),
+            bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+        };
 
-//         db.save_workspace(workspace_1.clone()).await;
+        db.save_workspace(workspace_1.clone()).await;
 
-//         db.write(|conn| {
-//             conn.exec_bound(sql!(INSERT INTO test_table(text, workspace_id) VALUES (?, ?)))
-//                 .unwrap()(("test-text-1", 1))
-//             .unwrap();
-//         })
-//         .await;
+        db.write(|conn| {
+            conn.exec_bound(sql!(INSERT INTO test_table(text, workspace_id) VALUES (?, ?)))
+                .unwrap()(("test-text-1", 1))
+            .unwrap();
+        })
+        .await;
 
-//         db.save_workspace(workspace_2.clone()).await;
+        db.save_workspace(workspace_2.clone()).await;
 
-//         db.write(|conn| {
-//             conn.exec_bound(sql!(INSERT INTO test_table(text, workspace_id) VALUES (?, ?)))
-//                 .unwrap()(("test-text-2", 2))
-//             .unwrap();
-//         })
-//         .await;
+        db.write(|conn| {
+            conn.exec_bound(sql!(INSERT INTO test_table(text, workspace_id) VALUES (?, ?)))
+                .unwrap()(("test-text-2", 2))
+            .unwrap();
+        })
+        .await;
 
-//         workspace_1.location = (["/tmp", "/tmp3"]).into();
-//         db.save_workspace(workspace_1.clone()).await;
-//         db.save_workspace(workspace_1).await;
-//         db.save_workspace(workspace_2).await;
+        workspace_1.location = (["/tmp", "/tmp3"]).into();
+        db.save_workspace(workspace_1.clone()).await;
+        db.save_workspace(workspace_1).await;
+        db.save_workspace(workspace_2).await;
 
-//         let test_text_2 = db
-//             .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
-//             .unwrap()(2)
-//         .unwrap()
-//         .unwrap();
-//         assert_eq!(test_text_2, "test-text-2");
+        let test_text_2 = db
+            .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
+            .unwrap()(2)
+        .unwrap()
+        .unwrap();
+        assert_eq!(test_text_2, "test-text-2");
 
-//         let test_text_1 = db
-//             .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
-//             .unwrap()(1)
-//         .unwrap()
-//         .unwrap();
-//         assert_eq!(test_text_1, "test-text-1");
-//     }
+        let test_text_1 = db
+            .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
+            .unwrap()(1)
+        .unwrap()
+        .unwrap();
+        assert_eq!(test_text_1, "test-text-1");
+    }
 
-//     fn group(axis: gpui::Axis, children: Vec<SerializedPaneGroup>) -> SerializedPaneGroup {
-//         SerializedPaneGroup::Group {
-//             axis,
-//             flexes: None,
-//             children,
-//         }
-//     }
+    fn group(axis: Axis, children: Vec<SerializedPaneGroup>) -> SerializedPaneGroup {
+        SerializedPaneGroup::Group {
+            axis,
+            flexes: None,
+            children,
+        }
+    }
 
-//     #[gpui::test]
-//     async fn test_full_workspace_serialization() {
-//         env_logger::try_init().ok();
+    #[gpui::test]
+    async fn test_full_workspace_serialization() {
+        env_logger::try_init().ok();
 
-//         let db = WorkspaceDb(open_test_db("test_full_workspace_serialization").await);
+        let db = WorkspaceDb(open_test_db("test_full_workspace_serialization").await);
 
-//         //  -----------------
-//         //  | 1,2   | 5,6   |
-//         //  | - - - |       |
-//         //  | 3,4   |       |
-//         //  -----------------
-//         let center_group = group(
-//             gpui::Axis::Horizontal,
-//             vec![
-//                 group(
-//                     gpui::Axis::Vertical,
-//                     vec![
-//                         SerializedPaneGroup::Pane(SerializedPane::new(
-//                             vec![
-//                                 SerializedItem::new("Terminal", 5, false),
-//                                 SerializedItem::new("Terminal", 6, true),
-//                             ],
-//                             false,
-//                         )),
-//                         SerializedPaneGroup::Pane(SerializedPane::new(
-//                             vec![
-//                                 SerializedItem::new("Terminal", 7, true),
-//                                 SerializedItem::new("Terminal", 8, false),
-//                             ],
-//                             false,
-//                         )),
-//                     ],
-//                 ),
-//                 SerializedPaneGroup::Pane(SerializedPane::new(
-//                     vec![
-//                         SerializedItem::new("Terminal", 9, false),
-//                         SerializedItem::new("Terminal", 10, true),
-//                     ],
-//                     false,
-//                 )),
-//             ],
-//         );
+        //  -----------------
+        //  | 1,2   | 5,6   |
+        //  | - - - |       |
+        //  | 3,4   |       |
+        //  -----------------
+        let center_group = group(
+            Axis::Horizontal,
+            vec![
+                group(
+                    Axis::Vertical,
+                    vec![
+                        SerializedPaneGroup::Pane(SerializedPane::new(
+                            vec![
+                                SerializedItem::new("Terminal", 5, false),
+                                SerializedItem::new("Terminal", 6, true),
+                            ],
+                            false,
+                        )),
+                        SerializedPaneGroup::Pane(SerializedPane::new(
+                            vec![
+                                SerializedItem::new("Terminal", 7, true),
+                                SerializedItem::new("Terminal", 8, false),
+                            ],
+                            false,
+                        )),
+                    ],
+                ),
+                SerializedPaneGroup::Pane(SerializedPane::new(
+                    vec![
+                        SerializedItem::new("Terminal", 9, false),
+                        SerializedItem::new("Terminal", 10, true),
+                    ],
+                    false,
+                )),
+            ],
+        );
 
-//         let workspace = SerializedWorkspace {
-//             id: 5,
-//             location: (["/tmp", "/tmp2"]).into(),
-//             center_group,
-//             bounds: Default::default(),
-//             display: Default::default(),
-//             docks: Default::default(),
-//         };
+        let workspace = SerializedWorkspace {
+            id: 5,
+            location: (["/tmp", "/tmp2"]).into(),
+            center_group,
+            bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+        };
 
-//         db.save_workspace(workspace.clone()).await;
-//         let round_trip_workspace = db.workspace_for_roots(&["/tmp2", "/tmp"]);
+        db.save_workspace(workspace.clone()).await;
+        let round_trip_workspace = db.workspace_for_roots(&["/tmp2", "/tmp"]);
 
-//         assert_eq!(workspace, round_trip_workspace.unwrap());
+        assert_eq!(workspace, round_trip_workspace.unwrap());
 
-//         // Test guaranteed duplicate IDs
-//         db.save_workspace(workspace.clone()).await;
-//         db.save_workspace(workspace.clone()).await;
+        // Test guaranteed duplicate IDs
+        db.save_workspace(workspace.clone()).await;
+        db.save_workspace(workspace.clone()).await;
 
-//         let round_trip_workspace = db.workspace_for_roots(&["/tmp", "/tmp2"]);
-//         assert_eq!(workspace, round_trip_workspace.unwrap());
-//     }
+        let round_trip_workspace = db.workspace_for_roots(&["/tmp", "/tmp2"]);
+        assert_eq!(workspace, round_trip_workspace.unwrap());
+    }
 
-//     #[gpui::test]
-//     async fn test_workspace_assignment() {
-//         env_logger::try_init().ok();
+    #[gpui::test]
+    async fn test_workspace_assignment() {
+        env_logger::try_init().ok();
 
-//         let db = WorkspaceDb(open_test_db("test_basic_functionality").await);
+        let db = WorkspaceDb(open_test_db("test_basic_functionality").await);
 
-//         let workspace_1 = SerializedWorkspace {
-//             id: 1,
-//             location: (["/tmp", "/tmp2"]).into(),
-//             center_group: Default::default(),
-//             bounds: Default::default(),
-//             display: Default::default(),
-//             docks: Default::default(),
-//         };
+        let workspace_1 = SerializedWorkspace {
+            id: 1,
+            location: (["/tmp", "/tmp2"]).into(),
+            center_group: Default::default(),
+            bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+        };
 
-//         let mut workspace_2 = SerializedWorkspace {
-//             id: 2,
-//             location: (["/tmp"]).into(),
-//             center_group: Default::default(),
-//             bounds: Default::default(),
-//             display: Default::default(),
-//             docks: Default::default(),
-//         };
+        let mut workspace_2 = SerializedWorkspace {
+            id: 2,
+            location: (["/tmp"]).into(),
+            center_group: Default::default(),
+            bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+        };
 
-//         db.save_workspace(workspace_1.clone()).await;
-//         db.save_workspace(workspace_2.clone()).await;
+        db.save_workspace(workspace_1.clone()).await;
+        db.save_workspace(workspace_2.clone()).await;
 
-//         // Test that paths are treated as a set
-//         assert_eq!(
-//             db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
-//             workspace_1
-//         );
-//         assert_eq!(
-//             db.workspace_for_roots(&["/tmp2", "/tmp"]).unwrap(),
-//             workspace_1
-//         );
+        // Test that paths are treated as a set
+        assert_eq!(
+            db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
+            workspace_1
+        );
+        assert_eq!(
+            db.workspace_for_roots(&["/tmp2", "/tmp"]).unwrap(),
+            workspace_1
+        );
 
-//         // Make sure that other keys work
-//         assert_eq!(db.workspace_for_roots(&["/tmp"]).unwrap(), workspace_2);
-//         assert_eq!(db.workspace_for_roots(&["/tmp3", "/tmp2", "/tmp4"]), None);
+        // Make sure that other keys work
+        assert_eq!(db.workspace_for_roots(&["/tmp"]).unwrap(), workspace_2);
+        assert_eq!(db.workspace_for_roots(&["/tmp3", "/tmp2", "/tmp4"]), None);
 
-//         // Test 'mutate' case of updating a pre-existing id
-//         workspace_2.location = (["/tmp", "/tmp2"]).into();
+        // Test 'mutate' case of updating a pre-existing id
+        workspace_2.location = (["/tmp", "/tmp2"]).into();
 
-//         db.save_workspace(workspace_2.clone()).await;
-//         assert_eq!(
-//             db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
-//             workspace_2
-//         );
+        db.save_workspace(workspace_2.clone()).await;
+        assert_eq!(
+            db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
+            workspace_2
+        );
 
-//         // Test other mechanism for mutating
-//         let mut workspace_3 = SerializedWorkspace {
-//             id: 3,
-//             location: (&["/tmp", "/tmp2"]).into(),
-//             center_group: Default::default(),
-//             bounds: Default::default(),
-//             display: Default::default(),
-//             docks: Default::default(),
-//         };
+        // Test other mechanism for mutating
+        let mut workspace_3 = SerializedWorkspace {
+            id: 3,
+            location: (&["/tmp", "/tmp2"]).into(),
+            center_group: Default::default(),
+            bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+        };
 
-//         db.save_workspace(workspace_3.clone()).await;
-//         assert_eq!(
-//             db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
-//             workspace_3
-//         );
+        db.save_workspace(workspace_3.clone()).await;
+        assert_eq!(
+            db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
+            workspace_3
+        );
 
-//         // Make sure that updating paths differently also works
-//         workspace_3.location = (["/tmp3", "/tmp4", "/tmp2"]).into();
-//         db.save_workspace(workspace_3.clone()).await;
-//         assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
-//         assert_eq!(
-//             db.workspace_for_roots(&["/tmp2", "/tmp3", "/tmp4"])
-//                 .unwrap(),
-//             workspace_3
-//         );
-//     }
+        // Make sure that updating paths differently also works
+        workspace_3.location = (["/tmp3", "/tmp4", "/tmp2"]).into();
+        db.save_workspace(workspace_3.clone()).await;
+        assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
+        assert_eq!(
+            db.workspace_for_roots(&["/tmp2", "/tmp3", "/tmp4"])
+                .unwrap(),
+            workspace_3
+        );
+    }
 
-//     use crate::persistence::model::SerializedWorkspace;
-//     use crate::persistence::model::{SerializedItem, SerializedPane, SerializedPaneGroup};
+    use crate::persistence::model::SerializedWorkspace;
+    use crate::persistence::model::{SerializedItem, SerializedPane, SerializedPaneGroup};
 
-//     fn default_workspace<P: AsRef<Path>>(
-//         workspace_id: &[P],
-//         center_group: &SerializedPaneGroup,
-//     ) -> SerializedWorkspace {
-//         SerializedWorkspace {
-//             id: 4,
-//             location: workspace_id.into(),
-//             center_group: center_group.clone(),
-//             bounds: Default::default(),
-//             display: Default::default(),
-//             docks: Default::default(),
-//         }
-//     }
+    fn default_workspace<P: AsRef<Path>>(
+        workspace_id: &[P],
+        center_group: &SerializedPaneGroup,
+    ) -> SerializedWorkspace {
+        SerializedWorkspace {
+            id: 4,
+            location: workspace_id.into(),
+            center_group: center_group.clone(),
+            bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+        }
+    }
 
-//     #[gpui::test]
-//     async fn test_simple_split() {
-//         env_logger::try_init().ok();
+    #[gpui::test]
+    async fn test_simple_split() {
+        env_logger::try_init().ok();
 
-//         let db = WorkspaceDb(open_test_db("simple_split").await);
+        let db = WorkspaceDb(open_test_db("simple_split").await);
 
-//         //  -----------------
-//         //  | 1,2   | 5,6   |
-//         //  | - - - |       |
-//         //  | 3,4   |       |
-//         //  -----------------
-//         let center_pane = group(
-//             gpui::Axis::Horizontal,
-//             vec![
-//                 group(
-//                     gpui::Axis::Vertical,
-//                     vec![
-//                         SerializedPaneGroup::Pane(SerializedPane::new(
-//                             vec![
-//                                 SerializedItem::new("Terminal", 1, false),
-//                                 SerializedItem::new("Terminal", 2, true),
-//                             ],
-//                             false,
-//                         )),
-//                         SerializedPaneGroup::Pane(SerializedPane::new(
-//                             vec![
-//                                 SerializedItem::new("Terminal", 4, false),
-//                                 SerializedItem::new("Terminal", 3, true),
-//                             ],
-//                             true,
-//                         )),
-//                     ],
-//                 ),
-//                 SerializedPaneGroup::Pane(SerializedPane::new(
-//                     vec![
-//                         SerializedItem::new("Terminal", 5, true),
-//                         SerializedItem::new("Terminal", 6, false),
-//                     ],
-//                     false,
-//                 )),
-//             ],
-//         );
+        //  -----------------
+        //  | 1,2   | 5,6   |
+        //  | - - - |       |
+        //  | 3,4   |       |
+        //  -----------------
+        let center_pane = group(
+            Axis::Horizontal,
+            vec![
+                group(
+                    Axis::Vertical,
+                    vec![
+                        SerializedPaneGroup::Pane(SerializedPane::new(
+                            vec![
+                                SerializedItem::new("Terminal", 1, false),
+                                SerializedItem::new("Terminal", 2, true),
+                            ],
+                            false,
+                        )),
+                        SerializedPaneGroup::Pane(SerializedPane::new(
+                            vec![
+                                SerializedItem::new("Terminal", 4, false),
+                                SerializedItem::new("Terminal", 3, true),
+                            ],
+                            true,
+                        )),
+                    ],
+                ),
+                SerializedPaneGroup::Pane(SerializedPane::new(
+                    vec![
+                        SerializedItem::new("Terminal", 5, true),
+                        SerializedItem::new("Terminal", 6, false),
+                    ],
+                    false,
+                )),
+            ],
+        );
 
-//         let workspace = default_workspace(&["/tmp"], &center_pane);
+        let workspace = default_workspace(&["/tmp"], &center_pane);
 
-//         db.save_workspace(workspace.clone()).await;
+        db.save_workspace(workspace.clone()).await;
 
-//         let new_workspace = db.workspace_for_roots(&["/tmp"]).unwrap();
+        let new_workspace = db.workspace_for_roots(&["/tmp"]).unwrap();
 
-//         assert_eq!(workspace.center_group, new_workspace.center_group);
-//     }
+        assert_eq!(workspace.center_group, new_workspace.center_group);
+    }
 
-//     #[gpui::test]
-//     async fn test_cleanup_panes() {
-//         env_logger::try_init().ok();
+    #[gpui::test]
+    async fn test_cleanup_panes() {
+        env_logger::try_init().ok();
 
-//         let db = WorkspaceDb(open_test_db("test_cleanup_panes").await);
+        let db = WorkspaceDb(open_test_db("test_cleanup_panes").await);
 
-//         let center_pane = group(
-//             gpui::Axis::Horizontal,
-//             vec![
-//                 group(
-//                     gpui::Axis::Vertical,
-//                     vec![
-//                         SerializedPaneGroup::Pane(SerializedPane::new(
-//                             vec![
-//                                 SerializedItem::new("Terminal", 1, false),
-//                                 SerializedItem::new("Terminal", 2, true),
-//                             ],
-//                             false,
-//                         )),
-//                         SerializedPaneGroup::Pane(SerializedPane::new(
-//                             vec![
-//                                 SerializedItem::new("Terminal", 4, false),
-//                                 SerializedItem::new("Terminal", 3, true),
-//                             ],
-//                             true,
-//                         )),
-//                     ],
-//                 ),
-//                 SerializedPaneGroup::Pane(SerializedPane::new(
-//                     vec![
-//                         SerializedItem::new("Terminal", 5, false),
-//                         SerializedItem::new("Terminal", 6, true),
-//                     ],
-//                     false,
-//                 )),
-//             ],
-//         );
+        let center_pane = group(
+            Axis::Horizontal,
+            vec![
+                group(
+                    Axis::Vertical,
+                    vec![
+                        SerializedPaneGroup::Pane(SerializedPane::new(
+                            vec![
+                                SerializedItem::new("Terminal", 1, false),
+                                SerializedItem::new("Terminal", 2, true),
+                            ],
+                            false,
+                        )),
+                        SerializedPaneGroup::Pane(SerializedPane::new(
+                            vec![
+                                SerializedItem::new("Terminal", 4, false),
+                                SerializedItem::new("Terminal", 3, true),
+                            ],
+                            true,
+                        )),
+                    ],
+                ),
+                SerializedPaneGroup::Pane(SerializedPane::new(
+                    vec![
+                        SerializedItem::new("Terminal", 5, false),
+                        SerializedItem::new("Terminal", 6, true),
+                    ],
+                    false,
+                )),
+            ],
+        );
 
-//         let id = &["/tmp"];
+        let id = &["/tmp"];
 
-//         let mut workspace = default_workspace(id, &center_pane);
+        let mut workspace = default_workspace(id, &center_pane);
 
-//         db.save_workspace(workspace.clone()).await;
+        db.save_workspace(workspace.clone()).await;
 
-//         workspace.center_group = group(
-//             gpui::Axis::Vertical,
-//             vec![
-//                 SerializedPaneGroup::Pane(SerializedPane::new(
-//                     vec![
-//                         SerializedItem::new("Terminal", 1, false),
-//                         SerializedItem::new("Terminal", 2, true),
-//                     ],
-//                     false,
-//                 )),
-//                 SerializedPaneGroup::Pane(SerializedPane::new(
-//                     vec![
-//                         SerializedItem::new("Terminal", 4, true),
-//                         SerializedItem::new("Terminal", 3, false),
-//                     ],
-//                     true,
-//                 )),
-//             ],
-//         );
+        workspace.center_group = group(
+            Axis::Vertical,
+            vec![
+                SerializedPaneGroup::Pane(SerializedPane::new(
+                    vec![
+                        SerializedItem::new("Terminal", 1, false),
+                        SerializedItem::new("Terminal", 2, true),
+                    ],
+                    false,
+                )),
+                SerializedPaneGroup::Pane(SerializedPane::new(
+                    vec![
+                        SerializedItem::new("Terminal", 4, true),
+                        SerializedItem::new("Terminal", 3, false),
+                    ],
+                    true,
+                )),
+            ],
+        );
 
-//         db.save_workspace(workspace.clone()).await;
+        db.save_workspace(workspace.clone()).await;
 
-//         let new_workspace = db.workspace_for_roots(id).unwrap();
+        let new_workspace = db.workspace_for_roots(id).unwrap();
 
-//         assert_eq!(workspace.center_group, new_workspace.center_group);
-//     }
-// }
+        assert_eq!(workspace.center_group, new_workspace.center_group);
+    }
+}

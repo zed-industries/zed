@@ -1,5 +1,5 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
-use gpui2::{
+use gpui::{
     div, Action, AnyView, AppContext, Div, Entity, EntityId, EventEmitter, ParentElement, Render,
     Subscription, View, ViewContext, WeakView, WindowContext,
 };
@@ -629,7 +629,7 @@ impl StatusItemView for PanelButtons {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::*;
-    use gpui2::{div, Div, ViewContext, WindowContext};
+    use gpui::{div, Div, ViewContext, WindowContext};
 
     #[derive(Debug)]
     pub enum TestPanelEvent {
@@ -678,7 +678,7 @@ pub mod test {
             "TestPanel"
         }
 
-        fn position(&self, _: &gpui2::WindowContext) -> super::DockPosition {
+        fn position(&self, _: &gpui::WindowContext) -> super::DockPosition {
             self.position
         }
 

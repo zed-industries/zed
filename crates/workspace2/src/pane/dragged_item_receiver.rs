@@ -1,6 +1,6 @@
 use super::DraggedItem;
 use crate::{Pane, SplitDirection, Workspace};
-use gpui2::{
+use gpui::{
     color::Color,
     elements::{Canvas, MouseEventHandler, ParentElement, Stack},
     geometry::{rect::RectF, vector::Vector2F},

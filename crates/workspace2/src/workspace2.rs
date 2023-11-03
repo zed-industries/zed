@@ -30,7 +30,7 @@ use futures::{
     future::try_join_all,
     Future, FutureExt, StreamExt,
 };
-use gpui2::{
+use gpui::{
     div, point, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, Component, Div, EntityId, EventEmitter, GlobalPixels, Model,
     ModelContext, ParentElement, Point, Render, Size, StatefulInteractive, Styled, Subscription,
@@ -460,7 +460,7 @@ struct Follower {
 impl AppState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
-        use gpui2::Context;
+        use gpui::Context;
         use node_runtime::FakeNodeRuntime;
         use settings2::SettingsStore;
 
