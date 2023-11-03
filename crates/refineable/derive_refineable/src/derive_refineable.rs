@@ -16,9 +16,33 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         ..
     } = parse_macro_input!(input);
 
-    let impl_debug_on_refinement = attrs
-        .iter()
-        .any(|attr| attr.path.is_ident("refineable") && attr.tokens.to_string().contains("debug"));
+    let refineable_attr = attrs.iter().find(|attr| attr.path.is_ident("refineable"));
+
+    let mut impl_debug_on_refinement = false;
+    let mut derive_serialize_on_refinement = false;
+    let mut derive_deserialize_on_refinement = false;
+
+    if let Some(refineable_attr) = refineable_attr {
+        if let Ok(syn::Meta::List(meta_list)) = refineable_attr.parse_meta() {
+            for nested in meta_list.nested {
+                let syn::NestedMeta::Meta(syn::Meta::Path(path)) = nested else {
+                    continue;
+                };
+
+                if path.is_ident("debug") {
+                    impl_debug_on_refinement = true;
+                }
+
+                if path.is_ident("serialize") {
+                    derive_serialize_on_refinement = true;
+                }
+
+                if path.is_ident("deserialize") {
+                    derive_deserialize_on_refinement = true;
+                }
+            }
+        }
+    }
 
     let refinement_ident = format_ident!("{}Refinement", ident);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
@@ -235,8 +259,22 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    let derive_serialize = if derive_serialize_on_refinement {
+        quote! { #[derive(serde::Serialize)]}
+    } else {
+        quote! {}
+    };
+
+    let derive_deserialize = if derive_deserialize_on_refinement {
+        quote! { #[derive(serde::Deserialize)]}
+    } else {
+        quote! {}
+    };
+
     let gen = quote! {
         #[derive(Clone)]
+        #derive_serialize
+        #derive_deserialize
         pub struct #refinement_ident #impl_generics {
             #( #field_visibilities #field_names: #wrapped_types ),*
         }
