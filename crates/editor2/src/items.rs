@@ -576,7 +576,7 @@ impl Item for Editor {
     }
 
     fn tab_content<T: 'static>(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<T> {
-        todo!();
+        AnyElement::new(gpui::ParentElement::child(gpui::div(), "HEY"))
 
         // Flex::row()
         //     .with_child(Label::new(self.title(cx).to_string(), style.label.clone()).into_any())
