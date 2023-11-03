@@ -119,7 +119,7 @@ fn main() -> Result<()> {
 
         let theme_module = format!(
             r#"
-            use gpui2::rgba;
+            use gpui::rgba;
 
             use crate::{{
                 default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
