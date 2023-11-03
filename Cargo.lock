@@ -8881,7 +8881,7 @@ dependencies = [
  "ctor",
  "digest 0.9.0",
  "env_logger 0.9.3",
- "gpui2",
+ "gpui",
  "lazy_static",
  "log",
  "parking_lot 0.11.2",
