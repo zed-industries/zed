@@ -1,10 +1,10 @@
 use crate::{Channel, ChannelId, ChannelStore};
 use anyhow::Result;
-use client2::{Client, Collaborator, UserStore};
+use client::{Client, Collaborator, UserStore};
 use collections::HashMap;
-use gpui2::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
-use language2::proto::serialize_version;
-use rpc2::{
+use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
+use language::proto::serialize_version;
+use rpc::{
     proto::{self, PeerId},
     TypedEnvelope,
 };
@@ -24,10 +24,10 @@ pub struct ChannelBuffer {
     collaborators: HashMap<PeerId, Collaborator>,
     user_store: Model<UserStore>,
     channel_store: Model<ChannelStore>,
-    buffer: Model<language2::Buffer>,
+    buffer: Model<language::Buffer>,
     buffer_epoch: u64,
     client: Arc<Client>,
-    subscription: Option<client2::Subscription>,
+    subscription: Option<client::Subscription>,
     acknowledge_task: Option<Task<Result<()>>>,
 }
 
@@ -60,11 +60,11 @@ impl ChannelBuffer {
         let operations = response
             .operations
             .into_iter()
-            .map(language2::proto::deserialize_operation)
+            .map(language::proto::deserialize_operation)
             .collect::<Result<Vec<_>, _>>()?;
 
         let buffer = cx.build_model(|_| {
-            language2::Buffer::remote(response.buffer_id, response.replica_id as u16, base_text)
+            language::Buffer::remote(response.buffer_id, response.replica_id as u16, base_text)
         })?;
         buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))??;
 
@@ -145,7 +145,7 @@ impl ChannelBuffer {
             .payload
             .operations
             .into_iter()
-            .map(language2::proto::deserialize_operation)
+            .map(language::proto::deserialize_operation)
             .collect::<Result<Vec<_>, _>>()?;
 
         this.update(&mut cx, |this, cx| {
@@ -172,13 +172,13 @@ impl ChannelBuffer {
 
     fn on_buffer_update(
         &mut self,
-        _: Model<language2::Buffer>,
-        event: &language2::Event,
+        _: Model<language::Buffer>,
+        event: &language::Event,
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language2::Event::Operation(operation) => {
-                let operation = language2::proto::serialize_operation(operation);
+            language::Event::Operation(operation) => {
+                let operation = language::proto::serialize_operation(operation);
                 self.client
                     .send(proto::UpdateChannelBuffer {
                         channel_id: self.channel_id,
@@ -186,7 +186,7 @@ impl ChannelBuffer {
                     })
                     .log_err();
             }
-            language2::Event::Edited => {
+            language::Event::Edited => {
                 cx.emit(ChannelBufferEvent::BufferEdited);
             }
             _ => {}
@@ -201,7 +201,9 @@ impl ChannelBuffer {
         let epoch = self.epoch();
 
         self.acknowledge_task = Some(cx.spawn(move |_, cx| async move {
-            cx.executor().timer(ACKNOWLEDGE_DEBOUNCE_INTERVAL).await;
+            cx.background_executor()
+                .timer(ACKNOWLEDGE_DEBOUNCE_INTERVAL)
+                .await;
             client
                 .send(proto::AckBufferOperation {
                     buffer_id,
@@ -217,7 +219,7 @@ impl ChannelBuffer {
         self.buffer_epoch
     }
 
-    pub fn buffer(&self) -> Model<language2::Buffer> {
+    pub fn buffer(&self) -> Model<language::Buffer> {
         self.buffer.clone()
     }
 

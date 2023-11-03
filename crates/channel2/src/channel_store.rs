@@ -3,14 +3,14 @@ mod channel_index;
 use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat, ChannelMessage};
 use anyhow::{anyhow, Result};
 use channel_index::ChannelIndex;
-use client2::{Client, Subscription, User, UserId, UserStore};
+use client::{Client, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
-use db2::RELEASE_CHANNEL;
+use db::RELEASE_CHANNEL;
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
-use gpui2::{
+use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
-use rpc2::{
+use rpc::{
     proto::{self, ChannelVisibility},
     TypedEnvelope,
 };
@@ -142,13 +142,13 @@ impl ChannelStore {
             while let Some(status) = connection_status.next().await {
                 let this = this.upgrade()?;
                 match status {
-                    client2::Status::Connected { .. } => {
+                    client::Status::Connected { .. } => {
                         this.update(&mut cx, |this, cx| this.handle_connect(cx))
                             .ok()?
                             .await
                             .log_err()?;
                     }
-                    client2::Status::SignedOut | client2::Status::UpgradeRequired => {
+                    client::Status::SignedOut | client::Status::UpgradeRequired => {
                         this.update(&mut cx, |this, cx| this.handle_disconnect(false, cx))
                             .ok();
                     }
@@ -389,8 +389,8 @@ impl ChannelStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<T>>>
     where
-        F: 'static + Send + FnOnce(Arc<Channel>, AsyncAppContext) -> Fut,
-        Fut: Send + Future<Output = Result<Model<T>>>,
+        F: 'static + FnOnce(Arc<Channel>, AsyncAppContext) -> Fut,
+        Fut: Future<Output = Result<Model<T>>>,
         T: 'static,
     {
         let task = loop {
@@ -445,7 +445,7 @@ impl ChannelStore {
                 }
             }
         };
-        cx.executor()
+        cx.background_executor()
             .spawn(async move { task.await.map_err(|error| anyhow!("{}", error)) })
     }
 
@@ -671,7 +671,7 @@ impl ChannelStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             client
                 .request(proto::RespondToChannelInvite { channel_id, accept })
                 .await?;
@@ -770,7 +770,7 @@ impl ChannelStore {
                     buffer_versions.push(proto::ChannelBufferVersion {
                         channel_id: channel_buffer.channel_id,
                         epoch: channel_buffer.epoch(),
-                        version: language2::proto::serialize_version(&buffer.version()),
+                        version: language::proto::serialize_version(&buffer.version()),
                     });
                 }
             }
@@ -803,7 +803,7 @@ impl ChannelStore {
                             {
                                 let channel_id = channel_buffer.channel_id;
                                 let remote_version =
-                                    language2::proto::deserialize_version(&remote_buffer.version);
+                                    language::proto::deserialize_version(&remote_buffer.version);
 
                                 channel_buffer.replace_collaborators(
                                     mem::take(&mut remote_buffer.collaborators),
@@ -818,7 +818,7 @@ impl ChannelStore {
                                         let incoming_operations =
                                             mem::take(&mut remote_buffer.operations)
                                                 .into_iter()
-                                                .map(language2::proto::deserialize_operation)
+                                                .map(language::proto::deserialize_operation)
                                                 .collect::<Result<Vec<_>>>()?;
                                         buffer.apply_ops(incoming_operations, cx)?;
                                         anyhow::Ok(outgoing_operations)
@@ -827,11 +827,11 @@ impl ChannelStore {
 
                                 if let Some(operations) = operations {
                                     let client = this.client.clone();
-                                    cx.executor()
+                                    cx.background_executor()
                                         .spawn(async move {
                                             let operations = operations.await;
                                             for chunk in
-                                                language2::proto::split_operations(operations)
+                                                language::proto::split_operations(operations)
                                             {
                                                 client
                                                     .send(proto::UpdateChannelBuffer {
@@ -864,7 +864,7 @@ impl ChannelStore {
         self.disconnect_channel_buffers_task.get_or_insert_with(|| {
             cx.spawn(move |this, mut cx| async move {
                 if wait_for_reconnect {
-                    cx.executor().timer(RECONNECT_TIMEOUT).await;
+                    cx.background_executor().timer(RECONNECT_TIMEOUT).await;
                 }
 
                 if let Some(this) = this.upgrade() {
@@ -958,7 +958,7 @@ impl ChannelStore {
             }
 
             for unseen_buffer_change in payload.unseen_channel_buffer_changes {
-                let version = language2::proto::deserialize_version(&unseen_buffer_change.version);
+                let version = language::proto::deserialize_version(&unseen_buffer_change.version);
                 index.note_changed(
                     unseen_buffer_change.channel_id,
                     unseen_buffer_change.epoch,

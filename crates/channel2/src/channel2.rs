@@ -2,8 +2,8 @@ mod channel_buffer;
 mod channel_chat;
 mod channel_store;
 
-use client2::{Client, UserStore};
-use gpui2::{AppContext, Model};
+use client::{Client, UserStore};
+use gpui::{AppContext, Model};
 use std::sync::Arc;
 
 pub use channel_buffer::{ChannelBuffer, ChannelBufferEvent, ACKNOWLEDGE_DEBOUNCE_INTERVAL};

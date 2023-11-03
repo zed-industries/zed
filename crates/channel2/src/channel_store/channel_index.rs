@@ -1,6 +1,6 @@
 use crate::{Channel, ChannelId};
 use collections::BTreeMap;
-use rpc2::proto;
+use rpc::proto;
 use std::sync::Arc;
 
 #[derive(Default, Debug)]

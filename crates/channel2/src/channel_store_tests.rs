@@ -1,13 +1,13 @@
 use crate::channel_chat::ChannelChatEvent;
 
 use super::*;
-use client2::{test::FakeServer, Client, UserStore};
-use gpui2::{AppContext, Context, Model, TestAppContext};
-use rpc2::proto::{self};
-use settings2::SettingsStore;
+use client::{test::FakeServer, Client, UserStore};
+use gpui::{AppContext, Context, Model, TestAppContext};
+use rpc::proto::{self};
+use settings::SettingsStore;
 use util::http::FakeHttpClient;
 
-#[gpui2::test]
+#[gpui::test]
 fn test_update_channels(cx: &mut AppContext) {
     let channel_store = init_test(cx);
 
@@ -79,7 +79,7 @@ fn test_update_channels(cx: &mut AppContext) {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_dangling_channel_paths(cx: &mut AppContext) {
     let channel_store = init_test(cx);
 
@@ -142,7 +142,7 @@ fn test_dangling_channel_paths(cx: &mut AppContext) {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 async fn test_channel_messages(cx: &mut TestAppContext) {
     let user_id = 5;
     let channel_id = 5;
@@ -349,7 +349,7 @@ fn init_test(cx: &mut AppContext) -> Model<ChannelStore> {
 
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
-    client2::init(&client, cx);
+    client::init(&client, cx);
     crate::init(&client, user_store, cx);
 
     ChannelStore::global(cx)

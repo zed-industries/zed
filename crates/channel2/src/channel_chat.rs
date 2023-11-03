@@ -1,12 +1,12 @@
 use crate::{Channel, ChannelId, ChannelStore};
 use anyhow::{anyhow, Result};
-use client2::{
+use client::{
     proto,
     user::{User, UserStore},
     Client, Subscription, TypedEnvelope, UserId,
 };
 use futures::lock::Mutex;
-use gpui2::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
+use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
 use rand::prelude::*;
 use std::{
     collections::HashSet,
