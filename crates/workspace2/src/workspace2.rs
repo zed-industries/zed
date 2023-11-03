@@ -26,7 +26,7 @@ use client2::{
     proto::{self, PeerId},
     Client, TypedEnvelope, UserStore,
 };
-use collections::{HashMap, HashSet};
+use collections::{hash_map, HashMap, HashSet};
 use dock::{Dock, DockPosition, PanelButtons};
 use futures::{
     channel::{mpsc, oneshot},
@@ -35,10 +35,10 @@ use futures::{
 };
 use gpui2::{
     div, point, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
-    AsyncWindowContext, Bounds, Component, Div, EntityId, EventEmitter, GlobalPixels, Model,
-    ModelContext, ParentElement, Point, Render, Size, StatefulInteractive, Styled, Subscription,
-    Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
-    WindowOptions,
+    AsyncWindowContext, Bounds, Component, Div, Entity, EntityId, EventEmitter, FocusHandle,
+    GlobalPixels, Model, ModelContext, ParentElement, Point, Render, Size, StatefulInteractive,
+    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds,
+    WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use language2::LanguageRegistry;
@@ -547,9 +547,10 @@ pub enum Event {
 
 pub struct Workspace {
     weak_self: WeakView<Self>,
+    focus_handle: FocusHandle,
     //     modal: Option<ActiveModal>,
     zoomed: Option<AnyWeakView>,
-    //     zoomed_position: Option<DockPosition>,
+    zoomed_position: Option<DockPosition>,
     center: PaneGroup,
     left_dock: View<Dock>,
     bottom_dock: View<Dock>,
@@ -766,9 +767,10 @@ impl Workspace {
         cx.defer(|this, cx| this.update_window_title(cx));
         Workspace {
             weak_self: weak_handle.clone(),
+            focus_handle: cx.focus_handle(),
             // modal: None,
             zoomed: None,
-            // zoomed_position: None,
+            zoomed_position: None,
             center: PaneGroup::new(center_pane.clone()),
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
@@ -1699,9 +1701,9 @@ impl Workspace {
         self.active_pane().read(cx).active_item()
     }
 
-    //     fn active_project_path(&self, cx: &ViewContext<Self>) -> Option<ProjectPath> {
-    //         self.active_item(cx).and_then(|item| item.project_path(cx))
-    //     }
+    fn active_project_path(&self, cx: &ViewContext<Self>) -> Option<ProjectPath> {
+        self.active_item(cx).and_then(|item| item.project_path(cx))
+    }
 
     //     pub fn save_active_item(
     //         &mut self,
@@ -1923,44 +1925,44 @@ impl Workspace {
     //         self.zoomed.and_then(|view| view.upgrade(cx))
     //     }
 
-    //     fn dismiss_zoomed_items_to_reveal(
-    //         &mut self,
-    //         dock_to_reveal: Option<DockPosition>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         // If a center pane is zoomed, unzoom it.
-    //         for pane in &self.panes {
-    //             if pane != &self.active_pane || dock_to_reveal.is_some() {
-    //                 pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
-    //             }
-    //         }
+    fn dismiss_zoomed_items_to_reveal(
+        &mut self,
+        dock_to_reveal: Option<DockPosition>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        // If a center pane is zoomed, unzoom it.
+        for pane in &self.panes {
+            if pane != &self.active_pane || dock_to_reveal.is_some() {
+                pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+            }
+        }
 
-    //         // If another dock is zoomed, hide it.
-    //         let mut focus_center = false;
-    //         for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
-    //             dock.update(cx, |dock, cx| {
-    //                 if Some(dock.position()) != dock_to_reveal {
-    //                     if let Some(panel) = dock.active_panel() {
-    //                         if panel.is_zoomed(cx) {
-    //                             focus_center |= panel.has_focus(cx);
-    //                             dock.set_open(false, cx);
-    //                         }
-    //                     }
-    //                 }
-    //             });
-    //         }
+        // If another dock is zoomed, hide it.
+        let mut focus_center = false;
+        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+            dock.update(cx, |dock, cx| {
+                if Some(dock.position()) != dock_to_reveal {
+                    if let Some(panel) = dock.active_panel() {
+                        if panel.is_zoomed(cx) {
+                            focus_center |= panel.has_focus(cx);
+                            dock.set_open(false, cx);
+                        }
+                    }
+                }
+            });
+        }
 
-    //         if focus_center {
-    //             cx.focus_self();
-    //         }
+        if focus_center {
+            cx.focus(&self.focus_handle);
+        }
 
-    //         if self.zoomed_position != dock_to_reveal {
-    //             self.zoomed = None;
-    //             self.zoomed_position = None;
-    //         }
+        if self.zoomed_position != dock_to_reveal {
+            self.zoomed = None;
+            self.zoomed_position = None;
+        }
 
-    //         cx.notify();
-    //     }
+        cx.notify();
+    }
 
     fn add_pane(&mut self, _cx: &mut ViewContext<Self>) -> View<Pane> {
         todo!()
@@ -2288,214 +2290,213 @@ impl Workspace {
     //         self.center.pane_at_pixel_position(target)
     //     }
 
-    //     fn handle_pane_focused(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
-    //         if self.active_pane != pane {
-    //             self.active_pane = pane.clone();
-    //             self.status_bar.update(cx, |status_bar, cx| {
-    //                 status_bar.set_active_pane(&self.active_pane, cx);
-    //             });
-    //             self.active_item_path_changed(cx);
-    //             self.last_active_center_pane = Some(pane.downgrade());
-    //         }
+    fn handle_pane_focused(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
+        if self.active_pane != pane {
+            self.active_pane = pane.clone();
+            self.status_bar.update(cx, |status_bar, cx| {
+                status_bar.set_active_pane(&self.active_pane, cx);
+            });
+            self.active_item_path_changed(cx);
+            self.last_active_center_pane = Some(pane.downgrade());
+        }
 
-    //         self.dismiss_zoomed_items_to_reveal(None, cx);
-    //         if pane.read(cx).is_zoomed() {
-    //             self.zoomed = Some(pane.downgrade().into_any());
-    //         } else {
-    //             self.zoomed = None;
-    //         }
-    //         self.zoomed_position = None;
-    //         self.update_active_view_for_followers(cx);
+        self.dismiss_zoomed_items_to_reveal(None, cx);
+        if pane.read(cx).is_zoomed() {
+            self.zoomed = Some(pane.downgrade().into());
+        } else {
+            self.zoomed = None;
+        }
+        self.zoomed_position = None;
+        self.update_active_view_for_followers(cx);
 
-    //         cx.notify();
-    //     }
+        cx.notify();
+    }
 
     fn handle_pane_event(
         &mut self,
-        _pane: View<Pane>,
-        _event: &pane::Event,
-        _cx: &mut ViewContext<Self>,
+        pane: View<Pane>,
+        event: &pane::Event,
+        cx: &mut ViewContext<Self>,
     ) {
-        todo!()
-        // match event {
-        //     pane::Event::AddItem { item } => item.added_to_pane(self, pane, cx),
-        //     pane::Event::Split(direction) => {
-        //         self.split_and_clone(pane, *direction, cx);
-        //     }
-        //     pane::Event::Remove => self.remove_pane(pane, cx),
-        //     pane::Event::ActivateItem { local } => {
-        //         if *local {
-        //             self.unfollow(&pane, cx);
-        //         }
-        //         if &pane == self.active_pane() {
-        //             self.active_item_path_changed(cx);
-        //         }
-        //     }
-        //     pane::Event::ChangeItemTitle => {
-        //         if pane == self.active_pane {
-        //             self.active_item_path_changed(cx);
-        //         }
-        //         self.update_window_edited(cx);
-        //     }
-        //     pane::Event::RemoveItem { item_id } => {
-        //         self.update_window_edited(cx);
-        //         if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
-        //             if entry.get().id() == pane.id() {
-        //                 entry.remove();
-        //             }
-        //         }
-        //     }
-        //     pane::Event::Focus => {
-        //         self.handle_pane_focused(pane.clone(), cx);
-        //     }
-        //     pane::Event::ZoomIn => {
-        //         if pane == self.active_pane {
-        //             pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
-        //             if pane.read(cx).has_focus() {
-        //                 self.zoomed = Some(pane.downgrade().into_any());
-        //                 self.zoomed_position = None;
-        //             }
-        //             cx.notify();
-        //         }
-        //     }
-        //     pane::Event::ZoomOut => {
-        //         pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
-        //         if self.zoomed_position.is_none() {
-        //             self.zoomed = None;
-        //         }
-        //         cx.notify();
-        //     }
-        // }
+        match event {
+            pane::Event::AddItem { item } => item.added_to_pane(self, pane, cx),
+            pane::Event::Split(direction) => {
+                self.split_and_clone(pane, *direction, cx);
+            }
+            pane::Event::Remove => self.remove_pane(pane, cx),
+            pane::Event::ActivateItem { local } => {
+                if *local {
+                    self.unfollow(&pane, cx);
+                }
+                if &pane == self.active_pane() {
+                    self.active_item_path_changed(cx);
+                }
+            }
+            pane::Event::ChangeItemTitle => {
+                if pane == self.active_pane {
+                    self.active_item_path_changed(cx);
+                }
+                self.update_window_edited(cx);
+            }
+            pane::Event::RemoveItem { item_id } => {
+                self.update_window_edited(cx);
+                if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
+                    if entry.get().entity_id() == pane.entity_id() {
+                        entry.remove();
+                    }
+                }
+            }
+            pane::Event::Focus => {
+                self.handle_pane_focused(pane.clone(), cx);
+            }
+            pane::Event::ZoomIn => {
+                if pane == self.active_pane {
+                    pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
+                    if pane.read(cx).has_focus(cx) {
+                        self.zoomed = Some(pane.downgrade().into());
+                        self.zoomed_position = None;
+                    }
+                    cx.notify();
+                }
+            }
+            pane::Event::ZoomOut => {
+                pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+                if self.zoomed_position.is_none() {
+                    self.zoomed = None;
+                }
+                cx.notify();
+            }
+        }
 
-        // self.serialize_workspace(cx);
+        self.serialize_workspace(cx);
     }
 
-    //     pub fn split_pane(
-    //         &mut self,
-    //         pane_to_split: View<Pane>,
-    //         split_direction: SplitDirection,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> View<Pane> {
-    //         let new_pane = self.add_pane(cx);
-    //         self.center
-    //             .split(&pane_to_split, &new_pane, split_direction)
-    //             .unwrap();
-    //         cx.notify();
-    //         new_pane
-    //     }
+    pub fn split_pane(
+        &mut self,
+        pane_to_split: View<Pane>,
+        split_direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) -> View<Pane> {
+        let new_pane = self.add_pane(cx);
+        self.center
+            .split(&pane_to_split, &new_pane, split_direction)
+            .unwrap();
+        cx.notify();
+        new_pane
+    }
 
-    //     pub fn split_and_clone(
-    //         &mut self,
-    //         pane: View<Pane>,
-    //         direction: SplitDirection,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<View<Pane>> {
-    //         let item = pane.read(cx).active_item()?;
-    //         let maybe_pane_handle = if let Some(clone) = item.clone_on_split(self.database_id(), cx) {
-    //             let new_pane = self.add_pane(cx);
-    //             new_pane.update(cx, |pane, cx| pane.add_item(clone, true, true, None, cx));
-    //             self.center.split(&pane, &new_pane, direction).unwrap();
-    //             Some(new_pane)
-    //         } else {
-    //             None
-    //         };
-    //         cx.notify();
-    //         maybe_pane_handle
-    //     }
+    pub fn split_and_clone(
+        &mut self,
+        pane: View<Pane>,
+        direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<View<Pane>> {
+        let item = pane.read(cx).active_item()?;
+        let maybe_pane_handle = if let Some(clone) = item.clone_on_split(self.database_id(), cx) {
+            let new_pane = self.add_pane(cx);
+            new_pane.update(cx, |pane, cx| pane.add_item(clone, true, true, None, cx));
+            self.center.split(&pane, &new_pane, direction).unwrap();
+            Some(new_pane)
+        } else {
+            None
+        };
+        cx.notify();
+        maybe_pane_handle
+    }
 
-    //     pub fn split_pane_with_item(
-    //         &mut self,
-    //         pane_to_split: WeakView<Pane>,
-    //         split_direction: SplitDirection,
-    //         from: WeakView<Pane>,
-    //         item_id_to_move: usize,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         let Some(pane_to_split) = pane_to_split.upgrade(cx) else {
-    //             return;
-    //         };
-    //         let Some(from) = from.upgrade(cx) else {
-    //             return;
-    //         };
+    pub fn split_pane_with_item(
+        &mut self,
+        pane_to_split: WeakView<Pane>,
+        split_direction: SplitDirection,
+        from: WeakView<Pane>,
+        item_id_to_move: EntityId,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(pane_to_split) = pane_to_split.upgrade() else {
+            return;
+        };
+        let Some(from) = from.upgrade() else {
+            return;
+        };
 
-    //         let new_pane = self.add_pane(cx);
-    //         self.move_item(from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
-    //         self.center
-    //             .split(&pane_to_split, &new_pane, split_direction)
-    //             .unwrap();
-    //         cx.notify();
-    //     }
+        let new_pane = self.add_pane(cx);
+        self.move_item(from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
+        self.center
+            .split(&pane_to_split, &new_pane, split_direction)
+            .unwrap();
+        cx.notify();
+    }
 
-    //     pub fn split_pane_with_project_entry(
-    //         &mut self,
-    //         pane_to_split: WeakView<Pane>,
-    //         split_direction: SplitDirection,
-    //         project_entry: ProjectEntryId,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         let pane_to_split = pane_to_split.upgrade(cx)?;
-    //         let new_pane = self.add_pane(cx);
-    //         self.center
-    //             .split(&pane_to_split, &new_pane, split_direction)
-    //             .unwrap();
+    pub fn split_pane_with_project_entry(
+        &mut self,
+        pane_to_split: WeakView<Pane>,
+        split_direction: SplitDirection,
+        project_entry: ProjectEntryId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let pane_to_split = pane_to_split.upgrade()?;
+        let new_pane = self.add_pane(cx);
+        self.center
+            .split(&pane_to_split, &new_pane, split_direction)
+            .unwrap();
 
-    //         let path = self.project.read(cx).path_for_entry(project_entry, cx)?;
-    //         let task = self.open_path(path, Some(new_pane.downgrade()), true, cx);
-    //         Some(cx.foreground().spawn(async move {
-    //             task.await?;
-    //             Ok(())
-    //         }))
-    //     }
+        let path = self.project.read(cx).path_for_entry(project_entry, cx)?;
+        let task = self.open_path(path, Some(new_pane.downgrade()), true, cx);
+        Some(cx.foreground_executor().spawn(async move {
+            task.await?;
+            Ok(())
+        }))
+    }
 
-    //     pub fn move_item(
-    //         &mut self,
-    //         source: View<Pane>,
-    //         destination: View<Pane>,
-    //         item_id_to_move: usize,
-    //         destination_index: usize,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         let item_to_move = source
-    //             .read(cx)
-    //             .items()
-    //             .enumerate()
-    //             .find(|(_, item_handle)| item_handle.id() == item_id_to_move);
+    pub fn move_item(
+        &mut self,
+        source: View<Pane>,
+        destination: View<Pane>,
+        item_id_to_move: EntityId,
+        destination_index: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let item_to_move = source
+            .read(cx)
+            .items()
+            .enumerate()
+            .find(|(_, item_handle)| item_handle.id() == item_id_to_move);
 
-    //         if item_to_move.is_none() {
-    //             log::warn!("Tried to move item handle which was not in `from` pane. Maybe tab was closed during drop");
-    //             return;
-    //         }
-    //         let (item_ix, item_handle) = item_to_move.unwrap();
-    //         let item_handle = item_handle.clone();
+        if item_to_move.is_none() {
+            log::warn!("Tried to move item handle which was not in `from` pane. Maybe tab was closed during drop");
+            return;
+        }
+        let (item_ix, item_handle) = item_to_move.unwrap();
+        let item_handle = item_handle.clone();
 
-    //         if source != destination {
-    //             // Close item from previous pane
-    //             source.update(cx, |source, cx| {
-    //                 source.remove_item(item_ix, false, cx);
-    //             });
-    //         }
+        if source != destination {
+            // Close item from previous pane
+            source.update(cx, |source, cx| {
+                source.remove_item(item_ix, false, cx);
+            });
+        }
 
-    //         // This automatically removes duplicate items in the pane
-    //         destination.update(cx, |destination, cx| {
-    //             destination.add_item(item_handle, true, true, Some(destination_index), cx);
-    //             cx.focus_self();
-    //         });
-    //     }
+        // This automatically removes duplicate items in the pane
+        destination.update(cx, |destination, cx| {
+            destination.add_item(item_handle, true, true, Some(destination_index), cx);
+            destination.focus(cx)
+        });
+    }
 
-    //     fn remove_pane(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
-    //         if self.center.remove(&pane).unwrap() {
-    //             self.force_remove_pane(&pane, cx);
-    //             self.unfollow(&pane, cx);
-    //             self.last_leaders_by_pane.remove(&pane.downgrade());
-    //             for removed_item in pane.read(cx).items() {
-    //                 self.panes_by_item.remove(&removed_item.id());
-    //             }
+    fn remove_pane(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
+        if self.center.remove(&pane).unwrap() {
+            self.force_remove_pane(&pane, cx);
+            self.unfollow(&pane, cx);
+            self.last_leaders_by_pane.remove(&pane.downgrade());
+            for removed_item in pane.read(cx).items() {
+                self.panes_by_item.remove(&removed_item.id());
+            }
 
-    //             cx.notify();
-    //         } else {
-    //             self.active_item_path_changed(cx);
-    //         }
-    //     }
+            cx.notify();
+        } else {
+            self.active_item_path_changed(cx);
+        }
+    }
 
     pub fn panes(&self) -> &[View<Pane>] {
         &self.panes
@@ -2708,12 +2709,12 @@ impl Workspace {
             .child("Collab title bar Item") // self.titlebar_item
     }
 
-    // fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
-    //     let active_entry = self.active_project_path(cx);
-    //     self.project
-    //         .update(cx, |project, cx| project.set_active_path(active_entry, cx));
-    //     self.update_window_title(cx);
-    // }
+    fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
+        let active_entry = self.active_project_path(cx);
+        self.project
+            .update(cx, |project, cx| project.set_active_path(active_entry, cx));
+        self.update_window_title(cx);
+    }
 
     fn update_window_title(&mut self, cx: &mut ViewContext<Self>) {
         let project = self.project().read(cx);
@@ -3010,7 +3011,7 @@ impl Workspace {
     fn update_active_view_for_followers(&mut self, cx: &mut ViewContext<Self>) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
-        if self.active_pane.read(cx).has_focus() {
+        if self.active_pane.read(cx).has_focus(cx) {
             let item = self
                 .active_item(cx)
                 .and_then(|item| item.to_followable_item_handle(cx));
@@ -3105,7 +3106,7 @@ impl Workspace {
         }
 
         for (pane, item) in items_to_activate {
-            let pane_was_focused = pane.read(cx).has_focus();
+            let pane_was_focused = pane.read(cx).has_focus(cx);
             if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
                 pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
             } else {
@@ -3242,7 +3243,7 @@ impl Workspace {
     //     }
 
     fn serialize_workspace(&self, cx: &mut ViewContext<Self>) {
-        fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &AppContext) -> SerializedPane {
+        fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &WindowContext) -> SerializedPane {
             let (items, active) = {
                 let pane = pane_handle.read(cx);
                 let active_item_id = pane.active_item().map(|item| item.id());
@@ -3256,7 +3257,7 @@ impl Workspace {
                             })
                         })
                         .collect::<Vec<_>>(),
-                    pane.has_focus(),
+                    pane.has_focus(cx),
                 )
             };
 
@@ -3265,7 +3266,7 @@ impl Workspace {
 
         fn build_serialized_pane_group(
             pane_group: &Member,
-            cx: &AppContext,
+            cx: &WindowContext,
         ) -> SerializedPaneGroup {
             match pane_group {
                 Member::Axis(PaneAxis {
