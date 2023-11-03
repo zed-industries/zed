@@ -3,12 +3,12 @@ use crate::{
     movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
     Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
     point, AnyElement, AppContext, AsyncAppContext, Entity, EntityId, Model, Pixels, SharedString,
-    Subscription, Task, View, ViewContext, WeakView,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
@@ -566,11 +566,9 @@ impl Item for Editor {
         Some(file_path.into())
     }
 
-    fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<SharedString> {
-        match path_for_buffer(&self.buffer, detail, true, cx)? {
-            Cow::Borrowed(path) => Some(path.to_string_lossy().into()),
-            Cow::Owned(path) => Some(path.to_string_lossy().to_string().into()),
-        }
+    fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<SharedString> {
+        let path = path_for_buffer(&self.buffer, detail, true, cx)?;
+        Some(path.to_string_lossy().to_string().into())
     }
 
     fn tab_content<T: 'static>(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<T> {
@@ -613,11 +611,11 @@ impl Item for Editor {
         &self,
         _workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
-    ) -> Option<View<Self>>
+    ) -> Option<View<Editor>>
     where
         Self: Sized,
     {
-        Some(self.clone())
+        Some(cx.build_view(|cx| self.clone(cx)))
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
@@ -706,7 +704,9 @@ impl Item for Editor {
             .as_singleton()
             .expect("cannot call save_as on an excerpt list");
 
-        let file_extension = abs_path.extension().map(|a| a.to_string_lossy.to_string());
+        let file_extension = abs_path
+            .extension()
+            .map(|a| a.to_string_lossy().to_string());
         self.report_editor_event("save", file_extension, cx);
 
         project.update(cx, |project, cx| {
@@ -807,7 +807,7 @@ impl Item for Editor {
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         let workspace_id = workspace.database_id();
-        let item_id = cx.view_id();
+        let item_id = cx.view().entity_id().as_u64() as ItemId;
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
 
         fn serialize(
@@ -835,7 +835,12 @@ impl Item for Editor {
             cx.subscribe(&buffer, |this, buffer, event, cx| {
                 if let Some((_, workspace_id)) = this.workspace.as_ref() {
                     if let language::Event::FileHandleChanged = event {
-                        serialize(buffer, *workspace_id, cx.view_id(), cx);
+                        serialize(
+                            buffer,
+                            *workspace_id,
+                            cx.view().entity_id().as_u64() as ItemId,
+                            cx,
+                        );
                     }
                 }
             })
@@ -877,10 +882,11 @@ impl Item for Editor {
                     let (_, project_item) = project_item.await?;
                     let buffer = project_item
                         .downcast::<Buffer>()
-                        .context("Project item at stored path was not a buffer")?;
+                        .map_err(|_| anyhow!("Project item at stored path was not a buffer"))?;
                     Ok(pane.update(&mut cx, |_, cx| {
-                        cx.add_view(|cx| {
+                        cx.build_view(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), cx);
+
                             editor.read_scroll_position_from_db(item_id, workspace_id, cx);
                             editor
                         })

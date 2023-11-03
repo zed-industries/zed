@@ -241,7 +241,7 @@ impl DisplayMap {
 
     pub fn set_font(&self, font: Font, font_size: Pixels, cx: &mut ModelContext<Self>) -> bool {
         self.wrap_map
-            .update(cx, |map, cx| map.set_font(font, font_size, cx))
+            .update(cx, |map, cx| map.set_font_with_size(font, font_size, cx))
     }
 
     pub fn set_fold_ellipses_color(&mut self, color: Hsla) -> bool {
@@ -1388,7 +1388,7 @@ pub fn next_rows(display_row: u32, display_map: &DisplaySnapshot) -> impl Iterat
 //             );
 
 //             // Re-wrap on font size changes
-//             map.update(cx, |map, cx| map.set_font(font_id, font_size + 3., cx));
+//             map.update(cx, |map, cx| map.set_font_with_size(font_id, font_size + 3., cx));
 
 //             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
 //             assert_eq!(

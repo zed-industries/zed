@@ -2704,10 +2704,11 @@ impl PositionMap {
         let y = position.y.max(px(0.)).min(self.size.width);
         let x = position.x + (scroll_position.x * self.em_width);
         let row = (f32::from(y / self.line_height) + scroll_position.y) as u32;
+
         let (column, x_overshoot_after_line_end) = if let Some(line) = self
             .line_layouts
-            .get(row as usize - scroll_position.y.into())
-            .map(|LineWithInvisibles { line, .. }| line)
+            .get(row as usize - scroll_position.y as usize)
+            .map(|&LineWithInvisibles { ref line, .. }| line)
         {
             if let Some(ix) = line.index_for_x(x) {
                 (ix as u32, px(0.))

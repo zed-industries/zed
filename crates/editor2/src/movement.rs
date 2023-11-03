@@ -1,7 +1,8 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, CharKind, EditorStyle, ToOffset, ToPoint};
-use gpui::TextSystem;
+use gpui::{px, TextSystem};
 use language::Point;
+use serde::de::IntoDeserializer;
 use std::ops::Range;
 
 #[derive(Debug, PartialEq)]
@@ -93,9 +94,9 @@ pub fn up_by_rows(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let mut goal_x = match goal {
-        SelectionGoal::HorizontalPosition(x) => x,
-        SelectionGoal::WrappedHorizontalPosition((_, x)) => x,
-        SelectionGoal::HorizontalRange { end, .. } => end,
+        SelectionGoal::HorizontalPosition(x) => x.into(), // todo!("Can the fields in SelectionGoal by Pixels? We should extract a geometry crate and depend on that.")
+        SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
+        SelectionGoal::HorizontalRange { end, .. } => end.into(),
         _ => map.x_for_point(start, text_layout_details),
     };
 
@@ -110,14 +111,17 @@ pub fn up_by_rows(
         return (start, goal);
     } else {
         point = DisplayPoint::new(0, 0);
-        goal_x = 0.0;
+        goal_x = px(0.);
     }
 
     let mut clipped_point = map.clip_point(point, Bias::Left);
     if clipped_point.row() < point.row() {
         clipped_point = map.clip_point(point, Bias::Right);
     }
-    (clipped_point, SelectionGoal::HorizontalPosition(goal_x))
+    (
+        clipped_point,
+        SelectionGoal::HorizontalPosition(goal_x.into()),
+    )
 }
 
 pub fn down_by_rows(
@@ -129,9 +133,9 @@ pub fn down_by_rows(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let mut goal_x = match goal {
-        SelectionGoal::HorizontalPosition(x) => x,
-        SelectionGoal::WrappedHorizontalPosition((_, x)) => x,
-        SelectionGoal::HorizontalRange { end, .. } => end,
+        SelectionGoal::HorizontalPosition(x) => x.into(),
+        SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
+        SelectionGoal::HorizontalRange { end, .. } => end.into(),
         _ => map.x_for_point(start, text_layout_details),
     };
 
@@ -150,7 +154,10 @@ pub fn down_by_rows(
     if clipped_point.row() > point.row() {
         clipped_point = map.clip_point(point, Bias::Left);
     }
-    (clipped_point, SelectionGoal::HorizontalPosition(goal_x))
+    (
+        clipped_point,
+        SelectionGoal::HorizontalPosition(goal_x.into()),
+    )
 }
 
 pub fn line_beginning(

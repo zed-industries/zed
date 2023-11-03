@@ -35,8 +35,8 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, AppContext, BackgroundExecutor, Element, EventEmitter, Model, Pixels, Render,
-    Subscription, Task, TextStyle, View, ViewContext, WeakView, WindowContext,
+    AnyElement, AppContext, BackgroundExecutor, Context, Element, EventEmitter, Model, Pixels,
+    Render, Subscription, Task, TextStyle, View, ViewContext, WeakView, WindowContext,
 };
 use hover_popover::HoverState;
 pub use items::MAX_TAB_TITLE_LEN;
@@ -64,7 +64,7 @@ use std::{
     cmp::Reverse,
     ops::{Deref, DerefMut, Range},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
 use util::{ResultExt, TryFutureExt};
@@ -1810,14 +1810,14 @@ impl Editor {
     //         )
     //     }
 
-    //     pub fn for_buffer(
-    //         buffer: Model<Buffer>,
-    //         project: Option<Model<Project>>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Self {
-    //         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    //         Self::new(EditorMode::Full, buffer, project, None, cx)
-    //     }
+    pub fn for_buffer(
+        buffer: Model<Buffer>,
+        project: Option<Model<Project>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+        Self::new(EditorMode::Full, buffer, project, cx)
+    }
 
     //     pub fn for_multibuffer(
     //         buffer: Model<MultiBuffer>,
@@ -1827,170 +1827,174 @@ impl Editor {
     //         Self::new(EditorMode::Full, buffer, project, None, cx)
     //     }
 
-    //     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
-    //         let mut clone = Self::new(
-    //             self.mode,
-    //             self.buffer.clone(),
-    //             self.project.clone(),
-    //             self.get_field_editor_theme.clone(),
+    pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
+        let mut clone = Self::new(
+            self.mode,
+            self.buffer.clone(),
+            self.project.clone(),
+            // todo!
+            // self.get_field_editor_theme.clone(),
+            cx,
+        );
+        self.display_map.update(cx, |display_map, cx| {
+            let snapshot = display_map.snapshot(cx);
+            clone.display_map.update(cx, |display_map, cx| {
+                display_map.set_state(&snapshot, cx);
+            });
+        });
+        clone.selections.clone_state(&self.selections);
+        clone.scroll_manager.clone_state(&self.scroll_manager);
+        clone.searchable = self.searchable;
+        clone
+    }
+
+    fn new(
+        mode: EditorMode,
+        buffer: Model<MultiBuffer>,
+        project: Option<Model<Project>>,
+        // todo!()
+        // get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        todo!("old version below")
+    }
+    //     let editor_view_id = cx.view_id();
+    //     let display_map = cx.add_model(|cx| {
+    //         let settings = settings::get::<ThemeSettings>(cx);
+    //         let style = build_style(settings, get_field_editor_theme.as_deref(), None, cx);
+    //         DisplayMap::new(
+    //             buffer.clone(),
+    //             style.text.font_id,
+    //             style.text.font_size,
+    //             None,
+    //             2,
+    //             1,
     //             cx,
-    //         );
-    //         self.display_map.update(cx, |display_map, cx| {
-    //             let snapshot = display_map.snapshot(cx);
-    //             clone.display_map.update(cx, |display_map, cx| {
-    //                 display_map.set_state(&snapshot, cx);
-    //             });
-    //         });
-    //         clone.selections.clone_state(&self.selections);
-    //         clone.scroll_manager.clone_state(&self.scroll_manager);
-    //         clone.searchable = self.searchable;
-    //         clone
-    //     }
+    //         )
+    //     });
 
-    //     fn new(
-    //         mode: EditorMode,
-    //         buffer: Model<MultiBuffer>,
-    //         project: Option<Model<Project>>,
-    //         get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Self {
-    //         let editor_view_id = cx.view_id();
-    //         let display_map = cx.add_model(|cx| {
-    //             let settings = settings::get::<ThemeSettings>(cx);
-    //             let style = build_style(settings, get_field_editor_theme.as_deref(), None, cx);
-    //             DisplayMap::new(
-    //                 buffer.clone(),
-    //                 style.text.font_id,
-    //                 style.text.font_size,
-    //                 None,
-    //                 2,
-    //                 1,
-    //                 cx,
-    //             )
-    //         });
+    //     let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
 
-    //         let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
+    //     let blink_manager = cx.add_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
-    //         let blink_manager = cx.add_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
+    //     let soft_wrap_mode_override =
+    //         (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::None);
 
-    //         let soft_wrap_mode_override =
-    //             (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::None);
-
-    //         let mut project_subscriptions = Vec::new();
-    //         if mode == EditorMode::Full {
-    //             if let Some(project) = project.as_ref() {
-    //                 if buffer.read(cx).is_singleton() {
-    //                     project_subscriptions.push(cx.observe(project, |_, _, cx| {
-    //                         cx.emit(Event::TitleChanged);
-    //                     }));
-    //                 }
-    //                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
-    //                     if let project::Event::RefreshInlayHints = event {
-    //                         editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
-    //                     };
+    //     let mut project_subscriptions = Vec::new();
+    //     if mode == EditorMode::Full {
+    //         if let Some(project) = project.as_ref() {
+    //             if buffer.read(cx).is_singleton() {
+    //                 project_subscriptions.push(cx.observe(project, |_, _, cx| {
+    //                     cx.emit(Event::TitleChanged);
     //                 }));
     //             }
+    //             project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
+    //                 if let project::Event::RefreshInlayHints = event {
+    //                     editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
+    //                 };
+    //             }));
     //         }
-
-    //         let inlay_hint_settings = inlay_hint_settings(
-    //             selections.newest_anchor().head(),
-    //             &buffer.read(cx).snapshot(cx),
-    //             cx,
-    //         );
-
-    //         let mut this = Self {
-    //             handle: cx.weak_handle(),
-    //             buffer: buffer.clone(),
-    //             display_map: display_map.clone(),
-    //             selections,
-    //             scroll_manager: ScrollManager::new(),
-    //             columnar_selection_tail: None,
-    //             add_selections_state: None,
-    //             select_next_state: None,
-    //             select_prev_state: None,
-    //             selection_history: Default::default(),
-    //             autoclose_regions: Default::default(),
-    //             snippet_stack: Default::default(),
-    //             select_larger_syntax_node_stack: Vec::new(),
-    //             ime_transaction: Default::default(),
-    //             active_diagnostics: None,
-    //             soft_wrap_mode_override,
-    //             get_field_editor_theme,
-    //             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
-    //             project,
-    //             focused: false,
-    //             blink_manager: blink_manager.clone(),
-    //             show_local_selections: true,
-    //             mode,
-    //             show_gutter: mode == EditorMode::Full,
-    //             show_wrap_guides: None,
-    //             placeholder_text: None,
-    //             highlighted_rows: None,
-    //             background_highlights: Default::default(),
-    //             inlay_background_highlights: Default::default(),
-    //             nav_history: None,
-    //             context_menu: RwLock::new(None),
-    //             mouse_context_menu: cx
-    //                 .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
-    //             completion_tasks: Default::default(),
-    //             next_completion_id: 0,
-    //             next_inlay_id: 0,
-    //             available_code_actions: Default::default(),
-    //             code_actions_task: Default::default(),
-    //             document_highlights_task: Default::default(),
-    //             pending_rename: Default::default(),
-    //             searchable: true,
-    //             override_text_style: None,
-    //             cursor_shape: Default::default(),
-    //             autoindent_mode: Some(AutoindentMode::EachLine),
-    //             collapse_matches: false,
-    //             workspace: None,
-    //             keymap_context_layers: Default::default(),
-    //             input_enabled: true,
-    //             read_only: false,
-    //             leader_peer_id: None,
-    //             remote_id: None,
-    //             hover_state: Default::default(),
-    //             link_go_to_definition_state: Default::default(),
-    //             copilot_state: Default::default(),
-    //             // inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
-    //             gutter_hovered: false,
-    //             pixel_position_of_newest_cursor: None,
-    //             _subscriptions: vec![
-    //                 cx.observe(&buffer, Self::on_buffer_changed),
-    //                 cx.subscribe(&buffer, Self::on_buffer_event),
-    //                 cx.observe(&display_map, Self::on_display_map_changed),
-    //                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
-    //                 cx.observe_global::<SettingsStore, _>(Self::settings_changed),
-    //                 cx.observe_window_activation(|editor, active, cx| {
-    //                     editor.blink_manager.update(cx, |blink_manager, cx| {
-    //                         if active {
-    //                             blink_manager.enable(cx);
-    //                         } else {
-    //                             blink_manager.show_cursor(cx);
-    //                             blink_manager.disable(cx);
-    //                         }
-    //                     });
-    //                 }),
-    //             ],
-    //         };
-
-    //         this._subscriptions.extend(project_subscriptions);
-
-    //         this.end_selection(cx);
-    //         this.scroll_manager.show_scrollbar(cx);
-
-    //         let editor_created_event = EditorCreated(cx.handle());
-    //         cx.emit_global(editor_created_event);
-
-    //         if mode == EditorMode::Full {
-    //             let should_auto_hide_scrollbars = cx.platform().should_auto_hide_scrollbars();
-    //             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
-    //         }
-
-    //         this.report_editor_event("open", None, cx);
-    //         this
     //     }
+
+    //     let inlay_hint_settings = inlay_hint_settings(
+    //         selections.newest_anchor().head(),
+    //         &buffer.read(cx).snapshot(cx),
+    //         cx,
+    //     );
+
+    //     let mut this = Self {
+    //         handle: cx.weak_handle(),
+    //         buffer: buffer.clone(),
+    //         display_map: display_map.clone(),
+    //         selections,
+    //         scroll_manager: ScrollManager::new(),
+    //         columnar_selection_tail: None,
+    //         add_selections_state: None,
+    //         select_next_state: None,
+    //         select_prev_state: None,
+    //         selection_history: Default::default(),
+    //         autoclose_regions: Default::default(),
+    //         snippet_stack: Default::default(),
+    //         select_larger_syntax_node_stack: Vec::new(),
+    //         ime_transaction: Default::default(),
+    //         active_diagnostics: None,
+    //         soft_wrap_mode_override,
+    //         get_field_editor_theme,
+    //         collaboration_hub: project.clone().map(|project| Box::new(project) as _),
+    //         project,
+    //         focused: false,
+    //         blink_manager: blink_manager.clone(),
+    //         show_local_selections: true,
+    //         mode,
+    //         show_gutter: mode == EditorMode::Full,
+    //         show_wrap_guides: None,
+    //         placeholder_text: None,
+    //         highlighted_rows: None,
+    //         background_highlights: Default::default(),
+    //         inlay_background_highlights: Default::default(),
+    //         nav_history: None,
+    //         context_menu: RwLock::new(None),
+    //         mouse_context_menu: cx
+    //             .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
+    //         completion_tasks: Default::default(),
+    //         next_completion_id: 0,
+    //         next_inlay_id: 0,
+    //         available_code_actions: Default::default(),
+    //         code_actions_task: Default::default(),
+    //         document_highlights_task: Default::default(),
+    //         pending_rename: Default::default(),
+    //         searchable: true,
+    //         override_text_style: None,
+    //         cursor_shape: Default::default(),
+    //         autoindent_mode: Some(AutoindentMode::EachLine),
+    //         collapse_matches: false,
+    //         workspace: None,
+    //         keymap_context_layers: Default::default(),
+    //         input_enabled: true,
+    //         read_only: false,
+    //         leader_peer_id: None,
+    //         remote_id: None,
+    //         hover_state: Default::default(),
+    //         link_go_to_definition_state: Default::default(),
+    //         copilot_state: Default::default(),
+    //         // inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
+    //         gutter_hovered: false,
+    //         pixel_position_of_newest_cursor: None,
+    //         _subscriptions: vec![
+    //             cx.observe(&buffer, Self::on_buffer_changed),
+    //             cx.subscribe(&buffer, Self::on_buffer_event),
+    //             cx.observe(&display_map, Self::on_display_map_changed),
+    //             cx.observe(&blink_manager, |_, _, cx| cx.notify()),
+    //             cx.observe_global::<SettingsStore, _>(Self::settings_changed),
+    //             cx.observe_window_activation(|editor, active, cx| {
+    //                 editor.blink_manager.update(cx, |blink_manager, cx| {
+    //                     if active {
+    //                         blink_manager.enable(cx);
+    //                     } else {
+    //                         blink_manager.show_cursor(cx);
+    //                         blink_manager.disable(cx);
+    //                     }
+    //                 });
+    //             }),
+    //         ],
+    //     };
+
+    //     this._subscriptions.extend(project_subscriptions);
+
+    //     this.end_selection(cx);
+    //     this.scroll_manager.show_scrollbar(cx);
+
+    //     let editor_created_event = EditorCreated(cx.handle());
+    //     cx.emit_global(editor_created_event);
+
+    //     if mode == EditorMode::Full {
+    //         let should_auto_hide_scrollbars = cx.platform().should_auto_hide_scrollbars();
+    //         cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
+    //     }
+
+    //     this.report_editor_event("open", None, cx);
+    //     this
+    // }
 
     //     pub fn new_file(
     //         workspace: &mut Workspace,
@@ -2316,19 +2320,19 @@ impl Editor {
     //         result
     //     }
 
-    //     pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut ViewContext<Self>)
-    //     where
-    //         I: IntoIterator<Item = (Range<S>, T)>,
-    //         S: ToOffset,
-    //         T: Into<Arc<str>>,
-    //     {
-    //         if self.read_only {
-    //             return;
-    //         }
+    pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut ViewContext<Self>)
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        if self.read_only {
+            return;
+        }
 
-    //         self.buffer
-    //             .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
-    //     }
+        self.buffer
+            .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+    }
 
     //     pub fn edit_with_autoindent<I, S, T>(&mut self, edits: I, cx: &mut ViewContext<Self>)
     //     where
@@ -8058,48 +8062,50 @@ impl Editor {
     //         });
     //     }
 
-    //     pub fn transact(
-    //         &mut self,
-    //         cx: &mut ViewContext<Self>,
-    //         update: impl FnOnce(&mut Self, &mut ViewContext<Self>),
-    //     ) -> Option<TransactionId> {
-    //         self.start_transaction_at(Instant::now(), cx);
-    //         update(self, cx);
-    //         self.end_transaction_at(Instant::now(), cx)
-    //     }
+    pub fn transact(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        update: impl FnOnce(&mut Self, &mut ViewContext<Self>),
+    ) -> Option<TransactionId> {
+        self.start_transaction_at(Instant::now(), cx);
+        update(self, cx);
+        self.end_transaction_at(Instant::now(), cx)
+    }
 
-    //     fn start_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
-    //         self.end_selection(cx);
-    //         if let Some(tx_id) = self
-    //             .buffer
-    //             .update(cx, |buffer, cx| buffer.start_transaction_at(now, cx))
-    //         {
-    //             self.selection_history
-    //                 .insert_transaction(tx_id, self.selections.disjoint_anchors());
-    //         }
-    //     }
+    fn start_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
+        todo!()
+        // self.end_selection(cx);
+        // if let Some(tx_id) = self
+        //     .buffer
+        //     .update(cx, |buffer, cx| buffer.start_transaction_at(now, cx))
+        // {
+        //     self.selection_history
+        //         .insert_transaction(tx_id, self.selections.disjoint_anchors());
+        // }
+    }
 
-    //     fn end_transaction_at(
-    //         &mut self,
-    //         now: Instant,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<TransactionId> {
-    //         if let Some(tx_id) = self
-    //             .buffer
-    //             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
-    //         {
-    //             if let Some((_, end_selections)) = self.selection_history.transaction_mut(tx_id) {
-    //                 *end_selections = Some(self.selections.disjoint_anchors());
-    //             } else {
-    //                 error!("unexpectedly ended a transaction that wasn't started by this editor");
-    //             }
+    fn end_transaction_at(
+        &mut self,
+        now: Instant,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<TransactionId> {
+        todo!()
+        // if let Some(tx_id) = self
+        //     .buffer
+        //     .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
+        // {
+        //     if let Some((_, end_selections)) = self.selection_history.transaction_mut(tx_id) {
+        //         *end_selections = Some(self.selections.disjoint_anchors());
+        //     } else {
+        //         error!("unexpectedly ended a transaction that wasn't started by this editor");
+        //     }
 
-    //             cx.emit(Event::Edited);
-    //             Some(tx_id)
-    //         } else {
-    //             None
-    //         }
-    //     }
+        //     cx.emit(Event::Edited);
+        //     Some(tx_id)
+        // } else {
+        //     None
+        // }
+    }
 
     //     pub fn fold(&mut self, _: &Fold, cx: &mut ViewContext<Self>) {
     //         let mut fold_ranges = Vec::new();
@@ -9304,7 +9310,7 @@ impl Render for Editor {
 //         let style = self.style(cx);
 //         let font_changed = self.display_map.update(cx, |map, cx| {
 //             map.set_fold_ellipses_color(style.folds.ellipses.text_color);
-//             map.set_font(style.text.font_id, style.text.font_size, cx)
+//             map.set_font_with_size(style.text.font_id, style.text.font_size, cx)
 //         });
 
 //         if font_changed {

@@ -23,7 +23,7 @@ pub struct WrapMap {
     edits_since_sync: Patch<u32>,
     wrap_width: Option<Pixels>,
     background_task: Option<Task<()>>,
-    font: (Font, Pixels),
+    font_with_size: (Font, Pixels),
 }
 
 #[derive(Clone)]
@@ -76,7 +76,7 @@ impl WrapMap {
     ) -> (Model<Self>, WrapSnapshot) {
         let handle = cx.build_model(|cx| {
             let mut this = Self {
-                font: (font, font_size),
+                font_with_size: (font, font_size),
                 wrap_width: None,
                 pending_edits: Default::default(),
                 interpolated_edits: Default::default(),
@@ -116,9 +116,16 @@ impl WrapMap {
         (self.snapshot.clone(), mem::take(&mut self.edits_since_sync))
     }
 
-    pub fn set_font(&mut self, font: Font, font_size: Pixels, cx: &mut ModelContext<Self>) -> bool {
-        if (font, font_size) != self.font {
-            self.font = (font, font_size);
+    pub fn set_font_with_size(
+        &mut self,
+        font: Font,
+        font_size: Pixels,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
+        let font_with_size = (font, font_size);
+
+        if font_with_size != self.font_with_size {
+            self.font_with_size = font_with_size;
             self.rewrap(cx);
             true
         } else {
@@ -149,10 +156,9 @@ impl WrapMap {
             let mut new_snapshot = self.snapshot.clone();
             let mut edits = Patch::default();
             let text_system = cx.text_system().clone();
-            let (font_id, font_size) = self.font;
+            let (font, font_size) = self.font_with_size.clone();
             let task = cx.background_executor().spawn(async move {
-                if let Some(mut line_wrapper) =
-                    text_system.line_wrapper(font_id, font_size).log_err()
+                if let Some(mut line_wrapper) = text_system.line_wrapper(font, font_size).log_err()
                 {
                     let tab_snapshot = new_snapshot.tab_snapshot.clone();
                     let range = TabPoint::zero()..tab_snapshot.max_point();
@@ -236,11 +242,11 @@ impl WrapMap {
                 let pending_edits = self.pending_edits.clone();
                 let mut snapshot = self.snapshot.clone();
                 let text_system = cx.text_system().clone();
-                let (font_id, font_size) = self.font;
+                let (font, font_size) = self.font_with_size.clone();
                 let update_task = cx.background_executor().spawn(async move {
                     let mut edits = Patch::default();
                     if let Some(mut line_wrapper) =
-                        text_system.line_wrapper(font_id, font_size).log_err()
+                        text_system.line_wrapper(font, font_size).log_err()
                     {
                         for (tab_snapshot, tab_edits) in pending_edits {
                             let wrap_edits = snapshot
