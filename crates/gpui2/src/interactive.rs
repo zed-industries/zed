@@ -358,7 +358,7 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
             self.stateful_interaction().tooltip_builder.is_none(),
             "calling tooltip more than once on the same element is not supported"
         );
-        self.stateful_interaction().tooltip_builder = Some(Box::new(move |view_state, cx| {
+        self.stateful_interaction().tooltip_builder = Some(Arc::new(move |view_state, cx| {
             build_tooltip(view_state, cx).into()
         }));
 
@@ -602,6 +602,10 @@ pub trait ElementInteraction<V: 'static>: 'static {
             if let Some(hover_listener) = stateful.hover_listener.take() {
                 let was_hovered = element_state.hover_state.clone();
                 let has_mouse_down = element_state.pending_mouse_down.lock().is_some();
+
+                let active_tooltip = element_state.active_tooltip.clone();
+                let tooltip_builder = stateful.tooltip_builder.clone();
+
                 cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
@@ -612,9 +616,24 @@ pub trait ElementInteraction<V: 'static>: 'static {
                     if is_hovered != was_hovered.clone() {
                         *was_hovered = is_hovered;
                         drop(was_hovered);
+                        if let Some(tooltip_builder) = &tooltip_builder {
+                            let mut active_tooltip = active_tooltip.lock();
+                            if is_hovered && active_tooltip.is_none() {
+                                *active_tooltip = Some(tooltip_builder(view_state, cx));
+                            } else if !is_hovered {
+                                active_tooltip.take();
+                            }
+                        }
+
                         hover_listener(view_state, is_hovered, cx);
                     }
                 });
+            }
+
+            if let Some(active_tooltip) = element_state.active_tooltip.lock().as_ref() {
+                if *element_state.hover_state.lock() {
+                    cx.active_tooltip = Some(active_tooltip.clone());
+                }
             }
 
             let active_state = element_state.active_state.clone();
@@ -804,6 +823,7 @@ pub struct InteractiveElementState {
     hover_state: Arc<Mutex<bool>>,
     pending_mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
     scroll_offset: Option<Arc<Mutex<Point<Pixels>>>>,
+    active_tooltip: Arc<Mutex<Option<AnyView>>>,
 }
 
 impl InteractiveElementState {
@@ -1155,7 +1175,7 @@ pub(crate) type DragListener<V> =
 
 pub(crate) type HoverListener<V> = Box<dyn Fn(&mut V, bool, &mut ViewContext<V>) + 'static>;
 
-pub(crate) type TooltipBuilder<V> = Box<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static>;
+pub(crate) type TooltipBuilder<V> = Arc<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static>;
 
 pub type KeyListener<V> = Box<
     dyn Fn(

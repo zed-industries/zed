@@ -987,6 +987,14 @@ impl<'a> WindowContext<'a> {
                     cx.active_drag = Some(active_drag);
                 });
             });
+        } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
+            self.stack(1, |cx| {
+                cx.with_element_offset(Some(cx.mouse_position()), |cx| {
+                    let available_space =
+                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                    active_tooltip.draw(available_space, cx);
+                });
+            });
         }
 
         self.window.root_view = Some(root_view);

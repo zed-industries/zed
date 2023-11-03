@@ -31,6 +31,7 @@ mod theme_selector;
 mod title_bar;
 mod toast;
 mod toolbar;
+mod tooltip;
 mod traffic_lights;
 mod workspace;
 
@@ -67,5 +68,6 @@ pub use theme_selector::*;
 pub use title_bar::*;
 pub use toast::*;
 pub use toolbar::*;
+pub use tooltip::*;
 pub use traffic_lights::*;
 pub use workspace::*;

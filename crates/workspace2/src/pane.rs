@@ -9,9 +9,8 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    AppContext, AsyncWindowContext, Component, CursorStyle, Div, EntityId, EventEmitter,
-    FocusHandle, Model, PromptLevel, Render, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    AnyView, AppContext, AsyncWindowContext, Component, Div, EntityId, EventEmitter, FocusHandle,
+    Model, PromptLevel, Render, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -27,7 +26,7 @@ use std::{
     },
 };
 use ui::v_stack;
-use ui::{prelude::*, Icon, IconButton, IconColor, IconElement};
+use ui::{prelude::*, Icon, IconButton, IconColor, IconElement, TextTooltip};
 use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -1402,7 +1401,10 @@ impl Pane {
             .on_hover(|_, hovered, _| {
                 dbg!(hovered);
             })
-            // .tooltip(|pane, cx| cx.create_view( tooltip.child("Hovering the tab"))
+            .when_some(item.tab_tooltip_text(cx), |div, text| {
+                div.tooltip(move |_, cx| TextTooltip::build_view(text.clone(), cx))
+            })
+            // .tooltip(|pane, cx| cx.build_view(|cx| div().child(title)))
             // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
             // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
             // .on_drop(|_view, state: View<DraggedTab>, cx| {
