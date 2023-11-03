@@ -6,6 +6,7 @@ use theme::{
     ThemeColors, ThemeColorsRefinement, ThemeStyles, ThemeVariant,
 };
 
+use crate::util::Traverse;
 use crate::ThemeMetadata;
 
 #[derive(Deserialize, Debug)]
@@ -443,50 +444,118 @@ impl VsCodeThemeConverter {
         let vscode_colors = &self.theme.colors;
 
         let theme_colors_refinements = ThemeColorsRefinement {
-            border: Some(try_parse_color(&vscode_colors.panel_border)?),
-            border_variant: Some(try_parse_color(&vscode_colors.panel_border)?),
-            border_focused: Some(try_parse_color(&vscode_colors.panel_border)?),
-            border_transparent: Some(try_parse_color(&vscode_colors.panel_border)?),
-            elevated_surface_background: Some(try_parse_color(&vscode_colors.panel_background)?),
-            surface_background: Some(try_parse_color(&vscode_colors.panel_background)?),
-            background: Some(try_parse_color(&vscode_colors.editor_background)?),
-            element_background: Some(try_parse_color(&vscode_colors.button_background)?),
-            text: Some(try_parse_color(&vscode_colors.foreground)?),
-            tab_active_background: Some(try_parse_color(&vscode_colors.tab_active_background)?),
-            tab_inactive_background: Some(try_parse_color(&vscode_colors.tab_inactive_background)?),
-            terminal_background: Some(try_parse_color(&vscode_colors.terminal_background)?),
-            terminal_ansi_bright_black: Some(try_parse_color(
-                &vscode_colors.terminal_ansi_bright_black,
-            )?),
-            terminal_ansi_bright_red: Some(try_parse_color(
-                &vscode_colors.terminal_ansi_bright_red,
-            )?),
-            terminal_ansi_bright_green: Some(try_parse_color(
-                &vscode_colors.terminal_ansi_bright_green,
-            )?),
-            terminal_ansi_bright_yellow: Some(try_parse_color(
-                &vscode_colors.terminal_ansi_bright_yellow,
-            )?),
-            terminal_ansi_bright_blue: Some(try_parse_color(
-                &vscode_colors.terminal_ansi_bright_blue,
-            )?),
-            terminal_ansi_bright_magenta: Some(try_parse_color(
-                &vscode_colors.terminal_ansi_bright_magenta,
-            )?),
-            terminal_ansi_bright_cyan: Some(try_parse_color(
-                &vscode_colors.terminal_ansi_bright_cyan,
-            )?),
-            terminal_ansi_bright_white: Some(try_parse_color(
-                &vscode_colors.terminal_ansi_bright_white,
-            )?),
-            terminal_ansi_black: Some(try_parse_color(&vscode_colors.terminal_ansi_black)?),
-            terminal_ansi_red: Some(try_parse_color(&vscode_colors.terminal_ansi_red)?),
-            terminal_ansi_green: Some(try_parse_color(&vscode_colors.terminal_ansi_green)?),
-            terminal_ansi_yellow: Some(try_parse_color(&vscode_colors.terminal_ansi_yellow)?),
-            terminal_ansi_blue: Some(try_parse_color(&vscode_colors.terminal_ansi_blue)?),
-            terminal_ansi_magenta: Some(try_parse_color(&vscode_colors.terminal_ansi_magenta)?),
-            terminal_ansi_cyan: Some(try_parse_color(&vscode_colors.terminal_ansi_cyan)?),
-            terminal_ansi_white: Some(try_parse_color(&vscode_colors.terminal_ansi_white)?),
+            border: vscode_colors
+                .panel_border
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            border_variant: vscode_colors
+                .panel_border
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            border_focused: vscode_colors
+                .panel_border
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            border_transparent: vscode_colors
+                .panel_border
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            elevated_surface_background: vscode_colors
+                .panel_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            surface_background: vscode_colors
+                .panel_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            background: vscode_colors
+                .editor_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            element_background: vscode_colors
+                .button_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            text: vscode_colors
+                .foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            tab_active_background: vscode_colors
+                .tab_active_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            tab_inactive_background: vscode_colors
+                .tab_inactive_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_background: vscode_colors
+                .terminal_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_bright_black: vscode_colors
+                .terminal_ansi_bright_black
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_bright_red: vscode_colors
+                .terminal_ansi_bright_red
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_bright_green: vscode_colors
+                .terminal_ansi_bright_green
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_bright_yellow: vscode_colors
+                .terminal_ansi_bright_yellow
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_bright_blue: vscode_colors
+                .terminal_ansi_bright_blue
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_bright_magenta: vscode_colors
+                .terminal_ansi_bright_magenta
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_bright_cyan: vscode_colors
+                .terminal_ansi_bright_cyan
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_bright_white: vscode_colors
+                .terminal_ansi_bright_white
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_black: vscode_colors
+                .terminal_ansi_black
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_red: vscode_colors
+                .terminal_ansi_red
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_green: vscode_colors
+                .terminal_ansi_green
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_yellow: vscode_colors
+                .terminal_ansi_yellow
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_blue: vscode_colors
+                .terminal_ansi_blue
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_magenta: vscode_colors
+                .terminal_ansi_magenta
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_cyan: vscode_colors
+                .terminal_ansi_cyan
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            terminal_ansi_white: vscode_colors
+                .terminal_ansi_white
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             ..Default::default()
         };
 
