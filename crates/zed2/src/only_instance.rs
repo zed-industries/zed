@@ -37,10 +37,9 @@ pub enum IsOnlyInstance {
 }
 
 pub fn ensure_only_instance() -> IsOnlyInstance {
-    // todo!("zed_stateless")
-    // if *db::ZED_STATELESS {
-    //     return IsOnlyInstance::Yes;
-    // }
+    if *db::ZED_STATELESS {
+        return IsOnlyInstance::Yes;
+    }
 
     if check_got_handshake() {
         return IsOnlyInstance::No;

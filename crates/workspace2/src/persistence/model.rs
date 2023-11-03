@@ -7,7 +7,7 @@ use db2::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui2::{AsyncWindowContext, Model, Task, View, WeakView, WindowBounds};
+use gpui::{AsyncWindowContext, Model, Task, View, WeakView, WindowBounds};
 use project2::Project;
 use std::{
     path::{Path, PathBuf},
@@ -55,7 +55,7 @@ impl Column for WorkspaceLocation {
     }
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct SerializedWorkspace {
     pub id: WorkspaceId,
     pub location: WorkspaceLocation,
@@ -127,7 +127,7 @@ impl Bind for DockData {
     }
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum SerializedPaneGroup {
     Group {
         axis: Axis,
@@ -286,15 +286,15 @@ pub struct SerializedItem {
     pub active: bool,
 }
 
-// impl SerializedItem {
-//     pub fn new(kind: impl AsRef<str>, item_id: ItemId, active: bool) -> Self {
-//         Self {
-//             kind: Arc::from(kind.as_ref()),
-//             item_id,
-//             active,
-//         }
-//     }
-// }
+impl SerializedItem {
+    pub fn new(kind: impl AsRef<str>, item_id: ItemId, active: bool) -> Self {
+        Self {
+            kind: Arc::from(kind.as_ref()),
+            item_id,
+            active,
+        }
+    }
+}
 
 #[cfg(test)]
 impl Default for SerializedItem {

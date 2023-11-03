@@ -4232,7 +4232,7 @@ dependencies = [
  "settings2",
  "shellexpand",
  "util",
- "workspace",
+ "workspace2",
 ]
 
 [[package]]

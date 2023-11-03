@@ -1,5 +1,5 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
-use gpui2::{
+use gpui::{
     div, Action, AnyView, AppContext, Div, Entity, EntityId, EventEmitter, ParentElement, Render,
     Subscription, View, ViewContext, WeakView, WindowContext,
 };
@@ -226,9 +226,9 @@ impl Dock {
         // })
     }
 
-    //     pub fn active_panel_index(&self) -> usize {
-    //         self.active_panel_index
-    //     }
+    pub fn active_panel_index(&self) -> usize {
+        self.active_panel_index
+    }
 
     pub(crate) fn set_open(&mut self, open: bool, cx: &mut ViewContext<Self>) {
         if open != self.is_open {
@@ -241,84 +241,87 @@ impl Dock {
         }
     }
 
-    //     pub fn set_panel_zoomed(&mut self, panel: &AnyView, zoomed: bool, cx: &mut ViewContext<Self>) {
-    //         for entry in &mut self.panel_entries {
-    //             if entry.panel.as_any() == panel {
-    //                 if zoomed != entry.panel.is_zoomed(cx) {
-    //                     entry.panel.set_zoomed(zoomed, cx);
-    //                 }
-    //             } else if entry.panel.is_zoomed(cx) {
-    //                 entry.panel.set_zoomed(false, cx);
+    // todo!()
+    // pub fn set_panel_zoomed(&mut self, panel: &AnyView, zoomed: bool, cx: &mut ViewContext<Self>) {
+    //     for entry in &mut self.panel_entries {
+    //         if entry.panel.as_any() == panel {
+    //             if zoomed != entry.panel.is_zoomed(cx) {
+    //                 entry.panel.set_zoomed(zoomed, cx);
     //             }
-    //         }
-
-    //         cx.notify();
-    //     }
-
-    //     pub fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
-    //         for entry in &mut self.panel_entries {
-    //             if entry.panel.is_zoomed(cx) {
-    //                 entry.panel.set_zoomed(false, cx);
-    //             }
+    //         } else if entry.panel.is_zoomed(cx) {
+    //             entry.panel.set_zoomed(false, cx);
     //         }
     //     }
 
-    //     pub(crate) fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) {
-    //         let subscriptions = [
-    //             cx.observe(&panel, |_, _, cx| cx.notify()),
-    //             cx.subscribe(&panel, |this, panel, event, cx| {
-    //                 if T::should_activate_on_event(event) {
-    //                     if let Some(ix) = this
-    //                         .panel_entries
-    //                         .iter()
-    //                         .position(|entry| entry.panel.id() == panel.id())
-    //                     {
-    //                         this.set_open(true, cx);
-    //                         this.activate_panel(ix, cx);
-    //                         cx.focus(&panel);
-    //                     }
-    //                 } else if T::should_close_on_event(event)
-    //                     && this.visible_panel().map_or(false, |p| p.id() == panel.id())
-    //                 {
-    //                     this.set_open(false, cx);
-    //                 }
-    //             }),
-    //         ];
+    //     cx.notify();
+    // }
 
-    //         let dock_view_id = cx.view_id();
-    //         self.panel_entries.push(PanelEntry {
-    //             panel: Arc::new(panel),
-    //             // todo!()
-    //             // context_menu: cx.add_view(|cx| {
-    //             //     let mut menu = ContextMenu::new(dock_view_id, cx);
-    //             //     menu.set_position_mode(OverlayPositionMode::Local);
-    //             //     menu
-    //             // }),
-    //             _subscriptions: subscriptions,
-    //         });
-    //         cx.notify()
-    //     }
+    pub fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
+        for entry in &mut self.panel_entries {
+            if entry.panel.is_zoomed(cx) {
+                entry.panel.set_zoomed(false, cx);
+            }
+        }
+    }
 
-    //     pub fn remove_panel<T: Panel>(&mut self, panel: &View<T>, cx: &mut ViewContext<Self>) {
-    //         if let Some(panel_ix) = self
-    //             .panel_entries
-    //             .iter()
-    //             .position(|entry| entry.panel.id() == panel.id())
-    //         {
-    //             if panel_ix == self.active_panel_index {
-    //                 self.active_panel_index = 0;
-    //                 self.set_open(false, cx);
-    //             } else if panel_ix < self.active_panel_index {
-    //                 self.active_panel_index -= 1;
-    //             }
-    //             self.panel_entries.remove(panel_ix);
-    //             cx.notify();
-    //         }
-    //     }
+    pub(crate) fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) {
+        let subscriptions = [
+            cx.observe(&panel, |_, _, cx| cx.notify()),
+            cx.subscribe(&panel, |this, panel, event, cx| {
+                if T::should_activate_on_event(event) {
+                    if let Some(ix) = this
+                        .panel_entries
+                        .iter()
+                        .position(|entry| entry.panel.id() == panel.id())
+                    {
+                        this.set_open(true, cx);
+                        this.activate_panel(ix, cx);
+                        // todo!()
+                        // cx.focus(&panel);
+                    }
+                } else if T::should_close_on_event(event)
+                    && this.visible_panel().map_or(false, |p| p.id() == panel.id())
+                {
+                    this.set_open(false, cx);
+                }
+            }),
+        ];
 
-    //     pub fn panels_len(&self) -> usize {
-    //         self.panel_entries.len()
-    //     }
+        // todo!()
+        // let dock_view_id = cx.view_id();
+        self.panel_entries.push(PanelEntry {
+            panel: Arc::new(panel),
+            // todo!()
+            // context_menu: cx.add_view(|cx| {
+            //     let mut menu = ContextMenu::new(dock_view_id, cx);
+            //     menu.set_position_mode(OverlayPositionMode::Local);
+            //     menu
+            // }),
+            _subscriptions: subscriptions,
+        });
+        cx.notify()
+    }
+
+    pub fn remove_panel<T: Panel>(&mut self, panel: &View<T>, cx: &mut ViewContext<Self>) {
+        if let Some(panel_ix) = self
+            .panel_entries
+            .iter()
+            .position(|entry| entry.panel.id() == panel.id())
+        {
+            if panel_ix == self.active_panel_index {
+                self.active_panel_index = 0;
+                self.set_open(false, cx);
+            } else if panel_ix < self.active_panel_index {
+                self.active_panel_index -= 1;
+            }
+            self.panel_entries.remove(panel_ix);
+            cx.notify();
+        }
+    }
+
+    pub fn panels_len(&self) -> usize {
+        self.panel_entries.len()
+    }
 
     pub fn activate_panel(&mut self, panel_ix: usize, cx: &mut ViewContext<Self>) {
         if panel_ix != self.active_panel_index {
@@ -352,38 +355,38 @@ impl Dock {
         }
     }
 
-    //     pub fn zoomed_panel(&self, cx: &WindowContext) -> Option<Arc<dyn PanelHandle>> {
-    //         let entry = self.visible_entry()?;
-    //         if entry.panel.is_zoomed(cx) {
-    //             Some(entry.panel.clone())
-    //         } else {
-    //             None
-    //         }
-    //     }
+    pub fn zoomed_panel(&self, cx: &WindowContext) -> Option<Arc<dyn PanelHandle>> {
+        let entry = self.visible_entry()?;
+        if entry.panel.is_zoomed(cx) {
+            Some(entry.panel.clone())
+        } else {
+            None
+        }
+    }
 
-    //     pub fn panel_size(&self, panel: &dyn PanelHandle, cx: &WindowContext) -> Option<f32> {
-    //         self.panel_entries
-    //             .iter()
-    //             .find(|entry| entry.panel.id() == panel.id())
-    //             .map(|entry| entry.panel.size(cx))
-    //     }
+    pub fn panel_size(&self, panel: &dyn PanelHandle, cx: &WindowContext) -> Option<f32> {
+        self.panel_entries
+            .iter()
+            .find(|entry| entry.panel.id() == panel.id())
+            .map(|entry| entry.panel.size(cx))
+    }
 
-    //     pub fn active_panel_size(&self, cx: &WindowContext) -> Option<f32> {
-    //         if self.is_open {
-    //             self.panel_entries
-    //                 .get(self.active_panel_index)
-    //                 .map(|entry| entry.panel.size(cx))
-    //         } else {
-    //             None
-    //         }
-    //     }
+    pub fn active_panel_size(&self, cx: &WindowContext) -> Option<f32> {
+        if self.is_open {
+            self.panel_entries
+                .get(self.active_panel_index)
+                .map(|entry| entry.panel.size(cx))
+        } else {
+            None
+        }
+    }
 
-    //     pub fn resize_active_panel(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
-    //         if let Some(entry) = self.panel_entries.get_mut(self.active_panel_index) {
-    //             entry.panel.set_size(size, cx);
-    //             cx.notify();
-    //         }
-    //     }
+    pub fn resize_active_panel(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
+        if let Some(entry) = self.panel_entries.get_mut(self.active_panel_index) {
+            entry.panel.set_size(size, cx);
+            cx.notify();
+        }
+    }
 
     //     pub fn render_placeholder(&self, cx: &WindowContext) -> AnyElement<Workspace> {
     //         todo!()
@@ -629,7 +632,7 @@ impl StatusItemView for PanelButtons {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::*;
-    use gpui2::{div, Div, ViewContext, WindowContext};
+    use gpui::{div, Div, ViewContext, WindowContext};
 
     #[derive(Debug)]
     pub enum TestPanelEvent {
@@ -678,7 +681,7 @@ pub mod test {
             "TestPanel"
         }
 
-        fn position(&self, _: &gpui2::WindowContext) -> super::DockPosition {
+        fn position(&self, _: &gpui::WindowContext) -> super::DockPosition {
             self.position
         }
 
