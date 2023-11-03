@@ -12,7 +12,7 @@ doctest = false
 editor = { path = "../editor" }
 gpui = { package = "gpui2", path = "../gpui2" }
 util = { path = "../util" }
-workspace = { path = "../workspace" }
+workspace2 = { path = "../workspace2" }
 settings2 = { path = "../settings2" }
 
 anyhow.workspace = true

@@ -10,13 +10,13 @@ use gpui::{executor::Deterministic, Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry, ToOffset};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
-use project::{project_settings::ProjectSettings, search::PathMatcher, FakeFs, Fs, Project};
+use project::{project_settings::ProjectSettings, FakeFs, Fs, Project};
 use rand::{rngs::StdRng, Rng};
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc, time::SystemTime};
 use unindent::Unindent;
-use util::RandomCharIter;
+use util::{paths::PathMatcher, RandomCharIter};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -289,12 +289,12 @@ async fn test_code_context_retrieval_rust() {
         impl E {
             // This is also a preceding comment
             pub fn function_1() -> Option<()> {
-                todo!();
+                unimplemented!();
             }
 
             // This is a preceding comment
             fn function_2() -> Result<()> {
-                todo!();
+                unimplemented!();
             }
         }
 
@@ -344,7 +344,7 @@ async fn test_code_context_retrieval_rust() {
                 "
                 // This is also a preceding comment
                 pub fn function_1() -> Option<()> {
-                    todo!();
+                    unimplemented!();
                 }"
                 .unindent(),
                 text.find("pub fn function_1").unwrap(),
@@ -353,7 +353,7 @@ async fn test_code_context_retrieval_rust() {
                 "
                 // This is a preceding comment
                 fn function_2() -> Result<()> {
-                    todo!();
+                    unimplemented!();
                 }"
                 .unindent(),
                 text.find("fn function_2").unwrap(),

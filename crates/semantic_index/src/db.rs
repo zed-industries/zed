@@ -9,7 +9,7 @@ use futures::channel::oneshot;
 use gpui::executor;
 use ndarray::{Array1, Array2};
 use ordered_float::OrderedFloat;
-use project::{search::PathMatcher, Fs};
+use project::Fs;
 use rpc::proto::Timestamp;
 use rusqlite::params;
 use rusqlite::types::Value;
@@ -21,7 +21,7 @@ use std::{
     sync::Arc,
     time::SystemTime,
 };
-use util::TryFutureExt;
+use util::{paths::PathMatcher, TryFutureExt};
 
 pub fn argsort<T: Ord>(data: &[T]) -> Vec<usize> {
     let mut indices = (0..data.len()).collect::<Vec<_>>();

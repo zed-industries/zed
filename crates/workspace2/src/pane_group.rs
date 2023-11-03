@@ -6,9 +6,7 @@ use db2::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui2::{
-    point, size, AnyElement, AnyWeakView, Bounds, Model, Pixels, Point, View, ViewContext,
-};
+use gpui::{point, size, AnyElement, AnyWeakView, Bounds, Model, Pixels, Point, View, ViewContext};
 use parking_lot::Mutex;
 use project2::Project;
 use serde::Deserialize;

@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
-use gpui2::{
+use gpui::{
     AppContext, AsyncWindowContext, Component, Div, EntityId, EventEmitter, Model, PromptLevel,
     Render, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -416,17 +416,17 @@ impl Pane {
         }
     }
 
-    //     pub(crate) fn workspace(&self) -> &WeakView<Workspace> {
-    //         &self.workspace
-    //     }
+    pub(crate) fn workspace(&self) -> &WeakView<Workspace> {
+        &self.workspace
+    }
 
     pub fn has_focus(&self) -> bool {
         self.has_focus
     }
 
-    //     pub fn active_item_index(&self) -> usize {
-    //         self.active_item_index
-    //     }
+    pub fn active_item_index(&self) -> usize {
+        self.active_item_index
+    }
 
     //     pub fn on_can_drop<F>(&mut self, can_drop: F)
     //     where
@@ -1865,14 +1865,14 @@ impl Pane {
     //             .into_any()
     //     }
 
-    //     pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
-    //         self.zoomed = zoomed;
-    //         cx.notify();
-    //     }
+    pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
+        self.zoomed = zoomed;
+        cx.notify();
+    }
 
-    //     pub fn is_zoomed(&self) -> bool {
-    //         self.zoomed
-    //     }
+    pub fn is_zoomed(&self) -> bool {
+        self.zoomed
+    }
 }
 
 // impl Entity for Pane {
@@ -2907,6 +2907,6 @@ impl Render for DraggedTab {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        div().w_8().h_4().bg(gpui2::red())
+        div().w_8().h_4().bg(gpui::red())
     }
 }

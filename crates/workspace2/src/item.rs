@@ -11,7 +11,7 @@ use client2::{
     proto::{self, PeerId},
     Client,
 };
-use gpui2::{
+use gpui::{
     AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, HighlightStyle, Model, Pixels,
     Point, Render, SharedString, Task, View, ViewContext, WeakView, WindowContext,
 };
@@ -212,7 +212,7 @@ pub trait ItemHandle: 'static + Send {
         &self,
         cx: &mut WindowContext,
         handler: Box<dyn Fn(ItemEvent, &mut WindowContext) + Send>,
-    ) -> gpui2::Subscription;
+    ) -> gpui::Subscription;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<Pane>;
@@ -256,7 +256,7 @@ pub trait ItemHandle: 'static + Send {
         &mut self,
         cx: &mut AppContext,
         callback: Box<dyn FnOnce(&mut AppContext) + Send>,
-    ) -> gpui2::Subscription;
+    ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
     fn breadcrumbs(&self, theme: &ThemeVariant, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
@@ -286,7 +286,7 @@ impl<T: Item> ItemHandle for View<T> {
         &self,
         cx: &mut WindowContext,
         handler: Box<dyn Fn(ItemEvent, &mut WindowContext) + Send>,
-    ) -> gpui2::Subscription {
+    ) -> gpui::Subscription {
         cx.subscribe(self, move |_, event, cx| {
             for item_event in T::to_item_events(event) {
                 handler(item_event, cx)
@@ -573,7 +573,7 @@ impl<T: Item> ItemHandle for View<T> {
         &mut self,
         cx: &mut AppContext,
         callback: Box<dyn FnOnce(&mut AppContext) + Send>,
-    ) -> gpui2::Subscription {
+    ) -> gpui::Subscription {
         cx.observe_release(self, move |_, cx| callback(cx))
     }
 
@@ -747,7 +747,7 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
 // pub mod test {
 //     use super::{Item, ItemEvent};
 //     use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
-//     use gpui2::{
+//     use gpui::{
 //         elements::Empty, AnyElement, AppContext, Element, Entity, Model, Task, View,
 //         ViewContext, View, WeakViewHandle,
 //     };
