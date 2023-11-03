@@ -1185,10 +1185,10 @@ impl Pane {
     }
 
     pub fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
-        todo!();
-        // if let Some(active_item) = self.active_item() {
-        //     cx.focus(active_item.as_any());
-        // }
+        if let Some(active_item) = self.active_item() {
+            let focus_handle = active_item.focus_handle(cx);
+            cx.focus(&focus_handle);
+        }
     }
 
     //     pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {

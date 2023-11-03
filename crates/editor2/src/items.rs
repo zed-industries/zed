@@ -7,8 +7,8 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    point, AnyElement, AppContext, AsyncAppContext, Entity, EntityId, Model, Pixels, SharedString,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    point, AnyElement, AppContext, AsyncAppContext, Entity, EntityId, FocusHandle, Model, Pixels,
+    SharedString, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
@@ -515,6 +515,10 @@ fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor)
 }
 
 impl Item for Editor {
+    fn focus_handle(&self) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
         todo!();
         // if let Ok(data) = data.downcast::<NavigationData>() {

@@ -12,8 +12,8 @@ use client2::{
     Client,
 };
 use gpui2::{
-    AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, HighlightStyle, Model, Pixels,
-    Point, Render, SharedString, Task, View, ViewContext, WeakView, WindowContext,
+    AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, HighlightStyle,
+    Model, Pixels, Point, Render, SharedString, Task, View, ViewContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -91,6 +91,7 @@ pub struct BreadcrumbText {
 }
 
 pub trait Item: Render + EventEmitter {
+    fn focus_handle(&self) -> FocusHandle;
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
@@ -212,6 +213,7 @@ pub trait Item: Render + EventEmitter {
 }
 
 pub trait ItemHandle: 'static + Send {
+    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
     fn subscribe_to_item_events(
         &self,
         cx: &mut WindowContext,
@@ -290,6 +292,10 @@ impl dyn ItemHandle {
 }
 
 impl<T: Item> ItemHandle for View<T> {
+    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
+        self.read(cx).focus_handle()
+    }
+
     fn subscribe_to_item_events(
         &self,
         cx: &mut WindowContext,
