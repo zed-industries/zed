@@ -11,7 +11,7 @@ use crate::{
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
-use gpui::{FontId, HighlightStyle, Hsla, Line, Model, ModelContext};
+use gpui::{Font, FontId, HighlightStyle, Hsla, Line, Model, ModelContext, Pixels};
 use inlay_map::InlayMap;
 use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
@@ -58,8 +58,8 @@ pub struct DisplayMap {
 impl DisplayMap {
     pub fn new(
         buffer: Model<MultiBuffer>,
-        font_id: FontId,
-        font_size: f32,
+        font: Font,
+        font_size: Pixels,
         wrap_width: Option<f32>,
         buffer_header_height: u8,
         excerpt_header_height: u8,
@@ -71,7 +71,7 @@ impl DisplayMap {
         let (inlay_map, snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
         let (fold_map, snapshot) = FoldMap::new(snapshot);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
-        let (wrap_map, snapshot) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
+        let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
         let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
@@ -239,7 +239,7 @@ impl DisplayMap {
         cleared
     }
 
-    pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) -> bool {
+    pub fn set_font(&self, font: Font, font_size: Pixels, cx: &mut ModelContext<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_font(font_id, font_size, cx))
     }
@@ -248,7 +248,7 @@ impl DisplayMap {
         self.fold_map.set_ellipses_color(color)
     }
 
-    pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut ModelContext<Self>) -> bool {
+    pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut ModelContext<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
@@ -558,62 +558,62 @@ impl DisplaySnapshot {
         &self,
         display_row: u32,
         TextLayoutDetails {
-            text_system: font_cache,
-            text_system: text_layout_cache,
+            text_system,
             editor_style,
         }: &TextLayoutDetails,
     ) -> Line {
-        let mut styles = Vec::new();
-        let mut line = String::new();
-        let mut ended_in_newline = false;
+        todo!()
+        // let mut styles = Vec::new();
+        // let mut line = String::new();
+        // let mut ended_in_newline = false;
 
-        let range = display_row..display_row + 1;
-        for chunk in self.highlighted_chunks(range, false, editor_style) {
-            line.push_str(chunk.chunk);
+        // let range = display_row..display_row + 1;
+        // for chunk in self.highlighted_chunks(range, false, editor_style) {
+        //     line.push_str(chunk.chunk);
 
-            let text_style = if let Some(style) = chunk.style {
-                editor_style
-                    .text
-                    .clone()
-                    .highlight(style, font_cache)
-                    .map(Cow::Owned)
-                    .unwrap_or_else(|_| Cow::Borrowed(&editor_style.text))
-            } else {
-                Cow::Borrowed(&editor_style.text)
-            };
-            ended_in_newline = chunk.chunk.ends_with("\n");
+        //     let text_style = if let Some(style) = chunk.style {
+        //         editor_style
+        //             .text
+        //             .clone()
+        //             .highlight(style, text_system)
+        //             .map(Cow::Owned)
+        //             .unwrap_or_else(|_| Cow::Borrowed(&editor_style.text))
+        //     } else {
+        //         Cow::Borrowed(&editor_style.text)
+        //     };
+        //     ended_in_newline = chunk.chunk.ends_with("\n");
 
-            styles.push(
-                todo!(), // len: chunk.chunk.len(),
-                         // font_id: text_style.font_id,
-                         // color: text_style.color,
-                         // underline: text_style.underline,
-            );
-        }
+        //     styles.push(
+        //         todo!(), // len: chunk.chunk.len(),
+        //                  // font_id: text_style.font_id,
+        //                  // color: text_style.color,
+        //                  // underline: text_style.underline,
+        //     );
+        // }
 
-        // our pixel positioning logic assumes each line ends in \n,
-        // this is almost always true except for the last line which
-        // may have no trailing newline.
-        if !ended_in_newline && display_row == self.max_point().row() {
-            line.push_str("\n");
+        // // our pixel positioning logic assumes each line ends in \n,
+        // // this is almost always true except for the last line which
+        // // may have no trailing newline.
+        // if !ended_in_newline && display_row == self.max_point().row() {
+        //     line.push_str("\n");
 
-            todo!();
-            // styles.push(RunStyle {
-            //     len: "\n".len(),
-            //     font_id: editor_style.text.font_id,
-            //     color: editor_style.text_color,
-            //     underline: editor_style.text.underline,
-            // });
-        }
+        //     todo!();
+        //     // styles.push(RunStyle {
+        //     //     len: "\n".len(),
+        //     //     font_id: editor_style.text.font_id,
+        //     //     color: editor_style.text_color,
+        //     //     underline: editor_style.text.underline,
+        //     // });
+        // }
 
-        text_layout_cache.layout_text(&line, editor_style.text.font_size, &styles, None)
+        // text_system.layout_text(&line, editor_style.text.font_size, &styles, None)
     }
 
     pub fn x_for_point(
         &self,
         display_point: DisplayPoint,
         text_layout_details: &TextLayoutDetails,
-    ) -> f32 {
+    ) -> Pixels {
         let layout_line = self.lay_out_line_for_row(display_point.row(), text_layout_details);
         layout_line.x_for_index(display_point.column() as usize)
     }
