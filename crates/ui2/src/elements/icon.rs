@@ -1,4 +1,4 @@
-use gpui2::{svg, Hsla};
+use gpui2::{rems, svg, Hsla};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -26,22 +26,21 @@ pub enum IconColor {
 
 impl IconColor {
     pub fn color(self, cx: &WindowContext) -> Hsla {
-        let theme = theme(cx);
         match self {
-            IconColor::Default => gpui2::red(),
-            IconColor::Muted => gpui2::red(),
-            IconColor::Disabled => gpui2::red(),
-            IconColor::Placeholder => gpui2::red(),
-            IconColor::Accent => gpui2::red(),
-            IconColor::Error => gpui2::red(),
-            IconColor::Warning => gpui2::red(),
-            IconColor::Success => gpui2::red(),
-            IconColor::Info => gpui2::red(),
+            IconColor::Default => cx.theme().colors().icon,
+            IconColor::Muted => cx.theme().colors().icon_muted,
+            IconColor::Disabled => cx.theme().colors().icon_disabled,
+            IconColor::Placeholder => cx.theme().colors().icon_placeholder,
+            IconColor::Accent => cx.theme().colors().icon_accent,
+            IconColor::Error => cx.theme().status().error,
+            IconColor::Warning => cx.theme().status().warning,
+            IconColor::Success => cx.theme().status().success,
+            IconColor::Info => cx.theme().status().info,
         }
     }
 }
 
-#[derive(Debug, Default, PartialEq, Copy, Clone, EnumIter)]
+#[derive(Debug, PartialEq, Copy, Clone, EnumIter)]
 pub enum Icon {
     Ai,
     ArrowLeft,
@@ -50,6 +49,7 @@ pub enum Icon {
     AudioOff,
     AudioOn,
     Bolt,
+    Check,
     ChevronDown,
     ChevronLeft,
     ChevronRight,
@@ -68,7 +68,6 @@ pub enum Icon {
     Folder,
     FolderOpen,
     FolderX,
-    #[default]
     Hash,
     InlayHint,
     MagicWand,
@@ -90,6 +89,11 @@ pub enum Icon {
     XCircle,
     Copilot,
     Envelope,
+    Bell,
+    BellOff,
+    BellRing,
+    MailOpen,
+    AtSign,
 }
 
 impl Icon {
@@ -102,6 +106,7 @@ impl Icon {
             Icon::AudioOff => "icons/speaker-off.svg",
             Icon::AudioOn => "icons/speaker-loud.svg",
             Icon::Bolt => "icons/bolt.svg",
+            Icon::Check => "icons/check.svg",
             Icon::ChevronDown => "icons/chevron_down.svg",
             Icon::ChevronLeft => "icons/chevron_left.svg",
             Icon::ChevronRight => "icons/chevron_right.svg",
@@ -141,6 +146,11 @@ impl Icon {
             Icon::XCircle => "icons/error.svg",
             Icon::Copilot => "icons/copilot.svg",
             Icon::Envelope => "icons/feedback.svg",
+            Icon::Bell => "icons/bell.svg",
+            Icon::BellOff => "icons/bell-off.svg",
+            Icon::BellRing => "icons/bell-ring.svg",
+            Icon::MailOpen => "icons/mail-open.svg",
+            Icon::AtSign => "icons/at-sign.svg",
         }
     }
 }
@@ -174,8 +184,8 @@ impl IconElement {
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let fill = self.color.color(cx);
         let svg_size = match self.size {
-            IconSize::Small => ui_size(cx, 12. / 14.),
-            IconSize::Medium => ui_size(cx, 15. / 14.),
+            IconSize::Small => rems(0.75),
+            IconSize::Medium => rems(0.9375),
         };
 
         svg()

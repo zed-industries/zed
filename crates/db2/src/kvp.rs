@@ -31,32 +31,32 @@ impl KeyValueStore {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use crate::kvp::KeyValueStore;
+#[cfg(test)]
+mod tests {
+    use crate::kvp::KeyValueStore;
 
-//     #[gpui::test]
-//     async fn test_kvp() {
-//         let db = KeyValueStore(crate::open_test_db("test_kvp").await);
+    #[gpui::test]
+    async fn test_kvp() {
+        let db = KeyValueStore(crate::open_test_db("test_kvp").await);
 
-//         assert_eq!(db.read_kvp("key-1").unwrap(), None);
+        assert_eq!(db.read_kvp("key-1").unwrap(), None);
 
-//         db.write_kvp("key-1".to_string(), "one".to_string())
-//             .await
-//             .unwrap();
-//         assert_eq!(db.read_kvp("key-1").unwrap(), Some("one".to_string()));
+        db.write_kvp("key-1".to_string(), "one".to_string())
+            .await
+            .unwrap();
+        assert_eq!(db.read_kvp("key-1").unwrap(), Some("one".to_string()));
 
-//         db.write_kvp("key-1".to_string(), "one-2".to_string())
-//             .await
-//             .unwrap();
-//         assert_eq!(db.read_kvp("key-1").unwrap(), Some("one-2".to_string()));
+        db.write_kvp("key-1".to_string(), "one-2".to_string())
+            .await
+            .unwrap();
+        assert_eq!(db.read_kvp("key-1").unwrap(), Some("one-2".to_string()));
 
-//         db.write_kvp("key-2".to_string(), "two".to_string())
-//             .await
-//             .unwrap();
-//         assert_eq!(db.read_kvp("key-2").unwrap(), Some("two".to_string()));
+        db.write_kvp("key-2".to_string(), "two".to_string())
+            .await
+            .unwrap();
+        assert_eq!(db.read_kvp("key-2").unwrap(), Some("two".to_string()));
 
-//         db.delete_kvp("key-1".to_string()).await.unwrap();
-//         assert_eq!(db.read_kvp("key-1").unwrap(), None);
-//     }
-// }
+        db.delete_kvp("key-1".to_string()).await.unwrap();
+        assert_eq!(db.read_kvp("key-1").unwrap(), None);
+    }
+}

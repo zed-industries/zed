@@ -11,28 +11,28 @@ doctest = false
 [features]
 test-support = [
     "rand",
-    "client2/test-support",
+    "client/test-support",
     "collections/test-support",
-    "lsp2/test-support",
+    "lsp/test-support",
     "text/test-support",
     "tree-sitter-rust",
     "tree-sitter-typescript",
-    "settings2/test-support",
+    "settings/test-support",
     "util/test-support",
 ]
 
 [dependencies]
 clock = { path = "../clock" }
 collections = { path = "../collections" }
-fuzzy2 = { path = "../fuzzy2" }
-git = { path = "../git" }
-gpui2 = { path = "../gpui2" }
-lsp2 = { path = "../lsp2" }
-rpc2 = { path = "../rpc2" }
-settings2 = { path = "../settings2" }
+fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
+git = { package = "git3", path = "../git3" }
+gpui = { package = "gpui2", path = "../gpui2" }
+lsp = { package = "lsp2", path = "../lsp2" }
+rpc = { package = "rpc2", path = "../rpc2" }
+settings = { package = "settings2", path = "../settings2" }
 sum_tree = { path = "../sum_tree" }
-text = { path = "../text" }
-theme2 = { path = "../theme2" }
+text = { package = "text2", path = "../text2" }
+theme = { package = "theme2", path = "../theme2" }
 util = { path = "../util" }
 
 anyhow.workspace = true
@@ -60,12 +60,12 @@ tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 
 [dev-dependencies]
-client2 = { path = "../client2", features = ["test-support"] }
+client = { package = "client2", path = "../client2", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
-gpui2 = { path = "../gpui2", features = ["test-support"] }
-lsp2 = { path = "../lsp2", features = ["test-support"] }
-text = { path = "../text", features = ["test-support"] }
-settings2 = { path = "../settings2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+lsp = { package = "lsp2", path = "../lsp2", features = ["test-support"] }
+text = { package = "text2", path = "../text2", features = ["test-support"] }
+settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true

@@ -12,9 +12,9 @@ doctest = false
 test-support = []
 
 [dependencies]
-gpui2 = { path = "../gpui2" }
+gpui = { package = "gpui2", path = "../gpui2" }
 util = { path = "../util" }
-language2 = { path = "../language2" }
+language = { package = "language2", path = "../language2" }
 async-trait.workspace = true
 anyhow.workspace = true
 futures.workspace = true
@@ -35,4 +35,4 @@ rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 bincode = "1.3.3"
 
 [dev-dependencies]
-gpui2 = { path = "../gpui2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }

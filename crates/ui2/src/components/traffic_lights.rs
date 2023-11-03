@@ -22,13 +22,13 @@ impl TrafficLight {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
+        let system_colors = &cx.theme().styles.system;
 
         let fill = match (self.window_has_focus, self.color) {
-            (true, TrafficLightColor::Red) => theme.mac_os_traffic_light_red,
-            (true, TrafficLightColor::Yellow) => theme.mac_os_traffic_light_yellow,
-            (true, TrafficLightColor::Green) => theme.mac_os_traffic_light_green,
-            (false, _) => theme.filled_element,
+            (true, TrafficLightColor::Red) => system_colors.mac_os_traffic_light_red,
+            (true, TrafficLightColor::Yellow) => system_colors.mac_os_traffic_light_yellow,
+            (true, TrafficLightColor::Green) => system_colors.mac_os_traffic_light_green,
+            (false, _) => cx.theme().colors().element,
         };
 
         div().w_3().h_3().rounded_full().bg(fill)

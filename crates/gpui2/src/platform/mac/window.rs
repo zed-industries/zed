@@ -1,10 +1,10 @@
 use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
-    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, Executor, ExternalPaths,
-    FileDropEvent, GlobalPixels, InputEvent, KeyDownEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, Scene, Size,
-    Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions, WindowPromptLevel,
+    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, ExternalPaths,
+    FileDropEvent, ForegroundExecutor, GlobalPixels, InputEvent, KeyDownEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    PromptLevel, Scene, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -315,7 +315,7 @@ struct InsertText {
 
 struct MacWindowState {
     handle: AnyWindowHandle,
-    executor: Executor,
+    executor: ForegroundExecutor,
     native_window: id,
     renderer: MetalRenderer,
     scene_to_render: Option<Scene>,
@@ -451,7 +451,11 @@ unsafe impl Send for MacWindowState {}
 pub struct MacWindow(Arc<Mutex<MacWindowState>>);
 
 impl MacWindow {
-    pub fn open(handle: AnyWindowHandle, options: WindowOptions, executor: Executor) -> Self {
+    pub fn open(
+        handle: AnyWindowHandle,
+        options: WindowOptions,
+        executor: ForegroundExecutor,
+    ) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
 
@@ -674,11 +678,13 @@ impl MacWindow {
 
 impl Drop for MacWindow {
     fn drop(&mut self) {
-        let this = self.0.clone();
-        let executor = self.0.lock().executor.clone();
-        executor
-            .run_on_main(move || unsafe {
-                this.lock().native_window.close();
+        let this = self.0.lock();
+        let window = this.native_window;
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    window.close();
+                }
             })
             .detach();
     }
@@ -741,12 +747,7 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().input_handler = Some(input_handler);
     }
 
-    fn prompt(
-        &self,
-        level: WindowPromptLevel,
-        msg: &str,
-        answers: &[&str],
-    ) -> oneshot::Receiver<usize> {
+    fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize> {
         // macOs applies overrides to modal window buttons after they are added.
         // Two most important for this logic are:
         // * Buttons with "Cancel" title will be displayed as the last buttons in the modal
@@ -776,9 +777,9 @@ impl PlatformWindow for MacWindow {
             let alert: id = msg_send![class!(NSAlert), alloc];
             let alert: id = msg_send![alert, init];
             let alert_style = match level {
-                WindowPromptLevel::Info => 1,
-                WindowPromptLevel::Warning => 0,
-                WindowPromptLevel::Critical => 2,
+                PromptLevel::Info => 1,
+                PromptLevel::Warning => 0,
+                PromptLevel::Critical => 2,
             };
             let _: () = msg_send![alert, setAlertStyle: alert_style];
             let _: () = msg_send![alert, setMessageText: ns_string(msg)];
@@ -807,7 +808,7 @@ impl PlatformWindow for MacWindow {
             let native_window = self.0.lock().native_window;
             let executor = self.0.lock().executor.clone();
             executor
-                .spawn_on_main_local(async move {
+                .spawn(async move {
                     let _: () = msg_send![
                         alert,
                         beginSheetModalForWindow: native_window
@@ -824,7 +825,7 @@ impl PlatformWindow for MacWindow {
         let window = self.0.lock().native_window;
         let executor = self.0.lock().executor.clone();
         executor
-            .spawn_on_main_local(async move {
+            .spawn(async move {
                 unsafe {
                     let _: () = msg_send![window, makeKeyAndOrderFront: nil];
                 }
@@ -873,7 +874,7 @@ impl PlatformWindow for MacWindow {
         let this = self.0.lock();
         let window = this.native_window;
         this.executor
-            .spawn_on_main_local(async move {
+            .spawn(async move {
                 unsafe {
                     window.zoom_(nil);
                 }
@@ -885,7 +886,7 @@ impl PlatformWindow for MacWindow {
         let this = self.0.lock();
         let window = this.native_window;
         this.executor
-            .spawn_on_main_local(async move {
+            .spawn(async move {
                 unsafe {
                     window.toggleFullScreen_(nil);
                 }
@@ -1189,7 +1190,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 lock.synthetic_drag_counter += 1;
                 let executor = lock.executor.clone();
                 executor
-                    .spawn_on_main_local(synthetic_drag(
+                    .spawn(synthetic_drag(
                         weak_window_state,
                         lock.synthetic_drag_counter,
                         event.clone(),
@@ -1317,7 +1318,7 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     let executor = lock.executor.clone();
     drop(lock);
     executor
-        .spawn_on_main_local(async move {
+        .spawn(async move {
             let mut lock = window_state.as_ref().lock();
             if let Some(mut callback) = lock.activate_callback.take() {
                 drop(lock);

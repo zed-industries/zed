@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui2::{AsyncAppContext, Task};
-pub use language2::*;
+use gpui::{AsyncAppContext, Task};
+pub use language::*;
 use lazy_static::lazy_static;
-use lsp2::LanguageServerBinary;
+use lsp::LanguageServerBinary;
 use regex::Regex;
 use smol::{fs, process};
 use std::{
@@ -170,7 +170,7 @@ impl super::LspAdapter for GoLspAdapter {
 
     async fn label_for_completion(
         &self,
-        completion: &lsp2::CompletionItem,
+        completion: &lsp::CompletionItem,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let label = &completion.label;
@@ -181,7 +181,7 @@ impl super::LspAdapter for GoLspAdapter {
         let name_offset = label.rfind('.').unwrap_or(0);
 
         match completion.kind.zip(completion.detail.as_ref()) {
-            Some((lsp2::CompletionItemKind::MODULE, detail)) => {
+            Some((lsp::CompletionItemKind::MODULE, detail)) => {
                 let text = format!("{label} {detail}");
                 let source = Rope::from(format!("import {text}").as_str());
                 let runs = language.highlight_text(&source, 7..7 + text.len());
@@ -192,7 +192,7 @@ impl super::LspAdapter for GoLspAdapter {
                 });
             }
             Some((
-                lsp2::CompletionItemKind::CONSTANT | lsp2::CompletionItemKind::VARIABLE,
+                lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE,
                 detail,
             )) => {
                 let text = format!("{label} {detail}");
@@ -208,7 +208,7 @@ impl super::LspAdapter for GoLspAdapter {
                     filter_range: 0..label.len(),
                 });
             }
-            Some((lsp2::CompletionItemKind::STRUCT, _)) => {
+            Some((lsp::CompletionItemKind::STRUCT, _)) => {
                 let text = format!("{label} struct {{}}");
                 let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
                 let runs = adjust_runs(
@@ -221,7 +221,7 @@ impl super::LspAdapter for GoLspAdapter {
                     filter_range: 0..label.len(),
                 });
             }
-            Some((lsp2::CompletionItemKind::INTERFACE, _)) => {
+            Some((lsp::CompletionItemKind::INTERFACE, _)) => {
                 let text = format!("{label} interface {{}}");
                 let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
                 let runs = adjust_runs(
@@ -234,7 +234,7 @@ impl super::LspAdapter for GoLspAdapter {
                     filter_range: 0..label.len(),
                 });
             }
-            Some((lsp2::CompletionItemKind::FIELD, detail)) => {
+            Some((lsp::CompletionItemKind::FIELD, detail)) => {
                 let text = format!("{label} {detail}");
                 let source =
                     Rope::from(format!("type T struct {{ {} }}", &text[name_offset..]).as_str());
@@ -248,10 +248,7 @@ impl super::LspAdapter for GoLspAdapter {
                     filter_range: 0..label.len(),
                 });
             }
-            Some((
-                lsp2::CompletionItemKind::FUNCTION | lsp2::CompletionItemKind::METHOD,
-                detail,
-            )) => {
+            Some((lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD, detail)) => {
                 if let Some(signature) = detail.strip_prefix("func") {
                     let text = format!("{label}{signature}");
                     let source = Rope::from(format!("func {} {{}}", &text[name_offset..]).as_str());
@@ -274,47 +271,47 @@ impl super::LspAdapter for GoLspAdapter {
     async fn label_for_symbol(
         &self,
         name: &str,
-        kind: lsp2::SymbolKind,
+        kind: lsp::SymbolKind,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let (text, filter_range, display_range) = match kind {
-            lsp2::SymbolKind::METHOD | lsp2::SymbolKind::FUNCTION => {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("func {} () {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::STRUCT => {
+            lsp::SymbolKind::STRUCT => {
                 let text = format!("type {} struct {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..text.len();
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::INTERFACE => {
+            lsp::SymbolKind::INTERFACE => {
                 let text = format!("type {} interface {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..text.len();
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::CLASS => {
+            lsp::SymbolKind::CLASS => {
                 let text = format!("type {} T", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::CONSTANT => {
+            lsp::SymbolKind::CONSTANT => {
                 let text = format!("const {} = nil", name);
                 let filter_range = 6..6 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::VARIABLE => {
+            lsp::SymbolKind::VARIABLE => {
                 let text = format!("var {} = nil", name);
                 let filter_range = 4..4 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::MODULE => {
+            lsp::SymbolKind::MODULE => {
                 let text = format!("package {}", name);
                 let filter_range = 8..8 + name.len();
                 let display_range = 0..filter_range.end;
@@ -375,10 +372,10 @@ fn adjust_runs(
 mod tests {
     use super::*;
     use crate::languages::language;
-    use gpui2::Hsla;
-    use theme2::SyntaxTheme;
+    use gpui::Hsla;
+    use theme::SyntaxTheme;
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_go_label_for_completion() {
         let language = language(
             "go",
@@ -405,8 +402,8 @@ mod tests {
 
         assert_eq!(
             language
-                .label_for_completion(&lsp2::CompletionItem {
-                    kind: Some(lsp2::CompletionItemKind::FUNCTION),
+                .label_for_completion(&lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
                     label: "Hello".to_string(),
                     detail: Some("func(a B) c.D".to_string()),
                     ..Default::default()
@@ -426,8 +423,8 @@ mod tests {
         // Nested methods
         assert_eq!(
             language
-                .label_for_completion(&lsp2::CompletionItem {
-                    kind: Some(lsp2::CompletionItemKind::METHOD),
+                .label_for_completion(&lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::METHOD),
                     label: "one.two.Three".to_string(),
                     detail: Some("func() [3]interface{}".to_string()),
                     ..Default::default()
@@ -447,8 +444,8 @@ mod tests {
         // Nested fields
         assert_eq!(
             language
-                .label_for_completion(&lsp2::CompletionItem {
-                    kind: Some(lsp2::CompletionItemKind::FIELD),
+                .label_for_completion(&lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FIELD),
                     label: "two.Three".to_string(),
                     detail: Some("a.Bcd".to_string()),
                     ..Default::default()

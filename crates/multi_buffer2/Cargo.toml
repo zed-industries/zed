@@ -1,0 +1,78 @@
+[package]
+name = "multi_buffer2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/multi_buffer2.rs"
+doctest = false
+
+[features]
+test-support = [
+    "copilot/test-support",
+    "text/test-support",
+    "language/test-support",
+    "gpui/test-support",
+    "util/test-support",
+    "tree-sitter-rust",
+    "tree-sitter-typescript"
+]
+
+[dependencies]
+client = { package = "client2", path = "../client2" }
+clock = { path = "../clock" }
+collections = { path = "../collections" }
+git = { package = "git3", path = "../git3" }
+gpui = { package = "gpui2", path = "../gpui2" }
+language = { package = "language2", path = "../language2" }
+lsp = { package = "lsp2", path = "../lsp2" }
+rich_text = { package = "rich_text2", path = "../rich_text2" }
+settings = { package = "settings2", path = "../settings2" }
+snippet = { path = "../snippet" }
+sum_tree = { path = "../sum_tree" }
+text = { package = "text2", path = "../text2" }
+theme = { package = "theme2", path = "../theme2" }
+util = { path = "../util" }
+
+aho-corasick = "1.1"
+anyhow.workspace = true
+convert_case = "0.6.0"
+futures.workspace = true
+indoc = "1.0.4"
+itertools = "0.10"
+lazy_static.workspace = true
+log.workspace = true
+ordered-float.workspace = true
+parking_lot.workspace = true
+postage.workspace = true
+pulldown-cmark = { version = "0.9.2", default-features = false }
+rand.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+smallvec.workspace = true
+smol.workspace = true
+
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-html = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+
+[dev-dependencies]
+copilot = { package = "copilot2", path = "../copilot2", features = ["test-support"] }
+text = { package = "text2", path = "../text2", features = ["test-support"] }
+language = { package = "language2", path = "../language2", features = ["test-support"] }
+lsp = { package = "lsp2", path = "../lsp2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
+project = { package = "project2", path = "../project2", features = ["test-support"] }
+settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
+
+ctor.workspace = true
+env_logger.workspace = true
+rand.workspace = true
+unindent.workspace = true
+tree-sitter.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-html.workspace = true
+tree-sitter-typescript.workspace = true

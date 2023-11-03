@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
-use gpui2::AppContext;
+use gpui::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings2::Settings;
@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use workspace::AppState;
+use workspace2::AppState;
 // use zed::AppState;
 
 // todo!();
@@ -59,7 +59,7 @@ pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
     // cx.add_global_action(move |_: &NewJournalEntry, cx| new_journal_entry(app_state.clone(), cx));
 }
 
-pub fn new_journal_entry(_: Arc<AppState>, cx: &mut AppContext) {
+pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
     let settings = JournalSettings::get_global(cx);
     let journal_dir = match journal_dir(settings.path.as_ref().unwrap()) {
         Some(journal_dir) => journal_dir,
@@ -77,7 +77,7 @@ pub fn new_journal_entry(_: Arc<AppState>, cx: &mut AppContext) {
     let now = now.time();
     let _entry_heading = heading_entry(now, &settings.hour_format);
 
-    let _create_entry = cx.executor().spawn(async move {
+    let create_entry = cx.background_executor().spawn(async move {
         std::fs::create_dir_all(month_dir)?;
         OpenOptions::new()
             .create(true)
@@ -86,37 +86,38 @@ pub fn new_journal_entry(_: Arc<AppState>, cx: &mut AppContext) {
         Ok::<_, std::io::Error>((journal_dir, entry_path))
     });
 
-    // todo!("workspace")
-    // cx.spawn(|cx| async move {
-    //     let (journal_dir, entry_path) = create_entry.await?;
-    //     let (workspace, _) =
-    //         cx.update(|cx| workspace::open_paths(&[journal_dir], &app_state, None, cx))?;
+    cx.spawn(|mut cx| async move {
+        let (journal_dir, entry_path) = create_entry.await?;
+        let (workspace, _) = cx
+            .update(|cx| workspace2::open_paths(&[journal_dir], &app_state, None, cx))?
+            .await?;
 
-    //     let opened = workspace
-    //         .update(&mut cx, |workspace, cx| {
-    //             workspace.open_paths(vec![entry_path], true, cx)
-    //         })?
-    //         .await;
+        let _opened = workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.open_paths(vec![entry_path], true, cx)
+            })?
+            .await;
 
-    //     if let Some(Some(Ok(item))) = opened.first() {
-    //         if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
-    //             editor.update(&mut cx, |editor, cx| {
-    //                 let len = editor.buffer().read(cx).len(cx);
-    //                 editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-    //                     s.select_ranges([len..len])
-    //                 });
-    //                 if len > 0 {
-    //                     editor.insert("\n\n", cx);
-    //                 }
-    //                 editor.insert(&entry_heading, cx);
-    //                 editor.insert("\n\n", cx);
-    //             })?;
-    //         }
-    //     }
+        // todo!("editor")
+        // if let Some(Some(Ok(item))) = opened.first() {
+        //     if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
+        //         editor.update(&mut cx, |editor, cx| {
+        //             let len = editor.buffer().read(cx).len(cx);
+        //             editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+        //                 s.select_ranges([len..len])
+        //             });
+        //             if len > 0 {
+        //                 editor.insert("\n\n", cx);
+        //             }
+        //             editor.insert(&entry_heading, cx);
+        //             editor.insert("\n\n", cx);
+        //         })?;
+        //     }
+        // }
 
-    //     anyhow::Ok(())
-    // })
-    // .detach_and_log_err(cx);
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 fn journal_dir(path: &str) -> Option<PathBuf> {

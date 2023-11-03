@@ -1169,7 +1169,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui2",
  "language2",
- "live_kit_client",
+ "live_kit_client2",
  "log",
  "media",
  "postage",
@@ -1541,13 +1541,12 @@ dependencies = [
  "schemars",
  "serde",
  "serde_derive",
- "settings",
  "settings2",
  "smol",
  "sum_tree",
  "sysinfo",
  "tempfile",
- "text",
+ "text2",
  "thiserror",
  "time",
  "tiny_http",
@@ -1603,7 +1602,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.27.0"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3092,7 +3091,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempfile",
- "text",
+ "text2",
  "time",
  "util",
 ]
@@ -3382,6 +3381,26 @@ dependencies = [
  "libgit2-sys",
  "log",
  "url",
+]
+
+[[package]]
+name = "git3"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clock",
+ "collections",
+ "futures 0.3.28",
+ "git2",
+ "lazy_static",
+ "log",
+ "parking_lot 0.11.2",
+ "smol",
+ "sum_tree",
+ "text2",
+ "unindent",
+ "util",
 ]
 
 [[package]]
@@ -4225,7 +4244,7 @@ dependencies = [
  "settings2",
  "shellexpand",
  "util",
- "workspace",
+ "workspace2",
 ]
 
 [[package]]
@@ -4358,7 +4377,7 @@ dependencies = [
  "env_logger 0.9.3",
  "futures 0.3.28",
  "fuzzy2",
- "git",
+ "git3",
  "globset",
  "gpui2",
  "indoc",
@@ -4379,7 +4398,7 @@ dependencies = [
  "smallvec",
  "smol",
  "sum_tree",
- "text",
+ "text2",
  "theme2",
  "tree-sitter",
  "tree-sitter-elixir",
@@ -4585,6 +4604,39 @@ dependencies = [
  "foreign-types",
  "futures 0.3.28",
  "gpui",
+ "hmac 0.12.1",
+ "jwt",
+ "live_kit_server",
+ "log",
+ "media",
+ "nanoid",
+ "objc",
+ "parking_lot 0.11.2",
+ "postage",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "sha2 0.10.7",
+ "simplelog",
+]
+
+[[package]]
+name = "live_kit_client2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-broadcast",
+ "async-trait",
+ "block",
+ "byteorder",
+ "bytes 1.5.0",
+ "cocoa",
+ "collections",
+ "core-foundation",
+ "core-graphics",
+ "foreign-types",
+ "futures 0.3.28",
+ "gpui2",
  "hmac 0.12.1",
  "jwt",
  "live_kit_server",
@@ -5045,6 +5097,53 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "multi_buffer2"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "anyhow",
+ "client2",
+ "clock",
+ "collections",
+ "convert_case 0.6.0",
+ "copilot2",
+ "ctor",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "git3",
+ "gpui2",
+ "indoc",
+ "itertools 0.10.5",
+ "language2",
+ "lazy_static",
+ "log",
+ "lsp2",
+ "ordered-float 2.10.0",
+ "parking_lot 0.11.2",
+ "postage",
+ "project2",
+ "pulldown-cmark",
+ "rand 0.8.5",
+ "rich_text2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "settings2",
+ "smallvec",
+ "smol",
+ "snippet",
+ "sum_tree",
+ "text2",
+ "theme2",
+ "tree-sitter",
+ "tree-sitter-html",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "unindent",
+ "util",
 ]
 
 [[package]]
@@ -6218,8 +6317,8 @@ dependencies = [
  "fsevent",
  "futures 0.3.28",
  "fuzzy2",
- "git",
  "git2",
+ "git3",
  "globset",
  "gpui2",
  "ignore",
@@ -6247,7 +6346,7 @@ dependencies = [
  "sum_tree",
  "tempdir",
  "terminal2",
- "text",
+ "text2",
  "thiserror",
  "toml 0.5.11",
  "unindent",
@@ -6879,6 +6978,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rich_text2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "lazy_static",
+ "pulldown-cmark",
+ "smallvec",
+ "smol",
+ "sum_tree",
+ "theme2",
+ "util",
+]
+
+[[package]]
 name = "ring"
 version = "0.16.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7493,7 +7610,6 @@ dependencies = [
  "collections",
  "editor",
  "futures 0.3.28",
- "globset",
  "gpui",
  "language",
  "log",
@@ -7746,7 +7862,6 @@ dependencies = [
  "anyhow",
  "collections",
  "feature_flags2",
- "fs",
  "fs2",
  "futures 0.3.28",
  "gpui2",
@@ -8757,6 +8872,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "text2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clock",
+ "collections",
+ "ctor",
+ "digest 0.9.0",
+ "env_logger 0.9.3",
+ "gpui2",
+ "lazy_static",
+ "log",
+ "parking_lot 0.11.2",
+ "postage",
+ "rand 0.8.5",
+ "regex",
+ "rope",
+ "smallvec",
+ "sum_tree",
+ "util",
+]
+
+[[package]]
 name = "textwrap"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8785,10 +8923,11 @@ name = "theme2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "fs",
+ "fs2",
  "gpui2",
  "indexmap 1.9.3",
  "parking_lot 0.11.2",
+ "refineable",
  "schemars",
  "serde",
  "serde_derive",
@@ -8796,21 +8935,6 @@ dependencies = [
  "settings2",
  "toml 0.5.11",
  "util",
-]
-
-[[package]]
-name = "theme_converter"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap 4.4.4",
- "convert_case 0.6.0",
- "gpui2",
- "log",
- "rust-embed",
- "serde",
- "simplelog",
- "theme2",
 ]
 
 [[package]]
@@ -9630,6 +9754,7 @@ dependencies = [
  "itertools 0.11.0",
  "rand 0.8.5",
  "serde",
+ "settings2",
  "smallvec",
  "strum",
  "theme2",
@@ -9791,6 +9916,7 @@ dependencies = [
  "dirs 3.0.2",
  "futures 0.3.28",
  "git2",
+ "globset",
  "isahc",
  "lazy_static",
  "log",
@@ -10753,6 +10879,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "workspace2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-recursion 1.0.5",
+ "bincode",
+ "call2",
+ "client2",
+ "collections",
+ "db2",
+ "env_logger 0.9.3",
+ "fs2",
+ "futures 0.3.28",
+ "gpui2",
+ "indoc",
+ "install_cli2",
+ "itertools 0.10.5",
+ "language2",
+ "lazy_static",
+ "log",
+ "node_runtime",
+ "parking_lot 0.11.2",
+ "postage",
+ "project2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "smallvec",
+ "terminal2",
+ "theme2",
+ "ui2",
+ "util",
+ "uuid 1.4.1",
+]
+
+[[package]]
 name = "ws2_32-sys"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10832,7 +10996,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.111.0"
+version = "0.112.0"
 dependencies = [
  "activity_indicator",
  "ai",
@@ -11029,7 +11193,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempdir",
- "text",
+ "text2",
  "theme2",
  "thiserror",
  "tiny_http",
@@ -11067,6 +11231,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid 1.4.1",
+ "workspace2",
 ]
 
 [[package]]

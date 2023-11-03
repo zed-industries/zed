@@ -1,11 +1,13 @@
-const { Buffer } = require('buffer');
+const { Buffer } = require("buffer");
 const fs = require("fs");
 const path = require("path");
-const { once } = require('events');
+const { once } = require("events");
 
 const prettierContainerPath = process.argv[2];
 if (prettierContainerPath == null || prettierContainerPath.length == 0) {
-    process.stderr.write(`Prettier path argument was not specified or empty.\nUsage: ${process.argv[0]} ${process.argv[1]} prettier/path\n`);
+    process.stderr.write(
+        `Prettier path argument was not specified or empty.\nUsage: ${process.argv[0]} ${process.argv[1]} prettier/path\n`,
+    );
     process.exit(1);
 }
 fs.stat(prettierContainerPath, (err, stats) => {
@@ -19,7 +21,7 @@ fs.stat(prettierContainerPath, (err, stats) => {
         process.exit(1);
     }
 });
-const prettierPath = path.join(prettierContainerPath, 'node_modules/prettier');
+const prettierPath = path.join(prettierContainerPath, "node_modules/prettier");
 
 class Prettier {
     constructor(path, prettier, config) {
@@ -34,7 +36,7 @@ class Prettier {
     let config;
     try {
         prettier = await loadPrettier(prettierPath);
-        config = await prettier.resolveConfig(prettierPath) || {};
+        config = (await prettier.resolveConfig(prettierPath)) || {};
     } catch (e) {
         process.stderr.write(`Failed to load prettier: ${e}\n`);
         process.exit(1);
@@ -42,7 +44,7 @@ class Prettier {
     process.stderr.write(`Prettier at path '${prettierPath}' loaded successfully, config: ${JSON.stringify(config)}\n`);
     process.stdin.resume();
     handleBuffer(new Prettier(prettierPath, prettier, config));
-})()
+})();
 
 async function handleBuffer(prettier) {
     for await (const messageText of readStdin()) {
@@ -54,22 +56,29 @@ async function handleBuffer(prettier) {
             continue;
         }
         // allow concurrent request handling by not `await`ing the message handling promise (async function)
-        handleMessage(message, prettier).catch(e => {
-            sendResponse({ id: message.id, ...makeError(`error during message handling: ${e}`) });
+        handleMessage(message, prettier).catch((e) => {
+            const errorMessage = message;
+            if ((errorMessage.params || {}).text !== undefined) {
+                errorMessage.params.text = "..snip..";
+            }
+            sendResponse({
+                id: message.id,
+                ...makeError(`error during message '${JSON.stringify(errorMessage)}' handling: ${e}`),
+            });
         });
     }
 }
 
 const headerSeparator = "\r\n";
-const contentLengthHeaderName = 'Content-Length';
+const contentLengthHeaderName = "Content-Length";
 
 async function* readStdin() {
     let buffer = Buffer.alloc(0);
     let streamEnded = false;
-    process.stdin.on('end', () => {
+    process.stdin.on("end", () => {
         streamEnded = true;
     });
-    process.stdin.on('data', (data) => {
+    process.stdin.on("data", (data) => {
         buffer = Buffer.concat([buffer, data]);
     });
 
@@ -77,7 +86,7 @@ async function* readStdin() {
         sendResponse(makeError(errorMessage));
         buffer = Buffer.alloc(0);
         messageLength = null;
-        await once(process.stdin, 'readable');
+        await once(process.stdin, "readable");
         streamEnded = false;
     }
 
@@ -88,20 +97,25 @@ async function* readStdin() {
             if (messageLength === null) {
                 while (buffer.indexOf(`${headerSeparator}${headerSeparator}`) === -1) {
                     if (streamEnded) {
-                        await handleStreamEnded('Unexpected end of stream: headers not found');
+                        await handleStreamEnded("Unexpected end of stream: headers not found");
                         continue main_loop;
                     } else if (buffer.length > contentLengthHeaderName.length * 10) {
-                        await handleStreamEnded(`Unexpected stream of bytes: no headers end found after ${buffer.length} bytes of input`);
+                        await handleStreamEnded(
+                            `Unexpected stream of bytes: no headers end found after ${buffer.length} bytes of input`,
+                        );
                         continue main_loop;
                     }
-                    await once(process.stdin, 'readable');
+                    await once(process.stdin, "readable");
                 }
-                const headers = buffer.subarray(0, buffer.indexOf(`${headerSeparator}${headerSeparator}`)).toString('ascii');
-                const contentLengthHeader = headers.split(headerSeparator)
-                    .map(header => header.split(':'))
-                    .filter(header => header[2] === undefined)
-                    .filter(header => (header[1] || '').length > 0)
-                    .find(header => (header[0] || '').trim() === contentLengthHeaderName);
+                const headers = buffer
+                    .subarray(0, buffer.indexOf(`${headerSeparator}${headerSeparator}`))
+                    .toString("ascii");
+                const contentLengthHeader = headers
+                    .split(headerSeparator)
+                    .map((header) => header.split(":"))
+                    .filter((header) => header[2] === undefined)
+                    .filter((header) => (header[1] || "").length > 0)
+                    .find((header) => (header[0] || "").trim() === contentLengthHeaderName);
                 const contentLength = (contentLengthHeader || [])[1];
                 if (contentLength === undefined) {
                     await handleStreamEnded(`Missing or incorrect ${contentLengthHeaderName} header: ${headers}`);
@@ -111,13 +125,14 @@ async function* readStdin() {
                 messageLength = parseInt(contentLength, 10);
             }
 
-            while (buffer.length < (headersLength + messageLength)) {
+            while (buffer.length < headersLength + messageLength) {
                 if (streamEnded) {
                     await handleStreamEnded(
-                        `Unexpected end of stream: buffer length ${buffer.length} does not match expected header length ${headersLength} + body length ${messageLength}`);
+                        `Unexpected end of stream: buffer length ${buffer.length} does not match expected header length ${headersLength} + body length ${messageLength}`,
+                    );
                     continue main_loop;
                 }
-                await once(process.stdin, 'readable');
+                await once(process.stdin, "readable");
             }
 
             const messageEnd = headersLength + messageLength;
@@ -125,12 +140,12 @@ async function* readStdin() {
             buffer = buffer.subarray(messageEnd);
             headersLength = null;
             messageLength = null;
-            yield message.toString('utf8');
+            yield message.toString("utf8");
         }
     } catch (e) {
         sendResponse(makeError(`Error reading stdin: ${e}`));
     } finally {
-        process.stdin.off('data', () => { });
+        process.stdin.off("data", () => {});
     }
 }
 
@@ -143,7 +158,7 @@ async function handleMessage(message, prettier) {
         throw new Error(`Message id is undefined: ${JSON.stringify(message)}`);
     }
 
-    if (method === 'prettier/format') {
+    if (method === "prettier/format") {
         if (params === undefined || params.text === undefined) {
             throw new Error(`Message params.text is undefined: ${JSON.stringify(message)}`);
         }
@@ -153,7 +168,7 @@ async function handleMessage(message, prettier) {
 
         let resolvedConfig = {};
         if (params.options.filepath !== undefined) {
-            resolvedConfig = await prettier.prettier.resolveConfig(params.options.filepath) || {};
+            resolvedConfig = (await prettier.prettier.resolveConfig(params.options.filepath)) || {};
         }
 
         const options = {
@@ -161,21 +176,25 @@ async function handleMessage(message, prettier) {
             ...resolvedConfig,
             parser: params.options.parser,
             plugins: params.options.plugins,
-            path: params.options.filepath
+            path: params.options.filepath,
         };
-        process.stderr.write(`Resolved config: ${JSON.stringify(resolvedConfig)}, will format file '${params.options.filepath || ''}' with options: ${JSON.stringify(options)}\n`);
+        process.stderr.write(
+            `Resolved config: ${JSON.stringify(resolvedConfig)}, will format file '${
+                params.options.filepath || ""
+            }' with options: ${JSON.stringify(options)}\n`,
+        );
         const formattedText = await prettier.prettier.format(params.text, options);
         sendResponse({ id, result: { text: formattedText } });
-    } else if (method === 'prettier/clear_cache') {
+    } else if (method === "prettier/clear_cache") {
         prettier.prettier.clearConfigCache();
-        prettier.config = await prettier.prettier.resolveConfig(prettier.path) || {};
+        prettier.config = (await prettier.prettier.resolveConfig(prettier.path)) || {};
         sendResponse({ id, result: null });
-    } else if (method === 'initialize') {
+    } else if (method === "initialize") {
         sendResponse({
             id,
             result: {
-                "capabilities": {}
-            }
+                capabilities: {},
+            },
         });
     } else {
         throw new Error(`Unknown method: ${method}`);
@@ -185,18 +204,20 @@ async function handleMessage(message, prettier) {
 function makeError(message) {
     return {
         error: {
-            "code": -32600, // invalid request code
+            code: -32600, // invalid request code
             message,
-        }
+        },
     };
 }
 
 function sendResponse(response) {
     const responsePayloadString = JSON.stringify({
         jsonrpc: "2.0",
-        ...response
+        ...response,
     });
-    const headers = `${contentLengthHeaderName}: ${Buffer.byteLength(responsePayloadString)}${headerSeparator}${headerSeparator}`;
+    const headers = `${contentLengthHeaderName}: ${Buffer.byteLength(
+        responsePayloadString,
+    )}${headerSeparator}${headerSeparator}`;
     process.stdout.write(headers + responsePayloadString);
 }
 

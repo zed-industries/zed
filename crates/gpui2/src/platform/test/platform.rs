@@ -1,21 +1,29 @@
-use crate::{DisplayId, Executor, Platform, PlatformTextSystem};
+use crate::{BackgroundExecutor, DisplayId, ForegroundExecutor, Platform, PlatformTextSystem};
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
 pub struct TestPlatform {
-    executor: Executor,
+    background_executor: BackgroundExecutor,
+    foreground_executor: ForegroundExecutor,
 }
 
 impl TestPlatform {
-    pub fn new(executor: Executor) -> Self {
-        TestPlatform { executor }
+    pub fn new(executor: BackgroundExecutor, foreground_executor: ForegroundExecutor) -> Self {
+        TestPlatform {
+            background_executor: executor,
+            foreground_executor,
+        }
     }
 }
 
 // todo!("implement out what our tests needed in GPUI 1")
 impl Platform for TestPlatform {
-    fn executor(&self) -> Executor {
-        self.executor.clone()
+    fn background_executor(&self) -> BackgroundExecutor {
+        self.background_executor.clone()
+    }
+
+    fn foreground_executor(&self) -> ForegroundExecutor {
+        self.foreground_executor.clone()
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
@@ -73,7 +81,7 @@ impl Platform for TestPlatform {
     fn set_display_link_output_callback(
         &self,
         _display_id: DisplayId,
-        _callback: Box<dyn FnMut(&crate::VideoTimestamp, &crate::VideoTimestamp)>,
+        _callback: Box<dyn FnMut(&crate::VideoTimestamp, &crate::VideoTimestamp) + Send>,
     ) {
         unimplemented!()
     }

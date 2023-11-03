@@ -1,6 +1,6 @@
-use gpui2::HighlightStyle;
+use gpui::HighlightStyle;
 use std::sync::Arc;
-use theme2::SyntaxTheme;
+use theme::SyntaxTheme;
 
 #[derive(Clone, Debug)]
 pub struct HighlightMap(Arc<[HighlightId]>);
@@ -79,7 +79,7 @@ impl Default for HighlightId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui2::rgba;
+    use gpui::rgba;
 
     #[test]
     fn test_highlight_map() {

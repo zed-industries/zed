@@ -1,9 +1,9 @@
 use anyhow::Context;
-use gpui2::AppContext;
-pub use language2::*;
+use gpui::AppContext;
+pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
-use settings2::Settings;
+use settings::Settings;
 use std::{borrow::Cow, str, sync::Arc};
 use util::asset_str;
 

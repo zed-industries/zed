@@ -6,9 +6,9 @@ publish = false
 
 [features]
 test-support = [
-    "gpui2/test-support",
+    "gpui/test-support",
     "fs/test-support",
-    "settings2/test-support"
+    "settings/test-support"
 ]
 
 [lib]
@@ -16,21 +16,21 @@ path = "src/theme2.rs"
 doctest = false
 
 [dependencies]
-gpui2 = { path = "../gpui2" }
-fs = { path = "../fs" }
-schemars.workspace = true
-settings2 = { path = "../settings2" }
-util = { path = "../util" }
-
 anyhow.workspace = true
+fs = { package = "fs2", path = "../fs2" }
+gpui = { package = "gpui2", path = "../gpui2" }
 indexmap = "1.6.2"
 parking_lot.workspace = true
+refineable.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
+settings = { package = "settings2", path = "../settings2" }
 toml.workspace = true
+util = { path = "../util" }
 
 [dev-dependencies]
-gpui2 = { path = "../gpui2", features = ["test-support"] }
-fs = { path = "../fs", features = ["test-support"] }
-settings2 = { path = "../settings2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+fs = { package = "fs2", path = "../fs2", features = ["test-support"] }
+settings = { package = "settings2", path = "../settings2", features = ["test-support"] }

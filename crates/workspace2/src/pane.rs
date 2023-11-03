@@ -1,48 +1,33 @@
 // mod dragged_item_receiver;
 
-// use super::{ItemHandle, SplitDirection};
-// pub use crate::toolbar::Toolbar;
-// use crate::{
-//     item::{ItemSettings, WeakItemHandle},
-//     notify_of_new_dock, AutosaveSetting, Item, NewCenterTerminal, NewFile, NewSearch, ToggleZoom,
-//     Workspace, WorkspaceSettings,
-// };
-// use anyhow::Result;
-// use collections::{HashMap, HashSet, VecDeque};
-// // use context_menu::{ContextMenu, ContextMenuItem};
-
-// use dragged_item_receiver::dragged_item_receiver;
-// use fs2::repository::GitFileStatus;
-// use futures::StreamExt;
-// use gpui2::{
-//     actions,
-//     elements::*,
-//     geometry::{
-//         rect::RectF,
-//         vector::{vec2f, Vector2F},
-//     },
-//     impl_actions,
-//     keymap_matcher::KeymapContext,
-//     platform::{CursorStyle, MouseButton, NavigationDirection, PromptLevel},
-//     Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
-//     ModelHandle, MouseRegion, Quad, Task, View, ViewContext, ViewHandle, WeakViewHandle,
-//     WindowContext,
-// };
-// use project2::{Project, ProjectEntryId, ProjectPath};
+use crate::{
+    item::{Item, ItemHandle, ItemSettings, WeakItemHandle},
+    toolbar::Toolbar,
+    workspace_settings::{AutosaveSetting, WorkspaceSettings},
+    SplitDirection, Workspace,
+};
+use anyhow::Result;
+use collections::{HashMap, HashSet, VecDeque};
+use gpui::{
+    AppContext, AsyncWindowContext, Component, Div, EntityId, EventEmitter, Model, PromptLevel,
+    Render, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+};
+use parking_lot::Mutex;
+use project2::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-// use std::{
-//     any::Any,
-//     cell::RefCell,
-//     cmp, mem,
-//     path::{Path, PathBuf},
-//     rc::Rc,
-//     sync::{
-//         atomic::{AtomicUsize, Ordering},
-//         Arc,
-//     },
-// };
-// use theme2::{Theme, ThemeSettings};
-// use util::truncate_and_remove_front;
+use settings2::Settings;
+use std::{
+    any::Any,
+    cmp, fmt, mem,
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
+use ui::v_stack;
+use ui::{prelude::*, Icon, IconButton, IconColor, IconElement};
+use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -69,19 +54,19 @@ pub enum SaveIntent {
 // #[derive(Clone, PartialEq)]
 // pub struct CloseItemById {
 //     pub item_id: usize,
-//     pub pane: WeakViewHandle<Pane>,
+//     pub pane: WeakView<Pane>,
 // }
 
 // #[derive(Clone, PartialEq)]
 // pub struct CloseItemsToTheLeftById {
 //     pub item_id: usize,
-//     pub pane: WeakViewHandle<Pane>,
+//     pub pane: WeakView<Pane>,
 // }
 
 // #[derive(Clone, PartialEq)]
 // pub struct CloseItemsToTheRightById {
 //     pub item_id: usize,
-//     pub pane: WeakViewHandle<Pane>,
+//     pub pane: WeakView<Pane>,
 // }
 
 // #[derive(Clone, PartialEq, Debug, Deserialize, Default)]
@@ -96,6 +81,7 @@ pub enum SaveIntent {
 //     pub save_intent: Option<SaveIntent>,
 // }
 
+// todo!()
 // actions!(
 //     pane,
 //     [
@@ -118,40 +104,40 @@ pub enum SaveIntent {
 
 // impl_actions!(pane, [ActivateItem, CloseActiveItem, CloseAllItems]);
 
-// const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
+const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
-// pub fn init(cx: &mut AppContext) {
-//     cx.add_action(Pane::toggle_zoom);
-//     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
-//         pane.activate_item(action.0, true, true, cx);
-//     });
-//     cx.add_action(|pane: &mut Pane, _: &ActivateLastItem, cx| {
-//         pane.activate_item(pane.items.len() - 1, true, true, cx);
-//     });
-//     cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
-//         pane.activate_prev_item(true, cx);
-//     });
-//     cx.add_action(|pane: &mut Pane, _: &ActivateNextItem, cx| {
-//         pane.activate_next_item(true, cx);
-//     });
-//     cx.add_async_action(Pane::close_active_item);
-//     cx.add_async_action(Pane::close_inactive_items);
-//     cx.add_async_action(Pane::close_clean_items);
-//     cx.add_async_action(Pane::close_items_to_the_left);
-//     cx.add_async_action(Pane::close_items_to_the_right);
-//     cx.add_async_action(Pane::close_all_items);
-//     cx.add_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx));
-//     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
-//     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
-//     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
-// }
+pub fn init(cx: &mut AppContext) {
+    // todo!()
+    //     cx.add_action(Pane::toggle_zoom);
+    //     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
+    //         pane.activate_item(action.0, true, true, cx);
+    //     });
+    //     cx.add_action(|pane: &mut Pane, _: &ActivateLastItem, cx| {
+    //         pane.activate_item(pane.items.len() - 1, true, true, cx);
+    //     });
+    //     cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
+    //         pane.activate_prev_item(true, cx);
+    //     });
+    //     cx.add_action(|pane: &mut Pane, _: &ActivateNextItem, cx| {
+    //         pane.activate_next_item(true, cx);
+    //     });
+    //     cx.add_async_action(Pane::close_active_item);
+    //     cx.add_async_action(Pane::close_inactive_items);
+    //     cx.add_async_action(Pane::close_clean_items);
+    //     cx.add_async_action(Pane::close_items_to_the_left);
+    //     cx.add_async_action(Pane::close_items_to_the_right);
+    //     cx.add_async_action(Pane::close_all_items);
+    //     cx.add_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx));
+    //     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
+    //     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
+    //     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
+}
 
-#[derive(Debug)]
 pub enum Event {
     AddItem { item: Box<dyn ItemHandle> },
     ActivateItem { local: bool },
     Remove,
-    RemoveItem { item_id: usize },
+    RemoveItem { item_id: EntityId },
     Split(SplitDirection),
     ChangeItemTitle,
     Focus,
@@ -159,36 +145,45 @@ pub enum Event {
     ZoomOut,
 }
 
-use crate::{
-    item::{ItemHandle, WeakItemHandle},
-    SplitDirection,
-};
-use collections::{HashMap, VecDeque};
-use gpui2::{Handle, ViewContext, WeakView};
-use project2::{Project, ProjectEntryId, ProjectPath};
-use std::{
-    any::Any,
-    cell::RefCell,
-    cmp, mem,
-    path::PathBuf,
-    rc::Rc,
-    sync::{atomic::AtomicUsize, Arc},
-};
+impl fmt::Debug for Event {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Event::AddItem { item } => f.debug_struct("AddItem").field("item", &item.id()).finish(),
+            Event::ActivateItem { local } => f
+                .debug_struct("ActivateItem")
+                .field("local", local)
+                .finish(),
+            Event::Remove => f.write_str("Remove"),
+            Event::RemoveItem { item_id } => f
+                .debug_struct("RemoveItem")
+                .field("item_id", item_id)
+                .finish(),
+            Event::Split(direction) => f
+                .debug_struct("Split")
+                .field("direction", direction)
+                .finish(),
+            Event::ChangeItemTitle => f.write_str("ChangeItemTitle"),
+            Event::Focus => f.write_str("Focus"),
+            Event::ZoomIn => f.write_str("ZoomIn"),
+            Event::ZoomOut => f.write_str("ZoomOut"),
+        }
+    }
+}
 
 pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
-    //     activation_history: Vec<usize>,
-    //     zoomed: bool,
-    //     active_item_index: usize,
+    activation_history: Vec<EntityId>,
+    zoomed: bool,
+    active_item_index: usize,
     //     last_focused_view_by_item: HashMap<usize, AnyWeakViewHandle>,
-    //     autoscroll: bool,
+    autoscroll: bool,
     nav_history: NavHistory,
-    //     toolbar: ViewHandle<Toolbar>,
+    toolbar: View<Toolbar>,
     //     tab_bar_context_menu: TabBarContextMenu,
     //     tab_context_menu: ViewHandle<ContextMenu>,
-    //     workspace: WeakViewHandle<Workspace>,
-    project: Handle<Project>,
-    //     has_focus: bool,
+    workspace: WeakView<Workspace>,
+    project: Model<Project>,
+    has_focus: bool,
     //     can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
     //     can_split: bool,
     //     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>>,
@@ -196,18 +191,18 @@ pub struct Pane {
 
 pub struct ItemNavHistory {
     history: NavHistory,
-    item: Rc<dyn WeakItemHandle>,
+    item: Arc<dyn WeakItemHandle>,
 }
 
 #[derive(Clone)]
-pub struct NavHistory(Rc<RefCell<NavHistoryState>>);
+pub struct NavHistory(Arc<Mutex<NavHistoryState>>);
 
 struct NavHistoryState {
     mode: NavigationMode,
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
     closed_stack: VecDeque<NavigationEntry>,
-    paths_by_item: HashMap<usize, (ProjectPath, Option<PathBuf>)>,
+    paths_by_item: HashMap<EntityId, (ProjectPath, Option<PathBuf>)>,
     pane: WeakView<Pane>,
     next_timestamp: Arc<AtomicUsize>,
 }
@@ -229,14 +224,14 @@ impl Default for NavigationMode {
 }
 
 pub struct NavigationEntry {
-    pub item: Rc<dyn WeakItemHandle>,
-    pub data: Option<Box<dyn Any>>,
+    pub item: Arc<dyn WeakItemHandle>,
+    pub data: Option<Box<dyn Any + Send>>,
     pub timestamp: usize,
 }
 
 // pub struct DraggedItem {
 //     pub handle: Box<dyn ItemHandle>,
-//     pub pane: WeakViewHandle<Pane>,
+//     pub pane: WeakView<Pane>,
 // }
 
 // pub enum ReorderBehavior {
@@ -315,118 +310,123 @@ pub struct NavigationEntry {
 //     .into_any_named("nav button")
 // }
 
+impl EventEmitter for Pane {
+    type Event = Event;
+}
+
 impl Pane {
-    //     pub fn new(
-    //         workspace: WeakViewHandle<Workspace>,
-    //         project: ModelHandle<Project>,
-    //         next_timestamp: Arc<AtomicUsize>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Self {
-    //         let pane_view_id = cx.view_id();
-    //         let handle = cx.weak_handle();
-    //         let context_menu = cx.add_view(|cx| ContextMenu::new(pane_view_id, cx));
-    //         context_menu.update(cx, |menu, _| {
-    //             menu.set_position_mode(OverlayPositionMode::Local)
-    //         });
+    pub fn new(
+        workspace: WeakView<Workspace>,
+        project: Model<Project>,
+        next_timestamp: Arc<AtomicUsize>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        // todo!("context menu")
+        // let pane_view_id = cx.view_id();
+        // let context_menu = cx.add_view(|cx| ContextMenu::new(pane_view_id, cx));
+        // context_menu.update(cx, |menu, _| {
+        //     menu.set_position_mode(OverlayPositionMode::Local)
+        // });
 
-    //         Self {
-    //             items: Vec::new(),
-    //             activation_history: Vec::new(),
-    //             zoomed: false,
-    //             active_item_index: 0,
-    //             last_focused_view_by_item: Default::default(),
-    //             autoscroll: false,
-    //             nav_history: NavHistory(Rc::new(RefCell::new(NavHistoryState {
-    //                 mode: NavigationMode::Normal,
-    //                 backward_stack: Default::default(),
-    //                 forward_stack: Default::default(),
-    //                 closed_stack: Default::default(),
-    //                 paths_by_item: Default::default(),
-    //                 pane: handle.clone(),
-    //                 next_timestamp,
-    //             }))),
-    //             toolbar: cx.add_view(|_| Toolbar::new()),
-    //             tab_bar_context_menu: TabBarContextMenu {
-    //                 kind: TabBarContextMenuKind::New,
-    //                 handle: context_menu,
-    //             },
-    //             tab_context_menu: cx.add_view(|cx| ContextMenu::new(pane_view_id, cx)),
-    //             workspace,
-    //             project,
-    //             has_focus: false,
-    //             can_drop: Rc::new(|_, _| true),
-    //             can_split: true,
-    //             render_tab_bar_buttons: Rc::new(move |pane, cx| {
-    //                 Flex::row()
-    //                     // New menu
-    //                     .with_child(Self::render_tab_bar_button(
-    //                         0,
-    //                         "icons/plus.svg",
-    //                         false,
-    //                         Some(("New...".into(), None)),
-    //                         cx,
-    //                         |pane, cx| pane.deploy_new_menu(cx),
-    //                         |pane, cx| {
-    //                             pane.tab_bar_context_menu
-    //                                 .handle
-    //                                 .update(cx, |menu, _| menu.delay_cancel())
-    //                         },
-    //                         pane.tab_bar_context_menu
-    //                             .handle_if_kind(TabBarContextMenuKind::New),
-    //                     ))
-    //                     .with_child(Self::render_tab_bar_button(
-    //                         1,
-    //                         "icons/split.svg",
-    //                         false,
-    //                         Some(("Split Pane".into(), None)),
-    //                         cx,
-    //                         |pane, cx| pane.deploy_split_menu(cx),
-    //                         |pane, cx| {
-    //                             pane.tab_bar_context_menu
-    //                                 .handle
-    //                                 .update(cx, |menu, _| menu.delay_cancel())
-    //                         },
-    //                         pane.tab_bar_context_menu
-    //                             .handle_if_kind(TabBarContextMenuKind::Split),
-    //                     ))
-    //                     .with_child({
-    //                         let icon_path;
-    //                         let tooltip_label;
-    //                         if pane.is_zoomed() {
-    //                             icon_path = "icons/minimize.svg";
-    //                             tooltip_label = "Zoom In";
-    //                         } else {
-    //                             icon_path = "icons/maximize.svg";
-    //                             tooltip_label = "Zoom In";
-    //                         }
+        let handle = cx.view().downgrade();
+        Self {
+            items: Vec::new(),
+            activation_history: Vec::new(),
+            zoomed: false,
+            active_item_index: 0,
+            // last_focused_view_by_item: Default::default(),
+            autoscroll: false,
+            nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
+                mode: NavigationMode::Normal,
+                backward_stack: Default::default(),
+                forward_stack: Default::default(),
+                closed_stack: Default::default(),
+                paths_by_item: Default::default(),
+                pane: handle.clone(),
+                next_timestamp,
+            }))),
+            toolbar: cx.build_view(|_| Toolbar::new()),
+            // tab_bar_context_menu: TabBarContextMenu {
+            //     kind: TabBarContextMenuKind::New,
+            //     handle: context_menu,
+            // },
+            // tab_context_menu: cx.add_view(|cx| ContextMenu::new(pane_view_id, cx)),
+            workspace,
+            project,
+            has_focus: false,
+            // can_drop: Rc::new(|_, _| true),
+            // can_split: true,
+            // render_tab_bar_buttons: Rc::new(move |pane, cx| {
+            //     Flex::row()
+            //         // New menu
+            //         .with_child(Self::render_tab_bar_button(
+            //             0,
+            //             "icons/plus.svg",
+            //             false,
+            //             Some(("New...".into(), None)),
+            //             cx,
+            //             |pane, cx| pane.deploy_new_menu(cx),
+            //             |pane, cx| {
+            //                 pane.tab_bar_context_menu
+            //                     .handle
+            //                     .update(cx, |menu, _| menu.delay_cancel())
+            //             },
+            //             pane.tab_bar_context_menu
+            //                 .handle_if_kind(TabBarContextMenuKind::New),
+            //         ))
+            //         .with_child(Self::render_tab_bar_button(
+            //             1,
+            //             "icons/split.svg",
+            //             false,
+            //             Some(("Split Pane".into(), None)),
+            //             cx,
+            //             |pane, cx| pane.deploy_split_menu(cx),
+            //             |pane, cx| {
+            //                 pane.tab_bar_context_menu
+            //                     .handle
+            //                     .update(cx, |menu, _| menu.delay_cancel())
+            //             },
+            //             pane.tab_bar_context_menu
+            //                 .handle_if_kind(TabBarContextMenuKind::Split),
+            //         ))
+            //         .with_child({
+            //             let icon_path;
+            //             let tooltip_label;
+            //             if pane.is_zoomed() {
+            //                 icon_path = "icons/minimize.svg";
+            //                 tooltip_label = "Zoom In";
+            //             } else {
+            //                 icon_path = "icons/maximize.svg";
+            //                 tooltip_label = "Zoom In";
+            //             }
 
-    //                         Pane::render_tab_bar_button(
-    //                             2,
-    //                             icon_path,
-    //                             pane.is_zoomed(),
-    //                             Some((tooltip_label, Some(Box::new(ToggleZoom)))),
-    //                             cx,
-    //                             move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
-    //                             move |_, _| {},
-    //                             None,
-    //                         )
-    //                     })
-    //                     .into_any()
-    //             }),
-    //         }
-    //     }
+            //             Pane::render_tab_bar_button(
+            //                 2,
+            //                 icon_path,
+            //                 pane.is_zoomed(),
+            //                 Some((tooltip_label, Some(Box::new(ToggleZoom)))),
+            //                 cx,
+            //                 move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
+            //                 move |_, _| {},
+            //                 None,
+            //             )
+            //         })
+            //         .into_any()
+            // }),
+        }
+    }
 
-    //     pub(crate) fn workspace(&self) -> &WeakViewHandle<Workspace> {
-    //         &self.workspace
-    //     }
+    pub(crate) fn workspace(&self) -> &WeakView<Workspace> {
+        &self.workspace
+    }
 
-    //     pub fn has_focus(&self) -> bool {
-    //         self.has_focus
-    //     }
+    pub fn has_focus(&self) -> bool {
+        self.has_focus
+    }
 
-    //     pub fn active_item_index(&self) -> usize {
-    //         self.active_item_index
-    //     }
+    pub fn active_item_index(&self) -> usize {
+        self.active_item_index
+    }
 
     //     pub fn on_can_drop<F>(&mut self, can_drop: F)
     //     where
@@ -455,40 +455,40 @@ impl Pane {
     //         cx.notify();
     //     }
 
-    //     pub fn nav_history_for_item<T: Item>(&self, item: &ViewHandle<T>) -> ItemNavHistory {
-    //         ItemNavHistory {
-    //             history: self.nav_history.clone(),
-    //             item: Rc::new(item.downgrade()),
-    //         }
-    //     }
+    pub fn nav_history_for_item<T: Item>(&self, item: &View<T>) -> ItemNavHistory {
+        ItemNavHistory {
+            history: self.nav_history.clone(),
+            item: Arc::new(item.downgrade()),
+        }
+    }
 
-    //     pub fn nav_history(&self) -> &NavHistory {
-    //         &self.nav_history
-    //     }
+    pub fn nav_history(&self) -> &NavHistory {
+        &self.nav_history
+    }
 
-    //     pub fn nav_history_mut(&mut self) -> &mut NavHistory {
-    //         &mut self.nav_history
-    //     }
+    pub fn nav_history_mut(&mut self) -> &mut NavHistory {
+        &mut self.nav_history
+    }
 
-    //     pub fn disable_history(&mut self) {
-    //         self.nav_history.disable();
-    //     }
+    pub fn disable_history(&mut self) {
+        self.nav_history.disable();
+    }
 
-    //     pub fn enable_history(&mut self) {
-    //         self.nav_history.enable();
-    //     }
+    pub fn enable_history(&mut self) {
+        self.nav_history.enable();
+    }
 
-    //     pub fn can_navigate_backward(&self) -> bool {
-    //         !self.nav_history.0.borrow().backward_stack.is_empty()
-    //     }
+    pub fn can_navigate_backward(&self) -> bool {
+        !self.nav_history.0.lock().backward_stack.is_empty()
+    }
 
-    //     pub fn can_navigate_forward(&self) -> bool {
-    //         !self.nav_history.0.borrow().forward_stack.is_empty()
-    //     }
+    pub fn can_navigate_forward(&self) -> bool {
+        !self.nav_history.0.lock().forward_stack.is_empty()
+    }
 
-    //     fn history_updated(&mut self, cx: &mut ViewContext<Self>) {
-    //         self.toolbar.update(cx, |_, cx| cx.notify());
-    //     }
+    fn history_updated(&mut self, cx: &mut ViewContext<Self>) {
+        self.toolbar.update(cx, |_, cx| cx.notify());
+    }
 
     pub(crate) fn open_item(
         &mut self,
@@ -532,7 +532,7 @@ impl Pane {
                     let abs_path = project.absolute_path(&project_path, cx);
                     self.nav_history
                         .0
-                        .borrow_mut()
+                        .lock()
                         .paths_by_item
                         .insert(item.id(), (project_path, abs_path));
                 }
@@ -615,13 +615,13 @@ impl Pane {
         cx.emit(Event::AddItem { item });
     }
 
-    //     pub fn items_len(&self) -> usize {
-    //         self.items.len()
-    //     }
+    pub fn items_len(&self) -> usize {
+        self.items.len()
+    }
 
-    //     pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> + DoubleEndedIterator {
-    //         self.items.iter()
-    //     }
+    pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> + DoubleEndedIterator {
+        self.items.iter()
+    }
 
     //     pub fn items_of_type<T: View>(&self) -> impl '_ + Iterator<Item = ViewHandle<T>> {
     //         self.items
@@ -629,9 +629,9 @@ impl Pane {
     //             .filter_map(|item| item.as_any().clone().downcast())
     //     }
 
-    //     pub fn active_item(&self) -> Option<Box<dyn ItemHandle>> {
-    //         self.items.get(self.active_item_index).cloned()
-    //     }
+    pub fn active_item(&self) -> Option<Box<dyn ItemHandle>> {
+        self.items.get(self.active_item_index).cloned()
+    }
 
     //     pub fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Vector2F> {
     //         self.items
@@ -653,9 +653,9 @@ impl Pane {
     //         })
     //     }
 
-    //     pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
-    //         self.items.iter().position(|i| i.id() == item.id())
-    //     }
+    pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
+        self.items.iter().position(|i| i.id() == item.id())
+    }
 
     //     pub fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
     //         // Potentially warn the user of the new keybinding
@@ -751,448 +751,445 @@ impl Pane {
     //         ))
     //     }
 
-    //     pub fn close_item_by_id(
-    //         &mut self,
-    //         item_id_to_close: usize,
-    //         save_intent: SaveIntent,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<Result<()>> {
-    //         self.close_items(cx, save_intent, move |view_id| view_id == item_id_to_close)
+    pub fn close_item_by_id(
+        &mut self,
+        item_id_to_close: EntityId,
+        save_intent: SaveIntent,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        self.close_items(cx, save_intent, move |view_id| view_id == item_id_to_close)
+    }
+
+    // pub fn close_inactive_items(
+    //     &mut self,
+    //     _: &CloseInactiveItems,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Option<Task<Result<()>>> {
+    //     if self.items.is_empty() {
+    //         return None;
     //     }
 
-    //     pub fn close_inactive_items(
-    //         &mut self,
-    //         _: &CloseInactiveItems,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         if self.items.is_empty() {
-    //             return None;
-    //         }
+    //     let active_item_id = self.items[self.active_item_index].id();
+    //     Some(self.close_items(cx, SaveIntent::Close, move |item_id| {
+    //         item_id != active_item_id
+    //     }))
+    // }
 
-    //         let active_item_id = self.items[self.active_item_index].id();
-    //         Some(self.close_items(cx, SaveIntent::Close, move |item_id| {
-    //             item_id != active_item_id
-    //         }))
+    // pub fn close_clean_items(
+    //     &mut self,
+    //     _: &CloseCleanItems,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Option<Task<Result<()>>> {
+    //     let item_ids: Vec<_> = self
+    //         .items()
+    //         .filter(|item| !item.is_dirty(cx))
+    //         .map(|item| item.id())
+    //         .collect();
+    //     Some(self.close_items(cx, SaveIntent::Close, move |item_id| {
+    //         item_ids.contains(&item_id)
+    //     }))
+    // }
+
+    // pub fn close_items_to_the_left(
+    //     &mut self,
+    //     _: &CloseItemsToTheLeft,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Option<Task<Result<()>>> {
+    //     if self.items.is_empty() {
+    //         return None;
+    //     }
+    //     let active_item_id = self.items[self.active_item_index].id();
+    //     Some(self.close_items_to_the_left_by_id(active_item_id, cx))
+    // }
+
+    // pub fn close_items_to_the_left_by_id(
+    //     &mut self,
+    //     item_id: usize,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Task<Result<()>> {
+    //     let item_ids: Vec<_> = self
+    //         .items()
+    //         .take_while(|item| item.id() != item_id)
+    //         .map(|item| item.id())
+    //         .collect();
+    //     self.close_items(cx, SaveIntent::Close, move |item_id| {
+    //         item_ids.contains(&item_id)
+    //     })
+    // }
+
+    // pub fn close_items_to_the_right(
+    //     &mut self,
+    //     _: &CloseItemsToTheRight,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Option<Task<Result<()>>> {
+    //     if self.items.is_empty() {
+    //         return None;
+    //     }
+    //     let active_item_id = self.items[self.active_item_index].id();
+    //     Some(self.close_items_to_the_right_by_id(active_item_id, cx))
+    // }
+
+    // pub fn close_items_to_the_right_by_id(
+    //     &mut self,
+    //     item_id: usize,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Task<Result<()>> {
+    //     let item_ids: Vec<_> = self
+    //         .items()
+    //         .rev()
+    //         .take_while(|item| item.id() != item_id)
+    //         .map(|item| item.id())
+    //         .collect();
+    //     self.close_items(cx, SaveIntent::Close, move |item_id| {
+    //         item_ids.contains(&item_id)
+    //     })
+    // }
+
+    // pub fn close_all_items(
+    //     &mut self,
+    //     action: &CloseAllItems,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Option<Task<Result<()>>> {
+    //     if self.items.is_empty() {
+    //         return None;
     //     }
 
-    //     pub fn close_clean_items(
-    //         &mut self,
-    //         _: &CloseCleanItems,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         let item_ids: Vec<_> = self
-    //             .items()
-    //             .filter(|item| !item.is_dirty(cx))
-    //             .map(|item| item.id())
-    //             .collect();
-    //         Some(self.close_items(cx, SaveIntent::Close, move |item_id| {
-    //             item_ids.contains(&item_id)
-    //         }))
-    //     }
+    //     Some(
+    //         self.close_items(cx, action.save_intent.unwrap_or(SaveIntent::Close), |_| {
+    //             true
+    //         }),
+    //     )
+    // }
 
-    //     pub fn close_items_to_the_left(
-    //         &mut self,
-    //         _: &CloseItemsToTheLeft,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         if self.items.is_empty() {
-    //             return None;
-    //         }
-    //         let active_item_id = self.items[self.active_item_index].id();
-    //         Some(self.close_items_to_the_left_by_id(active_item_id, cx))
-    //     }
+    pub(super) fn file_names_for_prompt(
+        items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
+        all_dirty_items: usize,
+        cx: &AppContext,
+    ) -> String {
+        /// Quantity of item paths displayed in prompt prior to cutoff..
+        const FILE_NAMES_CUTOFF_POINT: usize = 10;
+        let mut file_names: Vec<_> = items
+            .filter_map(|item| {
+                item.project_path(cx).and_then(|project_path| {
+                    project_path
+                        .path
+                        .file_name()
+                        .and_then(|name| name.to_str().map(ToOwned::to_owned))
+                })
+            })
+            .take(FILE_NAMES_CUTOFF_POINT)
+            .collect();
+        let should_display_followup_text =
+            all_dirty_items > FILE_NAMES_CUTOFF_POINT || file_names.len() != all_dirty_items;
+        if should_display_followup_text {
+            let not_shown_files = all_dirty_items - file_names.len();
+            if not_shown_files == 1 {
+                file_names.push(".. 1 file not shown".into());
+            } else {
+                file_names.push(format!(".. {} files not shown", not_shown_files).into());
+            }
+        }
+        let file_names = file_names.join("\n");
+        format!(
+            "Do you want to save changes to the following {} files?\n{file_names}",
+            all_dirty_items
+        )
+    }
 
-    //     pub fn close_items_to_the_left_by_id(
-    //         &mut self,
-    //         item_id: usize,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<Result<()>> {
-    //         let item_ids: Vec<_> = self
-    //             .items()
-    //             .take_while(|item| item.id() != item_id)
-    //             .map(|item| item.id())
-    //             .collect();
-    //         self.close_items(cx, SaveIntent::Close, move |item_id| {
-    //             item_ids.contains(&item_id)
-    //         })
-    //     }
+    pub fn close_items(
+        &mut self,
+        cx: &mut ViewContext<Pane>,
+        mut save_intent: SaveIntent,
+        should_close: impl 'static + Fn(EntityId) -> bool,
+    ) -> Task<Result<()>> {
+        // Find the items to close.
+        let mut items_to_close = Vec::new();
+        let mut dirty_items = Vec::new();
+        for item in &self.items {
+            if should_close(item.id()) {
+                items_to_close.push(item.boxed_clone());
+                if item.is_dirty(cx) {
+                    dirty_items.push(item.boxed_clone());
+                }
+            }
+        }
 
-    //     pub fn close_items_to_the_right(
-    //         &mut self,
-    //         _: &CloseItemsToTheRight,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         if self.items.is_empty() {
-    //             return None;
-    //         }
-    //         let active_item_id = self.items[self.active_item_index].id();
-    //         Some(self.close_items_to_the_right_by_id(active_item_id, cx))
-    //     }
+        // If a buffer is open both in a singleton editor and in a multibuffer, make sure
+        // to focus the singleton buffer when prompting to save that buffer, as opposed
+        // to focusing the multibuffer, because this gives the user a more clear idea
+        // of what content they would be saving.
+        items_to_close.sort_by_key(|item| !item.is_singleton(cx));
 
-    //     pub fn close_items_to_the_right_by_id(
-    //         &mut self,
-    //         item_id: usize,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<Result<()>> {
-    //         let item_ids: Vec<_> = self
-    //             .items()
-    //             .rev()
-    //             .take_while(|item| item.id() != item_id)
-    //             .map(|item| item.id())
-    //             .collect();
-    //         self.close_items(cx, SaveIntent::Close, move |item_id| {
-    //             item_ids.contains(&item_id)
-    //         })
-    //     }
+        let workspace = self.workspace.clone();
+        cx.spawn(|pane, mut cx| async move {
+            if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
+                let answer = pane.update(&mut cx, |_, cx| {
+                    let prompt =
+                        Self::file_names_for_prompt(&mut dirty_items.iter(), dirty_items.len(), cx);
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        &prompt,
+                        &["Save all", "Discard all", "Cancel"],
+                    )
+                })?;
+                match answer.await {
+                    Ok(0) => save_intent = SaveIntent::SaveAll,
+                    Ok(1) => save_intent = SaveIntent::Skip,
+                    _ => {}
+                }
+            }
+            let mut saved_project_items_ids = HashSet::default();
+            for item in items_to_close.clone() {
+                // Find the item's current index and its set of project item models. Avoid
+                // storing these in advance, in case they have changed since this task
+                // was started.
+                let (item_ix, mut project_item_ids) = pane.update(&mut cx, |pane, cx| {
+                    (pane.index_for_item(&*item), item.project_item_model_ids(cx))
+                })?;
+                let item_ix = if let Some(ix) = item_ix {
+                    ix
+                } else {
+                    continue;
+                };
 
-    //     pub fn close_all_items(
-    //         &mut self,
-    //         action: &CloseAllItems,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         if self.items.is_empty() {
-    //             return None;
-    //         }
+                // Check if this view has any project items that are not open anywhere else
+                // in the workspace, AND that the user has not already been prompted to save.
+                // If there are any such project entries, prompt the user to save this item.
+                let project = workspace.update(&mut cx, |workspace, cx| {
+                    for item in workspace.items(cx) {
+                        if !items_to_close
+                            .iter()
+                            .any(|item_to_close| item_to_close.id() == item.id())
+                        {
+                            let other_project_item_ids = item.project_item_model_ids(cx);
+                            project_item_ids.retain(|id| !other_project_item_ids.contains(id));
+                        }
+                    }
+                    workspace.project().clone()
+                })?;
+                let should_save = project_item_ids
+                    .iter()
+                    .any(|id| saved_project_items_ids.insert(*id));
 
-    //         Some(
-    //             self.close_items(cx, action.save_intent.unwrap_or(SaveIntent::Close), |_| {
-    //                 true
-    //             }),
-    //         )
-    //     }
+                if should_save
+                    && !Self::save_item(
+                        project.clone(),
+                        &pane,
+                        item_ix,
+                        &*item,
+                        save_intent,
+                        &mut cx,
+                    )
+                    .await?
+                {
+                    break;
+                }
 
-    //     pub(super) fn file_names_for_prompt(
-    //         items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
-    //         all_dirty_items: usize,
-    //         cx: &AppContext,
-    //     ) -> String {
-    //         /// Quantity of item paths displayed in prompt prior to cutoff..
-    //         const FILE_NAMES_CUTOFF_POINT: usize = 10;
-    //         let mut file_names: Vec<_> = items
-    //             .filter_map(|item| {
-    //                 item.project_path(cx).and_then(|project_path| {
-    //                     project_path
-    //                         .path
-    //                         .file_name()
-    //                         .and_then(|name| name.to_str().map(ToOwned::to_owned))
-    //                 })
-    //             })
-    //             .take(FILE_NAMES_CUTOFF_POINT)
-    //             .collect();
-    //         let should_display_followup_text =
-    //             all_dirty_items > FILE_NAMES_CUTOFF_POINT || file_names.len() != all_dirty_items;
-    //         if should_display_followup_text {
-    //             let not_shown_files = all_dirty_items - file_names.len();
-    //             if not_shown_files == 1 {
-    //                 file_names.push(".. 1 file not shown".into());
-    //             } else {
-    //                 file_names.push(format!(".. {} files not shown", not_shown_files).into());
-    //             }
-    //         }
-    //         let file_names = file_names.join("\n");
-    //         format!(
-    //             "Do you want to save changes to the following {} files?\n{file_names}",
-    //             all_dirty_items
-    //         )
-    //     }
+                // Remove the item from the pane.
+                pane.update(&mut cx, |pane, cx| {
+                    if let Some(item_ix) = pane.items.iter().position(|i| i.id() == item.id()) {
+                        pane.remove_item(item_ix, false, cx);
+                    }
+                })?;
+            }
 
-    //     pub fn close_items(
-    //         &mut self,
-    //         cx: &mut ViewContext<Pane>,
-    //         mut save_intent: SaveIntent,
-    //         should_close: impl 'static + Fn(usize) -> bool,
-    //     ) -> Task<Result<()>> {
-    //         // Find the items to close.
-    //         let mut items_to_close = Vec::new();
-    //         let mut dirty_items = Vec::new();
-    //         for item in &self.items {
-    //             if should_close(item.id()) {
-    //                 items_to_close.push(item.boxed_clone());
-    //                 if item.is_dirty(cx) {
-    //                     dirty_items.push(item.boxed_clone());
-    //                 }
-    //             }
-    //         }
+            pane.update(&mut cx, |_, cx| cx.notify())?;
+            Ok(())
+        })
+    }
 
-    //         // If a buffer is open both in a singleton editor and in a multibuffer, make sure
-    //         // to focus the singleton buffer when prompting to save that buffer, as opposed
-    //         // to focusing the multibuffer, because this gives the user a more clear idea
-    //         // of what content they would be saving.
-    //         items_to_close.sort_by_key(|item| !item.is_singleton(cx));
+    pub fn remove_item(
+        &mut self,
+        item_index: usize,
+        activate_pane: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.activation_history
+            .retain(|&history_entry| history_entry != self.items[item_index].id());
 
-    //         let workspace = self.workspace.clone();
-    //         cx.spawn(|pane, mut cx| async move {
-    //             if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
-    //                 let mut answer = pane.update(&mut cx, |_, cx| {
-    //                     let prompt =
-    //                         Self::file_names_for_prompt(&mut dirty_items.iter(), dirty_items.len(), cx);
-    //                     cx.prompt(
-    //                         PromptLevel::Warning,
-    //                         &prompt,
-    //                         &["Save all", "Discard all", "Cancel"],
-    //                     )
-    //                 })?;
-    //                 match answer.next().await {
-    //                     Some(0) => save_intent = SaveIntent::SaveAll,
-    //                     Some(1) => save_intent = SaveIntent::Skip,
-    //                     _ => {}
-    //                 }
-    //             }
-    //             let mut saved_project_items_ids = HashSet::default();
-    //             for item in items_to_close.clone() {
-    //                 // Find the item's current index and its set of project item models. Avoid
-    //                 // storing these in advance, in case they have changed since this task
-    //                 // was started.
-    //                 let (item_ix, mut project_item_ids) = pane.read_with(&cx, |pane, cx| {
-    //                     (pane.index_for_item(&*item), item.project_item_model_ids(cx))
-    //                 })?;
-    //                 let item_ix = if let Some(ix) = item_ix {
-    //                     ix
-    //                 } else {
-    //                     continue;
-    //                 };
+        if item_index == self.active_item_index {
+            let index_to_activate = self
+                .activation_history
+                .pop()
+                .and_then(|last_activated_item| {
+                    self.items.iter().enumerate().find_map(|(index, item)| {
+                        (item.id() == last_activated_item).then_some(index)
+                    })
+                })
+                // We didn't have a valid activation history entry, so fallback
+                // to activating the item to the left
+                .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1));
 
-    //                 // Check if this view has any project items that are not open anywhere else
-    //                 // in the workspace, AND that the user has not already been prompted to save.
-    //                 // If there are any such project entries, prompt the user to save this item.
-    //                 let project = workspace.read_with(&cx, |workspace, cx| {
-    //                     for item in workspace.items(cx) {
-    //                         if !items_to_close
-    //                             .iter()
-    //                             .any(|item_to_close| item_to_close.id() == item.id())
-    //                         {
-    //                             let other_project_item_ids = item.project_item_model_ids(cx);
-    //                             project_item_ids.retain(|id| !other_project_item_ids.contains(id));
-    //                         }
-    //                     }
-    //                     workspace.project().clone()
-    //                 })?;
-    //                 let should_save = project_item_ids
-    //                     .iter()
-    //                     .any(|id| saved_project_items_ids.insert(*id));
+            let should_activate = activate_pane || self.has_focus;
+            self.activate_item(index_to_activate, should_activate, should_activate, cx);
+        }
 
-    //                 if should_save
-    //                     && !Self::save_item(
-    //                         project.clone(),
-    //                         &pane,
-    //                         item_ix,
-    //                         &*item,
-    //                         save_intent,
-    //                         &mut cx,
-    //                     )
-    //                     .await?
-    //                 {
-    //                     break;
-    //                 }
+        let item = self.items.remove(item_index);
 
-    //                 // Remove the item from the pane.
-    //                 pane.update(&mut cx, |pane, cx| {
-    //                     if let Some(item_ix) = pane.items.iter().position(|i| i.id() == item.id()) {
-    //                         pane.remove_item(item_ix, false, cx);
-    //                     }
-    //                 })?;
-    //             }
+        cx.emit(Event::RemoveItem { item_id: item.id() });
+        if self.items.is_empty() {
+            item.deactivated(cx);
+            self.update_toolbar(cx);
+            cx.emit(Event::Remove);
+        }
 
-    //             pane.update(&mut cx, |_, cx| cx.notify())?;
-    //             Ok(())
-    //         })
-    //     }
+        if item_index < self.active_item_index {
+            self.active_item_index -= 1;
+        }
 
-    //     pub fn remove_item(
-    //         &mut self,
-    //         item_index: usize,
-    //         activate_pane: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.activation_history
-    //             .retain(|&history_entry| history_entry != self.items[item_index].id());
+        self.nav_history.set_mode(NavigationMode::ClosingItem);
+        item.deactivated(cx);
+        self.nav_history.set_mode(NavigationMode::Normal);
 
-    //         if item_index == self.active_item_index {
-    //             let index_to_activate = self
-    //                 .activation_history
-    //                 .pop()
-    //                 .and_then(|last_activated_item| {
-    //                     self.items.iter().enumerate().find_map(|(index, item)| {
-    //                         (item.id() == last_activated_item).then_some(index)
-    //                     })
-    //                 })
-    //                 // We didn't have a valid activation history entry, so fallback
-    //                 // to activating the item to the left
-    //                 .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1));
+        if let Some(path) = item.project_path(cx) {
+            let abs_path = self
+                .nav_history
+                .0
+                .lock()
+                .paths_by_item
+                .get(&item.id())
+                .and_then(|(_, abs_path)| abs_path.clone());
 
-    //             let should_activate = activate_pane || self.has_focus;
-    //             self.activate_item(index_to_activate, should_activate, should_activate, cx);
-    //         }
+            self.nav_history
+                .0
+                .lock()
+                .paths_by_item
+                .insert(item.id(), (path, abs_path));
+        } else {
+            self.nav_history.0.lock().paths_by_item.remove(&item.id());
+        }
 
-    //         let item = self.items.remove(item_index);
+        if self.items.is_empty() && self.zoomed {
+            cx.emit(Event::ZoomOut);
+        }
 
-    //         cx.emit(Event::RemoveItem { item_id: item.id() });
-    //         if self.items.is_empty() {
-    //             item.deactivated(cx);
-    //             self.update_toolbar(cx);
-    //             cx.emit(Event::Remove);
-    //         }
+        cx.notify();
+    }
 
-    //         if item_index < self.active_item_index {
-    //             self.active_item_index -= 1;
-    //         }
+    pub async fn save_item(
+        project: Model<Project>,
+        pane: &WeakView<Pane>,
+        item_ix: usize,
+        item: &dyn ItemHandle,
+        save_intent: SaveIntent,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<bool> {
+        const CONFLICT_MESSAGE: &str =
+                "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
-    //         self.nav_history.set_mode(NavigationMode::ClosingItem);
-    //         item.deactivated(cx);
-    //         self.nav_history.set_mode(NavigationMode::Normal);
+        if save_intent == SaveIntent::Skip {
+            return Ok(true);
+        }
 
-    //         if let Some(path) = item.project_path(cx) {
-    //             let abs_path = self
-    //                 .nav_history
-    //                 .0
-    //                 .borrow()
-    //                 .paths_by_item
-    //                 .get(&item.id())
-    //                 .and_then(|(_, abs_path)| abs_path.clone());
+        let (mut has_conflict, mut is_dirty, mut can_save, can_save_as) = cx.update(|_, cx| {
+            (
+                item.has_conflict(cx),
+                item.is_dirty(cx),
+                item.can_save(cx),
+                item.is_singleton(cx),
+            )
+        })?;
 
-    //             self.nav_history
-    //                 .0
-    //                 .borrow_mut()
-    //                 .paths_by_item
-    //                 .insert(item.id(), (path, abs_path));
-    //         } else {
-    //             self.nav_history
-    //                 .0
-    //                 .borrow_mut()
-    //                 .paths_by_item
-    //                 .remove(&item.id());
-    //         }
+        // when saving a single buffer, we ignore whether or not it's dirty.
+        if save_intent == SaveIntent::Save {
+            is_dirty = true;
+        }
 
-    //         if self.items.is_empty() && self.zoomed {
-    //             cx.emit(Event::ZoomOut);
-    //         }
+        if save_intent == SaveIntent::SaveAs {
+            is_dirty = true;
+            has_conflict = false;
+            can_save = false;
+        }
 
-    //         cx.notify();
-    //     }
+        if save_intent == SaveIntent::Overwrite {
+            has_conflict = false;
+        }
 
-    //     pub async fn save_item(
-    //         project: ModelHandle<Project>,
-    //         pane: &WeakViewHandle<Pane>,
-    //         item_ix: usize,
-    //         item: &dyn ItemHandle,
-    //         save_intent: SaveIntent,
-    //         cx: &mut AsyncAppContext,
-    //     ) -> Result<bool> {
-    //         const CONFLICT_MESSAGE: &str =
-    //             "This file has changed on disk since you started editing it. Do you want to overwrite it?";
+        if has_conflict && can_save {
+            let answer = pane.update(cx, |pane, cx| {
+                pane.activate_item(item_ix, true, true, cx);
+                cx.prompt(
+                    PromptLevel::Warning,
+                    CONFLICT_MESSAGE,
+                    &["Overwrite", "Discard", "Cancel"],
+                )
+            })?;
+            match answer.await {
+                Ok(0) => pane.update(cx, |_, cx| item.save(project, cx))?.await?,
+                Ok(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
+                _ => return Ok(false),
+            }
+        } else if is_dirty && (can_save || can_save_as) {
+            if save_intent == SaveIntent::Close {
+                let will_autosave = cx.update(|_, cx| {
+                    matches!(
+                        WorkspaceSettings::get_global(cx).autosave,
+                        AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
+                    ) && Self::can_autosave_item(&*item, cx)
+                })?;
+                if !will_autosave {
+                    let answer = pane.update(cx, |pane, cx| {
+                        pane.activate_item(item_ix, true, true, cx);
+                        let prompt = dirty_message_for(item.project_path(cx));
+                        cx.prompt(
+                            PromptLevel::Warning,
+                            &prompt,
+                            &["Save", "Don't Save", "Cancel"],
+                        )
+                    })?;
+                    match answer.await {
+                        Ok(0) => {}
+                        Ok(1) => return Ok(true), // Don't save this file
+                        _ => return Ok(false),    // Cancel
+                    }
+                }
+            }
 
-    //         if save_intent == SaveIntent::Skip {
-    //             return Ok(true);
-    //         }
+            if can_save {
+                pane.update(cx, |_, cx| item.save(project, cx))?.await?;
+            } else if can_save_as {
+                let start_abs_path = project
+                    .update(cx, |project, cx| {
+                        let worktree = project.visible_worktrees(cx).next()?;
+                        Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                    })?
+                    .unwrap_or_else(|| Path::new("").into());
 
-    //         let (mut has_conflict, mut is_dirty, mut can_save, can_save_as) = cx.read(|cx| {
-    //             (
-    //                 item.has_conflict(cx),
-    //                 item.is_dirty(cx),
-    //                 item.can_save(cx),
-    //                 item.is_singleton(cx),
-    //             )
-    //         });
+                let abs_path = cx.update(|_, cx| cx.prompt_for_new_path(&start_abs_path))?;
+                if let Some(abs_path) = abs_path.await.ok().flatten() {
+                    pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))?
+                        .await?;
+                } else {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
 
-    //         // when saving a single buffer, we ignore whether or not it's dirty.
-    //         if save_intent == SaveIntent::Save {
-    //             is_dirty = true;
-    //         }
+    fn can_autosave_item(item: &dyn ItemHandle, cx: &AppContext) -> bool {
+        let is_deleted = item.project_entry_ids(cx).is_empty();
+        item.is_dirty(cx) && !item.has_conflict(cx) && item.can_save(cx) && !is_deleted
+    }
 
-    //         if save_intent == SaveIntent::SaveAs {
-    //             is_dirty = true;
-    //             has_conflict = false;
-    //             can_save = false;
-    //         }
+    pub fn autosave_item(
+        item: &dyn ItemHandle,
+        project: Model<Project>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        if Self::can_autosave_item(item, cx) {
+            item.save(project, cx)
+        } else {
+            Task::ready(Ok(()))
+        }
+    }
 
-    //         if save_intent == SaveIntent::Overwrite {
-    //             has_conflict = false;
-    //         }
-
-    //         if has_conflict && can_save {
-    //             let mut answer = pane.update(cx, |pane, cx| {
-    //                 pane.activate_item(item_ix, true, true, cx);
-    //                 cx.prompt(
-    //                     PromptLevel::Warning,
-    //                     CONFLICT_MESSAGE,
-    //                     &["Overwrite", "Discard", "Cancel"],
-    //                 )
-    //             })?;
-    //             match answer.next().await {
-    //                 Some(0) => pane.update(cx, |_, cx| item.save(project, cx))?.await?,
-    //                 Some(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
-    //                 _ => return Ok(false),
-    //             }
-    //         } else if is_dirty && (can_save || can_save_as) {
-    //             if save_intent == SaveIntent::Close {
-    //                 let will_autosave = cx.read(|cx| {
-    //                     matches!(
-    //                         settings::get::<WorkspaceSettings>(cx).autosave,
-    //                         AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
-    //                     ) && Self::can_autosave_item(&*item, cx)
-    //                 });
-    //                 if !will_autosave {
-    //                     let mut answer = pane.update(cx, |pane, cx| {
-    //                         pane.activate_item(item_ix, true, true, cx);
-    //                         let prompt = dirty_message_for(item.project_path(cx));
-    //                         cx.prompt(
-    //                             PromptLevel::Warning,
-    //                             &prompt,
-    //                             &["Save", "Don't Save", "Cancel"],
-    //                         )
-    //                     })?;
-    //                     match answer.next().await {
-    //                         Some(0) => {}
-    //                         Some(1) => return Ok(true), // Don't save his file
-    //                         _ => return Ok(false),      // Cancel
-    //                     }
-    //                 }
-    //             }
-
-    //             if can_save {
-    //                 pane.update(cx, |_, cx| item.save(project, cx))?.await?;
-    //             } else if can_save_as {
-    //                 let start_abs_path = project
-    //                     .read_with(cx, |project, cx| {
-    //                         let worktree = project.visible_worktrees(cx).next()?;
-    //                         Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
-    //                     })
-    //                     .unwrap_or_else(|| Path::new("").into());
-
-    //                 let mut abs_path = cx.update(|cx| cx.prompt_for_new_path(&start_abs_path));
-    //                 if let Some(abs_path) = abs_path.next().await.flatten() {
-    //                     pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))?
-    //                         .await?;
-    //                 } else {
-    //                     return Ok(false);
-    //                 }
-    //             }
-    //         }
-    //         Ok(true)
-    //     }
-
-    //     fn can_autosave_item(item: &dyn ItemHandle, cx: &AppContext) -> bool {
-    //         let is_deleted = item.project_entry_ids(cx).is_empty();
-    //         item.is_dirty(cx) && !item.has_conflict(cx) && item.can_save(cx) && !is_deleted
-    //     }
-
-    //     pub fn autosave_item(
-    //         item: &dyn ItemHandle,
-    //         project: ModelHandle<Project>,
-    //         cx: &mut WindowContext,
-    //     ) -> Task<Result<()>> {
-    //         if Self::can_autosave_item(item, cx) {
-    //             item.save(project, cx)
-    //         } else {
-    //             Task::ready(Ok(()))
-    //         }
-    //     }
-
-    //     pub fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
-    //         if let Some(active_item) = self.active_item() {
-    //             cx.focus(active_item.as_any());
-    //         }
-    //     }
+    pub fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
+        todo!();
+        // if let Some(active_item) = self.active_item() {
+        //     cx.focus(active_item.as_any());
+        // }
+    }
 
     //     pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
     //         cx.emit(Event::Split(direction));
@@ -1317,38 +1314,178 @@ impl Pane {
     //         });
     //     }
 
-    //     pub fn toolbar(&self) -> &ViewHandle<Toolbar> {
-    //         &self.toolbar
-    //     }
+    pub fn toolbar(&self) -> &View<Toolbar> {
+        &self.toolbar
+    }
 
-    //     pub fn handle_deleted_project_item(
-    //         &mut self,
-    //         entry_id: ProjectEntryId,
-    //         cx: &mut ViewContext<Pane>,
-    //     ) -> Option<()> {
-    //         let (item_index_to_delete, item_id) = self.items().enumerate().find_map(|(i, item)| {
-    //             if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
-    //                 Some((i, item.id()))
-    //             } else {
-    //                 None
-    //             }
-    //         })?;
+    pub fn handle_deleted_project_item(
+        &mut self,
+        entry_id: ProjectEntryId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Option<()> {
+        let (item_index_to_delete, item_id) = self.items().enumerate().find_map(|(i, item)| {
+            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
+                Some((i, item.id()))
+            } else {
+                None
+            }
+        })?;
 
-    //         self.remove_item(item_index_to_delete, false, cx);
-    //         self.nav_history.remove_item(item_id);
+        self.remove_item(item_index_to_delete, false, cx);
+        self.nav_history.remove_item(item_id);
 
-    //         Some(())
-    //     }
+        Some(())
+    }
 
-    //     fn update_toolbar(&mut self, cx: &mut ViewContext<Self>) {
-    //         let active_item = self
-    //             .items
-    //             .get(self.active_item_index)
-    //             .map(|item| item.as_ref());
-    //         self.toolbar.update(cx, |toolbar, cx| {
-    //             toolbar.set_active_item(active_item, cx);
-    //         });
-    //     }
+    fn update_toolbar(&mut self, cx: &mut ViewContext<Self>) {
+        let active_item = self
+            .items
+            .get(self.active_item_index)
+            .map(|item| item.as_ref());
+        self.toolbar.update(cx, |toolbar, cx| {
+            toolbar.set_active_item(active_item, cx);
+        });
+    }
+
+    fn render_tab(
+        &self,
+        ix: usize,
+        item: &Box<dyn ItemHandle>,
+        detail: usize,
+        cx: &mut ViewContext<'_, Pane>,
+    ) -> impl Component<Self> {
+        let label = item.tab_content(Some(detail), cx);
+        let close_icon = || IconElement::new(Icon::Close).color(IconColor::Muted);
+
+        let (tab_bg, tab_hover_bg, tab_active_bg) = match ix == self.active_item_index {
+            false => (
+                cx.theme().colors().tab_inactive,
+                cx.theme().colors().ghost_element_hover,
+                cx.theme().colors().ghost_element_active,
+            ),
+            true => (
+                cx.theme().colors().tab_active,
+                cx.theme().colors().element_hover,
+                cx.theme().colors().element_active,
+            ),
+        };
+
+        let close_right = ItemSettings::get_global(cx).close_position.right();
+
+        div()
+            .id(item.id())
+            // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
+            // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
+            // .on_drop(|_view, state: View<DraggedTab>, cx| {
+            //     eprintln!("{:?}", state.read(cx));
+            // })
+            .px_2()
+            .py_0p5()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(tab_bg)
+            .hover(|h| h.bg(tab_hover_bg))
+            .active(|a| a.bg(tab_active_bg))
+            .child(
+                div()
+                    .px_1()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .children(if item.has_conflict(cx) {
+                        Some(
+                            IconElement::new(Icon::ExclamationTriangle)
+                                .size(ui::IconSize::Small)
+                                .color(IconColor::Warning),
+                        )
+                    } else if item.is_dirty(cx) {
+                        Some(
+                            IconElement::new(Icon::ExclamationTriangle)
+                                .size(ui::IconSize::Small)
+                                .color(IconColor::Info),
+                        )
+                    } else {
+                        None
+                    })
+                    .children(if !close_right {
+                        Some(close_icon())
+                    } else {
+                        None
+                    })
+                    .child(label)
+                    .children(if close_right {
+                        Some(close_icon())
+                    } else {
+                        None
+                    }),
+            )
+    }
+
+    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl Component<Self> {
+        div()
+            .group("tab_bar")
+            .id("tab_bar")
+            .w_full()
+            .flex()
+            .bg(cx.theme().colors().tab_bar)
+            // Left Side
+            .child(
+                div()
+                    .relative()
+                    .px_1()
+                    .flex()
+                    .flex_none()
+                    .gap_2()
+                    // Nav Buttons
+                    .child(
+                        div()
+                            .right_0()
+                            .flex()
+                            .items_center()
+                            .gap_px()
+                            .child(IconButton::new("navigate_backward", Icon::ArrowLeft).state(
+                                InteractionState::Enabled.if_enabled(self.can_navigate_backward()),
+                            ))
+                            .child(IconButton::new("navigate_forward", Icon::ArrowRight).state(
+                                InteractionState::Enabled.if_enabled(self.can_navigate_forward()),
+                            )),
+                    ),
+            )
+            .child(
+                div().w_0().flex_1().h_full().child(
+                    div().id("tabs").flex().overflow_x_scroll().children(
+                        self.items
+                            .iter()
+                            .enumerate()
+                            .zip(self.tab_details(cx))
+                            .map(|((ix, item), detail)| self.render_tab(ix, item, detail, cx)),
+                    ),
+                ),
+            )
+            // Right Side
+            .child(
+                div()
+                    // We only use absolute here since we don't
+                    // have opacity or `hidden()` yet
+                    .absolute()
+                    .neg_top_7()
+                    .px_1()
+                    .flex()
+                    .flex_none()
+                    .gap_2()
+                    .group_hover("tab_bar", |this| this.top_0())
+                    // Nav Buttons
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_px()
+                            .child(IconButton::new("plus", Icon::Plus))
+                            .child(IconButton::new("split", Icon::Split)),
+                    ),
+            )
+    }
 
     //     fn render_tabs(&mut self, cx: &mut ViewContext<Self>) -> impl Element<Self> {
     //         let theme = theme::current(cx).clone();
@@ -1505,46 +1642,46 @@ impl Pane {
     //         row
     //     }
 
-    //     fn tab_details(&self, cx: &AppContext) -> Vec<usize> {
-    //         let mut tab_details = (0..self.items.len()).map(|_| 0).collect::<Vec<_>>();
+    fn tab_details(&self, cx: &AppContext) -> Vec<usize> {
+        let mut tab_details = self.items.iter().map(|_| 0).collect::<Vec<_>>();
 
-    //         let mut tab_descriptions = HashMap::default();
-    //         let mut done = false;
-    //         while !done {
-    //             done = true;
+        let mut tab_descriptions = HashMap::default();
+        let mut done = false;
+        while !done {
+            done = true;
 
-    //             // Store item indices by their tab description.
-    //             for (ix, (item, detail)) in self.items.iter().zip(&tab_details).enumerate() {
-    //                 if let Some(description) = item.tab_description(*detail, cx) {
-    //                     if *detail == 0
-    //                         || Some(&description) != item.tab_description(detail - 1, cx).as_ref()
-    //                     {
-    //                         tab_descriptions
-    //                             .entry(description)
-    //                             .or_insert(Vec::new())
-    //                             .push(ix);
-    //                     }
-    //                 }
-    //             }
+            // Store item indices by their tab description.
+            for (ix, (item, detail)) in self.items.iter().zip(&tab_details).enumerate() {
+                if let Some(description) = item.tab_description(*detail, cx) {
+                    if *detail == 0
+                        || Some(&description) != item.tab_description(detail - 1, cx).as_ref()
+                    {
+                        tab_descriptions
+                            .entry(description)
+                            .or_insert(Vec::new())
+                            .push(ix);
+                    }
+                }
+            }
 
-    //             // If two or more items have the same tab description, increase their level
-    //             // of detail and try again.
-    //             for (_, item_ixs) in tab_descriptions.drain() {
-    //                 if item_ixs.len() > 1 {
-    //                     done = false;
-    //                     for ix in item_ixs {
-    //                         tab_details[ix] += 1;
-    //                     }
-    //                 }
-    //             }
-    //         }
+            // If two or more items have the same tab description, increase eir level
+            // of detail and try again.
+            for (_, item_ixs) in tab_descriptions.drain() {
+                if item_ixs.len() > 1 {
+                    done = false;
+                    for ix in item_ixs {
+                        tab_details[ix] += 1;
+                    }
+                }
+            }
+        }
 
-    //         tab_details
-    //     }
+        tab_details
+    }
 
     //     fn render_tab(
     //         item: &Box<dyn ItemHandle>,
-    //         pane: WeakViewHandle<Pane>,
+    //         pane: WeakView<Pane>,
     //         first: bool,
     //         detail: Option<usize>,
     //         hovered: bool,
@@ -1557,7 +1694,7 @@ impl Pane {
 
     //     fn render_dragged_tab(
     //         item: &Box<dyn ItemHandle>,
-    //         pane: WeakViewHandle<Pane>,
+    //         pane: WeakView<Pane>,
     //         first: bool,
     //         detail: Option<usize>,
     //         hovered: bool,
@@ -1571,7 +1708,7 @@ impl Pane {
     //     fn render_tab_with_title<T: View>(
     //         title: AnyElement<T>,
     //         item: &Box<dyn ItemHandle>,
-    //         pane: WeakViewHandle<Pane>,
+    //         pane: WeakView<Pane>,
     //         first: bool,
     //         hovered: bool,
     //         tab_style: &theme::Tab,
@@ -1728,406 +1865,414 @@ impl Pane {
     //             .into_any()
     //     }
 
-    //     pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
-    //         self.zoomed = zoomed;
-    //         cx.notify();
-    //     }
-
-    //     pub fn is_zoomed(&self) -> bool {
-    //         self.zoomed
-    //     }
-    // }
-
-    // impl Entity for Pane {
-    //     type Event = Event;
-    // }
-
-    // impl View for Pane {
-    //     fn ui_name() -> &'static str {
-    //         "Pane"
-    //     }
-
-    //     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-    //         enum MouseNavigationHandler {}
-
-    //         MouseEventHandler::new::<MouseNavigationHandler, _>(0, cx, |_, cx| {
-    //             let active_item_index = self.active_item_index;
-
-    //             if let Some(active_item) = self.active_item() {
-    //                 Flex::column()
-    //                     .with_child({
-    //                         let theme = theme::current(cx).clone();
-
-    //                         let mut stack = Stack::new();
-
-    //                         enum TabBarEventHandler {}
-    //                         stack.add_child(
-    //                             MouseEventHandler::new::<TabBarEventHandler, _>(0, cx, |_, _| {
-    //                                 Empty::new()
-    //                                     .contained()
-    //                                     .with_style(theme.workspace.tab_bar.container)
-    //                             })
-    //                             .on_down(
-    //                                 MouseButton::Left,
-    //                                 move |_, this, cx| {
-    //                                     this.activate_item(active_item_index, true, true, cx);
-    //                                 },
-    //                             ),
-    //                         );
-    //                         let tooltip_style = theme.tooltip.clone();
-    //                         let tab_bar_theme = theme.workspace.tab_bar.clone();
-
-    //                         let nav_button_height = tab_bar_theme.height;
-    //                         let button_style = tab_bar_theme.nav_button;
-    //                         let border_for_nav_buttons = tab_bar_theme
-    //                             .tab_style(false, false)
-    //                             .container
-    //                             .border
-    //                             .clone();
-
-    //                         let mut tab_row = Flex::row()
-    //                             .with_child(nav_button(
-    //                                 "icons/arrow_left.svg",
-    //                                 button_style.clone(),
-    //                                 nav_button_height,
-    //                                 tooltip_style.clone(),
-    //                                 self.can_navigate_backward(),
-    //                                 {
-    //                                     move |pane, cx| {
-    //                                         if let Some(workspace) = pane.workspace.upgrade(cx) {
-    //                                             let pane = cx.weak_handle();
-    //                                             cx.window_context().defer(move |cx| {
-    //                                                 workspace.update(cx, |workspace, cx| {
-    //                                                     workspace
-    //                                                         .go_back(pane, cx)
-    //                                                         .detach_and_log_err(cx)
-    //                                                 })
-    //                                             })
-    //                                         }
-    //                                     }
-    //                                 },
-    //                                 super::GoBack,
-    //                                 "Go Back",
-    //                                 cx,
-    //                             ))
-    //                             .with_child(
-    //                                 nav_button(
-    //                                     "icons/arrow_right.svg",
-    //                                     button_style.clone(),
-    //                                     nav_button_height,
-    //                                     tooltip_style,
-    //                                     self.can_navigate_forward(),
-    //                                     {
-    //                                         move |pane, cx| {
-    //                                             if let Some(workspace) = pane.workspace.upgrade(cx) {
-    //                                                 let pane = cx.weak_handle();
-    //                                                 cx.window_context().defer(move |cx| {
-    //                                                     workspace.update(cx, |workspace, cx| {
-    //                                                         workspace
-    //                                                             .go_forward(pane, cx)
-    //                                                             .detach_and_log_err(cx)
-    //                                                     })
-    //                                                 })
-    //                                             }
-    //                                         }
-    //                                     },
-    //                                     super::GoForward,
-    //                                     "Go Forward",
-    //                                     cx,
-    //                                 )
-    //                                 .contained()
-    //                                 .with_border(border_for_nav_buttons),
-    //                             )
-    //                             .with_child(self.render_tabs(cx).flex(1., true).into_any_named("tabs"));
-
-    //                         if self.has_focus {
-    //                             let render_tab_bar_buttons = self.render_tab_bar_buttons.clone();
-    //                             tab_row.add_child(
-    //                                 (render_tab_bar_buttons)(self, cx)
-    //                                     .contained()
-    //                                     .with_style(theme.workspace.tab_bar.pane_button_container)
-    //                                     .flex(1., false)
-    //                                     .into_any(),
-    //                             )
-    //                         }
-
-    //                         stack.add_child(tab_row);
-    //                         stack
-    //                             .constrained()
-    //                             .with_height(theme.workspace.tab_bar.height)
-    //                             .flex(1., false)
-    //                             .into_any_named("tab bar")
-    //                     })
-    //                     .with_child({
-    //                         enum PaneContentTabDropTarget {}
-    //                         dragged_item_receiver::<PaneContentTabDropTarget, _, _>(
-    //                             self,
-    //                             0,
-    //                             self.active_item_index + 1,
-    //                             !self.can_split,
-    //                             if self.can_split { Some(100.) } else { None },
-    //                             cx,
-    //                             {
-    //                                 let toolbar = self.toolbar.clone();
-    //                                 let toolbar_hidden = toolbar.read(cx).hidden();
-    //                                 move |_, cx| {
-    //                                     Flex::column()
-    //                                         .with_children(
-    //                                             (!toolbar_hidden)
-    //                                                 .then(|| ChildView::new(&toolbar, cx).expanded()),
-    //                                         )
-    //                                         .with_child(
-    //                                             ChildView::new(active_item.as_any(), cx).flex(1., true),
-    //                                         )
-    //                                 }
-    //                             },
-    //                         )
-    //                         .flex(1., true)
-    //                     })
-    //                     .with_child(ChildView::new(&self.tab_context_menu, cx))
-    //                     .into_any()
-    //             } else {
-    //                 enum EmptyPane {}
-    //                 let theme = theme::current(cx).clone();
-
-    //                 dragged_item_receiver::<EmptyPane, _, _>(self, 0, 0, false, None, cx, |_, cx| {
-    //                     self.render_blank_pane(&theme, cx)
-    //                 })
-    //                 .on_down(MouseButton::Left, |_, _, cx| {
-    //                     cx.focus_parent();
-    //                 })
-    //                 .into_any()
-    //             }
-    //         })
-    //         .on_down(
-    //             MouseButton::Navigate(NavigationDirection::Back),
-    //             move |_, pane, cx| {
-    //                 if let Some(workspace) = pane.workspace.upgrade(cx) {
-    //                     let pane = cx.weak_handle();
-    //                     cx.window_context().defer(move |cx| {
-    //                         workspace.update(cx, |workspace, cx| {
-    //                             workspace.go_back(pane, cx).detach_and_log_err(cx)
-    //                         })
-    //                     })
-    //                 }
-    //             },
-    //         )
-    //         .on_down(MouseButton::Navigate(NavigationDirection::Forward), {
-    //             move |_, pane, cx| {
-    //                 if let Some(workspace) = pane.workspace.upgrade(cx) {
-    //                     let pane = cx.weak_handle();
-    //                     cx.window_context().defer(move |cx| {
-    //                         workspace.update(cx, |workspace, cx| {
-    //                             workspace.go_forward(pane, cx).detach_and_log_err(cx)
-    //                         })
-    //                     })
-    //                 }
-    //             }
-    //         })
-    //         .into_any_named("pane")
-    //     }
-
-    //     fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
-    //         if !self.has_focus {
-    //             self.has_focus = true;
-    //             cx.emit(Event::Focus);
-    //             cx.notify();
-    //         }
-
-    //         self.toolbar.update(cx, |toolbar, cx| {
-    //             toolbar.focus_changed(true, cx);
-    //         });
-
-    //         if let Some(active_item) = self.active_item() {
-    //             if cx.is_self_focused() {
-    //                 // Pane was focused directly. We need to either focus a view inside the active item,
-    //                 // or focus the active item itself
-    //                 if let Some(weak_last_focused_view) =
-    //                     self.last_focused_view_by_item.get(&active_item.id())
-    //                 {
-    //                     if let Some(last_focused_view) = weak_last_focused_view.upgrade(cx) {
-    //                         cx.focus(&last_focused_view);
-    //                         return;
-    //                     } else {
-    //                         self.last_focused_view_by_item.remove(&active_item.id());
-    //                     }
-    //                 }
-
-    //                 cx.focus(active_item.as_any());
-    //             } else if focused != self.tab_bar_context_menu.handle {
-    //                 self.last_focused_view_by_item
-    //                     .insert(active_item.id(), focused.downgrade());
-    //             }
-    //         }
-    //     }
-
-    //     fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-    //         self.has_focus = false;
-    //         self.toolbar.update(cx, |toolbar, cx| {
-    //             toolbar.focus_changed(false, cx);
-    //         });
-    //         cx.notify();
-    //     }
-
-    //     fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
-    //         Self::reset_to_default_keymap_context(keymap);
-    //     }
-    // }
-
-    // impl ItemNavHistory {
-    //     pub fn push<D: 'static + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
-    //         self.history.push(data, self.item.clone(), cx);
-    //     }
-
-    //     pub fn pop_backward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
-    //         self.history.pop(NavigationMode::GoingBack, cx)
-    //     }
-
-    //     pub fn pop_forward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
-    //         self.history.pop(NavigationMode::GoingForward, cx)
-    //     }
-    // }
-
-    // impl NavHistory {
-    //     pub fn for_each_entry(
-    //         &self,
-    //         cx: &AppContext,
-    //         mut f: impl FnMut(&NavigationEntry, (ProjectPath, Option<PathBuf>)),
-    //     ) {
-    //         let borrowed_history = self.0.borrow();
-    //         borrowed_history
-    //             .forward_stack
-    //             .iter()
-    //             .chain(borrowed_history.backward_stack.iter())
-    //             .chain(borrowed_history.closed_stack.iter())
-    //             .for_each(|entry| {
-    //                 if let Some(project_and_abs_path) =
-    //                     borrowed_history.paths_by_item.get(&entry.item.id())
-    //                 {
-    //                     f(entry, project_and_abs_path.clone());
-    //                 } else if let Some(item) = entry.item.upgrade(cx) {
-    //                     if let Some(path) = item.project_path(cx) {
-    //                         f(entry, (path, None));
-    //                     }
-    //                 }
-    //             })
-    //     }
-
-    //     pub fn set_mode(&mut self, mode: NavigationMode) {
-    //         self.0.borrow_mut().mode = mode;
-    //     }
-
-    pub fn mode(&self) -> NavigationMode {
-        self.0.borrow().mode
+    pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
+        self.zoomed = zoomed;
+        cx.notify();
     }
 
-    //     pub fn disable(&mut self) {
-    //         self.0.borrow_mut().mode = NavigationMode::Disabled;
-    //     }
-
-    //     pub fn enable(&mut self) {
-    //         self.0.borrow_mut().mode = NavigationMode::Normal;
-    //     }
-
-    //     pub fn pop(&mut self, mode: NavigationMode, cx: &mut WindowContext) -> Option<NavigationEntry> {
-    //         let mut state = self.0.borrow_mut();
-    //         let entry = match mode {
-    //             NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
-    //                 return None
-    //             }
-    //             NavigationMode::GoingBack => &mut state.backward_stack,
-    //             NavigationMode::GoingForward => &mut state.forward_stack,
-    //             NavigationMode::ReopeningClosedItem => &mut state.closed_stack,
-    //         }
-    //         .pop_back();
-    //         if entry.is_some() {
-    //             state.did_update(cx);
-    //         }
-    //         entry
-    //     }
-
-    //     pub fn push<D: 'static + Any>(
-    //         &mut self,
-    //         data: Option<D>,
-    //         item: Rc<dyn WeakItemHandle>,
-    //         cx: &mut WindowContext,
-    //     ) {
-    //         let state = &mut *self.0.borrow_mut();
-    //         match state.mode {
-    //             NavigationMode::Disabled => {}
-    //             NavigationMode::Normal | NavigationMode::ReopeningClosedItem => {
-    //                 if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
-    //                     state.backward_stack.pop_front();
-    //                 }
-    //                 state.backward_stack.push_back(NavigationEntry {
-    //                     item,
-    //                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
-    //                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
-    //                 });
-    //                 state.forward_stack.clear();
-    //             }
-    //             NavigationMode::GoingBack => {
-    //                 if state.forward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
-    //                     state.forward_stack.pop_front();
-    //                 }
-    //                 state.forward_stack.push_back(NavigationEntry {
-    //                     item,
-    //                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
-    //                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
-    //                 });
-    //             }
-    //             NavigationMode::GoingForward => {
-    //                 if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
-    //                     state.backward_stack.pop_front();
-    //                 }
-    //                 state.backward_stack.push_back(NavigationEntry {
-    //                     item,
-    //                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
-    //                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
-    //                 });
-    //             }
-    //             NavigationMode::ClosingItem => {
-    //                 if state.closed_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
-    //                     state.closed_stack.pop_front();
-    //                 }
-    //                 state.closed_stack.push_back(NavigationEntry {
-    //                     item,
-    //                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
-    //                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
-    //                 });
-    //             }
-    //         }
-    //         state.did_update(cx);
-    //     }
-
-    //     pub fn remove_item(&mut self, item_id: usize) {
-    //         let mut state = self.0.borrow_mut();
-    //         state.paths_by_item.remove(&item_id);
-    //         state
-    //             .backward_stack
-    //             .retain(|entry| entry.item.id() != item_id);
-    //         state
-    //             .forward_stack
-    //             .retain(|entry| entry.item.id() != item_id);
-    //         state
-    //             .closed_stack
-    //             .retain(|entry| entry.item.id() != item_id);
-    //     }
-
-    //     pub fn path_for_item(&self, item_id: usize) -> Option<(ProjectPath, Option<PathBuf>)> {
-    //         self.0.borrow().paths_by_item.get(&item_id).cloned()
-    //     }
+    pub fn is_zoomed(&self) -> bool {
+        self.zoomed
+    }
 }
 
-// impl NavHistoryState {
-//     pub fn did_update(&self, cx: &mut WindowContext) {
-//         if let Some(pane) = self.pane.upgrade(cx) {
-//             cx.defer(move |cx| {
-//                 pane.update(cx, |pane, cx| pane.history_updated(cx));
-//             });
-//         }
-//     }
+// impl Entity for Pane {
+//     type Event = Event;
 // }
+
+impl Render for Pane {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        v_stack()
+            .child(self.render_tab_bar(cx))
+            .child(div() /* toolbar */)
+            .child(if let Some(item) = self.active_item() {
+                item.to_any().render()
+            } else {
+                // todo!()
+                div().child("Empty Pane").render()
+            })
+
+        // enum MouseNavigationHandler {}
+
+        // MouseEventHandler::new::<MouseNavigationHandler, _>(0, cx, |_, cx| {
+        //     let active_item_index = self.active_item_index;
+
+        //     if let Some(active_item) = self.active_item() {
+        //         Flex::column()
+        //             .with_child({
+        //                 let theme = theme::current(cx).clone();
+
+        //                 let mut stack = Stack::new();
+
+        //                 enum TabBarEventHandler {}
+        //                 stack.add_child(
+        //                     MouseEventHandler::new::<TabBarEventHandler, _>(0, cx, |_, _| {
+        //                         Empty::new()
+        //                             .contained()
+        //                             .with_style(theme.workspace.tab_bar.container)
+        //                     })
+        //                     .on_down(
+        //                         MouseButton::Left,
+        //                         move |_, this, cx| {
+        //                             this.activate_item(active_item_index, true, true, cx);
+        //                         },
+        //                     ),
+        //                 );
+        //                 let tooltip_style = theme.tooltip.clone();
+        //                 let tab_bar_theme = theme.workspace.tab_bar.clone();
+
+        //                 let nav_button_height = tab_bar_theme.height;
+        //                 let button_style = tab_bar_theme.nav_button;
+        //                 let border_for_nav_buttons = tab_bar_theme
+        //                     .tab_style(false, false)
+        //                     .container
+        //                     .border
+        //                     .clone();
+
+        //                 let mut tab_row = Flex::row()
+        //                     .with_child(nav_button(
+        //                         "icons/arrow_left.svg",
+        //                         button_style.clone(),
+        //                         nav_button_height,
+        //                         tooltip_style.clone(),
+        //                         self.can_navigate_backward(),
+        //                         {
+        //                             move |pane, cx| {
+        //                                 if let Some(workspace) = pane.workspace.upgrade(cx) {
+        //                                     let pane = cx.weak_handle();
+        //                                     cx.window_context().defer(move |cx| {
+        //                                         workspace.update(cx, |workspace, cx| {
+        //                                             workspace
+        //                                                 .go_back(pane, cx)
+        //                                                 .detach_and_log_err(cx)
+        //                                         })
+        //                                     })
+        //                                 }
+        //                             }
+        //                         },
+        //                         super::GoBack,
+        //                         "Go Back",
+        //                         cx,
+        //                     ))
+        //                     .with_child(
+        //                         nav_button(
+        //                             "icons/arrow_right.svg",
+        //                             button_style.clone(),
+        //                             nav_button_height,
+        //                             tooltip_style,
+        //                             self.can_navigate_forward(),
+        //                             {
+        //                                 move |pane, cx| {
+        //                                     if let Some(workspace) = pane.workspace.upgrade(cx) {
+        //                                         let pane = cx.weak_handle();
+        //                                         cx.window_context().defer(move |cx| {
+        //                                             workspace.update(cx, |workspace, cx| {
+        //                                                 workspace
+        //                                                     .go_forward(pane, cx)
+        //                                                     .detach_and_log_err(cx)
+        //                                             })
+        //                                         })
+        //                                     }
+        //                                 }
+        //                             },
+        //                             super::GoForward,
+        //                             "Go Forward",
+        //                             cx,
+        //                         )
+        //                         .contained()
+        //                         .with_border(border_for_nav_buttons),
+        //                     )
+        //                     .with_child(self.render_tabs(cx).flex(1., true).into_any_named("tabs"));
+
+        //                 if self.has_focus {
+        //                     let render_tab_bar_buttons = self.render_tab_bar_buttons.clone();
+        //                     tab_row.add_child(
+        //                         (render_tab_bar_buttons)(self, cx)
+        //                             .contained()
+        //                             .with_style(theme.workspace.tab_bar.pane_button_container)
+        //                             .flex(1., false)
+        //                             .into_any(),
+        //                     )
+        //                 }
+
+        //                 stack.add_child(tab_row);
+        //                 stack
+        //                     .constrained()
+        //                     .with_height(theme.workspace.tab_bar.height)
+        //                     .flex(1., false)
+        //                     .into_any_named("tab bar")
+        //             })
+        //             .with_child({
+        //                 enum PaneContentTabDropTarget {}
+        //                 dragged_item_receiver::<PaneContentTabDropTarget, _, _>(
+        //                     self,
+        //                     0,
+        //                     self.active_item_index + 1,
+        //                     !self.can_split,
+        //                     if self.can_split { Some(100.) } else { None },
+        //                     cx,
+        //                     {
+        //                         let toolbar = self.toolbar.clone();
+        //                         let toolbar_hidden = toolbar.read(cx).hidden();
+        //                         move |_, cx| {
+        //                             Flex::column()
+        //                                 .with_children(
+        //                                     (!toolbar_hidden)
+        //                                         .then(|| ChildView::new(&toolbar, cx).expanded()),
+        //                                 )
+        //                                 .with_child(
+        //                                     ChildView::new(active_item.as_any(), cx).flex(1., true),
+        //                                 )
+        //                         }
+        //                     },
+        //                 )
+        //                 .flex(1., true)
+        //             })
+        //             .with_child(ChildView::new(&self.tab_context_menu, cx))
+        //             .into_any()
+        //     } else {
+        //         enum EmptyPane {}
+        //         let theme = theme::current(cx).clone();
+
+        //         dragged_item_receiver::<EmptyPane, _, _>(self, 0, 0, false, None, cx, |_, cx| {
+        //             self.render_blank_pane(&theme, cx)
+        //         })
+        //         .on_down(MouseButton::Left, |_, _, cx| {
+        //             cx.focus_parent();
+        //         })
+        //         .into_any()
+        //     }
+        // })
+        // .on_down(
+        //     MouseButton::Navigate(NavigationDirection::Back),
+        //     move |_, pane, cx| {
+        //         if let Some(workspace) = pane.workspace.upgrade(cx) {
+        //             let pane = cx.weak_handle();
+        //             cx.window_context().defer(move |cx| {
+        //                 workspace.update(cx, |workspace, cx| {
+        //                     workspace.go_back(pane, cx).detach_and_log_err(cx)
+        //                 })
+        //             })
+        //         }
+        //     },
+        // )
+        // .on_down(MouseButton::Navigate(NavigationDirection::Forward), {
+        //     move |_, pane, cx| {
+        //         if let Some(workspace) = pane.workspace.upgrade(cx) {
+        //             let pane = cx.weak_handle();
+        //             cx.window_context().defer(move |cx| {
+        //                 workspace.update(cx, |workspace, cx| {
+        //                     workspace.go_forward(pane, cx).detach_and_log_err(cx)
+        //                 })
+        //             })
+        //         }
+        //     }
+        // })
+        // .into_any_named("pane")
+    }
+
+    // fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    //     if !self.has_focus {
+    //         self.has_focus = true;
+    //         cx.emit(Event::Focus);
+    //         cx.notify();
+    //     }
+
+    //     self.toolbar.update(cx, |toolbar, cx| {
+    //         toolbar.focus_changed(true, cx);
+    //     });
+
+    //     if let Some(active_item) = self.active_item() {
+    //         if cx.is_self_focused() {
+    //             // Pane was focused directly. We need to either focus a view inside the active item,
+    //             // or focus the active item itself
+    //             if let Some(weak_last_focused_view) =
+    //                 self.last_focused_view_by_item.get(&active_item.id())
+    //             {
+    //                 if let Some(last_focused_view) = weak_last_focused_view.upgrade(cx) {
+    //                     cx.focus(&last_focused_view);
+    //                     return;
+    //                 } else {
+    //                     self.last_focused_view_by_item.remove(&active_item.id());
+    //                 }
+    //             }
+
+    //             cx.focus(active_item.as_any());
+    //         } else if focused != self.tab_bar_context_menu.handle {
+    //             self.last_focused_view_by_item
+    //                 .insert(active_item.id(), focused.downgrade());
+    //         }
+    //     }
+    // }
+
+    // fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    //     self.has_focus = false;
+    //     self.toolbar.update(cx, |toolbar, cx| {
+    //         toolbar.focus_changed(false, cx);
+    //     });
+    //     cx.notify();
+    // }
+
+    // fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
+    //     Self::reset_to_default_keymap_context(keymap);
+    // }
+}
+
+impl ItemNavHistory {
+    pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
+        self.history.push(data, self.item.clone(), cx);
+    }
+
+    pub fn pop_backward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
+        self.history.pop(NavigationMode::GoingBack, cx)
+    }
+
+    pub fn pop_forward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
+        self.history.pop(NavigationMode::GoingForward, cx)
+    }
+}
+
+impl NavHistory {
+    pub fn for_each_entry(
+        &self,
+        cx: &AppContext,
+        mut f: impl FnMut(&NavigationEntry, (ProjectPath, Option<PathBuf>)),
+    ) {
+        let borrowed_history = self.0.lock();
+        borrowed_history
+            .forward_stack
+            .iter()
+            .chain(borrowed_history.backward_stack.iter())
+            .chain(borrowed_history.closed_stack.iter())
+            .for_each(|entry| {
+                if let Some(project_and_abs_path) =
+                    borrowed_history.paths_by_item.get(&entry.item.id())
+                {
+                    f(entry, project_and_abs_path.clone());
+                } else if let Some(item) = entry.item.upgrade() {
+                    if let Some(path) = item.project_path(cx) {
+                        f(entry, (path, None));
+                    }
+                }
+            })
+    }
+
+    pub fn set_mode(&mut self, mode: NavigationMode) {
+        self.0.lock().mode = mode;
+    }
+
+    pub fn mode(&self) -> NavigationMode {
+        self.0.lock().mode
+    }
+
+    pub fn disable(&mut self) {
+        self.0.lock().mode = NavigationMode::Disabled;
+    }
+
+    pub fn enable(&mut self) {
+        self.0.lock().mode = NavigationMode::Normal;
+    }
+
+    pub fn pop(&mut self, mode: NavigationMode, cx: &mut WindowContext) -> Option<NavigationEntry> {
+        let mut state = self.0.lock();
+        let entry = match mode {
+            NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
+                return None
+            }
+            NavigationMode::GoingBack => &mut state.backward_stack,
+            NavigationMode::GoingForward => &mut state.forward_stack,
+            NavigationMode::ReopeningClosedItem => &mut state.closed_stack,
+        }
+        .pop_back();
+        if entry.is_some() {
+            state.did_update(cx);
+        }
+        entry
+    }
+
+    pub fn push<D: 'static + Send + Any>(
+        &mut self,
+        data: Option<D>,
+        item: Arc<dyn WeakItemHandle>,
+        cx: &mut WindowContext,
+    ) {
+        let state = &mut *self.0.lock();
+        match state.mode {
+            NavigationMode::Disabled => {}
+            NavigationMode::Normal | NavigationMode::ReopeningClosedItem => {
+                if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                    state.backward_stack.pop_front();
+                }
+                state.backward_stack.push_back(NavigationEntry {
+                    item,
+                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                });
+                state.forward_stack.clear();
+            }
+            NavigationMode::GoingBack => {
+                if state.forward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                    state.forward_stack.pop_front();
+                }
+                state.forward_stack.push_back(NavigationEntry {
+                    item,
+                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                });
+            }
+            NavigationMode::GoingForward => {
+                if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                    state.backward_stack.pop_front();
+                }
+                state.backward_stack.push_back(NavigationEntry {
+                    item,
+                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                });
+            }
+            NavigationMode::ClosingItem => {
+                if state.closed_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                    state.closed_stack.pop_front();
+                }
+                state.closed_stack.push_back(NavigationEntry {
+                    item,
+                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                });
+            }
+        }
+        state.did_update(cx);
+    }
+
+    pub fn remove_item(&mut self, item_id: EntityId) {
+        let mut state = self.0.lock();
+        state.paths_by_item.remove(&item_id);
+        state
+            .backward_stack
+            .retain(|entry| entry.item.id() != item_id);
+        state
+            .forward_stack
+            .retain(|entry| entry.item.id() != item_id);
+        state
+            .closed_stack
+            .retain(|entry| entry.item.id() != item_id);
+    }
+
+    pub fn path_for_item(&self, item_id: EntityId) -> Option<(ProjectPath, Option<PathBuf>)> {
+        self.0.lock().paths_by_item.get(&item_id).cloned()
+    }
+}
+
+impl NavHistoryState {
+    pub fn did_update(&self, cx: &mut WindowContext) {
+        if let Some(pane) = self.pane.upgrade() {
+            cx.defer(move |cx| {
+                pane.update(cx, |pane, cx| pane.history_updated(cx));
+            });
+        }
+    }
+}
 
 // pub struct PaneBackdrop<V> {
 //     child_view: usize,
@@ -2221,14 +2366,14 @@ impl Pane {
 //     }
 // }
 
-// fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
-//     let path = buffer_path
-//         .as_ref()
-//         .and_then(|p| p.path.to_str())
-//         .unwrap_or(&"This buffer");
-//     let path = truncate_and_remove_front(path, 80);
-//     format!("{path} contains unsaved edits. Do you want to save it?")
-// }
+fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
+    let path = buffer_path
+        .as_ref()
+        .and_then(|p| p.path.to_str())
+        .unwrap_or(&"This buffer");
+    let path = truncate_and_remove_front(path, 80);
+    format!("{path} contains unsaved edits. Do you want to save it?")
+}
 
 // todo!("uncomment tests")
 // #[cfg(test)]
@@ -2752,3 +2897,16 @@ impl Pane {
 //         })
 //     }
 // }
+
+#[derive(Clone, Debug)]
+struct DraggedTab {
+    title: String,
+}
+
+impl Render for DraggedTab {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        div().w_8().h_4().bg(gpui::red())
+    }
+}

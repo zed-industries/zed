@@ -22,8 +22,6 @@ impl Avatar {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
-
         let mut img = img();
 
         if self.shape == Shape::Circle {
@@ -34,7 +32,8 @@ impl Avatar {
 
         img.uri(self.src.clone())
             .size_4()
-            .bg(theme.image_fallback_background)
+            // todo!(Pull the avatar fallback background from the theme.)
+            .bg(gpui2::red())
     }
 }
 
@@ -59,11 +58,26 @@ mod stories {
                 .child(Avatar::new(
                     "https://avatars.githubusercontent.com/u/1714999?v=4",
                 ))
+                .child(Avatar::new(
+                    "https://avatars.githubusercontent.com/u/326587?v=4",
+                ))
+                // .child(Avatar::new(
+                //     "https://avatars.githubusercontent.com/u/326587?v=4",
+                // ))
+                // .child(Avatar::new(
+                //     "https://avatars.githubusercontent.com/u/482957?v=4",
+                // ))
+                // .child(Avatar::new(
+                //     "https://avatars.githubusercontent.com/u/1714999?v=4",
+                // ))
+                // .child(Avatar::new(
+                //     "https://avatars.githubusercontent.com/u/1486634?v=4",
+                // ))
                 .child(Story::label(cx, "Rounded rectangle"))
-                .child(
-                    Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4")
-                        .shape(Shape::RoundedRectangle),
-                )
+            // .child(
+            //     Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4")
+            //         .shape(Shape::RoundedRectangle),
+            // )
         }
     }
 }

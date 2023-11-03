@@ -109,7 +109,9 @@ where
         let corner_radii = style.corner_radii;
 
         if let Some(uri) = self.uri.clone() {
-            let image_future = cx.image_cache.get(uri);
+            // eprintln!(">>> image_cache.get({uri}");
+            let image_future = cx.image_cache.get(uri.clone());
+            // eprintln!("<<< image_cache.get({uri}");
             if let Some(data) = image_future
                 .clone()
                 .now_or_never()

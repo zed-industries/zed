@@ -1,3 +1,6 @@
+#![allow(unused_variables, dead_code, unused_mut)]
+// todo!() this is to make transition easier.
+
 // Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
 
@@ -8,19 +11,20 @@ use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
-use client2::UserStore;
-use db2::kvp::KEY_VALUE_STORE;
-use fs2::RealFs;
+use client::UserStore;
+use collections::HashMap;
+use db::kvp::KEY_VALUE_STORE;
+use fs::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui2::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
+use gpui::{Action, App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
-use language2::LanguageRegistry;
+use language::LanguageRegistry;
 use log::LevelFilter;
 
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use settings2::{
+use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
@@ -39,14 +43,18 @@ use std::{
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
+use text::Point;
 use util::{
+    async_maybe,
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     http::{self, HttpClient},
-    paths, ResultExt,
+    paths::{self, PathLikeWithPosition},
+    ResultExt,
 };
 use uuid::Uuid;
-use zed2::languages;
-use zed2::{ensure_only_instance, AppState, Assets, IsOnlyInstance};
+use workspace2::{AppState, WorkspaceStore};
+use zed2::{build_window_options, initialize_workspace, languages};
+use zed2::{ensure_only_instance, Assets, IsOnlyInstance};
 
 mod open_listener;
 
@@ -62,20 +70,26 @@ fn main() {
     log::info!("========== starting zed ==========");
     let app = App::production(Arc::new(Assets));
 
-    let installation_id = app.executor().block(installation_id()).ok();
+    let installation_id = app.background_executor().block(installation_id()).ok();
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
     let fs = Arc::new(RealFs);
-    let user_settings_file_rx =
-        watch_config_file(&app.executor(), fs.clone(), paths::SETTINGS.clone());
-    let _user_keymap_file_rx =
-        watch_config_file(&app.executor(), fs.clone(), paths::KEYMAP.clone());
+    let user_settings_file_rx = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::SETTINGS.clone(),
+    );
+    let _user_keymap_file_rx = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::KEYMAP.clone(),
+    );
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
     } else {
-        app.executor().spawn(async {
+        app.background_executor().spawn(async {
             load_login_shell_environment().await.log_err();
         })
     };
@@ -108,27 +122,27 @@ fn main() {
         handle_settings_file_changes(user_settings_file_rx, cx);
         // handle_keymap_file_changes(user_keymap_file_rx, cx);
 
-        let client = client2::Client::new(http.clone(), cx);
+        let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
-        languages.set_executor(cx.executor().clone());
+        languages.set_executor(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
 
-        language2::init(cx);
+        language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
-        // let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let workspace_store = cx.build_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         cx.set_global(client.clone());
 
-        theme2::init(cx);
+        theme::init(cx);
         // context_menu::init(cx);
-        project2::Project::init(&client, cx);
-        client2::init(&client, cx);
+        project::Project::init(&client, cx);
+        client::init(&client, cx);
         // command_palette::init(cx);
-        language2::init(cx);
+        language::init(cx);
         // editor::init(cx);
         // go_to_line::init(cx);
         // file_finder::init(cx);
@@ -141,7 +155,7 @@ fn main() {
         // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         // vim::init(cx);
         // terminal_view::init(cx);
-        copilot2::init(
+        copilot::init(
             copilot_language_server_id,
             http.clone(),
             node_runtime.clone(),
@@ -164,26 +178,23 @@ fn main() {
 
         // client.telemetry().start(installation_id, session_id, cx);
 
-        // todo!("app_state")
-        let app_state = Arc::new(AppState { client, user_store });
-        // let app_state = Arc::new(AppState {
-        //     languages,
-        //     client: client.clone(),
-        //     user_store,
-        //     fs,
-        //     build_window_options,
-        //     initialize_workspace,
-        //     background_actions,
-        //     workspace_store,
-        //     node_runtime,
-        // });
-        // cx.set_global(Arc::downgrade(&app_state));
+        let app_state = Arc::new(AppState {
+            languages,
+            client: client.clone(),
+            user_store,
+            fs,
+            build_window_options,
+            initialize_workspace,
+            // background_actions: todo!("ask Mikayla"),
+            workspace_store,
+            node_runtime,
+        });
+        cx.set_global(Arc::downgrade(&app_state));
 
         // audio::init(Assets, cx);
         // auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
-        // todo!("workspace")
-        // workspace::init(app_state.clone(), cx);
+        workspace2::init(app_state.clone(), cx);
         // recent_projects::init(cx);
 
         // journal2::init(app_state.clone(), cx);
@@ -191,7 +202,7 @@ fn main() {
         // theme_selector::init(cx);
         // activity_indicator::init(cx);
         // language_tools::init(cx);
-        call2::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         // collab_ui::init(&app_state, cx);
         // feedback::init(cx);
         // welcome::init(cx);
@@ -220,10 +231,8 @@ fn main() {
         let mut _triggered_authentication = false;
 
         match open_rx.try_next() {
-            Ok(Some(OpenRequest::Paths { paths: _ })) => {
-                // todo!("workspace")
-                // cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
-                //     .detach();
+            Ok(Some(OpenRequest::Paths { paths })) => {
+                workspace2::open_paths(&paths, &app_state, None, cx).detach();
             }
             Ok(Some(OpenRequest::CliConnection { connection })) => {
                 let app_state = app_state.clone();
@@ -255,10 +264,10 @@ fn main() {
             async move {
                 while let Some(request) = open_rx.next().await {
                     match request {
-                        OpenRequest::Paths { paths: _ } => {
-                            // todo!("workspace")
-                            // cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
-                            //     .detach();
+                        OpenRequest::Paths { paths } => {
+                            cx.update(|cx| workspace2::open_paths(&paths, &app_state, None, cx))
+                                .ok()
+                                .map(|t| t.detach());
                         }
                         OpenRequest::CliConnection { connection } => {
                             let app_state = app_state.clone();
@@ -314,22 +323,30 @@ async fn installation_id() -> Result<String> {
     }
 }
 
-async fn restore_or_create_workspace(_app_state: &Arc<AppState>, mut _cx: AsyncAppContext) {
-    todo!("workspace")
-    // if let Some(location) = workspace::last_opened_workspace_paths().await {
-    //     cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))
-    //         .await
-    //         .log_err();
-    // } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-    //     cx.update(|cx| show_welcome_experience(app_state, cx));
-    // } else {
-    //     cx.update(|cx| {
-    //         workspace::open_new(app_state, cx, |workspace, cx| {
-    //             Editor::new_file(workspace, &Default::default(), cx)
-    //         })
-    //         .detach();
-    //     });
-    // }
+async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
+    async_maybe!({
+        if let Some(location) = workspace2::last_opened_workspace_paths().await {
+            cx.update(|cx| workspace2::open_paths(location.paths().as_ref(), app_state, None, cx))?
+                .await
+                .log_err();
+        } else if matches!(KEY_VALUE_STORE.read_kvp("******* THIS IS A BAD KEY PLEASE UNCOMMENT BELOW TO FIX THIS VERY LONG LINE *******"), Ok(None)) {
+            // todo!(welcome)
+            //} else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+            //todo!()
+            // cx.update(|cx| show_welcome_experience(app_state, cx));
+        } else {
+            cx.update(|cx| {
+                workspace2::open_new(app_state, cx, |workspace, cx| {
+                    // todo!(editor)
+                    // Editor::new_file(workspace, &Default::default(), cx)
+                })
+                .detach();
+            })?;
+        }
+        anyhow::Ok(())
+    })
+    .await
+    .log_err();
 }
 
 fn init_paths() {
@@ -438,7 +455,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
             std::process::exit(-1);
         }
 
-        let app_version = client2::ZED_APP_VERSION
+        let app_version = client::ZED_APP_VERSION
             .or(app_metadata.app_version)
             .map_or("dev".to_string(), |v| v.to_string());
 
@@ -506,11 +523,11 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
 }
 
 fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
-    let telemetry_settings = *client2::TelemetrySettings::get_global(cx);
+    let telemetry_settings = *client::TelemetrySettings::get_global(cx);
 
-    cx.executor()
+    cx.background_executor()
         .spawn(async move {
-            let panic_report_url = format!("{}/api/panic", &*client2::ZED_SERVER_URL);
+            let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
             let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
             while let Some(child) = children.next().await {
                 let child = child?;
@@ -553,7 +570,7 @@ fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
                     if let Some(panic) = panic {
                         let body = serde_json::to_string(&PanicRequest {
                             panic,
-                            token: client2::ZED_SECRET_CLIENT_TOKEN.into(),
+                            token: client::ZED_SECRET_CLIENT_TOKEN.into(),
                         })
                         .unwrap();
 
@@ -638,7 +655,7 @@ fn load_embedded_fonts(cx: &AppContext) {
     let asset_source = cx.asset_source();
     let font_paths = asset_source.list("fonts").unwrap();
     let embedded_fonts = Mutex::new(Vec::new());
-    let executor = cx.executor();
+    let executor = cx.background_executor();
 
     executor.block(executor.scoped(|scope| {
         for font_path in &font_paths {
@@ -765,45 +782,45 @@ async fn handle_cli_connection(
 ) {
     if let Some(request) = requests.next().await {
         match request {
-            CliRequest::Open { paths: _, wait: _ } => {
-                // let mut caret_positions = HashMap::new();
+            CliRequest::Open { paths, wait } => {
+                let mut caret_positions = HashMap::default();
 
-                // todo!("workspace")
-                // let paths = if paths.is_empty() {
-                // workspace::last_opened_workspace_paths()
-                //     .await
-                //     .map(|location| location.paths().to_vec())
-                //     .unwrap_or_default()
-                // } else {
-                //     paths
-                //         .into_iter()
-                //         .filter_map(|path_with_position_string| {
-                //             let path_with_position = PathLikeWithPosition::parse_str(
-                //                 &path_with_position_string,
-                //                 |path_str| {
-                //                     Ok::<_, std::convert::Infallible>(
-                //                         Path::new(path_str).to_path_buf(),
-                //                     )
-                //                 },
-                //             )
-                //             .expect("Infallible");
-                //             let path = path_with_position.path_like;
-                //             if let Some(row) = path_with_position.row {
-                //                 if path.is_file() {
-                //                     let row = row.saturating_sub(1);
-                //                     let col =
-                //                         path_with_position.column.unwrap_or(0).saturating_sub(1);
-                //                     caret_positions.insert(path.clone(), Point::new(row, col));
-                //                 }
-                //             }
-                //             Some(path)
-                //         })
-                //         .collect()
-                // };
+                let paths = if paths.is_empty() {
+                    workspace2::last_opened_workspace_paths()
+                        .await
+                        .map(|location| location.paths().to_vec())
+                        .unwrap_or_default()
+                } else {
+                    paths
+                        .into_iter()
+                        .filter_map(|path_with_position_string| {
+                            let path_with_position = PathLikeWithPosition::parse_str(
+                                &path_with_position_string,
+                                |path_str| {
+                                    Ok::<_, std::convert::Infallible>(
+                                        Path::new(path_str).to_path_buf(),
+                                    )
+                                },
+                            )
+                            .expect("Infallible");
+                            let path = path_with_position.path_like;
+                            if let Some(row) = path_with_position.row {
+                                if path.is_file() {
+                                    let row = row.saturating_sub(1);
+                                    let col =
+                                        path_with_position.column.unwrap_or(0).saturating_sub(1);
+                                    caret_positions.insert(path.clone(), Point::new(row, col));
+                                }
+                            }
+                            Some(path)
+                        })
+                        .collect()
+                };
 
+                // todo!("editor")
                 // let mut errored = false;
                 // match cx
-                //     .update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
+                //     .update(|cx| workspace2::open_paths(&paths, &app_state, None, cx))
                 //     .await
                 // {
                 //     Ok((workspace, items)) => {
@@ -913,11 +930,13 @@ async fn handle_cli_connection(
     }
 }
 
-// pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
-//     &[
-//         ("Go to file", &file_finder::Toggle),
-//         ("Open command palette", &command_palette::Toggle),
-//         ("Open recent projects", &recent_projects::OpenRecent),
-//         ("Change your settings", &zed_actions::OpenSettings),
-//     ]
-// }
+pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
+    // &[
+    //     ("Go to file", &file_finder::Toggle),
+    //     ("Open command palette", &command_palette::Toggle),
+    //     ("Open recent projects", &recent_projects::OpenRecent),
+    //     ("Change your settings", &zed_actions::OpenSettings),
+    // ]
+    // todo!()
+    &[]
+}

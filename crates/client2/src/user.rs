@@ -1,11 +1,11 @@
 use super::{proto, Client, Status, TypedEnvelope};
 use anyhow::{anyhow, Context, Result};
 use collections::{hash_map::Entry, HashMap, HashSet};
-use feature_flags2::FeatureFlagAppExt;
+use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
-use gpui2::{AsyncAppContext, EventEmitter, ImageData, Model, ModelContext, Task};
+use gpui::{AsyncAppContext, EventEmitter, ImageData, Model, ModelContext, Task};
 use postage::{sink::Sink, watch};
-use rpc2::proto::{RequestMessage, UsersResponse};
+use rpc::proto::{RequestMessage, UsersResponse};
 use std::sync::{Arc, Weak};
 use text::ReplicaId;
 use util::http::HttpClient;

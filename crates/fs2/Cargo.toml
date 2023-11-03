@@ -10,7 +10,7 @@ path = "src/fs2.rs"
 [dependencies]
 collections = { path = "../collections" }
 rope = { path = "../rope" }
-text = { path = "../text" }
+text = { package = "text2", path = "../text2" }
 util = { path = "../util" }
 sum_tree = { path = "../sum_tree" }
 
@@ -31,10 +31,10 @@ log.workspace = true
 libc = "0.2"
 time.workspace = true
 
-gpui2 = { path = "../gpui2", optional = true}
+gpui = { package = "gpui2", path = "../gpui2", optional = true}
 
 [dev-dependencies]
-gpui2 = { path = "../gpui2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 
 [features]
-test-support = ["gpui2/test-support"]
+test-support = ["gpui/test-support"]

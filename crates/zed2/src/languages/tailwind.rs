@@ -5,9 +5,9 @@ use futures::{
     future::{self, BoxFuture},
     FutureExt, StreamExt,
 };
-use gpui2::AppContext;
-use language2::{LanguageServerName, LspAdapter, LspAdapterDelegate};
-use lsp2::LanguageServerBinary;
+use gpui::AppContext;
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use serde_json::{json, Value};
 use smol::fs;

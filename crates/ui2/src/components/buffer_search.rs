@@ -30,9 +30,7 @@ impl Render for BufferSearch {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
-        let theme = theme(cx);
-
-        h_stack().bg(theme.toolbar).p_2().child(
+        h_stack().bg(cx.theme().colors().toolbar).p_2().child(
             h_stack().child(Input::new("Search")).child(
                 IconButton::<Self>::new("replace", Icon::Replace)
                     .when(self.is_replace_open, |this| this.color(IconColor::Accent))

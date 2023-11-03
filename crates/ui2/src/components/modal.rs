@@ -39,22 +39,20 @@ impl<V: 'static> Modal<V> {
     }
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
-
         v_stack()
             .id(self.id.clone())
             .w_96()
             // .rounded_xl()
-            .bg(theme.background)
+            .bg(cx.theme().colors().background)
             .border()
-            .border_color(theme.border)
+            .border_color(cx.theme().colors().border)
             .shadow_2xl()
             .child(
                 h_stack()
                     .justify_between()
                     .p_1()
                     .border_b()
-                    .border_color(theme.border)
+                    .border_color(cx.theme().colors().border)
                     .child(div().children(self.title.clone().map(|t| Label::new(t))))
                     .child(IconButton::new("close", Icon::Close)),
             )
@@ -65,7 +63,7 @@ impl<V: 'static> Modal<V> {
                     this.child(
                         h_stack()
                             .border_t()
-                            .border_color(theme.border)
+                            .border_color(cx.theme().colors().border)
                             .p_1()
                             .justify_end()
                             .children(self.secondary_action)

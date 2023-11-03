@@ -3,16 +3,20 @@ use crate::{
     Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext, DisplayId, Edges, Effect,
     Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId,
     Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
-    MainThread, MainThreadOnly, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformWindow,
-    Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakModel, WeakView,
-    WindowOptions, SUBPIXEL_VARIANTS,
+    Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformWindow, Point,
+    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
+    Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
+use futures::{
+    channel::{mpsc, oneshot},
+    StreamExt,
+};
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -21,8 +25,10 @@ use std::{
     borrow::{Borrow, BorrowMut, Cow},
     fmt::Debug,
     future::Future,
+    hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
+    rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -52,7 +58,8 @@ pub enum DispatchPhase {
     Capture,
 }
 
-type AnyListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + 'static>;
+type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
+type AnyListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 type AnyKeyListener = Box<
     dyn Fn(
             &dyn Any,
@@ -60,10 +67,9 @@ type AnyKeyListener = Box<
             DispatchPhase,
             &mut WindowContext,
         ) -> Option<Box<dyn Action>>
-        + Send
         + 'static,
 >;
-type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + Send + 'static>;
+type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + 'static>;
 
 slotmap::new_key_type! { pub struct FocusId; }
 
@@ -158,8 +164,9 @@ impl Drop for FocusHandle {
 
 // Holds the state for a specific window.
 pub struct Window {
-    handle: AnyWindowHandle,
-    platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
+    pub(crate) handle: AnyWindowHandle,
+    pub(crate) removed: bool,
+    platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
@@ -184,6 +191,10 @@ pub struct Window {
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     scale_factor: f32,
+    bounds: WindowBounds,
+    bounds_observers: SubscriberSet<(), AnyObserver>,
+    active: bool,
+    activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) scene_builder: SceneBuilder,
     pub(crate) dirty: bool,
     pub(crate) last_blur: Option<Option<FocusId>>,
@@ -194,46 +205,60 @@ impl Window {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         options: WindowOptions,
-        cx: &mut MainThread<AppContext>,
+        cx: &mut AppContext,
     ) -> Self {
-        let platform_window = cx.platform().open_window(handle, options);
+        let platform_window = cx.platform.open_window(handle, options);
         let display_id = platform_window.display().id();
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
+        let bounds = platform_window.bounds();
+
         platform_window.on_resize(Box::new({
-            let cx = cx.to_async();
-            move |content_size, scale_factor| {
-                cx.update_window(handle, |cx| {
-                    cx.window.scale_factor = scale_factor;
-                    cx.window.scene_builder = SceneBuilder::new();
-                    cx.window.content_size = content_size;
-                    cx.window.display_id = cx
-                        .window
-                        .platform_window
-                        .borrow_on_main_thread()
-                        .display()
-                        .id();
-                    cx.window.dirty = true;
-                })
-                .log_err();
+            let mut cx = cx.to_async();
+            move |_, _| {
+                handle
+                    .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .log_err();
+            }
+        }));
+        platform_window.on_moved(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .log_err();
+            }
+        }));
+        platform_window.on_active_status_change(Box::new({
+            let mut cx = cx.to_async();
+            move |active| {
+                handle
+                    .update(&mut cx, |_, cx| {
+                        cx.window.active = active;
+                        cx.window
+                            .activation_observers
+                            .clone()
+                            .retain(&(), |callback| callback(cx));
+                    })
+                    .log_err();
             }
         }));
 
         platform_window.on_input({
-            let cx = cx.to_async();
+            let mut cx = cx.to_async();
             Box::new(move |event| {
-                cx.update_window(handle, |cx| cx.dispatch_event(event))
+                handle
+                    .update(&mut cx, |_, cx| cx.dispatch_event(event))
                     .log_err()
                     .unwrap_or(true)
             })
         });
 
-        let platform_window = MainThreadOnly::new(Arc::new(platform_window), cx.executor.clone());
-
         Window {
             handle,
+            removed: false,
             platform_window,
             display_id,
             sprite_atlas,
@@ -259,6 +284,10 @@ impl Window {
             default_prevented: true,
             mouse_position,
             scale_factor,
+            bounds,
+            bounds_observers: SubscriberSet::new(),
+            active: false,
+            activation_observers: SubscriberSet::new(),
             scene_builder: SceneBuilder::new(),
             dirty: true,
             last_blur: None,
@@ -305,24 +334,14 @@ impl ContentMask<Pixels> {
 /// Provides access to application state in the context of a single window. Derefs
 /// to an `AppContext`, so you can also pass a `WindowContext` to any method that takes
 /// an `AppContext` and call any `AppContext` methods.
-pub struct WindowContext<'a, 'w> {
-    pub(crate) app: Reference<'a, AppContext>,
-    pub(crate) window: Reference<'w, Window>,
+pub struct WindowContext<'a> {
+    pub(crate) app: &'a mut AppContext,
+    pub(crate) window: &'a mut Window,
 }
 
-impl<'a, 'w> WindowContext<'a, 'w> {
-    pub(crate) fn immutable(app: &'a AppContext, window: &'w Window) -> Self {
-        Self {
-            app: Reference::Immutable(app),
-            window: Reference::Immutable(window),
-        }
-    }
-
-    pub(crate) fn mutable(app: &'a mut AppContext, window: &'w mut Window) -> Self {
-        Self {
-            app: Reference::Mutable(app),
-            window: Reference::Mutable(window),
-        }
+impl<'a> WindowContext<'a> {
+    pub(crate) fn new(app: &'a mut AppContext, window: &'a mut Window) -> Self {
+        Self { app, window }
     }
 
     /// Obtain a handle to the window that belongs to this context.
@@ -333,6 +352,11 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn notify(&mut self) {
         self.window.dirty = true;
+    }
+
+    /// Close this window.
+    pub fn remove_window(&mut self) {
+        self.window.removed = true;
     }
 
     /// Obtain a new `FocusHandle`, which allows you to track and manipulate the keyboard focus
@@ -354,10 +378,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             self.window.last_blur = Some(self.window.focus);
         }
 
-        let window_id = self.window.handle.id;
         self.window.focus = Some(handle.id);
         self.app.push_effect(Effect::FocusChanged {
-            window_id,
+            window_handle: self.window.handle,
             focused: Some(handle.id),
         });
         self.notify();
@@ -369,33 +392,51 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             self.window.last_blur = Some(self.window.focus);
         }
 
-        let window_id = self.window.handle.id;
         self.window.focus = None;
         self.app.push_effect(Effect::FocusChanged {
-            window_id,
+            window_handle: self.window.handle,
             focused: None,
         });
         self.notify();
     }
 
-    /// Schedule the given closure to be run on the main thread. It will be invoked with
-    /// a `MainThread<WindowContext>`, which provides access to platform-specific functionality
-    /// of the window.
-    pub fn run_on_main<R>(
+    /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
+    /// that are currently on the stack to be returned to the app.
+    pub fn defer(&mut self, f: impl FnOnce(&mut WindowContext) + 'static) {
+        let handle = self.window.handle;
+        self.app.defer(move |cx| {
+            handle.update(cx, |_, cx| f(cx)).ok();
+        });
+    }
+
+    pub fn subscribe<Emitter, E>(
         &mut self,
-        f: impl FnOnce(&mut MainThread<WindowContext<'_, '_>>) -> R + Send + 'static,
-    ) -> Task<Result<R>>
+        entity: &E,
+        mut on_event: impl FnMut(E, &Emitter::Event, &mut WindowContext<'_>) + 'static,
+    ) -> Subscription
     where
-        R: Send + 'static,
+        Emitter: EventEmitter,
+        E: Entity<Emitter>,
     {
-        if self.executor.is_main_thread() {
-            Task::ready(Ok(f(unsafe {
-                mem::transmute::<&mut Self, &mut MainThread<Self>>(self)
-            })))
-        } else {
-            let id = self.window.handle.id;
-            self.app.run_on_main(move |cx| cx.update_window(id, f))
-        }
+        let entity_id = entity.entity_id();
+        let entity = entity.downgrade();
+        let window_handle = self.window.handle;
+        self.app.event_listeners.insert(
+            entity_id,
+            Box::new(move |event, cx| {
+                window_handle
+                    .update(cx, |_, cx| {
+                        if let Some(handle) = E::upgrade_from(&entity) {
+                            let event = event.downcast_ref().expect("invalid event type");
+                            on_event(handle, event, cx);
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false)
+            }),
+        )
     }
 
     /// Create an `AsyncWindowContext`, which has a static lifetime and can be held across
@@ -405,66 +446,67 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     /// Schedule the given closure to be run directly after the current frame is rendered.
-    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + Send + 'static) {
-        let f = Box::new(f);
+    pub fn on_next_frame(&mut self, callback: impl FnOnce(&mut WindowContext) + 'static) {
+        let handle = self.window.handle;
         let display_id = self.window.display_id;
-        self.run_on_main(move |cx| {
-            if let Some(callbacks) = cx.next_frame_callbacks.get_mut(&display_id) {
-                callbacks.push(f);
-                // If there was already a callback, it means that we already scheduled a frame.
-                if callbacks.len() > 1 {
-                    return;
+
+        if !self.frame_consumers.contains_key(&display_id) {
+            let (tx, mut rx) = mpsc::unbounded::<()>();
+            self.platform.set_display_link_output_callback(
+                display_id,
+                Box::new(move |_current_time, _output_time| _ = tx.unbounded_send(())),
+            );
+
+            let consumer_task = self.app.spawn(|cx| async move {
+                while rx.next().await.is_some() {
+                    cx.update(|cx| {
+                        for callback in cx
+                            .next_frame_callbacks
+                            .get_mut(&display_id)
+                            .unwrap()
+                            .drain(..)
+                            .collect::<SmallVec<[_; 32]>>()
+                        {
+                            callback(cx);
+                        }
+                    })
+                    .ok();
+
+                    // Flush effects, then stop the display link if no new next_frame_callbacks have been added.
+
+                    cx.update(|cx| {
+                        if cx.next_frame_callbacks.is_empty() {
+                            cx.platform.stop_display_link(display_id);
+                        }
+                    })
+                    .ok();
                 }
-            } else {
-                let async_cx = cx.to_async();
-                cx.next_frame_callbacks.insert(display_id, vec![f]);
-                cx.platform().set_display_link_output_callback(
-                    display_id,
-                    Box::new(move |_current_time, _output_time| {
-                        let _ = async_cx.update(|cx| {
-                            let callbacks = cx
-                                .next_frame_callbacks
-                                .get_mut(&display_id)
-                                .unwrap()
-                                .drain(..)
-                                .collect::<Vec<_>>();
-                            for callback in callbacks {
-                                callback(cx);
-                            }
+            });
+            self.frame_consumers.insert(display_id, consumer_task);
+        }
 
-                            cx.run_on_main(move |cx| {
-                                if cx.next_frame_callbacks.get(&display_id).unwrap().is_empty() {
-                                    cx.platform().stop_display_link(display_id);
-                                }
-                            })
-                            .detach();
-                        });
-                    }),
-                );
-            }
+        if self.next_frame_callbacks.is_empty() {
+            self.platform.start_display_link(display_id);
+        }
 
-            cx.platform().start_display_link(display_id);
-        })
-        .detach();
+        self.next_frame_callbacks
+            .entry(display_id)
+            .or_default()
+            .push(Box::new(move |cx: &mut AppContext| {
+                cx.update_window(handle, |_root_view, cx| callback(cx)).ok();
+            }));
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
     /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
     /// use within your future.
-    pub fn spawn<Fut, R>(
-        &mut self,
-        f: impl FnOnce(AnyWindowHandle, AsyncWindowContext) -> Fut + Send + 'static,
-    ) -> Task<R>
+    pub fn spawn<Fut, R>(&mut self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
     where
-        R: Send + 'static,
-        Fut: Future<Output = R> + Send + 'static,
+        R: 'static,
+        Fut: Future<Output = R> + 'static,
     {
-        let window = self.window.handle;
-        self.app.spawn(move |app| {
-            let cx = AsyncWindowContext::new(app, window);
-            let future = f(window, cx);
-            async move { future.await }
-        })
+        self.app
+            .spawn(|app| f(AsyncWindowContext::new(app, self.window.handle)))
     }
 
     /// Update the global of the given type. The given closure is given simultaneous mutable
@@ -528,6 +570,38 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         bounds
     }
 
+    fn window_bounds_changed(&mut self) {
+        self.window.scale_factor = self.window.platform_window.scale_factor();
+        self.window.content_size = self.window.platform_window.content_size();
+        self.window.bounds = self.window.platform_window.bounds();
+        self.window.display_id = self.window.platform_window.display().id();
+        self.window.dirty = true;
+
+        self.window
+            .bounds_observers
+            .clone()
+            .retain(&(), |callback| callback(self));
+    }
+
+    pub fn window_bounds(&self) -> WindowBounds {
+        self.window.bounds
+    }
+
+    pub fn is_window_active(&self) -> bool {
+        self.window.active
+    }
+
+    pub fn zoom_window(&self) {
+        self.window.platform_window.zoom();
+    }
+
+    pub fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        self.platform
+            .displays()
+            .into_iter()
+            .find(|display| display.id() == self.window.display_id)
+    }
+
     /// The scale factor of the display associated with the window. For example, it could
     /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
     /// be rendered as two pixels on screen.
@@ -539,6 +613,12 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     /// UI to scale, just like zooming a web page.
     pub fn rem_size(&self) -> Pixels {
         self.window.rem_size
+    }
+
+    /// Sets the size of an em for the base font of the application. Adjusting this value allows the
+    /// UI to scale, just like zooming a web page.
+    pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
+        self.window.rem_size = rem_size.into();
     }
 
     /// The line height associated with the current text style.
@@ -569,7 +649,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     /// a specific need to register a global listener.
     pub fn on_mouse_event<Event: 'static>(
         &mut self,
-        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + Send + 'static,
+        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
         let order = self.window.z_index_stack.clone();
         self.window
@@ -906,14 +986,8 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.root_view = Some(root_view);
         let scene = self.window.scene_builder.build();
 
-        self.run_on_main(|cx| {
-            cx.window
-                .platform_window
-                .borrow_on_main_thread()
-                .draw(scene);
-            cx.window.dirty = false;
-        })
-        .detach();
+        self.window.platform_window.draw(scene);
+        self.window.dirty = false;
     }
 
     fn start_frame(&mut self) {
@@ -1149,13 +1223,26 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     /// is updated.
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut WindowContext<'_, '_>) + Send + 'static,
+        f: impl Fn(&mut WindowContext<'_>) + 'static,
     ) -> Subscription {
-        let window_id = self.window.handle.id;
+        let window_handle = self.window.handle;
         self.global_observers.insert(
             TypeId::of::<G>(),
-            Box::new(move |cx| cx.update_window(window_id, |cx| f(cx)).is_ok()),
+            Box::new(move |cx| window_handle.update(cx, |_, cx| f(cx)).is_ok()),
         )
+    }
+
+    pub fn activate_window(&self) {
+        self.window.platform_window.activate();
+    }
+
+    pub fn prompt(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
+        self.window.platform_window.prompt(level, msg, answers)
     }
 
     fn dispatch_action(
@@ -1237,52 +1324,61 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 }
 
-impl Context for WindowContext<'_, '_> {
-    type ModelContext<'a, T> = ModelContext<'a, T>;
+impl Context for WindowContext<'_> {
     type Result<T> = T;
 
     fn build_model<T>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Model<T>
     where
-        T: 'static + Send,
+        T: 'static,
     {
         let slot = self.app.entities.reserve();
-        let model = build_model(&mut ModelContext::mutable(&mut *self.app, slot.downgrade()));
+        let model = build_model(&mut ModelContext::new(&mut *self.app, slot.downgrade()));
         self.entities.insert(slot, model)
     }
 
     fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> R {
         let mut entity = self.entities.lease(model);
         let result = update(
             &mut *entity,
-            &mut ModelContext::mutable(&mut *self.app, model.downgrade()),
+            &mut ModelContext::new(&mut *self.app, model.downgrade()),
         );
         self.entities.end_lease(entity);
         result
     }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+    {
+        if window == self.window.handle {
+            let root_view = self.window.root_view.clone().unwrap();
+            Ok(update(root_view, self))
+        } else {
+            window.update(self.app, update)
+        }
+    }
 }
 
-impl VisualContext for WindowContext<'_, '_> {
-    type ViewContext<'a, 'w, V> = ViewContext<'a, 'w, V>;
-
+impl VisualContext for WindowContext<'_> {
     fn build_view<V>(
         &mut self,
-        build_view_state: impl FnOnce(&mut Self::ViewContext<'_, '_, V>) -> V,
+        build_view_state: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static + Send,
+        V: 'static,
     {
         let slot = self.app.entities.reserve();
         let view = View {
             model: slot.clone(),
         };
-        let mut cx = ViewContext::mutable(&mut *self.app, &mut *self.window, view.downgrade());
+        let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
         let entity = build_view_state(&mut cx);
         self.entities.insert(slot, entity);
         view
@@ -1292,17 +1388,35 @@ impl VisualContext for WindowContext<'_, '_> {
     fn update_view<T: 'static, R>(
         &mut self,
         view: &View<T>,
-        update: impl FnOnce(&mut T, &mut Self::ViewContext<'_, '_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ViewContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         let mut lease = self.app.entities.lease(&view.model);
-        let mut cx = ViewContext::mutable(&mut *self.app, &mut *self.window, view.downgrade());
+        let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
         let result = update(&mut *lease, &mut cx);
         cx.app.entities.end_lease(lease);
         result
     }
+
+    fn replace_root_view<V>(
+        &mut self,
+        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+    ) -> Self::Result<View<V>>
+    where
+        V: Render,
+    {
+        let slot = self.app.entities.reserve();
+        let view = View {
+            model: slot.clone(),
+        };
+        let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
+        let entity = build_view(&mut cx);
+        self.entities.insert(slot, entity);
+        self.window.root_view = Some(view.clone().into());
+        view
+    }
 }
 
-impl<'a, 'w> std::ops::Deref for WindowContext<'a, 'w> {
+impl<'a> std::ops::Deref for WindowContext<'a> {
     type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
@@ -1310,19 +1424,19 @@ impl<'a, 'w> std::ops::Deref for WindowContext<'a, 'w> {
     }
 }
 
-impl<'a, 'w> std::ops::DerefMut for WindowContext<'a, 'w> {
+impl<'a> std::ops::DerefMut for WindowContext<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.app
     }
 }
 
-impl<'a, 'w> Borrow<AppContext> for WindowContext<'a, 'w> {
+impl<'a> Borrow<AppContext> for WindowContext<'a> {
     fn borrow(&self) -> &AppContext {
         &self.app
     }
 }
 
-impl<'a, 'w> BorrowMut<AppContext> for WindowContext<'a, 'w> {
+impl<'a> BorrowMut<AppContext> for WindowContext<'a> {
     fn borrow_mut(&mut self) -> &mut AppContext {
         &mut self.app
     }
@@ -1422,7 +1536,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
     ) -> R
     where
-        S: 'static + Send,
+        S: 'static,
     {
         self.with_element_id(id, |global_id, cx| {
             if let Some(any) = cx
@@ -1460,7 +1574,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
     ) -> R
     where
-        S: 'static + Send,
+        S: 'static,
     {
         if let Some(element_id) = element_id {
             self.with_element_state(element_id, f)
@@ -1490,13 +1604,13 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     }
 }
 
-impl Borrow<Window> for WindowContext<'_, '_> {
+impl Borrow<Window> for WindowContext<'_> {
     fn borrow(&self) -> &Window {
         &self.window
     }
 }
 
-impl BorrowMut<Window> for WindowContext<'_, '_> {
+impl BorrowMut<Window> for WindowContext<'_> {
     fn borrow_mut(&mut self) -> &mut Window {
         &mut self.window
     }
@@ -1504,52 +1618,48 @@ impl BorrowMut<Window> for WindowContext<'_, '_> {
 
 impl<T> BorrowWindow for T where T: BorrowMut<AppContext> + BorrowMut<Window> {}
 
-pub struct ViewContext<'a, 'w, V> {
-    window_cx: WindowContext<'a, 'w>,
-    view: WeakView<V>,
+pub struct ViewContext<'a, V> {
+    window_cx: WindowContext<'a>,
+    view: &'a View<V>,
 }
 
-impl<V> Borrow<AppContext> for ViewContext<'_, '_, V> {
+impl<V> Borrow<AppContext> for ViewContext<'_, V> {
     fn borrow(&self) -> &AppContext {
         &*self.window_cx.app
     }
 }
 
-impl<V> BorrowMut<AppContext> for ViewContext<'_, '_, V> {
+impl<V> BorrowMut<AppContext> for ViewContext<'_, V> {
     fn borrow_mut(&mut self) -> &mut AppContext {
         &mut *self.window_cx.app
     }
 }
 
-impl<V> Borrow<Window> for ViewContext<'_, '_, V> {
+impl<V> Borrow<Window> for ViewContext<'_, V> {
     fn borrow(&self) -> &Window {
         &*self.window_cx.window
     }
 }
 
-impl<V> BorrowMut<Window> for ViewContext<'_, '_, V> {
+impl<V> BorrowMut<Window> for ViewContext<'_, V> {
     fn borrow_mut(&mut self) -> &mut Window {
         &mut *self.window_cx.window
     }
 }
 
-impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
-    pub(crate) fn mutable(
-        app: &'a mut AppContext,
-        window: &'w mut Window,
-        view: WeakView<V>,
-    ) -> Self {
+impl<'a, V: 'static> ViewContext<'a, V> {
+    pub(crate) fn new(app: &'a mut AppContext, window: &'a mut Window, view: &'a View<V>) -> Self {
         Self {
-            window_cx: WindowContext::mutable(app, window),
+            window_cx: WindowContext::new(app, window),
             view,
         }
     }
 
-    pub fn view(&self) -> WeakView<V> {
+    pub fn view(&self) -> View<V> {
         self.view.clone()
     }
 
-    pub fn model(&self) -> WeakModel<V> {
+    pub fn model(&self) -> Model<V> {
         self.view.model.clone()
     }
 
@@ -1560,40 +1670,50 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         result
     }
 
-    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + Send + 'static)
+    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static)
     where
-        V: Any + Send,
+        V: 'static,
     {
-        let view = self.view().upgrade().unwrap();
+        let view = self.view();
         self.window_cx.on_next_frame(move |cx| view.update(cx, f));
+    }
+
+    /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
+    /// that are currently on the stack to be returned to the app.
+    pub fn defer(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static) {
+        let view = self.view().downgrade();
+        self.window_cx.defer(move |cx| {
+            view.update(cx, f).ok();
+        });
     }
 
     pub fn observe<V2, E>(
         &mut self,
         entity: &E,
-        mut on_notify: impl FnMut(&mut V, E, &mut ViewContext<'_, '_, V>) + Send + 'static,
+        mut on_notify: impl FnMut(&mut V, E, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription
     where
         V2: 'static,
-        V: Any + Send,
+        V: 'static,
         E: Entity<V2>,
     {
-        let view = self.view();
+        let view = self.view().downgrade();
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
         self.app.observers.insert(
             entity_id,
             Box::new(move |cx| {
-                cx.update_window(window_handle.id, |cx| {
-                    if let Some(handle) = E::upgrade_from(&entity) {
-                        view.update(cx, |this, cx| on_notify(this, handle, cx))
-                            .is_ok()
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or(false)
+                window_handle
+                    .update(cx, |_, cx| {
+                        if let Some(handle) = E::upgrade_from(&entity) {
+                            view.update(cx, |this, cx| on_notify(this, handle, cx))
+                                .is_ok()
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false)
             }),
         )
     }
@@ -1601,44 +1721,44 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn subscribe<V2, E>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(&mut V, E, &V2::Event, &mut ViewContext<'_, '_, V>) + Send + 'static,
+        mut on_event: impl FnMut(&mut V, E, &V2::Event, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription
     where
         V2: EventEmitter,
         E: Entity<V2>,
     {
-        let view = self.view();
+        let view = self.view().downgrade();
         let entity_id = entity.entity_id();
         let handle = entity.downgrade();
         let window_handle = self.window.handle;
         self.app.event_listeners.insert(
             entity_id,
             Box::new(move |event, cx| {
-                cx.update_window(window_handle.id, |cx| {
-                    if let Some(handle) = E::upgrade_from(&handle) {
-                        let event = event.downcast_ref().expect("invalid event type");
-                        view.update(cx, |this, cx| on_event(this, handle, event, cx))
-                            .is_ok()
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or(false)
+                window_handle
+                    .update(cx, |_, cx| {
+                        if let Some(handle) = E::upgrade_from(&handle) {
+                            let event = event.downcast_ref().expect("invalid event type");
+                            view.update(cx, |this, cx| on_event(this, handle, event, cx))
+                                .is_ok()
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false)
             }),
         )
     }
 
     pub fn on_release(
         &mut self,
-        mut on_release: impl FnMut(&mut V, &mut WindowContext) + Send + 'static,
+        on_release: impl FnOnce(&mut V, &mut WindowContext) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
             self.view.model.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
-                // todo!("are we okay with silently swallowing the error?")
-                let _ = cx.update_window(window_handle.id, |cx| on_release(this, cx));
+                let _ = window_handle.update(cx, |_, cx| on_release(this, cx));
             }),
         )
     }
@@ -1646,21 +1766,21 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     pub fn observe_release<V2, E>(
         &mut self,
         entity: &E,
-        mut on_release: impl FnMut(&mut V, &mut V2, &mut ViewContext<'_, '_, V>) + Send + 'static,
+        mut on_release: impl FnMut(&mut V, &mut V2, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription
     where
-        V: Any + Send,
+        V: 'static,
         V2: 'static,
         E: Entity<V2>,
     {
-        let view = self.view();
+        let view = self.view().downgrade();
         let entity_id = entity.entity_id();
         let window_handle = self.window.handle;
         self.app.release_listeners.insert(
             entity_id,
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
-                let _ = cx.update_window(window_handle.id, |cx| {
+                let _ = window_handle.update(cx, |_, cx| {
                     view.update(cx, |this, cx| on_release(this, entity, cx))
                 });
             }),
@@ -1674,11 +1794,33 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         });
     }
 
+    pub fn observe_window_bounds(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        self.window.bounds_observers.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        )
+    }
+
+    pub fn observe_window_activation(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        self.window.activation_observers.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        )
+    }
+
     pub fn on_focus_changed(
         &mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + 'static,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
     ) {
-        let handle = self.view();
+        let handle = self.view().downgrade();
         self.window.focus_listeners.push(Box::new(move |event, cx| {
             handle
                 .update(cx, |view, cx| listener(view, event, cx))
@@ -1694,12 +1836,12 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         let old_stack_len = self.window.key_dispatch_stack.len();
         if !self.window.freeze_key_dispatch_stack {
             for (event_type, listener) in key_listeners {
-                let handle = self.view();
+                let handle = self.view().downgrade();
                 let listener = Box::new(
                     move |event: &dyn Any,
                           context_stack: &[&DispatchContext],
                           phase: DispatchPhase,
-                          cx: &mut WindowContext<'_, '_>| {
+                          cx: &mut WindowContext<'_>| {
                         handle
                             .update(cx, |view, cx| {
                                 listener(view, event, context_stack, phase, cx)
@@ -1772,41 +1914,21 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
         result
     }
 
-    pub fn run_on_main<R>(
-        &mut self,
-        view: &mut V,
-        f: impl FnOnce(&mut V, &mut MainThread<ViewContext<'_, '_, V>>) -> R + Send + 'static,
-    ) -> Task<Result<R>>
-    where
-        R: Send + 'static,
-    {
-        if self.executor.is_main_thread() {
-            let cx = unsafe { mem::transmute::<&mut Self, &mut MainThread<Self>>(self) };
-            Task::ready(Ok(f(view, cx)))
-        } else {
-            let view = self.view().upgrade().unwrap();
-            self.window_cx.run_on_main(move |cx| view.update(cx, f))
-        }
-    }
-
     pub fn spawn<Fut, R>(
         &mut self,
-        f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut + Send + 'static,
+        f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut,
     ) -> Task<R>
     where
-        R: Send + 'static,
-        Fut: Future<Output = R> + Send + 'static,
+        R: 'static,
+        Fut: Future<Output = R> + 'static,
     {
-        let view = self.view();
-        self.window_cx.spawn(move |_, cx| {
-            let result = f(view, cx);
-            async move { result.await }
-        })
+        let view = self.view().downgrade();
+        self.window_cx.spawn(|cx| f(view, cx))
     }
 
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static + Send,
+        G: 'static,
     {
         let mut global = self.app.lease_global::<G>();
         let result = f(&mut global, self);
@@ -1816,26 +1938,25 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut V, &mut ViewContext<'_, '_, V>) + Send + 'static,
+        f: impl Fn(&mut V, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription {
-        let window_id = self.window.handle.id;
-        let handle = self.view();
+        let window_handle = self.window.handle;
+        let view = self.view().downgrade();
         self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| {
-                cx.update_window(window_id, |cx| {
-                    handle.update(cx, |view, cx| f(view, cx)).is_ok()
-                })
-                .unwrap_or(false)
+                window_handle
+                    .update(cx, |_, cx| view.update(cx, |view, cx| f(view, cx)).is_ok())
+                    .unwrap_or(false)
             }),
         )
     }
 
     pub fn on_mouse_event<Event: 'static>(
         &mut self,
-        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + Send + 'static,
+        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + 'static,
     ) {
-        let handle = self.view().upgrade().unwrap();
+        let handle = self.view();
         self.window_cx.on_mouse_event(move |event, phase, cx| {
             handle.update(cx, |view, cx| {
                 handler(view, event, phase, cx);
@@ -1844,10 +1965,10 @@ impl<'a, 'w, V: 'static> ViewContext<'a, 'w, V> {
     }
 }
 
-impl<'a, 'w, V> ViewContext<'a, 'w, V>
+impl<V> ViewContext<'_, V>
 where
     V: EventEmitter,
-    V::Event: Any + Send,
+    V::Event: 'static,
 {
     pub fn emit(&mut self, event: V::Event) {
         let emitter = self.view.model.entity_id;
@@ -1858,35 +1979,36 @@ where
     }
 }
 
-impl<'a, 'w, V> Context for ViewContext<'a, 'w, V> {
-    type ModelContext<'b, U> = ModelContext<'b, U>;
+impl<V> Context for ViewContext<'_, V> {
     type Result<U> = U;
 
-    fn build_model<T>(
+    fn build_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Self::ModelContext<'_, T>) -> T,
-    ) -> Model<T>
-    where
-        T: 'static + Send,
-    {
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Model<T> {
         self.window_cx.build_model(build_model)
     }
 
     fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
-        update: impl FnOnce(&mut T, &mut Self::ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> R {
         self.window_cx.update_model(model, update)
     }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+    {
+        self.window_cx.update_window(window, update)
+    }
 }
 
-impl<V: 'static> VisualContext for ViewContext<'_, '_, V> {
-    type ViewContext<'a, 'w, V2> = ViewContext<'a, 'w, V2>;
-
-    fn build_view<W: 'static + Send>(
+impl<V: 'static> VisualContext for ViewContext<'_, V> {
+    fn build_view<W: 'static>(
         &mut self,
-        build_view: impl FnOnce(&mut Self::ViewContext<'_, '_, W>) -> W,
+        build_view: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>> {
         self.window_cx.build_view(build_view)
     }
@@ -1894,21 +2016,31 @@ impl<V: 'static> VisualContext for ViewContext<'_, '_, V> {
     fn update_view<V2: 'static, R>(
         &mut self,
         view: &View<V2>,
-        update: impl FnOnce(&mut V2, &mut Self::ViewContext<'_, '_, V2>) -> R,
+        update: impl FnOnce(&mut V2, &mut ViewContext<'_, V2>) -> R,
     ) -> Self::Result<R> {
         self.window_cx.update_view(view, update)
     }
+
+    fn replace_root_view<W>(
+        &mut self,
+        build_view: impl FnOnce(&mut ViewContext<'_, W>) -> W,
+    ) -> Self::Result<View<W>>
+    where
+        W: Render,
+    {
+        self.window_cx.replace_root_view(build_view)
+    }
 }
 
-impl<'a, 'w, V> std::ops::Deref for ViewContext<'a, 'w, V> {
-    type Target = WindowContext<'a, 'w>;
+impl<'a, V> std::ops::Deref for ViewContext<'a, V> {
+    type Target = WindowContext<'a>;
 
     fn deref(&self) -> &Self::Target {
         &self.window_cx
     }
 }
 
-impl<'a, 'w, V> std::ops::DerefMut for ViewContext<'a, 'w, V> {
+impl<'a, V> std::ops::DerefMut for ViewContext<'a, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.window_cx
     }
@@ -1923,42 +2055,74 @@ impl WindowId {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Deref, DerefMut)]
 pub struct WindowHandle<V> {
-    id: WindowId,
+    #[deref]
+    #[deref_mut]
+    pub(crate) any_handle: AnyWindowHandle,
     state_type: PhantomData<V>,
 }
 
-impl<S> Copy for WindowHandle<S> {}
-
-impl<S> Clone for WindowHandle<S> {
-    fn clone(&self) -> Self {
-        WindowHandle {
-            id: self.id,
-            state_type: PhantomData,
-        }
-    }
-}
-
-impl<S> WindowHandle<S> {
+impl<V: 'static + Render> WindowHandle<V> {
     pub fn new(id: WindowId) -> Self {
         WindowHandle {
-            id,
+            any_handle: AnyWindowHandle {
+                id,
+                state_type: TypeId::of::<V>(),
+            },
+            state_type: PhantomData,
+        }
+    }
+
+    pub fn update<C, R>(
+        self,
+        cx: &mut C,
+        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
+    ) -> Result<R>
+    where
+        C: Context,
+    {
+        cx.update_window(self.any_handle, |root_view, cx| {
+            let view = root_view
+                .downcast::<V>()
+                .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
+            Ok(cx.update_view(&view, update))
+        })?
+    }
+}
+
+impl<V> Copy for WindowHandle<V> {}
+
+impl<V> Clone for WindowHandle<V> {
+    fn clone(&self) -> Self {
+        WindowHandle {
+            any_handle: self.any_handle,
             state_type: PhantomData,
         }
     }
 }
 
-impl<S: 'static> Into<AnyWindowHandle> for WindowHandle<S> {
-    fn into(self) -> AnyWindowHandle {
-        AnyWindowHandle {
-            id: self.id,
-            state_type: TypeId::of::<S>(),
-        }
+impl<V> PartialEq for WindowHandle<V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.any_handle == other.any_handle
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+impl<V> Eq for WindowHandle<V> {}
+
+impl<V> Hash for WindowHandle<V> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.any_handle.hash(state);
+    }
+}
+
+impl<V: 'static> Into<AnyWindowHandle> for WindowHandle<V> {
+    fn into(self) -> AnyWindowHandle {
+        self.any_handle
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,
@@ -1967,6 +2131,28 @@ pub struct AnyWindowHandle {
 impl AnyWindowHandle {
     pub fn window_id(&self) -> WindowId {
         self.id
+    }
+
+    pub fn downcast<T: 'static>(&self) -> Option<WindowHandle<T>> {
+        if TypeId::of::<T>() == self.state_type {
+            Some(WindowHandle {
+                any_handle: *self,
+                state_type: PhantomData,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn update<C, R>(
+        self,
+        cx: &mut C,
+        update: impl FnOnce(AnyView, &mut WindowContext<'_>) -> R,
+    ) -> Result<R>
+    where
+        C: Context,
+    {
+        cx.update_window(self, update)
     }
 }
 

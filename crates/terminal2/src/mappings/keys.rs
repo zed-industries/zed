@@ -1,6 +1,6 @@
 /// The mappings defined in this file where created from reading the alacritty source
 use alacritty_terminal::term::TermMode;
-use gpui2::Keystroke;
+use gpui::Keystroke;
 
 #[derive(Debug, PartialEq, Eq)]
 enum AlacModifiers {
@@ -278,7 +278,7 @@ fn modifier_code(keystroke: &Keystroke) -> u32 {
 
 #[cfg(test)]
 mod test {
-    use gpui2::Modifiers;
+    use gpui::Modifiers;
 
     use super::*;
 

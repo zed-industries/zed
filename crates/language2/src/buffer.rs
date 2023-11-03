@@ -16,8 +16,8 @@ use crate::{
 use anyhow::{anyhow, Result};
 pub use clock::ReplicaId;
 use futures::FutureExt as _;
-use gpui2::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task};
-use lsp2::LanguageServerId;
+use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task};
+use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
@@ -40,7 +40,7 @@ use std::{
 use sum_tree::TreeMap;
 use text::operation_queue::OperationQueue;
 pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, *};
-use theme2::SyntaxTheme;
+use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 use util::{RangeExt, TryFutureExt as _};
@@ -48,7 +48,7 @@ use util::{RangeExt, TryFutureExt as _};
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
 
-pub use lsp2::DiagnosticSeverity;
+pub use lsp::DiagnosticSeverity;
 
 pub struct Buffer {
     text: TextBuffer,
@@ -149,14 +149,14 @@ pub struct Completion {
     pub new_text: String,
     pub label: CodeLabel,
     pub server_id: LanguageServerId,
-    pub lsp_completion: lsp2::CompletionItem,
+    pub lsp_completion: lsp::CompletionItem,
 }
 
 #[derive(Clone, Debug)]
 pub struct CodeAction {
     pub server_id: LanguageServerId,
     pub range: Range<Anchor>,
-    pub lsp_action: lsp2::CodeAction,
+    pub lsp_action: lsp::CodeAction,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -226,7 +226,7 @@ pub trait File: Send + Sync {
 
     fn as_any(&self) -> &dyn Any;
 
-    fn to_proto(&self) -> rpc2::proto::File;
+    fn to_proto(&self) -> rpc::proto::File;
 }
 
 pub trait LocalFile: File {
@@ -375,7 +375,7 @@ impl Buffer {
             file,
         );
         this.text.set_line_ending(proto::deserialize_line_ending(
-            rpc2::proto::LineEnding::from_i32(message.line_ending)
+            rpc::proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
@@ -434,7 +434,7 @@ impl Buffer {
         ));
 
         let text_operations = self.text.operations().clone();
-        cx.spawn(|_| async move {
+        cx.background_executor().spawn(async move {
             let since = since.unwrap_or_default();
             operations.extend(
                 text_operations
@@ -652,7 +652,7 @@ impl Buffer {
 
                     if !self.is_dirty() {
                         let reload = self.reload(cx).log_err().map(drop);
-                        task = cx.executor().spawn(reload);
+                        task = cx.background_executor().spawn(reload);
                     }
                 }
             }
@@ -684,7 +684,7 @@ impl Buffer {
         let snapshot = self.snapshot();
 
         let mut diff = self.git_diff.clone();
-        let diff = cx.executor().spawn(async move {
+        let diff = cx.background_executor().spawn(async move {
             diff.update(&diff_base, &snapshot).await;
             diff
         });
@@ -793,7 +793,7 @@ impl Buffer {
         let mut syntax_snapshot = syntax_map.snapshot();
         drop(syntax_map);
 
-        let parse_task = cx.executor().spawn({
+        let parse_task = cx.background_executor().spawn({
             let language = language.clone();
             let language_registry = language_registry.clone();
             async move {
@@ -803,7 +803,7 @@ impl Buffer {
         });
 
         match cx
-            .executor()
+            .background_executor()
             .block_with_timeout(self.sync_parse_timeout, parse_task)
         {
             Ok(new_syntax_snapshot) => {
@@ -866,9 +866,9 @@ impl Buffer {
 
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
         if let Some(indent_sizes) = self.compute_autoindents() {
-            let indent_sizes = cx.executor().spawn(indent_sizes);
+            let indent_sizes = cx.background_executor().spawn(indent_sizes);
             match cx
-                .executor()
+                .background_executor()
                 .block_with_timeout(Duration::from_micros(500), indent_sizes)
             {
                 Ok(indent_sizes) => self.apply_autoindents(indent_sizes, cx),
@@ -1117,7 +1117,7 @@ impl Buffer {
     pub fn diff(&self, mut new_text: String, cx: &AppContext) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let base_version = self.version();
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             let old_text = old_text.to_string();
             let line_ending = LineEnding::detect(&new_text);
             LineEnding::normalize(&mut new_text);
@@ -1155,7 +1155,7 @@ impl Buffer {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
         let base_version = self.version();
-        cx.executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             let ranges = trailing_whitespace_ranges(&old_text);
             let empty = Arc::<str>::from("");
             Diff {
@@ -3003,14 +3003,14 @@ impl IndentSize {
 impl Completion {
     pub fn sort_key(&self) -> (usize, &str) {
         let kind_key = match self.lsp_completion.kind {
-            Some(lsp2::CompletionItemKind::VARIABLE) => 0,
+            Some(lsp::CompletionItemKind::VARIABLE) => 0,
             _ => 1,
         };
         (kind_key, &self.label.text[self.label.filter_range.clone()])
     }
 
     pub fn is_snippet(&self) -> bool {
-        self.lsp_completion.insert_text_format == Some(lsp2::InsertTextFormat::SNIPPET)
+        self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
     }
 }
 

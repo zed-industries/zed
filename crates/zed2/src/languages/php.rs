@@ -3,8 +3,8 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 
-use language2::{LanguageServerName, LspAdapter, LspAdapterDelegate};
-use lsp2::LanguageServerBinary;
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 
 use smol::{fs, stream::StreamExt};
@@ -91,9 +91,9 @@ impl LspAdapter for IntelephenseLspAdapter {
 
     async fn label_for_completion(
         &self,
-        _item: &lsp2::CompletionItem,
-        _language: &Arc<language2::Language>,
-    ) -> Option<language2::CodeLabel> {
+        _item: &lsp::CompletionItem,
+        _language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
         None
     }
 

@@ -1,4077 +1,4029 @@
-// use crate::{search::PathMatcher, worktree::WorktreeModelHandle, Event, *};
-// use fs::{FakeFs, RealFs};
-// use futures::{future, StreamExt};
-// use gpui::{executor::Deterministic, test::subscribe, AppContext};
-// use language2::{
-//     language_settings::{AllLanguageSettings, LanguageSettingsContent},
-//     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
-//     LineEnding, OffsetRangeExt, Point, ToPoint,
-// };
-// use lsp2::Url;
-// use parking_lot::Mutex;
-// use pretty_assertions::assert_eq;
-// use serde_json::json;
-// use std::{cell::RefCell, os::unix, rc::Rc, task::Poll};
-// use unindent::Unindent as _;
-// use util::{assert_set_eq, test::temp_tree};
-
-// #[cfg(test)]
-// #[ctor::ctor]
-// fn init_logger() {
-//     if std::env::var("RUST_LOG").is_ok() {
-//         env_logger::init();
-//     }
-// }
-
-// #[gpui::test]
-// async fn test_symlinks(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-//     cx.foreground().allow_parking();
-
-//     let dir = temp_tree(json!({
-//         "root": {
-//             "apple": "",
-//             "banana": {
-//                 "carrot": {
-//                     "date": "",
-//                     "endive": "",
-//                 }
-//             },
-//             "fennel": {
-//                 "grape": "",
-//             }
-//         }
-//     }));
-
-//     let root_link_path = dir.path().join("root_link");
-//     unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
-//     unix::fs::symlink(
-//         &dir.path().join("root/fennel"),
-//         &dir.path().join("root/finnochio"),
-//     )
-//     .unwrap();
-
-//     let project = Project::test(Arc::new(RealFs), [root_link_path.as_ref()], cx).await;
-//     project.read_with(cx, |project, cx| {
-//         let tree = project.worktrees(cx).next().unwrap().read(cx);
-//         assert_eq!(tree.file_count(), 5);
-//         assert_eq!(
-//             tree.inode_for_path("fennel/grape"),
-//             tree.inode_for_path("finnochio/grape")
-//         );
-//     });
-// }
-
-// #[gpui::test]
-// async fn test_managing_project_specific_settings(
-//     deterministic: Arc<Deterministic>,
-//     cx: &mut gpui::TestAppContext,
-// ) {
-//     init_test(cx);
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/the-root",
-//         json!({
-//             ".zed": {
-//                 "settings.json": r#"{ "tab_size": 8 }"#
-//             },
-//             "a": {
-//                 "a.rs": "fn a() {\n    A\n}"
-//             },
-//             "b": {
-//                 ".zed": {
-//                     "settings.json": r#"{ "tab_size": 2 }"#
-//                 },
-//                 "b.rs": "fn b() {\n  B\n}"
-//             }
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
-//     let worktree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
-
-//     deterministic.run_until_parked();
-//     cx.read(|cx| {
-//         let tree = worktree.read(cx);
-
-//         let settings_a = language_settings(
-//             None,
-//             Some(
-//                 &(File::for_entry(
-//                     tree.entry_for_path("a/a.rs").unwrap().clone(),
-//                     worktree.clone(),
-//                 ) as _),
-//             ),
-//             cx,
-//         );
-//         let settings_b = language_settings(
-//             None,
-//             Some(
-//                 &(File::for_entry(
-//                     tree.entry_for_path("b/b.rs").unwrap().clone(),
-//                     worktree.clone(),
-//                 ) as _),
-//             ),
-//             cx,
-//         );
-
-//         assert_eq!(settings_a.tab_size.get(), 8);
-//         assert_eq!(settings_b.tab_size.get(), 2);
-//     });
-// }
-
-// #[gpui::test]
-// async fn test_managing_language_servers(
-//     deterministic: Arc<Deterministic>,
-//     cx: &mut gpui::TestAppContext,
-// ) {
-//     init_test(cx);
-
-//     let mut rust_language = Language::new(
-//         LanguageConfig {
-//             name: "Rust".into(),
-//             path_suffixes: vec!["rs".to_string()],
-//             ..Default::default()
-//         },
-//         Some(tree_sitter_rust::language()),
-//     );
-//     let mut json_language = Language::new(
-//         LanguageConfig {
-//             name: "JSON".into(),
-//             path_suffixes: vec!["json".to_string()],
-//             ..Default::default()
-//         },
-//         None,
-//     );
-//     let mut fake_rust_servers = rust_language
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             name: "the-rust-language-server",
-//             capabilities: lsp::ServerCapabilities {
-//                 completion_provider: Some(lsp::CompletionOptions {
-//                     trigger_characters: Some(vec![".".to_string(), "::".to_string()]),
-//                     ..Default::default()
-//                 }),
-//                 ..Default::default()
-//             },
-//             ..Default::default()
-//         }))
-//         .await;
-//     let mut fake_json_servers = json_language
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             name: "the-json-language-server",
-//             capabilities: lsp::ServerCapabilities {
-//                 completion_provider: Some(lsp::CompletionOptions {
-//                     trigger_characters: Some(vec![":".to_string()]),
-//                     ..Default::default()
-//                 }),
-//                 ..Default::default()
-//             },
-//             ..Default::default()
-//         }))
-//         .await;
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/the-root",
-//         json!({
-//             "test.rs": "const A: i32 = 1;",
-//             "test2.rs": "",
-//             "Cargo.toml": "a = 1",
-//             "package.json": "{\"a\": 1}",
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
-
-//     // Open a buffer without an associated language server.
-//     let toml_buffer = project
-//         .update(cx, |project, cx| {
-//             project.open_local_buffer("/the-root/Cargo.toml", cx)
-//         })
-//         .await
-//         .unwrap();
-
-//     // Open a buffer with an associated language server before the language for it has been loaded.
-//     let rust_buffer = project
-//         .update(cx, |project, cx| {
-//             project.open_local_buffer("/the-root/test.rs", cx)
-//         })
-//         .await
-//         .unwrap();
-//     rust_buffer.read_with(cx, |buffer, _| {
-//         assert_eq!(buffer.language().map(|l| l.name()), None);
-//     });
-
-//     // Now we add the languages to the project, and ensure they get assigned to all
-//     // the relevant open buffers.
-//     project.update(cx, |project, _| {
-//         project.languages.add(Arc::new(json_language));
-//         project.languages.add(Arc::new(rust_language));
-//     });
-//     deterministic.run_until_parked();
-//     rust_buffer.read_with(cx, |buffer, _| {
-//         assert_eq!(buffer.language().map(|l| l.name()), Some("Rust".into()));
-//     });
-
-//     // A server is started up, and it is notified about Rust files.
-//     let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
-//     assert_eq!(
-//         fake_rust_server
-//             .receive_notification::<lsp2::notification::DidOpenTextDocument>()
-//             .await
-//             .text_document,
-//         lsp2::TextDocumentItem {
-//             uri: lsp2::Url::from_file_path("/the-root/test.rs").unwrap(),
-//             version: 0,
-//             text: "const A: i32 = 1;".to_string(),
-//             language_id: Default::default()
-//         }
-//     );
-
-//     // The buffer is configured based on the language server's capabilities.
-//     rust_buffer.read_with(cx, |buffer, _| {
-//         assert_eq!(
-//             buffer.completion_triggers(),
-//             &[".".to_string(), "::".to_string()]
-//         );
-//     });
-//     toml_buffer.read_with(cx, |buffer, _| {
-//         assert!(buffer.completion_triggers().is_empty());
-//     });
-
-//     // Edit a buffer. The changes are reported to the language server.
-//     rust_buffer.update(cx, |buffer, cx| buffer.edit([(16..16, "2")], None, cx));
-//     assert_eq!(
-//         fake_rust_server
-//             .receive_notification::<lsp2::notification::DidChangeTextDocument>()
-//             .await
-//             .text_document,
-//         lsp2::VersionedTextDocumentIdentifier::new(
-//             lsp2::Url::from_file_path("/the-root/test.rs").unwrap(),
-//             1
-//         )
-//     );
-
-//     // Open a third buffer with a different associated language server.
-//     let json_buffer = project
-//         .update(cx, |project, cx| {
-//             project.open_local_buffer("/the-root/package.json", cx)
-//         })
-//         .await
-//         .unwrap();
-
-//     // A json language server is started up and is only notified about the json buffer.
-//     let mut fake_json_server = fake_json_servers.next().await.unwrap();
-//     assert_eq!(
-//         fake_json_server
-//             .receive_notification::<lsp2::notification::DidOpenTextDocument>()
-//             .await
-//             .text_document,
-//         lsp2::TextDocumentItem {
-//             uri: lsp2::Url::from_file_path("/the-root/package.json").unwrap(),
-//             version: 0,
-//             text: "{\"a\": 1}".to_string(),
-//             language_id: Default::default()
-//         }
-//     );
-
-//     // This buffer is configured based on the second language server's
-//     // capabilities.
-//     json_buffer.read_with(cx, |buffer, _| {
-//         assert_eq!(buffer.completion_triggers(), &[":".to_string()]);
-//     });
-
-//     // When opening another buffer whose language server is already running,
-//     // it is also configured based on the existing language server's capabilities.
-//     let rust_buffer2 = project
-//         .update(cx, |project, cx| {
-//             project.open_local_buffer("/the-root/test2.rs", cx)
-//         })
-//         .await
-//         .unwrap();
-//     rust_buffer2.read_with(cx, |buffer, _| {
-//         assert_eq!(
-//             buffer.completion_triggers(),
-//             &[".".to_string(), "::".to_string()]
-//         );
-//     });
-
-//     // Changes are reported only to servers matching the buffer's language.
-//     toml_buffer.update(cx, |buffer, cx| buffer.edit([(5..5, "23")], None, cx));
-//     rust_buffer2.update(cx, |buffer, cx| {
-//         buffer.edit([(0..0, "let x = 1;")], None, cx)
-//     });
-//     assert_eq!(
-//         fake_rust_server
-//             .receive_notification::<lsp2::notification::DidChangeTextDocument>()
-//             .await
-//             .text_document,
-//         lsp2::VersionedTextDocumentIdentifier::new(
-//             lsp2::Url::from_file_path("/the-root/test2.rs").unwrap(),
-//             1
-//         )
-//     );
-
-//     // Save notifications are reported to all servers.
-//     project
-//         .update(cx, |project, cx| project.save_buffer(toml_buffer, cx))
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         fake_rust_server
-//             .receive_notification::<lsp2::notification::DidSaveTextDocument>()
-//             .await
-//             .text_document,
-//         lsp2::TextDocumentIdentifier::new(
-//             lsp2::Url::from_file_path("/the-root/Cargo.toml").unwrap()
-//         )
-//     );
-//     assert_eq!(
-//         fake_json_server
-//             .receive_notification::<lsp2::notification::DidSaveTextDocument>()
-//             .await
-//             .text_document,
-//         lsp2::TextDocumentIdentifier::new(
-//             lsp2::Url::from_file_path("/the-root/Cargo.toml").unwrap()
-//         )
-//     );
-
-//     // Renames are reported only to servers matching the buffer's language.
-//     fs.rename(
-//         Path::new("/the-root/test2.rs"),
-//         Path::new("/the-root/test3.rs"),
-//         Default::default(),
-//     )
-//     .await
-//     .unwrap();
-//     assert_eq!(
-//         fake_rust_server
-//             .receive_notification::<lsp2::notification::DidCloseTextDocument>()
-//             .await
-//             .text_document,
-//         lsp2::TextDocumentIdentifier::new(lsp2::Url::from_file_path("/the-root/test2.rs").unwrap()),
-//     );
-//     assert_eq!(
-//         fake_rust_server
-//             .receive_notification::<lsp2::notification::DidOpenTextDocument>()
-//             .await
-//             .text_document,
-//         lsp2::TextDocumentItem {
-//             uri: lsp2::Url::from_file_path("/the-root/test3.rs").unwrap(),
-//             version: 0,
-//             text: rust_buffer2.read_with(cx, |buffer, _| buffer.text()),
-//             language_id: Default::default()
-//         },
-//     );
-
-//     rust_buffer2.update(cx, |buffer, cx| {
-//         buffer.update_diagnostics(
-//             LanguageServerId(0),
-//             DiagnosticSet::from_sorted_entries(
-//                 vec![DiagnosticEntry {
-//                     diagnostic: Default::default(),
-//                     range: Anchor::MIN..Anchor::MAX,
-//                 }],
-//                 &buffer.snapshot(),
-//             ),
-//             cx,
-//         );
-//         assert_eq!(
-//             buffer
-//                 .snapshot()
-//                 .diagnostics_in_range::<_, usize>(0..buffer.len(), false)
-//                 .count(),
-//             1
-//         );
-//     });
-
-//     // When the rename changes the extension of the file, the buffer gets closed on the old
-//     // language server and gets opened on the new one.
-//     fs.rename(
-//         Path::new("/the-root/test3.rs"),
-//         Path::new("/the-root/test3.json"),
-//         Default::default(),
-//     )
-//     .await
-//     .unwrap();
-//     assert_eq!(
-//         fake_rust_server
-//             .receive_notification::<lsp2::notification::DidCloseTextDocument>()
-//             .await
-//             .text_document,
-//         lsp2::TextDocumentIdentifier::new(lsp2::Url::from_file_path("/the-root/test3.rs").unwrap(),),
-//     );
-//     assert_eq!(
-//         fake_json_server
-//             .receive_notification::<lsp2::notification::DidOpenTextDocument>()
-//             .await
-//             .text_document,
-//         lsp2::TextDocumentItem {
-//             uri: lsp2::Url::from_file_path("/the-root/test3.json").unwrap(),
-//             version: 0,
-//             text: rust_buffer2.read_with(cx, |buffer, _| buffer.text()),
-//             language_id: Default::default()
-//         },
-//     );
-
-//     // We clear the diagnostics, since the language has changed.
-//     rust_buffer2.read_with(cx, |buffer, _| {
-//         assert_eq!(
-//             buffer
-//                 .snapshot()
-//                 .diagnostics_in_range::<_, usize>(0..buffer.len(), false)
-//                 .count(),
-//             0
-//         );
-//     });
-
-//     // The renamed file's version resets after changing language server.
-//     rust_buffer2.update(cx, |buffer, cx| buffer.edit([(0..0, "// ")], None, cx));
-//     assert_eq!(
-//         fake_json_server
-//             .receive_notification::<lsp2::notification::DidChangeTextDocument>()
-//             .await
-//             .text_document,
-//         lsp2::VersionedTextDocumentIdentifier::new(
-//             lsp2::Url::from_file_path("/the-root/test3.json").unwrap(),
-//             1
-//         )
-//     );
-
-//     // Restart language servers
-//     project.update(cx, |project, cx| {
-//         project.restart_language_servers_for_buffers(
-//             vec![rust_buffer.clone(), json_buffer.clone()],
-//             cx,
-//         );
-//     });
-
-//     let mut rust_shutdown_requests = fake_rust_server
-//         .handle_request::<lsp2::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
-//     let mut json_shutdown_requests = fake_json_server
-//         .handle_request::<lsp2::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
-//     futures::join!(rust_shutdown_requests.next(), json_shutdown_requests.next());
-
-//     let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
-//     let mut fake_json_server = fake_json_servers.next().await.unwrap();
-
-//     // Ensure rust document is reopened in new rust language server
-//     assert_eq!(
-//         fake_rust_server
-//             .receive_notification::<lsp2::notification::DidOpenTextDocument>()
-//             .await
-//             .text_document,
-//         lsp2::TextDocumentItem {
-//             uri: lsp2::Url::from_file_path("/the-root/test.rs").unwrap(),
-//             version: 0,
-//             text: rust_buffer.read_with(cx, |buffer, _| buffer.text()),
-//             language_id: Default::default()
-//         }
-//     );
-
-//     // Ensure json documents are reopened in new json language server
-//     assert_set_eq!(
-//         [
-//             fake_json_server
-//                 .receive_notification::<lsp2::notification::DidOpenTextDocument>()
-//                 .await
-//                 .text_document,
-//             fake_json_server
-//                 .receive_notification::<lsp2::notification::DidOpenTextDocument>()
-//                 .await
-//                 .text_document,
-//         ],
-//         [
-//             lsp2::TextDocumentItem {
-//                 uri: lsp2::Url::from_file_path("/the-root/package.json").unwrap(),
-//                 version: 0,
-//                 text: json_buffer.read_with(cx, |buffer, _| buffer.text()),
-//                 language_id: Default::default()
-//             },
-//             lsp2::TextDocumentItem {
-//                 uri: lsp2::Url::from_file_path("/the-root/test3.json").unwrap(),
-//                 version: 0,
-//                 text: rust_buffer2.read_with(cx, |buffer, _| buffer.text()),
-//                 language_id: Default::default()
-//             }
-//         ]
-//     );
-
-//     // Close notifications are reported only to servers matching the buffer's language.
-//     cx.update(|_| drop(json_buffer));
-//     let close_message = lsp2::DidCloseTextDocumentParams {
-//         text_document: lsp2::TextDocumentIdentifier::new(
-//             lsp2::Url::from_file_path("/the-root/package.json").unwrap(),
-//         ),
-//     };
-//     assert_eq!(
-//         fake_json_server
-//             .receive_notification::<lsp2::notification::DidCloseTextDocument>()
-//             .await,
-//         close_message,
-//     );
-// }
-
-// #[gpui::test]
-// async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             name: "Rust".into(),
-//             path_suffixes: vec!["rs".to_string()],
-//             ..Default::default()
-//         },
-//         Some(tree_sitter_rust::language()),
-//     );
-//     let mut fake_servers = language
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             name: "the-language-server",
-//             ..Default::default()
-//         }))
-//         .await;
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/the-root",
-//         json!({
-//             ".gitignore": "target\n",
-//             "src": {
-//                 "a.rs": "",
-//                 "b.rs": "",
-//             },
-//             "target": {
-//                 "x": {
-//                     "out": {
-//                         "x.rs": ""
-//                     }
-//                 },
-//                 "y": {
-//                     "out": {
-//                         "y.rs": "",
-//                     }
-//                 },
-//                 "z": {
-//                     "out": {
-//                         "z.rs": ""
-//                     }
-//                 }
-//             }
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
-//     project.update(cx, |project, _| {
-//         project.languages.add(Arc::new(language));
-//     });
-//     cx.foreground().run_until_parked();
-
-//     // Start the language server by opening a buffer with a compatible file extension.
-//     let _buffer = project
-//         .update(cx, |project, cx| {
-//             project.open_local_buffer("/the-root/src/a.rs", cx)
-//         })
-//         .await
-//         .unwrap();
-
-//     // Initially, we don't load ignored files because the language server has not explicitly asked us to watch them.
-//     project.read_with(cx, |project, cx| {
-//         let worktree = project.worktrees(cx).next().unwrap();
-//         assert_eq!(
-//             worktree
-//                 .read(cx)
-//                 .snapshot()
-//                 .entries(true)
-//                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
-//                 .collect::<Vec<_>>(),
-//             &[
-//                 (Path::new(""), false),
-//                 (Path::new(".gitignore"), false),
-//                 (Path::new("src"), false),
-//                 (Path::new("src/a.rs"), false),
-//                 (Path::new("src/b.rs"), false),
-//                 (Path::new("target"), true),
-//             ]
-//         );
-//     });
-
-//     let prev_read_dir_count = fs.read_dir_call_count();
-
-//     // Keep track of the FS events reported to the language server.
-//     let fake_server = fake_servers.next().await.unwrap();
-//     let file_changes = Arc::new(Mutex::new(Vec::new()));
-//     fake_server
-//         .request::<lsp2::request::RegisterCapability>(lsp2::RegistrationParams {
-//             registrations: vec![lsp2::Registration {
-//                 id: Default::default(),
-//                 method: "workspace/didChangeWatchedFiles".to_string(),
-//                 register_options: serde_json::to_value(
-//                     lsp::DidChangeWatchedFilesRegistrationOptions {
-//                         watchers: vec![
-//                             lsp2::FileSystemWatcher {
-//                                 glob_pattern: lsp2::GlobPattern::String(
-//                                     "/the-root/Cargo.toml".to_string(),
-//                                 ),
-//                                 kind: None,
-//                             },
-//                             lsp2::FileSystemWatcher {
-//                                 glob_pattern: lsp2::GlobPattern::String(
-//                                     "/the-root/src/*.{rs,c}".to_string(),
-//                                 ),
-//                                 kind: None,
-//                             },
-//                             lsp2::FileSystemWatcher {
-//                                 glob_pattern: lsp2::GlobPattern::String(
-//                                     "/the-root/target/y/**/*.rs".to_string(),
-//                                 ),
-//                                 kind: None,
-//                             },
-//                         ],
-//                     },
-//                 )
-//                 .ok(),
-//             }],
-//         })
-//         .await
-//         .unwrap();
-//     fake_server.handle_notification::<lsp2::notification::DidChangeWatchedFiles, _>({
-//         let file_changes = file_changes.clone();
-//         move |params, _| {
-//             let mut file_changes = file_changes.lock();
-//             file_changes.extend(params.changes);
-//             file_changes.sort_by(|a, b| a.uri.cmp(&b.uri));
-//         }
-//     });
-
-//     cx.foreground().run_until_parked();
-//     assert_eq!(mem::take(&mut *file_changes.lock()), &[]);
-//     assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 4);
-
-//     // Now the language server has asked us to watch an ignored directory path,
-//     // so we recursively load it.
-//     project.read_with(cx, |project, cx| {
-//         let worktree = project.worktrees(cx).next().unwrap();
-//         assert_eq!(
-//             worktree
-//                 .read(cx)
-//                 .snapshot()
-//                 .entries(true)
-//                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
-//                 .collect::<Vec<_>>(),
-//             &[
-//                 (Path::new(""), false),
-//                 (Path::new(".gitignore"), false),
-//                 (Path::new("src"), false),
-//                 (Path::new("src/a.rs"), false),
-//                 (Path::new("src/b.rs"), false),
-//                 (Path::new("target"), true),
-//                 (Path::new("target/x"), true),
-//                 (Path::new("target/y"), true),
-//                 (Path::new("target/y/out"), true),
-//                 (Path::new("target/y/out/y.rs"), true),
-//                 (Path::new("target/z"), true),
-//             ]
-//         );
-//     });
-
-//     // Perform some file system mutations, two of which match the watched patterns,
-//     // and one of which does not.
-//     fs.create_file("/the-root/src/c.rs".as_ref(), Default::default())
-//         .await
-//         .unwrap();
-//     fs.create_file("/the-root/src/d.txt".as_ref(), Default::default())
-//         .await
-//         .unwrap();
-//     fs.remove_file("/the-root/src/b.rs".as_ref(), Default::default())
-//         .await
-//         .unwrap();
-//     fs.create_file("/the-root/target/x/out/x2.rs".as_ref(), Default::default())
-//         .await
-//         .unwrap();
-//     fs.create_file("/the-root/target/y/out/y2.rs".as_ref(), Default::default())
-//         .await
-//         .unwrap();
-
-//     // The language server receives events for the FS mutations that match its watch patterns.
-//     cx.foreground().run_until_parked();
-//     assert_eq!(
-//         &*file_changes.lock(),
-//         &[
-//             lsp2::FileEvent {
-//                 uri: lsp2::Url::from_file_path("/the-root/src/b.rs").unwrap(),
-//                 typ: lsp2::FileChangeType::DELETED,
-//             },
-//             lsp2::FileEvent {
-//                 uri: lsp2::Url::from_file_path("/the-root/src/c.rs").unwrap(),
-//                 typ: lsp2::FileChangeType::CREATED,
-//             },
-//             lsp2::FileEvent {
-//                 uri: lsp2::Url::from_file_path("/the-root/target/y/out/y2.rs").unwrap(),
-//                 typ: lsp2::FileChangeType::CREATED,
-//             },
-//         ]
-//     );
-// }
-
-// #[gpui::test]
-// async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a.rs": "let a = 1;",
-//             "b.rs": "let b = 2;"
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs, ["/dir/a.rs".as_ref(), "/dir/b.rs".as_ref()], cx).await;
-
-//     let buffer_a = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
-//         .await
-//         .unwrap();
-//     let buffer_b = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
-//         .await
-//         .unwrap();
-
-//     project.update(cx, |project, cx| {
-//         project
-//             .update_diagnostics(
-//                 LanguageServerId(0),
-//                 lsp::PublishDiagnosticsParams {
-//                     uri: Url::from_file_path("/dir/a.rs").unwrap(),
-//                     version: None,
-//                     diagnostics: vec![lsp2::Diagnostic {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(0, 4),
-//                             lsp2::Position::new(0, 5),
-//                         ),
-//                         severity: Some(lsp2::DiagnosticSeverity::ERROR),
-//                         message: "error 1".to_string(),
-//                         ..Default::default()
-//                     }],
-//                 },
-//                 &[],
-//                 cx,
-//             )
-//             .unwrap();
-//         project
-//             .update_diagnostics(
-//                 LanguageServerId(0),
-//                 lsp::PublishDiagnosticsParams {
-//                     uri: Url::from_file_path("/dir/b.rs").unwrap(),
-//                     version: None,
-//                     diagnostics: vec![lsp2::Diagnostic {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(0, 4),
-//                             lsp2::Position::new(0, 5),
-//                         ),
-//                         severity: Some(lsp2::DiagnosticSeverity::WARNING),
-//                         message: "error 2".to_string(),
-//                         ..Default::default()
-//                     }],
-//                 },
-//                 &[],
-//                 cx,
-//             )
-//             .unwrap();
-//     });
-
-//     buffer_a.read_with(cx, |buffer, _| {
-//         let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
-//         assert_eq!(
-//             chunks
-//                 .iter()
-//                 .map(|(s, d)| (s.as_str(), *d))
-//                 .collect::<Vec<_>>(),
-//             &[
-//                 ("let ", None),
-//                 ("a", Some(DiagnosticSeverity::ERROR)),
-//                 (" = 1;", None),
-//             ]
-//         );
-//     });
-//     buffer_b.read_with(cx, |buffer, _| {
-//         let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
-//         assert_eq!(
-//             chunks
-//                 .iter()
-//                 .map(|(s, d)| (s.as_str(), *d))
-//                 .collect::<Vec<_>>(),
-//             &[
-//                 ("let ", None),
-//                 ("b", Some(DiagnosticSeverity::WARNING)),
-//                 (" = 2;", None),
-//             ]
-//         );
-//     });
-// }
-
-// #[gpui::test]
-// async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/root",
-//         json!({
-//             "dir": {
-//                 "a.rs": "let a = 1;",
-//             },
-//             "other.rs": "let b = c;"
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs, ["/root/dir".as_ref()], cx).await;
-
-//     let (worktree, _) = project
-//         .update(cx, |project, cx| {
-//             project.find_or_create_local_worktree("/root/other.rs", false, cx)
-//         })
-//         .await
-//         .unwrap();
-//     let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
-
-//     project.update(cx, |project, cx| {
-//         project
-//             .update_diagnostics(
-//                 LanguageServerId(0),
-//                 lsp::PublishDiagnosticsParams {
-//                     uri: Url::from_file_path("/root/other.rs").unwrap(),
-//                     version: None,
-//                     diagnostics: vec![lsp2::Diagnostic {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(0, 8),
-//                             lsp2::Position::new(0, 9),
-//                         ),
-//                         severity: Some(lsp2::DiagnosticSeverity::ERROR),
-//                         message: "unknown variable 'c'".to_string(),
-//                         ..Default::default()
-//                     }],
-//                 },
-//                 &[],
-//                 cx,
-//             )
-//             .unwrap();
-//     });
-
-//     let buffer = project
-//         .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
-//         .await
-//         .unwrap();
-//     buffer.read_with(cx, |buffer, _| {
-//         let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
-//         assert_eq!(
-//             chunks
-//                 .iter()
-//                 .map(|(s, d)| (s.as_str(), *d))
-//                 .collect::<Vec<_>>(),
-//             &[
-//                 ("let b = ", None),
-//                 ("c", Some(DiagnosticSeverity::ERROR)),
-//                 (";", None),
-//             ]
-//         );
-//     });
-
-//     project.read_with(cx, |project, cx| {
-//         assert_eq!(project.diagnostic_summaries(cx).next(), None);
-//         assert_eq!(project.diagnostic_summary(cx).error_count, 0);
-//     });
-// }
-
-// #[gpui::test]
-// async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let progress_token = "the-progress-token";
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             name: "Rust".into(),
-//             path_suffixes: vec!["rs".to_string()],
-//             ..Default::default()
-//         },
-//         Some(tree_sitter_rust::language()),
-//     );
-//     let mut fake_servers = language
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             disk_based_diagnostics_progress_token: Some(progress_token.into()),
-//             disk_based_diagnostics_sources: vec!["disk".into()],
-//             ..Default::default()
-//         }))
-//         .await;
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a.rs": "fn a() { A }",
-//             "b.rs": "const y: i32 = 1",
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-//     let worktree_id = project.read_with(cx, |p, cx| p.worktrees(cx).next().unwrap().read(cx).id());
-
-//     // Cause worktree to start the fake language server
-//     let _buffer = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
-//         .await
-//         .unwrap();
-
-//     let mut events = subscribe(&project, cx);
-
-//     let fake_server = fake_servers.next().await.unwrap();
-//     assert_eq!(
-//         events.next().await.unwrap(),
-//         Event::LanguageServerAdded(LanguageServerId(0)),
-//     );
-
-//     fake_server
-//         .start_progress(format!("{}/0", progress_token))
-//         .await;
-//     assert_eq!(
-//         events.next().await.unwrap(),
-//         Event::DiskBasedDiagnosticsStarted {
-//             language_server_id: LanguageServerId(0),
-//         }
-//     );
-
-//     fake_server.notify::<lsp2::notification::PublishDiagnostics>(lsp2::PublishDiagnosticsParams {
-//         uri: Url::from_file_path("/dir/a.rs").unwrap(),
-//         version: None,
-//         diagnostics: vec![lsp2::Diagnostic {
-//             range: lsp2::Range::new(lsp2::Position::new(0, 9), lsp2::Position::new(0, 10)),
-//             severity: Some(lsp2::DiagnosticSeverity::ERROR),
-//             message: "undefined variable 'A'".to_string(),
-//             ..Default::default()
-//         }],
-//     });
-//     assert_eq!(
-//         events.next().await.unwrap(),
-//         Event::DiagnosticsUpdated {
-//             language_server_id: LanguageServerId(0),
-//             path: (worktree_id, Path::new("a.rs")).into()
-//         }
-//     );
-
-//     fake_server.end_progress(format!("{}/0", progress_token));
-//     assert_eq!(
-//         events.next().await.unwrap(),
-//         Event::DiskBasedDiagnosticsFinished {
-//             language_server_id: LanguageServerId(0)
-//         }
-//     );
-
-//     let buffer = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/a.rs", cx))
-//         .await
-//         .unwrap();
-
-//     buffer.read_with(cx, |buffer, _| {
-//         let snapshot = buffer.snapshot();
-//         let diagnostics = snapshot
-//             .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
-//             .collect::<Vec<_>>();
-//         assert_eq!(
-//             diagnostics,
-//             &[DiagnosticEntry {
-//                 range: Point::new(0, 9)..Point::new(0, 10),
-//                 diagnostic: Diagnostic {
-//                     severity: lsp2::DiagnosticSeverity::ERROR,
-//                     message: "undefined variable 'A'".to_string(),
-//                     group_id: 0,
-//                     is_primary: true,
-//                     ..Default::default()
-//                 }
-//             }]
-//         )
-//     });
-
-//     // Ensure publishing empty diagnostics twice only results in one update event.
-//     fake_server.notify::<lsp2::notification::PublishDiagnostics>(lsp2::PublishDiagnosticsParams {
-//         uri: Url::from_file_path("/dir/a.rs").unwrap(),
-//         version: None,
-//         diagnostics: Default::default(),
-//     });
-//     assert_eq!(
-//         events.next().await.unwrap(),
-//         Event::DiagnosticsUpdated {
-//             language_server_id: LanguageServerId(0),
-//             path: (worktree_id, Path::new("a.rs")).into()
-//         }
-//     );
-
-//     fake_server.notify::<lsp2::notification::PublishDiagnostics>(lsp2::PublishDiagnosticsParams {
-//         uri: Url::from_file_path("/dir/a.rs").unwrap(),
-//         version: None,
-//         diagnostics: Default::default(),
-//     });
-//     cx.foreground().run_until_parked();
-//     assert_eq!(futures::poll!(events.next()), Poll::Pending);
-// }
-
-// #[gpui::test]
-// async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let progress_token = "the-progress-token";
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             path_suffixes: vec!["rs".to_string()],
-//             ..Default::default()
-//         },
-//         None,
-//     );
-//     let mut fake_servers = language
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             disk_based_diagnostics_sources: vec!["disk".into()],
-//             disk_based_diagnostics_progress_token: Some(progress_token.into()),
-//             ..Default::default()
-//         }))
-//         .await;
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-
-//     let buffer = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
-//         .await
-//         .unwrap();
-
-//     // Simulate diagnostics starting to update.
-//     let fake_server = fake_servers.next().await.unwrap();
-//     fake_server.start_progress(progress_token).await;
-
-//     // Restart the server before the diagnostics finish updating.
-//     project.update(cx, |project, cx| {
-//         project.restart_language_servers_for_buffers([buffer], cx);
-//     });
-//     let mut events = subscribe(&project, cx);
-
-//     // Simulate the newly started server sending more diagnostics.
-//     let fake_server = fake_servers.next().await.unwrap();
-//     assert_eq!(
-//         events.next().await.unwrap(),
-//         Event::LanguageServerAdded(LanguageServerId(1))
-//     );
-//     fake_server.start_progress(progress_token).await;
-//     assert_eq!(
-//         events.next().await.unwrap(),
-//         Event::DiskBasedDiagnosticsStarted {
-//             language_server_id: LanguageServerId(1)
-//         }
-//     );
-//     project.read_with(cx, |project, _| {
-//         assert_eq!(
-//             project
-//                 .language_servers_running_disk_based_diagnostics()
-//                 .collect::<Vec<_>>(),
-//             [LanguageServerId(1)]
-//         );
-//     });
-
-//     // All diagnostics are considered done, despite the old server's diagnostic
-//     // task never completing.
-//     fake_server.end_progress(progress_token);
-//     assert_eq!(
-//         events.next().await.unwrap(),
-//         Event::DiskBasedDiagnosticsFinished {
-//             language_server_id: LanguageServerId(1)
-//         }
-//     );
-//     project.read_with(cx, |project, _| {
-//         assert_eq!(
-//             project
-//                 .language_servers_running_disk_based_diagnostics()
-//                 .collect::<Vec<_>>(),
-//             [LanguageServerId(0); 0]
-//         );
-//     });
-// }
-
-// #[gpui::test]
-// async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             path_suffixes: vec!["rs".to_string()],
-//             ..Default::default()
-//         },
-//         None,
-//     );
-//     let mut fake_servers = language
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             ..Default::default()
-//         }))
-//         .await;
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree("/dir", json!({ "a.rs": "x" })).await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-
-//     let buffer = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
-//         .await
-//         .unwrap();
-
-//     // Publish diagnostics
-//     let fake_server = fake_servers.next().await.unwrap();
-//     fake_server.notify::<lsp2::notification::PublishDiagnostics>(lsp2::PublishDiagnosticsParams {
-//         uri: Url::from_file_path("/dir/a.rs").unwrap(),
-//         version: None,
-//         diagnostics: vec![lsp2::Diagnostic {
-//             range: lsp2::Range::new(lsp2::Position::new(0, 0), lsp2::Position::new(0, 0)),
-//             severity: Some(lsp2::DiagnosticSeverity::ERROR),
-//             message: "the message".to_string(),
-//             ..Default::default()
-//         }],
-//     });
-
-//     cx.foreground().run_until_parked();
-//     buffer.read_with(cx, |buffer, _| {
-//         assert_eq!(
-//             buffer
-//                 .snapshot()
-//                 .diagnostics_in_range::<_, usize>(0..1, false)
-//                 .map(|entry| entry.diagnostic.message.clone())
-//                 .collect::<Vec<_>>(),
-//             ["the message".to_string()]
-//         );
-//     });
-//     project.read_with(cx, |project, cx| {
-//         assert_eq!(
-//             project.diagnostic_summary(cx),
-//             DiagnosticSummary {
-//                 error_count: 1,
-//                 warning_count: 0,
-//             }
-//         );
-//     });
-
-//     project.update(cx, |project, cx| {
-//         project.restart_language_servers_for_buffers([buffer.clone()], cx);
-//     });
-
-//     // The diagnostics are cleared.
-//     cx.foreground().run_until_parked();
-//     buffer.read_with(cx, |buffer, _| {
-//         assert_eq!(
-//             buffer
-//                 .snapshot()
-//                 .diagnostics_in_range::<_, usize>(0..1, false)
-//                 .map(|entry| entry.diagnostic.message.clone())
-//                 .collect::<Vec<_>>(),
-//             Vec::<String>::new(),
-//         );
-//     });
-//     project.read_with(cx, |project, cx| {
-//         assert_eq!(
-//             project.diagnostic_summary(cx),
-//             DiagnosticSummary {
-//                 error_count: 0,
-//                 warning_count: 0,
-//             }
-//         );
-//     });
-// }
-
-// #[gpui::test]
-// async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             path_suffixes: vec!["rs".to_string()],
-//             ..Default::default()
-//         },
-//         None,
-//     );
-//     let mut fake_servers = language
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             name: "the-lsp",
-//             ..Default::default()
-//         }))
-//         .await;
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-
-//     let buffer = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
-//         .await
-//         .unwrap();
-
-//     // Before restarting the server, report diagnostics with an unknown buffer version.
-//     let fake_server = fake_servers.next().await.unwrap();
-//     fake_server.notify::<lsp2::notification::PublishDiagnostics>(lsp2::PublishDiagnosticsParams {
-//         uri: lsp2::Url::from_file_path("/dir/a.rs").unwrap(),
-//         version: Some(10000),
-//         diagnostics: Vec::new(),
-//     });
-//     cx.foreground().run_until_parked();
-
-//     project.update(cx, |project, cx| {
-//         project.restart_language_servers_for_buffers([buffer.clone()], cx);
-//     });
-//     let mut fake_server = fake_servers.next().await.unwrap();
-//     let notification = fake_server
-//         .receive_notification::<lsp2::notification::DidOpenTextDocument>()
-//         .await
-//         .text_document;
-//     assert_eq!(notification.version, 0);
-// }
-
-// #[gpui::test]
-// async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let mut rust = Language::new(
-//         LanguageConfig {
-//             name: Arc::from("Rust"),
-//             path_suffixes: vec!["rs".to_string()],
-//             ..Default::default()
-//         },
-//         None,
-//     );
-//     let mut fake_rust_servers = rust
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             name: "rust-lsp",
-//             ..Default::default()
-//         }))
-//         .await;
-//     let mut js = Language::new(
-//         LanguageConfig {
-//             name: Arc::from("JavaScript"),
-//             path_suffixes: vec!["js".to_string()],
-//             ..Default::default()
-//         },
-//         None,
-//     );
-//     let mut fake_js_servers = js
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             name: "js-lsp",
-//             ..Default::default()
-//         }))
-//         .await;
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree("/dir", json!({ "a.rs": "", "b.js": "" }))
-//         .await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     project.update(cx, |project, _| {
-//         project.languages.add(Arc::new(rust));
-//         project.languages.add(Arc::new(js));
-//     });
-
-//     let _rs_buffer = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
-//         .await
-//         .unwrap();
-//     let _js_buffer = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/b.js", cx))
-//         .await
-//         .unwrap();
-
-//     let mut fake_rust_server_1 = fake_rust_servers.next().await.unwrap();
-//     assert_eq!(
-//         fake_rust_server_1
-//             .receive_notification::<lsp2::notification::DidOpenTextDocument>()
-//             .await
-//             .text_document
-//             .uri
-//             .as_str(),
-//         "file:///dir/a.rs"
-//     );
-
-//     let mut fake_js_server = fake_js_servers.next().await.unwrap();
-//     assert_eq!(
-//         fake_js_server
-//             .receive_notification::<lsp2::notification::DidOpenTextDocument>()
-//             .await
-//             .text_document
-//             .uri
-//             .as_str(),
-//         "file:///dir/b.js"
-//     );
-
-//     // Disable Rust language server, ensuring only that server gets stopped.
-//     cx.update(|cx| {
-//         cx.update_global(|settings: &mut SettingsStore, cx| {
-//             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-//                 settings.languages.insert(
-//                     Arc::from("Rust"),
-//                     LanguageSettingsContent {
-//                         enable_language_server: Some(false),
-//                         ..Default::default()
-//                     },
-//                 );
-//             });
-//         })
-//     });
-//     fake_rust_server_1
-//         .receive_notification::<lsp2::notification::Exit>()
-//         .await;
-
-//     // Enable Rust and disable JavaScript language servers, ensuring that the
-//     // former gets started again and that the latter stops.
-//     cx.update(|cx| {
-//         cx.update_global(|settings: &mut SettingsStore, cx| {
-//             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-//                 settings.languages.insert(
-//                     Arc::from("Rust"),
-//                     LanguageSettingsContent {
-//                         enable_language_server: Some(true),
-//                         ..Default::default()
-//                     },
-//                 );
-//                 settings.languages.insert(
-//                     Arc::from("JavaScript"),
-//                     LanguageSettingsContent {
-//                         enable_language_server: Some(false),
-//                         ..Default::default()
-//                     },
-//                 );
-//             });
-//         })
-//     });
-//     let mut fake_rust_server_2 = fake_rust_servers.next().await.unwrap();
-//     assert_eq!(
-//         fake_rust_server_2
-//             .receive_notification::<lsp2::notification::DidOpenTextDocument>()
-//             .await
-//             .text_document
-//             .uri
-//             .as_str(),
-//         "file:///dir/a.rs"
-//     );
-//     fake_js_server
-//         .receive_notification::<lsp2::notification::Exit>()
-//         .await;
-// }
-
-// #[gpui::test(iterations = 3)]
-// async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             name: "Rust".into(),
-//             path_suffixes: vec!["rs".to_string()],
-//             ..Default::default()
-//         },
-//         Some(tree_sitter_rust::language()),
-//     );
-//     let mut fake_servers = language
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             disk_based_diagnostics_sources: vec!["disk".into()],
-//             ..Default::default()
-//         }))
-//         .await;
-
-//     let text = "
-//         fn a() { A }
-//         fn b() { BB }
-//         fn c() { CCC }
-//     "
-//     .unindent();
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree("/dir", json!({ "a.rs": text })).await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-
-//     let buffer = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
-//         .await
-//         .unwrap();
-
-//     let mut fake_server = fake_servers.next().await.unwrap();
-//     let open_notification = fake_server
-//         .receive_notification::<lsp2::notification::DidOpenTextDocument>()
-//         .await;
-
-//     // Edit the buffer, moving the content down
-//     buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "\n\n")], None, cx));
-//     let change_notification_1 = fake_server
-//         .receive_notification::<lsp2::notification::DidChangeTextDocument>()
-//         .await;
-//     assert!(change_notification_1.text_document.version > open_notification.text_document.version);
-
-//     // Report some diagnostics for the initial version of the buffer
-//     fake_server.notify::<lsp2::notification::PublishDiagnostics>(lsp2::PublishDiagnosticsParams {
-//         uri: lsp2::Url::from_file_path("/dir/a.rs").unwrap(),
-//         version: Some(open_notification.text_document.version),
-//         diagnostics: vec![
-//             lsp2::Diagnostic {
-//                 range: lsp2::Range::new(lsp2::Position::new(0, 9), lsp2::Position::new(0, 10)),
-//                 severity: Some(DiagnosticSeverity::ERROR),
-//                 message: "undefined variable 'A'".to_string(),
-//                 source: Some("disk".to_string()),
-//                 ..Default::default()
-//             },
-//             lsp2::Diagnostic {
-//                 range: lsp2::Range::new(lsp2::Position::new(1, 9), lsp2::Position::new(1, 11)),
-//                 severity: Some(DiagnosticSeverity::ERROR),
-//                 message: "undefined variable 'BB'".to_string(),
-//                 source: Some("disk".to_string()),
-//                 ..Default::default()
-//             },
-//             lsp2::Diagnostic {
-//                 range: lsp2::Range::new(lsp2::Position::new(2, 9), lsp2::Position::new(2, 12)),
-//                 severity: Some(DiagnosticSeverity::ERROR),
-//                 source: Some("disk".to_string()),
-//                 message: "undefined variable 'CCC'".to_string(),
-//                 ..Default::default()
-//             },
-//         ],
-//     });
-
-//     // The diagnostics have moved down since they were created.
-//     buffer.next_notification(cx).await;
-//     cx.foreground().run_until_parked();
-//     buffer.read_with(cx, |buffer, _| {
-//         assert_eq!(
-//             buffer
-//                 .snapshot()
-//                 .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(5, 0), false)
-//                 .collect::<Vec<_>>(),
-//             &[
-//                 DiagnosticEntry {
-//                     range: Point::new(3, 9)..Point::new(3, 11),
-//                     diagnostic: Diagnostic {
-//                         source: Some("disk".into()),
-//                         severity: DiagnosticSeverity::ERROR,
-//                         message: "undefined variable 'BB'".to_string(),
-//                         is_disk_based: true,
-//                         group_id: 1,
-//                         is_primary: true,
-//                         ..Default::default()
-//                     },
-//                 },
-//                 DiagnosticEntry {
-//                     range: Point::new(4, 9)..Point::new(4, 12),
-//                     diagnostic: Diagnostic {
-//                         source: Some("disk".into()),
-//                         severity: DiagnosticSeverity::ERROR,
-//                         message: "undefined variable 'CCC'".to_string(),
-//                         is_disk_based: true,
-//                         group_id: 2,
-//                         is_primary: true,
-//                         ..Default::default()
-//                     }
-//                 }
-//             ]
-//         );
-//         assert_eq!(
-//             chunks_with_diagnostics(buffer, 0..buffer.len()),
-//             [
-//                 ("\n\nfn a() { ".to_string(), None),
-//                 ("A".to_string(), Some(DiagnosticSeverity::ERROR)),
-//                 (" }\nfn b() { ".to_string(), None),
-//                 ("BB".to_string(), Some(DiagnosticSeverity::ERROR)),
-//                 (" }\nfn c() { ".to_string(), None),
-//                 ("CCC".to_string(), Some(DiagnosticSeverity::ERROR)),
-//                 (" }\n".to_string(), None),
-//             ]
-//         );
-//         assert_eq!(
-//             chunks_with_diagnostics(buffer, Point::new(3, 10)..Point::new(4, 11)),
-//             [
-//                 ("B".to_string(), Some(DiagnosticSeverity::ERROR)),
-//                 (" }\nfn c() { ".to_string(), None),
-//                 ("CC".to_string(), Some(DiagnosticSeverity::ERROR)),
-//             ]
-//         );
-//     });
-
-//     // Ensure overlapping diagnostics are highlighted correctly.
-//     fake_server.notify::<lsp2::notification::PublishDiagnostics>(lsp2::PublishDiagnosticsParams {
-//         uri: lsp2::Url::from_file_path("/dir/a.rs").unwrap(),
-//         version: Some(open_notification.text_document.version),
-//         diagnostics: vec![
-//             lsp2::Diagnostic {
-//                 range: lsp2::Range::new(lsp2::Position::new(0, 9), lsp2::Position::new(0, 10)),
-//                 severity: Some(DiagnosticSeverity::ERROR),
-//                 message: "undefined variable 'A'".to_string(),
-//                 source: Some("disk".to_string()),
-//                 ..Default::default()
-//             },
-//             lsp2::Diagnostic {
-//                 range: lsp2::Range::new(lsp2::Position::new(0, 9), lsp2::Position::new(0, 12)),
-//                 severity: Some(DiagnosticSeverity::WARNING),
-//                 message: "unreachable statement".to_string(),
-//                 source: Some("disk".to_string()),
-//                 ..Default::default()
-//             },
-//         ],
-//     });
-
-//     buffer.next_notification(cx).await;
-//     cx.foreground().run_until_parked();
-//     buffer.read_with(cx, |buffer, _| {
-//         assert_eq!(
-//             buffer
-//                 .snapshot()
-//                 .diagnostics_in_range::<_, Point>(Point::new(2, 0)..Point::new(3, 0), false)
-//                 .collect::<Vec<_>>(),
-//             &[
-//                 DiagnosticEntry {
-//                     range: Point::new(2, 9)..Point::new(2, 12),
-//                     diagnostic: Diagnostic {
-//                         source: Some("disk".into()),
-//                         severity: DiagnosticSeverity::WARNING,
-//                         message: "unreachable statement".to_string(),
-//                         is_disk_based: true,
-//                         group_id: 4,
-//                         is_primary: true,
-//                         ..Default::default()
-//                     }
-//                 },
-//                 DiagnosticEntry {
-//                     range: Point::new(2, 9)..Point::new(2, 10),
-//                     diagnostic: Diagnostic {
-//                         source: Some("disk".into()),
-//                         severity: DiagnosticSeverity::ERROR,
-//                         message: "undefined variable 'A'".to_string(),
-//                         is_disk_based: true,
-//                         group_id: 3,
-//                         is_primary: true,
-//                         ..Default::default()
-//                     },
-//                 }
-//             ]
-//         );
-//         assert_eq!(
-//             chunks_with_diagnostics(buffer, Point::new(2, 0)..Point::new(3, 0)),
-//             [
-//                 ("fn a() { ".to_string(), None),
-//                 ("A".to_string(), Some(DiagnosticSeverity::ERROR)),
-//                 (" }".to_string(), Some(DiagnosticSeverity::WARNING)),
-//                 ("\n".to_string(), None),
-//             ]
-//         );
-//         assert_eq!(
-//             chunks_with_diagnostics(buffer, Point::new(2, 10)..Point::new(3, 0)),
-//             [
-//                 (" }".to_string(), Some(DiagnosticSeverity::WARNING)),
-//                 ("\n".to_string(), None),
-//             ]
-//         );
-//     });
-
-//     // Keep editing the buffer and ensure disk-based diagnostics get translated according to the
-//     // changes since the last save.
-//     buffer.update(cx, |buffer, cx| {
-//         buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "    ")], None, cx);
-//         buffer.edit(
-//             [(Point::new(2, 8)..Point::new(2, 10), "(x: usize)")],
-//             None,
-//             cx,
-//         );
-//         buffer.edit([(Point::new(3, 10)..Point::new(3, 10), "xxx")], None, cx);
-//     });
-//     let change_notification_2 = fake_server
-//         .receive_notification::<lsp2::notification::DidChangeTextDocument>()
-//         .await;
-//     assert!(
-//         change_notification_2.text_document.version > change_notification_1.text_document.version
-//     );
-
-//     // Handle out-of-order diagnostics
-//     fake_server.notify::<lsp2::notification::PublishDiagnostics>(lsp2::PublishDiagnosticsParams {
-//         uri: lsp2::Url::from_file_path("/dir/a.rs").unwrap(),
-//         version: Some(change_notification_2.text_document.version),
-//         diagnostics: vec![
-//             lsp2::Diagnostic {
-//                 range: lsp2::Range::new(lsp2::Position::new(1, 9), lsp2::Position::new(1, 11)),
-//                 severity: Some(DiagnosticSeverity::ERROR),
-//                 message: "undefined variable 'BB'".to_string(),
-//                 source: Some("disk".to_string()),
-//                 ..Default::default()
-//             },
-//             lsp2::Diagnostic {
-//                 range: lsp2::Range::new(lsp2::Position::new(0, 9), lsp2::Position::new(0, 10)),
-//                 severity: Some(DiagnosticSeverity::WARNING),
-//                 message: "undefined variable 'A'".to_string(),
-//                 source: Some("disk".to_string()),
-//                 ..Default::default()
-//             },
-//         ],
-//     });
-
-//     buffer.next_notification(cx).await;
-//     cx.foreground().run_until_parked();
-//     buffer.read_with(cx, |buffer, _| {
-//         assert_eq!(
-//             buffer
-//                 .snapshot()
-//                 .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
-//                 .collect::<Vec<_>>(),
-//             &[
-//                 DiagnosticEntry {
-//                     range: Point::new(2, 21)..Point::new(2, 22),
-//                     diagnostic: Diagnostic {
-//                         source: Some("disk".into()),
-//                         severity: DiagnosticSeverity::WARNING,
-//                         message: "undefined variable 'A'".to_string(),
-//                         is_disk_based: true,
-//                         group_id: 6,
-//                         is_primary: true,
-//                         ..Default::default()
-//                     }
-//                 },
-//                 DiagnosticEntry {
-//                     range: Point::new(3, 9)..Point::new(3, 14),
-//                     diagnostic: Diagnostic {
-//                         source: Some("disk".into()),
-//                         severity: DiagnosticSeverity::ERROR,
-//                         message: "undefined variable 'BB'".to_string(),
-//                         is_disk_based: true,
-//                         group_id: 5,
-//                         is_primary: true,
-//                         ..Default::default()
-//                     },
-//                 }
-//             ]
-//         );
-//     });
-// }
-
-// #[gpui::test]
-// async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let text = concat!(
-//         "let one = ;\n", //
-//         "let two = \n",
-//         "let three = 3;\n",
-//     );
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree("/dir", json!({ "a.rs": text })).await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     let buffer = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
-//         .await
-//         .unwrap();
-
-//     project.update(cx, |project, cx| {
-//         project
-//             .update_buffer_diagnostics(
-//                 &buffer,
-//                 LanguageServerId(0),
-//                 None,
-//                 vec![
-//                     DiagnosticEntry {
-//                         range: Unclipped(PointUtf16::new(0, 10))..Unclipped(PointUtf16::new(0, 10)),
-//                         diagnostic: Diagnostic {
-//                             severity: DiagnosticSeverity::ERROR,
-//                             message: "syntax error 1".to_string(),
-//                             ..Default::default()
-//                         },
-//                     },
-//                     DiagnosticEntry {
-//                         range: Unclipped(PointUtf16::new(1, 10))..Unclipped(PointUtf16::new(1, 10)),
-//                         diagnostic: Diagnostic {
-//                             severity: DiagnosticSeverity::ERROR,
-//                             message: "syntax error 2".to_string(),
-//                             ..Default::default()
-//                         },
-//                     },
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//     });
-
-//     // An empty range is extended forward to include the following character.
-//     // At the end of a line, an empty range is extended backward to include
-//     // the preceding character.
-//     buffer.read_with(cx, |buffer, _| {
-//         let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
-//         assert_eq!(
-//             chunks
-//                 .iter()
-//                 .map(|(s, d)| (s.as_str(), *d))
-//                 .collect::<Vec<_>>(),
-//             &[
-//                 ("let one = ", None),
-//                 (";", Some(DiagnosticSeverity::ERROR)),
-//                 ("\nlet two =", None),
-//                 (" ", Some(DiagnosticSeverity::ERROR)),
-//                 ("\nlet three = 3;\n", None)
-//             ]
-//         );
-//     });
-// }
-
-// #[gpui::test]
-// async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree("/dir", json!({ "a.rs": "one two three" }))
-//         .await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-
-//     project.update(cx, |project, cx| {
-//         project
-//             .update_diagnostic_entries(
-//                 LanguageServerId(0),
-//                 Path::new("/dir/a.rs").to_owned(),
-//                 None,
-//                 vec![DiagnosticEntry {
-//                     range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
-//                     diagnostic: Diagnostic {
-//                         severity: DiagnosticSeverity::ERROR,
-//                         is_primary: true,
-//                         message: "syntax error a1".to_string(),
-//                         ..Default::default()
-//                     },
-//                 }],
-//                 cx,
-//             )
-//             .unwrap();
-//         project
-//             .update_diagnostic_entries(
-//                 LanguageServerId(1),
-//                 Path::new("/dir/a.rs").to_owned(),
-//                 None,
-//                 vec![DiagnosticEntry {
-//                     range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
-//                     diagnostic: Diagnostic {
-//                         severity: DiagnosticSeverity::ERROR,
-//                         is_primary: true,
-//                         message: "syntax error b1".to_string(),
-//                         ..Default::default()
-//                     },
-//                 }],
-//                 cx,
-//             )
-//             .unwrap();
-
-//         assert_eq!(
-//             project.diagnostic_summary(cx),
-//             DiagnosticSummary {
-//                 error_count: 2,
-//                 warning_count: 0,
-//             }
-//         );
-//     });
-// }
-
-// #[gpui::test]
-// async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             name: "Rust".into(),
-//             path_suffixes: vec!["rs".to_string()],
-//             ..Default::default()
-//         },
-//         Some(tree_sitter_rust::language()),
-//     );
-//     let mut fake_servers = language.set_fake_lsp_adapter(Default::default()).await;
-
-//     let text = "
-//         fn a() {
-//             f1();
-//         }
-//         fn b() {
-//             f2();
-//         }
-//         fn c() {
-//             f3();
-//         }
-//     "
-//     .unindent();
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a.rs": text.clone(),
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-//     let buffer = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
-//         .await
-//         .unwrap();
-
-//     let mut fake_server = fake_servers.next().await.unwrap();
-//     let lsp_document_version = fake_server
-//         .receive_notification::<lsp2::notification::DidOpenTextDocument>()
-//         .await
-//         .text_document
-//         .version;
-
-//     // Simulate editing the buffer after the language server computes some edits.
-//     buffer.update(cx, |buffer, cx| {
-//         buffer.edit(
-//             [(
-//                 Point::new(0, 0)..Point::new(0, 0),
-//                 "// above first function\n",
-//             )],
-//             None,
-//             cx,
-//         );
-//         buffer.edit(
-//             [(
-//                 Point::new(2, 0)..Point::new(2, 0),
-//                 "    // inside first function\n",
-//             )],
-//             None,
-//             cx,
-//         );
-//         buffer.edit(
-//             [(
-//                 Point::new(6, 4)..Point::new(6, 4),
-//                 "// inside second function ",
-//             )],
-//             None,
-//             cx,
-//         );
-
-//         assert_eq!(
-//             buffer.text(),
-//             "
-//                 // above first function
-//                 fn a() {
-//                     // inside first function
-//                     f1();
-//                 }
-//                 fn b() {
-//                     // inside second function f2();
-//                 }
-//                 fn c() {
-//                     f3();
-//                 }
-//             "
-//             .unindent()
-//         );
-//     });
-
-//     let edits = project
-//         .update(cx, |project, cx| {
-//             project.edits_from_lsp(
-//                 &buffer,
-//                 vec![
-//                     // replace body of first function
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(0, 0),
-//                             lsp2::Position::new(3, 0),
-//                         ),
-//                         new_text: "
-//                             fn a() {
-//                                 f10();
-//                             }
-//                             "
-//                         .unindent(),
-//                     },
-//                     // edit inside second function
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(4, 6),
-//                             lsp2::Position::new(4, 6),
-//                         ),
-//                         new_text: "00".into(),
-//                     },
-//                     // edit inside third function via two distinct edits
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(7, 5),
-//                             lsp2::Position::new(7, 5),
-//                         ),
-//                         new_text: "4000".into(),
-//                     },
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(7, 5),
-//                             lsp2::Position::new(7, 6),
-//                         ),
-//                         new_text: "".into(),
-//                     },
-//                 ],
-//                 LanguageServerId(0),
-//                 Some(lsp_document_version),
-//                 cx,
-//             )
-//         })
-//         .await
-//         .unwrap();
-
-//     buffer.update(cx, |buffer, cx| {
-//         for (range, new_text) in edits {
-//             buffer.edit([(range, new_text)], None, cx);
-//         }
-//         assert_eq!(
-//             buffer.text(),
-//             "
-//                 // above first function
-//                 fn a() {
-//                     // inside first function
-//                     f10();
-//                 }
-//                 fn b() {
-//                     // inside second function f200();
-//                 }
-//                 fn c() {
-//                     f4000();
-//                 }
-//                 "
-//             .unindent()
-//         );
-//     });
-// }
-
-// #[gpui::test]
-// async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let text = "
-//         use a::b;
-//         use a::c;
-
-//         fn f() {
-//             b();
-//             c();
-//         }
-//     "
-//     .unindent();
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a.rs": text.clone(),
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     let buffer = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
-//         .await
-//         .unwrap();
-
-//     // Simulate the language server sending us a small edit in the form of a very large diff.
-//     // Rust-analyzer does this when performing a merge-imports code action.
-//     let edits = project
-//         .update(cx, |project, cx| {
-//             project.edits_from_lsp(
-//                 &buffer,
-//                 [
-//                     // Replace the first use statement without editing the semicolon.
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(0, 4),
-//                             lsp2::Position::new(0, 8),
-//                         ),
-//                         new_text: "a::{b, c}".into(),
-//                     },
-//                     // Reinsert the remainder of the file between the semicolon and the final
-//                     // newline of the file.
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(0, 9),
-//                             lsp2::Position::new(0, 9),
-//                         ),
-//                         new_text: "\n\n".into(),
-//                     },
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(0, 9),
-//                             lsp2::Position::new(0, 9),
-//                         ),
-//                         new_text: "
-//                             fn f() {
-//                                 b();
-//                                 c();
-//                             }"
-//                         .unindent(),
-//                     },
-//                     // Delete everything after the first newline of the file.
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(1, 0),
-//                             lsp2::Position::new(7, 0),
-//                         ),
-//                         new_text: "".into(),
-//                     },
-//                 ],
-//                 LanguageServerId(0),
-//                 None,
-//                 cx,
-//             )
-//         })
-//         .await
-//         .unwrap();
-
-//     buffer.update(cx, |buffer, cx| {
-//         let edits = edits
-//             .into_iter()
-//             .map(|(range, text)| {
-//                 (
-//                     range.start.to_point(buffer)..range.end.to_point(buffer),
-//                     text,
-//                 )
-//             })
-//             .collect::<Vec<_>>();
-
-//         assert_eq!(
-//             edits,
-//             [
-//                 (Point::new(0, 4)..Point::new(0, 8), "a::{b, c}".into()),
-//                 (Point::new(1, 0)..Point::new(2, 0), "".into())
-//             ]
-//         );
-
-//         for (range, new_text) in edits {
-//             buffer.edit([(range, new_text)], None, cx);
-//         }
-//         assert_eq!(
-//             buffer.text(),
-//             "
-//                 use a::{b, c};
-
-//                 fn f() {
-//                     b();
-//                     c();
-//                 }
-//             "
-//             .unindent()
-//         );
-//     });
-// }
-
-// #[gpui::test]
-// async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let text = "
-//         use a::b;
-//         use a::c;
-
-//         fn f() {
-//             b();
-//             c();
-//         }
-//     "
-//     .unindent();
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a.rs": text.clone(),
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     let buffer = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
-//         .await
-//         .unwrap();
-
-//     // Simulate the language server sending us edits in a non-ordered fashion,
-//     // with ranges sometimes being inverted or pointing to invalid locations.
-//     let edits = project
-//         .update(cx, |project, cx| {
-//             project.edits_from_lsp(
-//                 &buffer,
-//                 [
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(0, 9),
-//                             lsp2::Position::new(0, 9),
-//                         ),
-//                         new_text: "\n\n".into(),
-//                     },
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(0, 8),
-//                             lsp2::Position::new(0, 4),
-//                         ),
-//                         new_text: "a::{b, c}".into(),
-//                     },
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(1, 0),
-//                             lsp2::Position::new(99, 0),
-//                         ),
-//                         new_text: "".into(),
-//                     },
-//                     lsp2::TextEdit {
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(0, 9),
-//                             lsp2::Position::new(0, 9),
-//                         ),
-//                         new_text: "
-//                             fn f() {
-//                                 b();
-//                                 c();
-//                             }"
-//                         .unindent(),
-//                     },
-//                 ],
-//                 LanguageServerId(0),
-//                 None,
-//                 cx,
-//             )
-//         })
-//         .await
-//         .unwrap();
-
-//     buffer.update(cx, |buffer, cx| {
-//         let edits = edits
-//             .into_iter()
-//             .map(|(range, text)| {
-//                 (
-//                     range.start.to_point(buffer)..range.end.to_point(buffer),
-//                     text,
-//                 )
-//             })
-//             .collect::<Vec<_>>();
-
-//         assert_eq!(
-//             edits,
-//             [
-//                 (Point::new(0, 4)..Point::new(0, 8), "a::{b, c}".into()),
-//                 (Point::new(1, 0)..Point::new(2, 0), "".into())
-//             ]
-//         );
-
-//         for (range, new_text) in edits {
-//             buffer.edit([(range, new_text)], None, cx);
-//         }
-//         assert_eq!(
-//             buffer.text(),
-//             "
-//                 use a::{b, c};
-
-//                 fn f() {
-//                     b();
-//                     c();
-//                 }
-//             "
-//             .unindent()
-//         );
-//     });
-// }
-
-// fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
-//     buffer: &Buffer,
-//     range: Range<T>,
-// ) -> Vec<(String, Option<DiagnosticSeverity>)> {
-//     let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
-//     for chunk in buffer.snapshot().chunks(range, true) {
-//         if chunks.last().map_or(false, |prev_chunk| {
-//             prev_chunk.1 == chunk.diagnostic_severity
-//         }) {
-//             chunks.last_mut().unwrap().0.push_str(chunk.text);
-//         } else {
-//             chunks.push((chunk.text.to_string(), chunk.diagnostic_severity));
-//         }
-//     }
-//     chunks
-// }
-
-// #[gpui::test(iterations = 10)]
-// async fn test_definition(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             name: "Rust".into(),
-//             path_suffixes: vec!["rs".to_string()],
-//             ..Default::default()
-//         },
-//         Some(tree_sitter_rust::language()),
-//     );
-//     let mut fake_servers = language.set_fake_lsp_adapter(Default::default()).await;
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a.rs": "const fn a() { A }",
-//             "b.rs": "const y: i32 = crate::a()",
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs, ["/dir/b.rs".as_ref()], cx).await;
-//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-
-//     let buffer = project
-//         .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
-//         .await
-//         .unwrap();
-
-//     let fake_server = fake_servers.next().await.unwrap();
-//     fake_server.handle_request::<lsp2::request::GotoDefinition, _, _>(|params, _| async move {
-//         let params = params.text_document_position_params;
-//         assert_eq!(
-//             params.text_document.uri.to_file_path().unwrap(),
-//             Path::new("/dir/b.rs"),
-//         );
-//         assert_eq!(params.position, lsp2::Position::new(0, 22));
-
-//         Ok(Some(lsp2::GotoDefinitionResponse::Scalar(
-//             lsp2::Location::new(
-//                 lsp2::Url::from_file_path("/dir/a.rs").unwrap(),
-//                 lsp2::Range::new(lsp2::Position::new(0, 9), lsp2::Position::new(0, 10)),
-//             ),
-//         )))
-//     });
-
-//     let mut definitions = project
-//         .update(cx, |project, cx| project.definition(&buffer, 22, cx))
-//         .await
-//         .unwrap();
-
-//     // Assert no new language server started
-//     cx.foreground().run_until_parked();
-//     assert!(fake_servers.try_next().is_err());
-
-//     assert_eq!(definitions.len(), 1);
-//     let definition = definitions.pop().unwrap();
-//     cx.update(|cx| {
-//         let target_buffer = definition.target.buffer.read(cx);
-//         assert_eq!(
-//             target_buffer
-//                 .file()
-//                 .unwrap()
-//                 .as_local()
-//                 .unwrap()
-//                 .abs_path(cx),
-//             Path::new("/dir/a.rs"),
-//         );
-//         assert_eq!(definition.target.range.to_offset(target_buffer), 9..10);
-//         assert_eq!(
-//             list_worktrees(&project, cx),
-//             [("/dir/b.rs".as_ref(), true), ("/dir/a.rs".as_ref(), false)]
-//         );
-
-//         drop(definition);
-//     });
-//     cx.read(|cx| {
-//         assert_eq!(list_worktrees(&project, cx), [("/dir/b.rs".as_ref(), true)]);
-//     });
-
-//     fn list_worktrees<'a>(
-//         project: &'a ModelHandle<Project>,
-//         cx: &'a AppContext,
-//     ) -> Vec<(&'a Path, bool)> {
-//         project
-//             .read(cx)
-//             .worktrees(cx)
-//             .map(|worktree| {
-//                 let worktree = worktree.read(cx);
-//                 (
-//                     worktree.as_local().unwrap().abs_path().as_ref(),
-//                     worktree.is_visible(),
-//                 )
-//             })
-//             .collect::<Vec<_>>()
-//     }
-// }
-
-// #[gpui::test]
-// async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             name: "TypeScript".into(),
-//             path_suffixes: vec!["ts".to_string()],
-//             ..Default::default()
-//         },
-//         Some(tree_sitter_typescript::language_typescript()),
-//     );
-//     let mut fake_language_servers = language
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             capabilities: lsp::ServerCapabilities {
-//                 completion_provider: Some(lsp::CompletionOptions {
-//                     trigger_characters: Some(vec![":".to_string()]),
-//                     ..Default::default()
-//                 }),
-//                 ..Default::default()
-//             },
-//             ..Default::default()
-//         }))
-//         .await;
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a.ts": "",
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-//     let buffer = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
-//         .await
-//         .unwrap();
-
-//     let fake_server = fake_language_servers.next().await.unwrap();
-
-//     let text = "let a = b.fqn";
-//     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
-//     let completions = project.update(cx, |project, cx| {
-//         project.completions(&buffer, text.len(), cx)
-//     });
-
-//     fake_server
-//         .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
-//             Ok(Some(lsp2::CompletionResponse::Array(vec![
-//                 lsp2::CompletionItem {
-//                     label: "fullyQualifiedName?".into(),
-//                     insert_text: Some("fullyQualifiedName".into()),
-//                     ..Default::default()
-//                 },
-//             ])))
-//         })
-//         .next()
-//         .await;
-//     let completions = completions.await.unwrap();
-//     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-//     assert_eq!(completions.len(), 1);
-//     assert_eq!(completions[0].new_text, "fullyQualifiedName");
-//     assert_eq!(
-//         completions[0].old_range.to_offset(&snapshot),
-//         text.len() - 3..text.len()
-//     );
-
-//     let text = "let a = \"atoms/cmp\"";
-//     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
-//     let completions = project.update(cx, |project, cx| {
-//         project.completions(&buffer, text.len() - 1, cx)
-//     });
-
-//     fake_server
-//         .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
-//             Ok(Some(lsp2::CompletionResponse::Array(vec![
-//                 lsp2::CompletionItem {
-//                     label: "component".into(),
-//                     ..Default::default()
-//                 },
-//             ])))
-//         })
-//         .next()
-//         .await;
-//     let completions = completions.await.unwrap();
-//     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-//     assert_eq!(completions.len(), 1);
-//     assert_eq!(completions[0].new_text, "component");
-//     assert_eq!(
-//         completions[0].old_range.to_offset(&snapshot),
-//         text.len() - 4..text.len() - 1
-//     );
-// }
-
-// #[gpui::test]
-// async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             name: "TypeScript".into(),
-//             path_suffixes: vec!["ts".to_string()],
-//             ..Default::default()
-//         },
-//         Some(tree_sitter_typescript::language_typescript()),
-//     );
-//     let mut fake_language_servers = language
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             capabilities: lsp::ServerCapabilities {
-//                 completion_provider: Some(lsp::CompletionOptions {
-//                     trigger_characters: Some(vec![":".to_string()]),
-//                     ..Default::default()
-//                 }),
-//                 ..Default::default()
-//             },
-//             ..Default::default()
-//         }))
-//         .await;
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a.ts": "",
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-//     let buffer = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
-//         .await
-//         .unwrap();
-
-//     let fake_server = fake_language_servers.next().await.unwrap();
-
-//     let text = "let a = b.fqn";
-//     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
-//     let completions = project.update(cx, |project, cx| {
-//         project.completions(&buffer, text.len(), cx)
-//     });
-
-//     fake_server
-//         .handle_request::<lsp2::request::Completion, _, _>(|_, _| async move {
-//             Ok(Some(lsp2::CompletionResponse::Array(vec![
-//                 lsp2::CompletionItem {
-//                     label: "fullyQualifiedName?".into(),
-//                     insert_text: Some("fully\rQualified\r\nName".into()),
-//                     ..Default::default()
-//                 },
-//             ])))
-//         })
-//         .next()
-//         .await;
-//     let completions = completions.await.unwrap();
-//     assert_eq!(completions.len(), 1);
-//     assert_eq!(completions[0].new_text, "fully\nQualified\nName");
-// }
-
-// #[gpui::test(iterations = 10)]
-// async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             name: "TypeScript".into(),
-//             path_suffixes: vec!["ts".to_string()],
-//             ..Default::default()
-//         },
-//         None,
-//     );
-//     let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a.ts": "a",
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-//     let buffer = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
-//         .await
-//         .unwrap();
-
-//     let fake_server = fake_language_servers.next().await.unwrap();
-
-//     // Language server returns code actions that contain commands, and not edits.
-//     let actions = project.update(cx, |project, cx| project.code_actions(&buffer, 0..0, cx));
-//     fake_server
-//         .handle_request::<lsp2::request::CodeActionRequest, _, _>(|_, _| async move {
-//             Ok(Some(vec![
-//                 lsp2::CodeActionOrCommand::CodeAction(lsp2::CodeAction {
-//                     title: "The code action".into(),
-//                     command: Some(lsp::Command {
-//                         title: "The command".into(),
-//                         command: "_the/command".into(),
-//                         arguments: Some(vec![json!("the-argument")]),
-//                     }),
-//                     ..Default::default()
-//                 }),
-//                 lsp2::CodeActionOrCommand::CodeAction(lsp2::CodeAction {
-//                     title: "two".into(),
-//                     ..Default::default()
-//                 }),
-//             ]))
-//         })
-//         .next()
-//         .await;
-
-//     let action = actions.await.unwrap()[0].clone();
-//     let apply = project.update(cx, |project, cx| {
-//         project.apply_code_action(buffer.clone(), action, true, cx)
-//     });
-
-//     // Resolving the code action does not populate its edits. In absence of
-//     // edits, we must execute the given command.
-//     fake_server.handle_request::<lsp2::request::CodeActionResolveRequest, _, _>(
-//         |action, _| async move { Ok(action) },
-//     );
-
-//     // While executing the command, the language server sends the editor
-//     // a `workspaceEdit` request.
-//     fake_server
-//         .handle_request::<lsp2::request::ExecuteCommand, _, _>({
-//             let fake = fake_server.clone();
-//             move |params, _| {
-//                 assert_eq!(params.command, "_the/command");
-//                 let fake = fake.clone();
-//                 async move {
-//                     fake.server
-//                         .request::<lsp2::request::ApplyWorkspaceEdit>(
-//                             lsp2::ApplyWorkspaceEditParams {
-//                                 label: None,
-//                                 edit: lsp::WorkspaceEdit {
-//                                     changes: Some(
-//                                         [(
-//                                             lsp2::Url::from_file_path("/dir/a.ts").unwrap(),
-//                                             vec![lsp2::TextEdit {
-//                                                 range: lsp2::Range::new(
-//                                                     lsp2::Position::new(0, 0),
-//                                                     lsp2::Position::new(0, 0),
-//                                                 ),
-//                                                 new_text: "X".into(),
-//                                             }],
-//                                         )]
-//                                         .into_iter()
-//                                         .collect(),
-//                                     ),
-//                                     ..Default::default()
-//                                 },
-//                             },
-//                         )
-//                         .await
-//                         .unwrap();
-//                     Ok(Some(json!(null)))
-//                 }
-//             }
-//         })
-//         .next()
-//         .await;
-
-//     // Applying the code action returns a project transaction containing the edits
-//     // sent by the language server in its `workspaceEdit` request.
-//     let transaction = apply.await.unwrap();
-//     assert!(transaction.0.contains_key(&buffer));
-//     buffer.update(cx, |buffer, cx| {
-//         assert_eq!(buffer.text(), "Xa");
-//         buffer.undo(cx);
-//         assert_eq!(buffer.text(), "a");
-//     });
-// }
-
-// #[gpui::test(iterations = 10)]
-// async fn test_save_file(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "file1": "the old contents",
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-//     let buffer = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
-//         .await
-//         .unwrap();
-//     buffer.update(cx, |buffer, cx| {
-//         assert_eq!(buffer.text(), "the old contents");
-//         buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
-//     });
-
-//     project
-//         .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-//         .await
-//         .unwrap();
-
-//     let new_text = fs.load(Path::new("/dir/file1")).await.unwrap();
-//     assert_eq!(new_text, buffer.read_with(cx, |buffer, _| buffer.text()));
-// }
-
-// #[gpui::test]
-// async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "file1": "the old contents",
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs.clone(), ["/dir/file1".as_ref()], cx).await;
-//     let buffer = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
-//         .await
-//         .unwrap();
-//     buffer.update(cx, |buffer, cx| {
-//         buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
-//     });
-
-//     project
-//         .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-//         .await
-//         .unwrap();
-
-//     let new_text = fs.load(Path::new("/dir/file1")).await.unwrap();
-//     assert_eq!(new_text, buffer.read_with(cx, |buffer, _| buffer.text()));
-// }
-
-// #[gpui::test]
-// async fn test_save_as(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree("/dir", json!({})).await;
-
-//     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-
-//     let languages = project.read_with(cx, |project, _| project.languages().clone());
-//     languages.register(
-//         "/some/path",
-//         LanguageConfig {
-//             name: "Rust".into(),
-//             path_suffixes: vec!["rs".into()],
-//             ..Default::default()
-//         },
-//         tree_sitter_rust::language(),
-//         vec![],
-//         |_| Default::default(),
-//     );
-
-//     let buffer = project.update(cx, |project, cx| {
-//         project.create_buffer("", None, cx).unwrap()
-//     });
-//     buffer.update(cx, |buffer, cx| {
-//         buffer.edit([(0..0, "abc")], None, cx);
-//         assert!(buffer.is_dirty());
-//         assert!(!buffer.has_conflict());
-//         assert_eq!(buffer.language().unwrap().name().as_ref(), "Plain Text");
-//     });
-//     project
-//         .update(cx, |project, cx| {
-//             project.save_buffer_as(buffer.clone(), "/dir/file1.rs".into(), cx)
-//         })
-//         .await
-//         .unwrap();
-//     assert_eq!(fs.load(Path::new("/dir/file1.rs")).await.unwrap(), "abc");
-
-//     cx.foreground().run_until_parked();
-//     buffer.read_with(cx, |buffer, cx| {
-//         assert_eq!(
-//             buffer.file().unwrap().full_path(cx),
-//             Path::new("dir/file1.rs")
-//         );
-//         assert!(!buffer.is_dirty());
-//         assert!(!buffer.has_conflict());
-//         assert_eq!(buffer.language().unwrap().name().as_ref(), "Rust");
-//     });
-
-//     let opened_buffer = project
-//         .update(cx, |project, cx| {
-//             project.open_local_buffer("/dir/file1.rs", cx)
-//         })
-//         .await
-//         .unwrap();
-//     assert_eq!(opened_buffer, buffer);
-// }
-
-// #[gpui::test(retries = 5)]
-// async fn test_rescan_and_remote_updates(
-//     deterministic: Arc<Deterministic>,
-//     cx: &mut gpui::TestAppContext,
-// ) {
-//     init_test(cx);
-//     cx.foreground().allow_parking();
-
-//     let dir = temp_tree(json!({
-//         "a": {
-//             "file1": "",
-//             "file2": "",
-//             "file3": "",
-//         },
-//         "b": {
-//             "c": {
-//                 "file4": "",
-//                 "file5": "",
-//             }
-//         }
-//     }));
-
-//     let project = Project::test(Arc::new(RealFs), [dir.path()], cx).await;
-//     let rpc = project.read_with(cx, |p, _| p.client.clone());
-
-//     let buffer_for_path = |path: &'static str, cx: &mut gpui2::TestAppContext| {
-//         let buffer = project.update(cx, |p, cx| p.open_local_buffer(dir.path().join(path), cx));
-//         async move { buffer.await.unwrap() }
-//     };
-//     let id_for_path = |path: &'static str, cx: &gpui2::TestAppContext| {
-//         project.read_with(cx, |project, cx| {
-//             let tree = project.worktrees(cx).next().unwrap();
-//             tree.read(cx)
-//                 .entry_for_path(path)
-//                 .unwrap_or_else(|| panic!("no entry for path {}", path))
-//                 .id
-//         })
-//     };
-
-//     let buffer2 = buffer_for_path("a/file2", cx).await;
-//     let buffer3 = buffer_for_path("a/file3", cx).await;
-//     let buffer4 = buffer_for_path("b/c/file4", cx).await;
-//     let buffer5 = buffer_for_path("b/c/file5", cx).await;
-
-//     let file2_id = id_for_path("a/file2", cx);
-//     let file3_id = id_for_path("a/file3", cx);
-//     let file4_id = id_for_path("b/c/file4", cx);
-
-//     // Create a remote copy of this worktree.
-//     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
-
-//     let metadata = tree.read_with(cx, |tree, _| tree.as_local().unwrap().metadata_proto());
-
-//     let updates = Arc::new(Mutex::new(Vec::new()));
-//     tree.update(cx, |tree, cx| {
-//         let _ = tree.as_local_mut().unwrap().observe_updates(0, cx, {
-//             let updates = updates.clone();
-//             move |update| {
-//                 updates.lock().push(update);
-//                 async { true }
-//             }
-//         });
-//     });
-
-//     let remote = cx.update(|cx| Worktree::remote(1, 1, metadata, rpc.clone(), cx));
-//     deterministic.run_until_parked();
-
-//     cx.read(|cx| {
-//         assert!(!buffer2.read(cx).is_dirty());
-//         assert!(!buffer3.read(cx).is_dirty());
-//         assert!(!buffer4.read(cx).is_dirty());
-//         assert!(!buffer5.read(cx).is_dirty());
-//     });
-
-//     // Rename and delete files and directories.
-//     tree.flush_fs_events(cx).await;
-//     std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
-//     std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
-//     std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
-//     std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
-//     tree.flush_fs_events(cx).await;
-
-//     let expected_paths = vec![
-//         "a",
-//         "a/file1",
-//         "a/file2.new",
-//         "b",
-//         "d",
-//         "d/file3",
-//         "d/file4",
-//     ];
-
-//     cx.read(|app| {
-//         assert_eq!(
-//             tree.read(app)
-//                 .paths()
-//                 .map(|p| p.to_str().unwrap())
-//                 .collect::<Vec<_>>(),
-//             expected_paths
-//         );
-
-//         assert_eq!(id_for_path("a/file2.new", cx), file2_id);
-//         assert_eq!(id_for_path("d/file3", cx), file3_id);
-//         assert_eq!(id_for_path("d/file4", cx), file4_id);
-
-//         assert_eq!(
-//             buffer2.read(app).file().unwrap().path().as_ref(),
-//             Path::new("a/file2.new")
-//         );
-//         assert_eq!(
-//             buffer3.read(app).file().unwrap().path().as_ref(),
-//             Path::new("d/file3")
-//         );
-//         assert_eq!(
-//             buffer4.read(app).file().unwrap().path().as_ref(),
-//             Path::new("d/file4")
-//         );
-//         assert_eq!(
-//             buffer5.read(app).file().unwrap().path().as_ref(),
-//             Path::new("b/c/file5")
-//         );
-
-//         assert!(!buffer2.read(app).file().unwrap().is_deleted());
-//         assert!(!buffer3.read(app).file().unwrap().is_deleted());
-//         assert!(!buffer4.read(app).file().unwrap().is_deleted());
-//         assert!(buffer5.read(app).file().unwrap().is_deleted());
-//     });
-
-//     // Update the remote worktree. Check that it becomes consistent with the
-//     // local worktree.
-//     deterministic.run_until_parked();
-//     remote.update(cx, |remote, _| {
-//         for update in updates.lock().drain(..) {
-//             remote.as_remote_mut().unwrap().update_from_remote(update);
-//         }
-//     });
-//     deterministic.run_until_parked();
-//     remote.read_with(cx, |remote, _| {
-//         assert_eq!(
-//             remote
-//                 .paths()
-//                 .map(|p| p.to_str().unwrap())
-//                 .collect::<Vec<_>>(),
-//             expected_paths
-//         );
-//     });
-// }
-
-// #[gpui::test(iterations = 10)]
-// async fn test_buffer_identity_across_renames(
-//     deterministic: Arc<Deterministic>,
-//     cx: &mut gpui::TestAppContext,
-// ) {
-//     init_test(cx);
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a": {
-//                 "file1": "",
-//             }
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs, [Path::new("/dir")], cx).await;
-//     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
-//     let tree_id = tree.read_with(cx, |tree, _| tree.id());
-
-//     let id_for_path = |path: &'static str, cx: &gpui::TestAppContext| {
-//         project.read_with(cx, |project, cx| {
-//             let tree = project.worktrees(cx).next().unwrap();
-//             tree.read(cx)
-//                 .entry_for_path(path)
-//                 .unwrap_or_else(|| panic!("no entry for path {}", path))
-//                 .id
-//         })
-//     };
-
-//     let dir_id = id_for_path("a", cx);
-//     let file_id = id_for_path("a/file1", cx);
-//     let buffer = project
-//         .update(cx, |p, cx| p.open_buffer((tree_id, "a/file1"), cx))
-//         .await
-//         .unwrap();
-//     buffer.read_with(cx, |buffer, _| assert!(!buffer.is_dirty()));
-
-//     project
-//         .update(cx, |project, cx| {
-//             project.rename_entry(dir_id, Path::new("b"), cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//     deterministic.run_until_parked();
-//     assert_eq!(id_for_path("b", cx), dir_id);
-//     assert_eq!(id_for_path("b/file1", cx), file_id);
-//     buffer.read_with(cx, |buffer, _| assert!(!buffer.is_dirty()));
-// }
-
-// #[gpui2::test]
-// async fn test_buffer_deduping(cx: &mut gpui2::TestAppContext) {
-//     init_test(cx);
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "a.txt": "a-contents",
-//             "b.txt": "b-contents",
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-
-//     // Spawn multiple tasks to open paths, repeating some paths.
-//     let (buffer_a_1, buffer_b, buffer_a_2) = project.update(cx, |p, cx| {
-//         (
-//             p.open_local_buffer("/dir/a.txt", cx),
-//             p.open_local_buffer("/dir/b.txt", cx),
-//             p.open_local_buffer("/dir/a.txt", cx),
-//         )
-//     });
-
-//     let buffer_a_1 = buffer_a_1.await.unwrap();
-//     let buffer_a_2 = buffer_a_2.await.unwrap();
-//     let buffer_b = buffer_b.await.unwrap();
-//     assert_eq!(buffer_a_1.read_with(cx, |b, _| b.text()), "a-contents");
-//     assert_eq!(buffer_b.read_with(cx, |b, _| b.text()), "b-contents");
-
-//     // There is only one buffer per path.
-//     let buffer_a_id = buffer_a_1.id();
-//     assert_eq!(buffer_a_2.id(), buffer_a_id);
-
-//     // Open the same path again while it is still open.
-//     drop(buffer_a_1);
-//     let buffer_a_3 = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/a.txt", cx))
-//         .await
-//         .unwrap();
-
-//     // There's still only one buffer per path.
-//     assert_eq!(buffer_a_3.id(), buffer_a_id);
-// }
-
-// #[gpui2::test]
-// async fn test_buffer_is_dirty(cx: &mut gpui2::TestAppContext) {
-//     init_test(cx);
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "file1": "abc",
-//             "file2": "def",
-//             "file3": "ghi",
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-
-//     let buffer1 = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
-//         .await
-//         .unwrap();
-//     let events = Rc::new(RefCell::new(Vec::new()));
-
-//     // initially, the buffer isn't dirty.
-//     buffer1.update(cx, |buffer, cx| {
-//         cx.subscribe(&buffer1, {
-//             let events = events.clone();
-//             move |_, _, event, _| match event {
-//                 BufferEvent::Operation(_) => {}
-//                 _ => events.borrow_mut().push(event.clone()),
-//             }
-//         })
-//         .detach();
-
-//         assert!(!buffer.is_dirty());
-//         assert!(events.borrow().is_empty());
-
-//         buffer.edit([(1..2, "")], None, cx);
-//     });
-
-//     // after the first edit, the buffer is dirty, and emits a dirtied event.
-//     buffer1.update(cx, |buffer, cx| {
-//         assert!(buffer.text() == "ac");
-//         assert!(buffer.is_dirty());
-//         assert_eq!(
-//             *events.borrow(),
-//             &[language2::Event::Edited, language2::Event::DirtyChanged]
-//         );
-//         events.borrow_mut().clear();
-//         buffer.did_save(
-//             buffer.version(),
-//             buffer.as_rope().fingerprint(),
-//             buffer.file().unwrap().mtime(),
-//             cx,
-//         );
-//     });
-
-//     // after saving, the buffer is not dirty, and emits a saved event.
-//     buffer1.update(cx, |buffer, cx| {
-//         assert!(!buffer.is_dirty());
-//         assert_eq!(*events.borrow(), &[language2::Event::Saved]);
-//         events.borrow_mut().clear();
-
-//         buffer.edit([(1..1, "B")], None, cx);
-//         buffer.edit([(2..2, "D")], None, cx);
-//     });
-
-//     // after editing again, the buffer is dirty, and emits another dirty event.
-//     buffer1.update(cx, |buffer, cx| {
-//         assert!(buffer.text() == "aBDc");
-//         assert!(buffer.is_dirty());
-//         assert_eq!(
-//             *events.borrow(),
-//             &[
-//                 language2::Event::Edited,
-//                 language2::Event::DirtyChanged,
-//                 language2::Event::Edited,
-//             ],
-//         );
-//         events.borrow_mut().clear();
-
-//         // After restoring the buffer to its previously-saved state,
-//         // the buffer is not considered dirty anymore.
-//         buffer.edit([(1..3, "")], None, cx);
-//         assert!(buffer.text() == "ac");
-//         assert!(!buffer.is_dirty());
-//     });
-
-//     assert_eq!(
-//         *events.borrow(),
-//         &[language2::Event::Edited, language2::Event::DirtyChanged]
-//     );
-
-//     // When a file is deleted, the buffer is considered dirty.
-//     let events = Rc::new(RefCell::new(Vec::new()));
-//     let buffer2 = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/file2", cx))
-//         .await
-//         .unwrap();
-//     buffer2.update(cx, |_, cx| {
-//         cx.subscribe(&buffer2, {
-//             let events = events.clone();
-//             move |_, _, event, _| events.borrow_mut().push(event.clone())
-//         })
-//         .detach();
-//     });
-
-//     fs.remove_file("/dir/file2".as_ref(), Default::default())
-//         .await
-//         .unwrap();
-//     cx.foreground().run_until_parked();
-//     buffer2.read_with(cx, |buffer, _| assert!(buffer.is_dirty()));
-//     assert_eq!(
-//         *events.borrow(),
-//         &[
-//             language2::Event::DirtyChanged,
-//             language2::Event::FileHandleChanged
-//         ]
-//     );
-
-//     // When a file is already dirty when deleted, we don't emit a Dirtied event.
-//     let events = Rc::new(RefCell::new(Vec::new()));
-//     let buffer3 = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/file3", cx))
-//         .await
-//         .unwrap();
-//     buffer3.update(cx, |_, cx| {
-//         cx.subscribe(&buffer3, {
-//             let events = events.clone();
-//             move |_, _, event, _| events.borrow_mut().push(event.clone())
-//         })
-//         .detach();
-//     });
-
-//     buffer3.update(cx, |buffer, cx| {
-//         buffer.edit([(0..0, "x")], None, cx);
-//     });
-//     events.borrow_mut().clear();
-//     fs.remove_file("/dir/file3".as_ref(), Default::default())
-//         .await
-//         .unwrap();
-//     cx.foreground().run_until_parked();
-//     assert_eq!(*events.borrow(), &[language2::Event::FileHandleChanged]);
-//     cx.read(|cx| assert!(buffer3.read(cx).is_dirty()));
-// }
-
-// #[gpui::test]
-// async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let initial_contents = "aaa\nbbbbb\nc\n";
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "the-file": initial_contents,
-//         }),
-//     )
-//     .await;
-//     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-//     let buffer = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/the-file", cx))
-//         .await
-//         .unwrap();
-
-//     let anchors = (0..3)
-//         .map(|row| buffer.read_with(cx, |b, _| b.anchor_before(Point::new(row, 1))))
-//         .collect::<Vec<_>>();
-
-//     // Change the file on disk, adding two new lines of text, and removing
-//     // one line.
-//     buffer.read_with(cx, |buffer, _| {
-//         assert!(!buffer.is_dirty());
-//         assert!(!buffer.has_conflict());
-//     });
-//     let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
-//     fs.save(
-//         "/dir/the-file".as_ref(),
-//         &new_contents.into(),
-//         LineEnding::Unix,
-//     )
-//     .await
-//     .unwrap();
-
-//     // Because the buffer was not modified, it is reloaded from disk. Its
-//     // contents are edited according to the diff between the old and new
-//     // file contents.
-//     cx.foreground().run_until_parked();
-//     buffer.update(cx, |buffer, _| {
-//         assert_eq!(buffer.text(), new_contents);
-//         assert!(!buffer.is_dirty());
-//         assert!(!buffer.has_conflict());
-
-//         let anchor_positions = anchors
-//             .iter()
-//             .map(|anchor| anchor.to_point(&*buffer))
-//             .collect::<Vec<_>>();
-//         assert_eq!(
-//             anchor_positions,
-//             [Point::new(1, 1), Point::new(3, 1), Point::new(3, 5)]
-//         );
-//     });
-
-//     // Modify the buffer
-//     buffer.update(cx, |buffer, cx| {
-//         buffer.edit([(0..0, " ")], None, cx);
-//         assert!(buffer.is_dirty());
-//         assert!(!buffer.has_conflict());
-//     });
-
-//     // Change the file on disk again, adding blank lines to the beginning.
-//     fs.save(
-//         "/dir/the-file".as_ref(),
-//         &"\n\n\nAAAA\naaa\nBB\nbbbbb\n".into(),
-//         LineEnding::Unix,
-//     )
-//     .await
-//     .unwrap();
-
-//     // Because the buffer is modified, it doesn't reload from disk, but is
-//     // marked as having a conflict.
-//     cx.foreground().run_until_parked();
-//     buffer.read_with(cx, |buffer, _| {
-//         assert!(buffer.has_conflict());
-//     });
-// }
-
-// #[gpui::test]
-// async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "file1": "a\nb\nc\n",
-//             "file2": "one\r\ntwo\r\nthree\r\n",
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-//     let buffer1 = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
-//         .await
-//         .unwrap();
-//     let buffer2 = project
-//         .update(cx, |p, cx| p.open_local_buffer("/dir/file2", cx))
-//         .await
-//         .unwrap();
-
-//     buffer1.read_with(cx, |buffer, _| {
-//         assert_eq!(buffer.text(), "a\nb\nc\n");
-//         assert_eq!(buffer.line_ending(), LineEnding::Unix);
-//     });
-//     buffer2.read_with(cx, |buffer, _| {
-//         assert_eq!(buffer.text(), "one\ntwo\nthree\n");
-//         assert_eq!(buffer.line_ending(), LineEnding::Windows);
-//     });
-
-//     // Change a file's line endings on disk from unix to windows. The buffer's
-//     // state updates correctly.
-//     fs.save(
-//         "/dir/file1".as_ref(),
-//         &"aaa\nb\nc\n".into(),
-//         LineEnding::Windows,
-//     )
-//     .await
-//     .unwrap();
-//     cx.foreground().run_until_parked();
-//     buffer1.read_with(cx, |buffer, _| {
-//         assert_eq!(buffer.text(), "aaa\nb\nc\n");
-//         assert_eq!(buffer.line_ending(), LineEnding::Windows);
-//     });
-
-//     // Save a file with windows line endings. The file is written correctly.
-//     buffer2.update(cx, |buffer, cx| {
-//         buffer.set_text("one\ntwo\nthree\nfour\n", cx);
-//     });
-//     project
-//         .update(cx, |project, cx| project.save_buffer(buffer2, cx))
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         fs.load("/dir/file2".as_ref()).await.unwrap(),
-//         "one\r\ntwo\r\nthree\r\nfour\r\n",
-//     );
-// }
-
-// #[gpui::test]
-// async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/the-dir",
-//         json!({
-//             "a.rs": "
-//                 fn foo(mut v: Vec<usize>) {
-//                     for x in &v {
-//                         v.push(1);
-//                     }
-//                 }
-//             "
-//             .unindent(),
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs.clone(), ["/the-dir".as_ref()], cx).await;
-//     let buffer = project
-//         .update(cx, |p, cx| p.open_local_buffer("/the-dir/a.rs", cx))
-//         .await
-//         .unwrap();
-
-//     let buffer_uri = Url::from_file_path("/the-dir/a.rs").unwrap();
-//     let message = lsp::PublishDiagnosticsParams {
-//         uri: buffer_uri.clone(),
-//         diagnostics: vec![
-//             lsp2::Diagnostic {
-//                 range: lsp2::Range::new(lsp2::Position::new(1, 8), lsp2::Position::new(1, 9)),
-//                 severity: Some(DiagnosticSeverity::WARNING),
-//                 message: "error 1".to_string(),
-//                 related_information: Some(vec![lsp::DiagnosticRelatedInformation {
-//                     location: lsp::Location {
-//                         uri: buffer_uri.clone(),
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(1, 8),
-//                             lsp2::Position::new(1, 9),
-//                         ),
-//                     },
-//                     message: "error 1 hint 1".to_string(),
-//                 }]),
-//                 ..Default::default()
-//             },
-//             lsp2::Diagnostic {
-//                 range: lsp2::Range::new(lsp2::Position::new(1, 8), lsp2::Position::new(1, 9)),
-//                 severity: Some(DiagnosticSeverity::HINT),
-//                 message: "error 1 hint 1".to_string(),
-//                 related_information: Some(vec![lsp::DiagnosticRelatedInformation {
-//                     location: lsp::Location {
-//                         uri: buffer_uri.clone(),
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(1, 8),
-//                             lsp2::Position::new(1, 9),
-//                         ),
-//                     },
-//                     message: "original diagnostic".to_string(),
-//                 }]),
-//                 ..Default::default()
-//             },
-//             lsp2::Diagnostic {
-//                 range: lsp2::Range::new(lsp2::Position::new(2, 8), lsp2::Position::new(2, 17)),
-//                 severity: Some(DiagnosticSeverity::ERROR),
-//                 message: "error 2".to_string(),
-//                 related_information: Some(vec![
-//                     lsp::DiagnosticRelatedInformation {
-//                         location: lsp::Location {
-//                             uri: buffer_uri.clone(),
-//                             range: lsp2::Range::new(
-//                                 lsp2::Position::new(1, 13),
-//                                 lsp2::Position::new(1, 15),
-//                             ),
-//                         },
-//                         message: "error 2 hint 1".to_string(),
-//                     },
-//                     lsp::DiagnosticRelatedInformation {
-//                         location: lsp::Location {
-//                             uri: buffer_uri.clone(),
-//                             range: lsp2::Range::new(
-//                                 lsp2::Position::new(1, 13),
-//                                 lsp2::Position::new(1, 15),
-//                             ),
-//                         },
-//                         message: "error 2 hint 2".to_string(),
-//                     },
-//                 ]),
-//                 ..Default::default()
-//             },
-//             lsp2::Diagnostic {
-//                 range: lsp2::Range::new(lsp2::Position::new(1, 13), lsp2::Position::new(1, 15)),
-//                 severity: Some(DiagnosticSeverity::HINT),
-//                 message: "error 2 hint 1".to_string(),
-//                 related_information: Some(vec![lsp::DiagnosticRelatedInformation {
-//                     location: lsp::Location {
-//                         uri: buffer_uri.clone(),
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(2, 8),
-//                             lsp2::Position::new(2, 17),
-//                         ),
-//                     },
-//                     message: "original diagnostic".to_string(),
-//                 }]),
-//                 ..Default::default()
-//             },
-//             lsp2::Diagnostic {
-//                 range: lsp2::Range::new(lsp2::Position::new(1, 13), lsp2::Position::new(1, 15)),
-//                 severity: Some(DiagnosticSeverity::HINT),
-//                 message: "error 2 hint 2".to_string(),
-//                 related_information: Some(vec![lsp::DiagnosticRelatedInformation {
-//                     location: lsp::Location {
-//                         uri: buffer_uri,
-//                         range: lsp2::Range::new(
-//                             lsp2::Position::new(2, 8),
-//                             lsp2::Position::new(2, 17),
-//                         ),
-//                     },
-//                     message: "original diagnostic".to_string(),
-//                 }]),
-//                 ..Default::default()
-//             },
-//         ],
-//         version: None,
-//     };
-
-//     project
-//         .update(cx, |p, cx| {
-//             p.update_diagnostics(LanguageServerId(0), message, &[], cx)
-//         })
-//         .unwrap();
-//     let buffer = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-
-//     assert_eq!(
-//         buffer
-//             .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
-//             .collect::<Vec<_>>(),
-//         &[
-//             DiagnosticEntry {
-//                 range: Point::new(1, 8)..Point::new(1, 9),
-//                 diagnostic: Diagnostic {
-//                     severity: DiagnosticSeverity::WARNING,
-//                     message: "error 1".to_string(),
-//                     group_id: 1,
-//                     is_primary: true,
-//                     ..Default::default()
-//                 }
-//             },
-//             DiagnosticEntry {
-//                 range: Point::new(1, 8)..Point::new(1, 9),
-//                 diagnostic: Diagnostic {
-//                     severity: DiagnosticSeverity::HINT,
-//                     message: "error 1 hint 1".to_string(),
-//                     group_id: 1,
-//                     is_primary: false,
-//                     ..Default::default()
-//                 }
-//             },
-//             DiagnosticEntry {
-//                 range: Point::new(1, 13)..Point::new(1, 15),
-//                 diagnostic: Diagnostic {
-//                     severity: DiagnosticSeverity::HINT,
-//                     message: "error 2 hint 1".to_string(),
-//                     group_id: 0,
-//                     is_primary: false,
-//                     ..Default::default()
-//                 }
-//             },
-//             DiagnosticEntry {
-//                 range: Point::new(1, 13)..Point::new(1, 15),
-//                 diagnostic: Diagnostic {
-//                     severity: DiagnosticSeverity::HINT,
-//                     message: "error 2 hint 2".to_string(),
-//                     group_id: 0,
-//                     is_primary: false,
-//                     ..Default::default()
-//                 }
-//             },
-//             DiagnosticEntry {
-//                 range: Point::new(2, 8)..Point::new(2, 17),
-//                 diagnostic: Diagnostic {
-//                     severity: DiagnosticSeverity::ERROR,
-//                     message: "error 2".to_string(),
-//                     group_id: 0,
-//                     is_primary: true,
-//                     ..Default::default()
-//                 }
-//             }
-//         ]
-//     );
-
-//     assert_eq!(
-//         buffer.diagnostic_group::<Point>(0).collect::<Vec<_>>(),
-//         &[
-//             DiagnosticEntry {
-//                 range: Point::new(1, 13)..Point::new(1, 15),
-//                 diagnostic: Diagnostic {
-//                     severity: DiagnosticSeverity::HINT,
-//                     message: "error 2 hint 1".to_string(),
-//                     group_id: 0,
-//                     is_primary: false,
-//                     ..Default::default()
-//                 }
-//             },
-//             DiagnosticEntry {
-//                 range: Point::new(1, 13)..Point::new(1, 15),
-//                 diagnostic: Diagnostic {
-//                     severity: DiagnosticSeverity::HINT,
-//                     message: "error 2 hint 2".to_string(),
-//                     group_id: 0,
-//                     is_primary: false,
-//                     ..Default::default()
-//                 }
-//             },
-//             DiagnosticEntry {
-//                 range: Point::new(2, 8)..Point::new(2, 17),
-//                 diagnostic: Diagnostic {
-//                     severity: DiagnosticSeverity::ERROR,
-//                     message: "error 2".to_string(),
-//                     group_id: 0,
-//                     is_primary: true,
-//                     ..Default::default()
-//                 }
-//             }
-//         ]
-//     );
-
-//     assert_eq!(
-//         buffer.diagnostic_group::<Point>(1).collect::<Vec<_>>(),
-//         &[
-//             DiagnosticEntry {
-//                 range: Point::new(1, 8)..Point::new(1, 9),
-//                 diagnostic: Diagnostic {
-//                     severity: DiagnosticSeverity::WARNING,
-//                     message: "error 1".to_string(),
-//                     group_id: 1,
-//                     is_primary: true,
-//                     ..Default::default()
-//                 }
-//             },
-//             DiagnosticEntry {
-//                 range: Point::new(1, 8)..Point::new(1, 9),
-//                 diagnostic: Diagnostic {
-//                     severity: DiagnosticSeverity::HINT,
-//                     message: "error 1 hint 1".to_string(),
-//                     group_id: 1,
-//                     is_primary: false,
-//                     ..Default::default()
-//                 }
-//             },
-//         ]
-//     );
-// }
-
-// #[gpui::test]
-// async fn test_rename(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let mut language = Language::new(
-//         LanguageConfig {
-//             name: "Rust".into(),
-//             path_suffixes: vec!["rs".to_string()],
-//             ..Default::default()
-//         },
-//         Some(tree_sitter_rust::language()),
-//     );
-//     let mut fake_servers = language
-//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-//             capabilities: lsp2::ServerCapabilities {
-//                 rename_provider: Some(lsp2::OneOf::Right(lsp2::RenameOptions {
-//                     prepare_provider: Some(true),
-//                     work_done_progress_options: Default::default(),
-//                 })),
-//                 ..Default::default()
-//             },
-//             ..Default::default()
-//         }))
-//         .await;
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "one.rs": "const ONE: usize = 1;",
-//             "two.rs": "const TWO: usize = one::ONE + one::ONE;"
-//         }),
-//     )
-//     .await;
-
-//     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-//     project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-//     let buffer = project
-//         .update(cx, |project, cx| {
-//             project.open_local_buffer("/dir/one.rs", cx)
-//         })
-//         .await
-//         .unwrap();
-
-//     let fake_server = fake_servers.next().await.unwrap();
-
-//     let response = project.update(cx, |project, cx| {
-//         project.prepare_rename(buffer.clone(), 7, cx)
-//     });
-//     fake_server
-//         .handle_request::<lsp2::request::PrepareRenameRequest, _, _>(|params, _| async move {
-//             assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
-//             assert_eq!(params.position, lsp2::Position::new(0, 7));
-//             Ok(Some(lsp2::PrepareRenameResponse::Range(lsp2::Range::new(
-//                 lsp2::Position::new(0, 6),
-//                 lsp2::Position::new(0, 9),
-//             ))))
-//         })
-//         .next()
-//         .await
-//         .unwrap();
-//     let range = response.await.unwrap().unwrap();
-//     let range = buffer.read_with(cx, |buffer, _| range.to_offset(buffer));
-//     assert_eq!(range, 6..9);
-
-//     let response = project.update(cx, |project, cx| {
-//         project.perform_rename(buffer.clone(), 7, "THREE".to_string(), true, cx)
-//     });
-//     fake_server
-//         .handle_request::<lsp2::request::Rename, _, _>(|params, _| async move {
-//             assert_eq!(
-//                 params.text_document_position.text_document.uri.as_str(),
-//                 "file:///dir/one.rs"
-//             );
-//             assert_eq!(
-//                 params.text_document_position.position,
-//                 lsp2::Position::new(0, 7)
-//             );
-//             assert_eq!(params.new_name, "THREE");
-//             Ok(Some(lsp::WorkspaceEdit {
-//                 changes: Some(
-//                     [
-//                         (
-//                             lsp2::Url::from_file_path("/dir/one.rs").unwrap(),
-//                             vec![lsp2::TextEdit::new(
-//                                 lsp2::Range::new(
-//                                     lsp2::Position::new(0, 6),
-//                                     lsp2::Position::new(0, 9),
-//                                 ),
-//                                 "THREE".to_string(),
-//                             )],
-//                         ),
-//                         (
-//                             lsp2::Url::from_file_path("/dir/two.rs").unwrap(),
-//                             vec![
-//                                 lsp2::TextEdit::new(
-//                                     lsp2::Range::new(
-//                                         lsp2::Position::new(0, 24),
-//                                         lsp2::Position::new(0, 27),
-//                                     ),
-//                                     "THREE".to_string(),
-//                                 ),
-//                                 lsp2::TextEdit::new(
-//                                     lsp2::Range::new(
-//                                         lsp2::Position::new(0, 35),
-//                                         lsp2::Position::new(0, 38),
-//                                     ),
-//                                     "THREE".to_string(),
-//                                 ),
-//                             ],
-//                         ),
-//                     ]
-//                     .into_iter()
-//                     .collect(),
-//                 ),
-//                 ..Default::default()
-//             }))
-//         })
-//         .next()
-//         .await
-//         .unwrap();
-//     let mut transaction = response.await.unwrap().0;
-//     assert_eq!(transaction.len(), 2);
-//     assert_eq!(
-//         transaction
-//             .remove_entry(&buffer)
-//             .unwrap()
-//             .0
-//             .read_with(cx, |buffer, _| buffer.text()),
-//         "const THREE: usize = 1;"
-//     );
-//     assert_eq!(
-//         transaction
-//             .into_keys()
-//             .next()
-//             .unwrap()
-//             .read_with(cx, |buffer, _| buffer.text()),
-//         "const TWO: usize = one::THREE + one::THREE;"
-//     );
-// }
-
-// #[gpui::test]
-// async fn test_search(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "one.rs": "const ONE: usize = 1;",
-//             "two.rs": "const TWO: usize = one::ONE + one::ONE;",
-//             "three.rs": "const THREE: usize = one::ONE + two::TWO;",
-//             "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
-//         }),
-//     )
-//     .await;
-//     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-//     assert_eq!(
-//         search(
-//             &project,
-//             SearchQuery::text("TWO", false, true, Vec::new(), Vec::new()).unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap(),
-//         HashMap::from_iter([
-//             ("two.rs".to_string(), vec![6..9]),
-//             ("three.rs".to_string(), vec![37..40])
-//         ])
-//     );
-
-//     let buffer_4 = project
-//         .update(cx, |project, cx| {
-//             project.open_local_buffer("/dir/four.rs", cx)
-//         })
-//         .await
-//         .unwrap();
-//     buffer_4.update(cx, |buffer, cx| {
-//         let text = "two::TWO";
-//         buffer.edit([(20..28, text), (31..43, text)], None, cx);
-//     });
-
-//     assert_eq!(
-//         search(
-//             &project,
-//             SearchQuery::text("TWO", false, true, Vec::new(), Vec::new()).unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap(),
-//         HashMap::from_iter([
-//             ("two.rs".to_string(), vec![6..9]),
-//             ("three.rs".to_string(), vec![37..40]),
-//             ("four.rs".to_string(), vec![25..28, 36..39])
-//         ])
-//     );
-// }
-
-// #[gpui::test]
-// async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let search_query = "file";
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "one.rs": r#"// Rust file one"#,
-//             "one.ts": r#"// TypeScript file one"#,
-//             "two.rs": r#"// Rust file two"#,
-//             "two.ts": r#"// TypeScript file two"#,
-//         }),
-//     )
-//     .await;
-//     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-
-//     assert!(
-//         search(
-//             &project,
-//             SearchQuery::text(
-//                 search_query,
-//                 false,
-//                 true,
-//                 vec![PathMatcher::new("*.odd").unwrap()],
-//                 Vec::new()
-//             )
-//             .unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap()
-//         .is_empty(),
-//         "If no inclusions match, no files should be returned"
-//     );
-
-//     assert_eq!(
-//         search(
-//             &project,
-//             SearchQuery::text(
-//                 search_query,
-//                 false,
-//                 true,
-//                 vec![PathMatcher::new("*.rs").unwrap()],
-//                 Vec::new()
-//             )
-//             .unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap(),
-//         HashMap::from_iter([
-//             ("one.rs".to_string(), vec![8..12]),
-//             ("two.rs".to_string(), vec![8..12]),
-//         ]),
-//         "Rust only search should give only Rust files"
-//     );
-
-//     assert_eq!(
-//         search(
-//             &project,
-//             SearchQuery::text(
-//                 search_query,
-//                 false,
-//                 true,
-//                 vec![
-//                     PathMatcher::new("*.ts").unwrap(),
-//                     PathMatcher::new("*.odd").unwrap(),
-//                 ],
-//                 Vec::new()
-//             ).unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap(),
-//         HashMap::from_iter([
-//             ("one.ts".to_string(), vec![14..18]),
-//             ("two.ts".to_string(), vec![14..18]),
-//         ]),
-//         "TypeScript only search should give only TypeScript files, even if other inclusions don't match anything"
-//     );
-
-//     assert_eq!(
-//         search(
-//             &project,
-//             SearchQuery::text(
-//                 search_query,
-//                 false,
-//                 true,
-//                 vec![
-//                     PathMatcher::new("*.rs").unwrap(),
-//                     PathMatcher::new("*.ts").unwrap(),
-//                     PathMatcher::new("*.odd").unwrap(),
-//                 ],
-//                 Vec::new()
-//             ).unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap(),
-//         HashMap::from_iter([
-//             ("one.rs".to_string(), vec![8..12]),
-//             ("one.ts".to_string(), vec![14..18]),
-//             ("two.rs".to_string(), vec![8..12]),
-//             ("two.ts".to_string(), vec![14..18]),
-//         ]),
-//         "Rust and typescript search should give both Rust and TypeScript files, even if other inclusions don't match anything"
-//     );
-// }
-
-// #[gpui::test]
-// async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let search_query = "file";
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "one.rs": r#"// Rust file one"#,
-//             "one.ts": r#"// TypeScript file one"#,
-//             "two.rs": r#"// Rust file two"#,
-//             "two.ts": r#"// TypeScript file two"#,
-//         }),
-//     )
-//     .await;
-//     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-
-//     assert_eq!(
-//         search(
-//             &project,
-//             SearchQuery::text(
-//                 search_query,
-//                 false,
-//                 true,
-//                 Vec::new(),
-//                 vec![PathMatcher::new("*.odd").unwrap()],
-//             )
-//             .unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap(),
-//         HashMap::from_iter([
-//             ("one.rs".to_string(), vec![8..12]),
-//             ("one.ts".to_string(), vec![14..18]),
-//             ("two.rs".to_string(), vec![8..12]),
-//             ("two.ts".to_string(), vec![14..18]),
-//         ]),
-//         "If no exclusions match, all files should be returned"
-//     );
-
-//     assert_eq!(
-//         search(
-//             &project,
-//             SearchQuery::text(
-//                 search_query,
-//                 false,
-//                 true,
-//                 Vec::new(),
-//                 vec![PathMatcher::new("*.rs").unwrap()],
-//             )
-//             .unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap(),
-//         HashMap::from_iter([
-//             ("one.ts".to_string(), vec![14..18]),
-//             ("two.ts".to_string(), vec![14..18]),
-//         ]),
-//         "Rust exclusion search should give only TypeScript files"
-//     );
-
-//     assert_eq!(
-//         search(
-//             &project,
-//             SearchQuery::text(
-//                 search_query,
-//                 false,
-//                 true,
-//                 Vec::new(),
-//                 vec![
-//                     PathMatcher::new("*.ts").unwrap(),
-//                     PathMatcher::new("*.odd").unwrap(),
-//                 ],
-//             ).unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap(),
-//         HashMap::from_iter([
-//             ("one.rs".to_string(), vec![8..12]),
-//             ("two.rs".to_string(), vec![8..12]),
-//         ]),
-//         "TypeScript exclusion search should give only Rust files, even if other exclusions don't match anything"
-//     );
-
-//     assert!(
-//         search(
-//             &project,
-//             SearchQuery::text(
-//                 search_query,
-//                 false,
-//                 true,
-//                 Vec::new(),
-//                 vec![
-//                     PathMatcher::new("*.rs").unwrap(),
-//                     PathMatcher::new("*.ts").unwrap(),
-//                     PathMatcher::new("*.odd").unwrap(),
-//                 ],
-//             ).unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap().is_empty(),
-//         "Rust and typescript exclusion should give no files, even if other exclusions don't match anything"
-//     );
-// }
-
-// #[gpui::test]
-// async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContext) {
-//     init_test(cx);
-
-//     let search_query = "file";
-
-//     let fs = FakeFs::new(cx.background());
-//     fs.insert_tree(
-//         "/dir",
-//         json!({
-//             "one.rs": r#"// Rust file one"#,
-//             "one.ts": r#"// TypeScript file one"#,
-//             "two.rs": r#"// Rust file two"#,
-//             "two.ts": r#"// TypeScript file two"#,
-//         }),
-//     )
-//     .await;
-//     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-
-//     assert!(
-//         search(
-//             &project,
-//             SearchQuery::text(
-//                 search_query,
-//                 false,
-//                 true,
-//                 vec![PathMatcher::new("*.odd").unwrap()],
-//                 vec![PathMatcher::new("*.odd").unwrap()],
-//             )
-//             .unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap()
-//         .is_empty(),
-//         "If both no exclusions and inclusions match, exclusions should win and return nothing"
-//     );
-
-//     assert!(
-//         search(
-//             &project,
-//             SearchQuery::text(
-//                 search_query,
-//                 false,
-//                 true,
-//                 vec![PathMatcher::new("*.ts").unwrap()],
-//                 vec![PathMatcher::new("*.ts").unwrap()],
-//             ).unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap()
-//         .is_empty(),
-//         "If both TypeScript exclusions and inclusions match, exclusions should win and return nothing files."
-//     );
-
-//     assert!(
-//         search(
-//             &project,
-//             SearchQuery::text(
-//                 search_query,
-//                 false,
-//                 true,
-//                 vec![
-//                     PathMatcher::new("*.ts").unwrap(),
-//                     PathMatcher::new("*.odd").unwrap()
-//                 ],
-//                 vec![
-//                     PathMatcher::new("*.ts").unwrap(),
-//                     PathMatcher::new("*.odd").unwrap()
-//                 ],
-//             )
-//             .unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap()
-//         .is_empty(),
-//         "Non-matching inclusions and exclusions should not change that."
-//     );
-
-//     assert_eq!(
-//         search(
-//             &project,
-//             SearchQuery::text(
-//                 search_query,
-//                 false,
-//                 true,
-//                 vec![
-//                     PathMatcher::new("*.ts").unwrap(),
-//                     PathMatcher::new("*.odd").unwrap()
-//                 ],
-//                 vec![
-//                     PathMatcher::new("*.rs").unwrap(),
-//                     PathMatcher::new("*.odd").unwrap()
-//                 ],
-//             )
-//             .unwrap(),
-//             cx
-//         )
-//         .await
-//         .unwrap(),
-//         HashMap::from_iter([
-//             ("one.ts".to_string(), vec![14..18]),
-//             ("two.ts".to_string(), vec![14..18]),
-//         ]),
-//         "Non-intersecting TypeScript inclusions and Rust exclusions should return TypeScript files"
-//     );
-// }
-
-// #[test]
-// fn test_glob_literal_prefix() {
-//     assert_eq!(glob_literal_prefix("**/*.js"), "");
-//     assert_eq!(glob_literal_prefix("node_modules/**/*.js"), "node_modules");
-//     assert_eq!(glob_literal_prefix("foo/{bar,baz}.js"), "foo");
-//     assert_eq!(glob_literal_prefix("foo/bar/baz.js"), "foo/bar/baz.js");
-// }
-
-// async fn search(
-//     project: &ModelHandle<Project>,
-//     query: SearchQuery,
-//     cx: &mut gpui::TestAppContext,
-// ) -> Result<HashMap<String, Vec<Range<usize>>>> {
-//     let mut search_rx = project.update(cx, |project, cx| project.search(query, cx));
-//     let mut result = HashMap::default();
-//     while let Some((buffer, range)) = search_rx.next().await {
-//         result.entry(buffer).or_insert(range);
-//     }
-//     Ok(result
-//         .into_iter()
-//         .map(|(buffer, ranges)| {
-//             buffer.read_with(cx, |buffer, _| {
-//                 let path = buffer.file().unwrap().path().to_string_lossy().to_string();
-//                 let ranges = ranges
-//                     .into_iter()
-//                     .map(|range| range.to_offset(buffer))
-//                     .collect::<Vec<_>>();
-//                 (path, ranges)
-//             })
-//         })
-//         .collect())
-// }
-
-// fn init_test(cx: &mut gpui::TestAppContext) {
-//     cx.foreground().forbid_parking();
-
-//     cx.update(|cx| {
-//         cx.set_global(SettingsStore::test(cx));
-//         language2::init(cx);
-//         Project::init_settings(cx);
-//     });
-// }
+use crate::{Event, *};
+use fs::FakeFs;
+use futures::{future, StreamExt};
+use gpui::AppContext;
+use language::{
+    language_settings::{AllLanguageSettings, LanguageSettingsContent},
+    tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
+    LineEnding, OffsetRangeExt, Point, ToPoint,
+};
+use lsp::Url;
+use parking_lot::Mutex;
+use pretty_assertions::assert_eq;
+use serde_json::json;
+use std::{os, task::Poll};
+use unindent::Unindent as _;
+use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
+
+#[gpui::test]
+async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
+    cx.executor().allow_parking();
+
+    let (tx, mut rx) = futures::channel::mpsc::unbounded();
+    let _thread = std::thread::spawn(move || {
+        std::fs::metadata("/Users").unwrap();
+        std::thread::sleep(Duration::from_millis(1000));
+        tx.unbounded_send(1).unwrap();
+    });
+    rx.next().await.unwrap();
+}
+
+#[gpui::test]
+async fn test_block_via_smol(cx: &mut gpui::TestAppContext) {
+    cx.executor().allow_parking();
+
+    let io_task = smol::unblock(move || {
+        println!("sleeping on thread {:?}", std::thread::current().id());
+        std::thread::sleep(Duration::from_millis(10));
+        1
+    });
+
+    let task = cx.foreground_executor().spawn(async move {
+        io_task.await;
+    });
+
+    task.await;
+}
+
+#[gpui::test]
+async fn test_symlinks(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = temp_tree(json!({
+        "root": {
+            "apple": "",
+            "banana": {
+                "carrot": {
+                    "date": "",
+                    "endive": "",
+                }
+            },
+            "fennel": {
+                "grape": "",
+            }
+        }
+    }));
+
+    let root_link_path = dir.path().join("root_link");
+    os::unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
+    os::unix::fs::symlink(
+        &dir.path().join("root/fennel"),
+        &dir.path().join("root/finnochio"),
+    )
+    .unwrap();
+
+    let project = Project::test(Arc::new(RealFs), [root_link_path.as_ref()], cx).await;
+
+    project.update(cx, |project, cx| {
+        let tree = project.worktrees().next().unwrap().read(cx);
+        assert_eq!(tree.file_count(), 5);
+        assert_eq!(
+            tree.inode_for_path("fennel/grape"),
+            tree.inode_for_path("finnochio/grape")
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/the-root",
+        json!({
+            ".zed": {
+                "settings.json": r#"{ "tab_size": 8 }"#
+            },
+            "a": {
+                "a.rs": "fn a() {\n    A\n}"
+            },
+            "b": {
+                ".zed": {
+                    "settings.json": r#"{ "tab_size": 2 }"#
+                },
+                "b.rs": "fn b() {\n  B\n}"
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
+    let worktree = project.update(cx, |project, _| project.worktrees().next().unwrap());
+
+    cx.executor().run_until_parked();
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+
+        let settings_a = language_settings(
+            None,
+            Some(
+                &(File::for_entry(
+                    tree.entry_for_path("a/a.rs").unwrap().clone(),
+                    worktree.clone(),
+                ) as _),
+            ),
+            cx,
+        );
+        let settings_b = language_settings(
+            None,
+            Some(
+                &(File::for_entry(
+                    tree.entry_for_path("b/b.rs").unwrap().clone(),
+                    worktree.clone(),
+                ) as _),
+            ),
+            cx,
+        );
+
+        assert_eq!(settings_a.tab_size.get(), 8);
+        assert_eq!(settings_b.tab_size.get(), 2);
+    });
+}
+
+#[gpui::test]
+async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut rust_language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut json_language = Language::new(
+        LanguageConfig {
+            name: "JSON".into(),
+            path_suffixes: vec!["json".to_string()],
+            ..Default::default()
+        },
+        None,
+    );
+    let mut fake_rust_servers = rust_language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            name: "the-rust-language-server",
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), "::".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
+    let mut fake_json_servers = json_language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            name: "the-json-language-server",
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/the-root",
+        json!({
+            "test.rs": "const A: i32 = 1;",
+            "test2.rs": "",
+            "Cargo.toml": "a = 1",
+            "package.json": "{\"a\": 1}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
+
+    // Open a buffer without an associated language server.
+    let toml_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/the-root/Cargo.toml", cx)
+        })
+        .await
+        .unwrap();
+
+    // Open a buffer with an associated language server before the language for it has been loaded.
+    let rust_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/the-root/test.rs", cx)
+        })
+        .await
+        .unwrap();
+    rust_buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.language().map(|l| l.name()), None);
+    });
+
+    // Now we add the languages to the project, and ensure they get assigned to all
+    // the relevant open buffers.
+    project.update(cx, |project, _| {
+        project.languages.add(Arc::new(json_language));
+        project.languages.add(Arc::new(rust_language));
+    });
+    cx.executor().run_until_parked();
+    rust_buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.language().map(|l| l.name()), Some("Rust".into()));
+    });
+
+    // A server is started up, and it is notified about Rust files.
+    let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+    assert_eq!(
+        fake_rust_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentItem {
+            uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+            version: 0,
+            text: "const A: i32 = 1;".to_string(),
+            language_id: Default::default()
+        }
+    );
+
+    // The buffer is configured based on the language server's capabilities.
+    rust_buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer.completion_triggers(),
+            &[".".to_string(), "::".to_string()]
+        );
+    });
+    toml_buffer.update(cx, |buffer, _| {
+        assert!(buffer.completion_triggers().is_empty());
+    });
+
+    // Edit a buffer. The changes are reported to the language server.
+    rust_buffer.update(cx, |buffer, cx| buffer.edit([(16..16, "2")], None, cx));
+    assert_eq!(
+        fake_rust_server
+            .receive_notification::<lsp::notification::DidChangeTextDocument>()
+            .await
+            .text_document,
+        lsp::VersionedTextDocumentIdentifier::new(
+            lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+            1
+        )
+    );
+
+    // Open a third buffer with a different associated language server.
+    let json_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/the-root/package.json", cx)
+        })
+        .await
+        .unwrap();
+
+    // A json language server is started up and is only notified about the json buffer.
+    let mut fake_json_server = fake_json_servers.next().await.unwrap();
+    assert_eq!(
+        fake_json_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentItem {
+            uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+            version: 0,
+            text: "{\"a\": 1}".to_string(),
+            language_id: Default::default()
+        }
+    );
+
+    // This buffer is configured based on the second language server's
+    // capabilities.
+    json_buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.completion_triggers(), &[":".to_string()]);
+    });
+
+    // When opening another buffer whose language server is already running,
+    // it is also configured based on the existing language server's capabilities.
+    let rust_buffer2 = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/the-root/test2.rs", cx)
+        })
+        .await
+        .unwrap();
+    rust_buffer2.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer.completion_triggers(),
+            &[".".to_string(), "::".to_string()]
+        );
+    });
+
+    // Changes are reported only to servers matching the buffer's language.
+    toml_buffer.update(cx, |buffer, cx| buffer.edit([(5..5, "23")], None, cx));
+    rust_buffer2.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "let x = 1;")], None, cx)
+    });
+    assert_eq!(
+        fake_rust_server
+            .receive_notification::<lsp::notification::DidChangeTextDocument>()
+            .await
+            .text_document,
+        lsp::VersionedTextDocumentIdentifier::new(
+            lsp::Url::from_file_path("/the-root/test2.rs").unwrap(),
+            1
+        )
+    );
+
+    // Save notifications are reported to all servers.
+    project
+        .update(cx, |project, cx| project.save_buffer(toml_buffer, cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        fake_rust_server
+            .receive_notification::<lsp::notification::DidSaveTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap())
+    );
+    assert_eq!(
+        fake_json_server
+            .receive_notification::<lsp::notification::DidSaveTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap())
+    );
+
+    // Renames are reported only to servers matching the buffer's language.
+    fs.rename(
+        Path::new("/the-root/test2.rs"),
+        Path::new("/the-root/test3.rs"),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        fake_rust_server
+            .receive_notification::<lsp::notification::DidCloseTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/test2.rs").unwrap()),
+    );
+    assert_eq!(
+        fake_rust_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentItem {
+            uri: lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),
+            version: 0,
+            text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
+            language_id: Default::default()
+        },
+    );
+
+    rust_buffer2.update(cx, |buffer, cx| {
+        buffer.update_diagnostics(
+            LanguageServerId(0),
+            DiagnosticSet::from_sorted_entries(
+                vec![DiagnosticEntry {
+                    diagnostic: Default::default(),
+                    range: Anchor::MIN..Anchor::MAX,
+                }],
+                &buffer.snapshot(),
+            ),
+            cx,
+        );
+        assert_eq!(
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, usize>(0..buffer.len(), false)
+                .count(),
+            1
+        );
+    });
+
+    // When the rename changes the extension of the file, the buffer gets closed on the old
+    // language server and gets opened on the new one.
+    fs.rename(
+        Path::new("/the-root/test3.rs"),
+        Path::new("/the-root/test3.json"),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        fake_rust_server
+            .receive_notification::<lsp::notification::DidCloseTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),),
+    );
+    assert_eq!(
+        fake_json_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentItem {
+            uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+            version: 0,
+            text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
+            language_id: Default::default()
+        },
+    );
+
+    // We clear the diagnostics, since the language has changed.
+    rust_buffer2.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, usize>(0..buffer.len(), false)
+                .count(),
+            0
+        );
+    });
+
+    // The renamed file's version resets after changing language server.
+    rust_buffer2.update(cx, |buffer, cx| buffer.edit([(0..0, "// ")], None, cx));
+    assert_eq!(
+        fake_json_server
+            .receive_notification::<lsp::notification::DidChangeTextDocument>()
+            .await
+            .text_document,
+        lsp::VersionedTextDocumentIdentifier::new(
+            lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+            1
+        )
+    );
+
+    // Restart language servers
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers(
+            vec![rust_buffer.clone(), json_buffer.clone()],
+            cx,
+        );
+    });
+
+    let mut rust_shutdown_requests = fake_rust_server
+        .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
+    let mut json_shutdown_requests = fake_json_server
+        .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
+    futures::join!(rust_shutdown_requests.next(), json_shutdown_requests.next());
+
+    let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+    let mut fake_json_server = fake_json_servers.next().await.unwrap();
+
+    // Ensure rust document is reopened in new rust language server
+    assert_eq!(
+        fake_rust_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentItem {
+            uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+            version: 0,
+            text: rust_buffer.update(cx, |buffer, _| buffer.text()),
+            language_id: Default::default()
+        }
+    );
+
+    // Ensure json documents are reopened in new json language server
+    assert_set_eq!(
+        [
+            fake_json_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            fake_json_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+        ],
+        [
+            lsp::TextDocumentItem {
+                uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+                version: 0,
+                text: json_buffer.update(cx, |buffer, _| buffer.text()),
+                language_id: Default::default()
+            },
+            lsp::TextDocumentItem {
+                uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+                version: 0,
+                text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
+                language_id: Default::default()
+            }
+        ]
+    );
+
+    // Close notifications are reported only to servers matching the buffer's language.
+    cx.update(|_| drop(json_buffer));
+    let close_message = lsp::DidCloseTextDocumentParams {
+        text_document: lsp::TextDocumentIdentifier::new(
+            lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+        ),
+    };
+    assert_eq!(
+        fake_json_server
+            .receive_notification::<lsp::notification::DidCloseTextDocument>()
+            .await,
+        close_message,
+    );
+}
+
+#[gpui::test]
+async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            name: "the-language-server",
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/the-root",
+        json!({
+            ".gitignore": "target\n",
+            "src": {
+                "a.rs": "",
+                "b.rs": "",
+            },
+            "target": {
+                "x": {
+                    "out": {
+                        "x.rs": ""
+                    }
+                },
+                "y": {
+                    "out": {
+                        "y.rs": "",
+                    }
+                },
+                "z": {
+                    "out": {
+                        "z.rs": ""
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
+    project.update(cx, |project, _| {
+        project.languages.add(Arc::new(language));
+    });
+    cx.executor().run_until_parked();
+
+    // Start the language server by opening a buffer with a compatible file extension.
+    let _buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/the-root/src/a.rs", cx)
+        })
+        .await
+        .unwrap();
+
+    // Initially, we don't load ignored files because the language server has not explicitly asked us to watch them.
+    project.update(cx, |project, cx| {
+        let worktree = project.worktrees().next().unwrap();
+        assert_eq!(
+            worktree
+                .read(cx)
+                .snapshot()
+                .entries(true)
+                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .collect::<Vec<_>>(),
+            &[
+                (Path::new(""), false),
+                (Path::new(".gitignore"), false),
+                (Path::new("src"), false),
+                (Path::new("src/a.rs"), false),
+                (Path::new("src/b.rs"), false),
+                (Path::new("target"), true),
+            ]
+        );
+    });
+
+    let prev_read_dir_count = fs.read_dir_call_count();
+
+    // Keep track of the FS events reported to the language server.
+    let fake_server = fake_servers.next().await.unwrap();
+    let file_changes = Arc::new(Mutex::new(Vec::new()));
+    fake_server
+        .request::<lsp::request::RegisterCapability>(lsp::RegistrationParams {
+            registrations: vec![lsp::Registration {
+                id: Default::default(),
+                method: "workspace/didChangeWatchedFiles".to_string(),
+                register_options: serde_json::to_value(
+                    lsp::DidChangeWatchedFilesRegistrationOptions {
+                        watchers: vec![
+                            lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String(
+                                    "/the-root/Cargo.toml".to_string(),
+                                ),
+                                kind: None,
+                            },
+                            lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String(
+                                    "/the-root/src/*.{rs,c}".to_string(),
+                                ),
+                                kind: None,
+                            },
+                            lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String(
+                                    "/the-root/target/y/**/*.rs".to_string(),
+                                ),
+                                kind: None,
+                            },
+                        ],
+                    },
+                )
+                .ok(),
+            }],
+        })
+        .await
+        .unwrap();
+    fake_server.handle_notification::<lsp::notification::DidChangeWatchedFiles, _>({
+        let file_changes = file_changes.clone();
+        move |params, _| {
+            let mut file_changes = file_changes.lock();
+            file_changes.extend(params.changes);
+            file_changes.sort_by(|a, b| a.uri.cmp(&b.uri));
+        }
+    });
+
+    cx.executor().run_until_parked();
+    assert_eq!(mem::take(&mut *file_changes.lock()), &[]);
+    assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 4);
+
+    // Now the language server has asked us to watch an ignored directory path,
+    // so we recursively load it.
+    project.update(cx, |project, cx| {
+        let worktree = project.worktrees().next().unwrap();
+        assert_eq!(
+            worktree
+                .read(cx)
+                .snapshot()
+                .entries(true)
+                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .collect::<Vec<_>>(),
+            &[
+                (Path::new(""), false),
+                (Path::new(".gitignore"), false),
+                (Path::new("src"), false),
+                (Path::new("src/a.rs"), false),
+                (Path::new("src/b.rs"), false),
+                (Path::new("target"), true),
+                (Path::new("target/x"), true),
+                (Path::new("target/y"), true),
+                (Path::new("target/y/out"), true),
+                (Path::new("target/y/out/y.rs"), true),
+                (Path::new("target/z"), true),
+            ]
+        );
+    });
+
+    // Perform some file system mutations, two of which match the watched patterns,
+    // and one of which does not.
+    fs.create_file("/the-root/src/c.rs".as_ref(), Default::default())
+        .await
+        .unwrap();
+    fs.create_file("/the-root/src/d.txt".as_ref(), Default::default())
+        .await
+        .unwrap();
+    fs.remove_file("/the-root/src/b.rs".as_ref(), Default::default())
+        .await
+        .unwrap();
+    fs.create_file("/the-root/target/x/out/x2.rs".as_ref(), Default::default())
+        .await
+        .unwrap();
+    fs.create_file("/the-root/target/y/out/y2.rs".as_ref(), Default::default())
+        .await
+        .unwrap();
+
+    // The language server receives events for the FS mutations that match its watch patterns.
+    cx.executor().run_until_parked();
+    assert_eq!(
+        &*file_changes.lock(),
+        &[
+            lsp::FileEvent {
+                uri: lsp::Url::from_file_path("/the-root/src/b.rs").unwrap(),
+                typ: lsp::FileChangeType::DELETED,
+            },
+            lsp::FileEvent {
+                uri: lsp::Url::from_file_path("/the-root/src/c.rs").unwrap(),
+                typ: lsp::FileChangeType::CREATED,
+            },
+            lsp::FileEvent {
+                uri: lsp::Url::from_file_path("/the-root/target/y/out/y2.rs").unwrap(),
+                typ: lsp::FileChangeType::CREATED,
+            },
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.rs": "let a = 1;",
+            "b.rs": "let b = 2;"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir/a.rs".as_ref(), "/dir/b.rs".as_ref()], cx).await;
+
+    let buffer_a = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+    let buffer_b = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
+        .await
+        .unwrap();
+
+    project.update(cx, |project, cx| {
+        project
+            .update_diagnostics(
+                LanguageServerId(0),
+                lsp::PublishDiagnosticsParams {
+                    uri: Url::from_file_path("/dir/a.rs").unwrap(),
+                    version: None,
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 5)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "error 1".to_string(),
+                        ..Default::default()
+                    }],
+                },
+                &[],
+                cx,
+            )
+            .unwrap();
+        project
+            .update_diagnostics(
+                LanguageServerId(0),
+                lsp::PublishDiagnosticsParams {
+                    uri: Url::from_file_path("/dir/b.rs").unwrap(),
+                    version: None,
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 5)),
+                        severity: Some(lsp::DiagnosticSeverity::WARNING),
+                        message: "error 2".to_string(),
+                        ..Default::default()
+                    }],
+                },
+                &[],
+                cx,
+            )
+            .unwrap();
+    });
+
+    buffer_a.update(cx, |buffer, _| {
+        let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|(s, d)| (s.as_str(), *d))
+                .collect::<Vec<_>>(),
+            &[
+                ("let ", None),
+                ("a", Some(DiagnosticSeverity::ERROR)),
+                (" = 1;", None),
+            ]
+        );
+    });
+    buffer_b.update(cx, |buffer, _| {
+        let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|(s, d)| (s.as_str(), *d))
+                .collect::<Vec<_>>(),
+            &[
+                ("let ", None),
+                ("b", Some(DiagnosticSeverity::WARNING)),
+                (" = 2;", None),
+            ]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir": {
+                "a.rs": "let a = 1;",
+            },
+            "other.rs": "let b = c;"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/root/dir".as_ref()], cx).await;
+
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_local_worktree("/root/other.rs", false, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_id = worktree.update(cx, |tree, _| tree.id());
+
+    project.update(cx, |project, cx| {
+        project
+            .update_diagnostics(
+                LanguageServerId(0),
+                lsp::PublishDiagnosticsParams {
+                    uri: Url::from_file_path("/root/other.rs").unwrap(),
+                    version: None,
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 9)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "unknown variable 'c'".to_string(),
+                        ..Default::default()
+                    }],
+                },
+                &[],
+                cx,
+            )
+            .unwrap();
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, _| {
+        let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|(s, d)| (s.as_str(), *d))
+                .collect::<Vec<_>>(),
+            &[
+                ("let b = ", None),
+                ("c", Some(DiagnosticSeverity::ERROR)),
+                (";", None),
+            ]
+        );
+    });
+
+    project.update(cx, |project, cx| {
+        assert_eq!(project.diagnostic_summaries(cx).next(), None);
+        assert_eq!(project.diagnostic_summary(cx).error_count, 0);
+    });
+}
+
+#[gpui::test]
+async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let progress_token = "the-progress-token";
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            disk_based_diagnostics_progress_token: Some(progress_token.into()),
+            disk_based_diagnostics_sources: vec!["disk".into()],
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.rs": "fn a() { A }",
+            "b.rs": "const y: i32 = 1",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+    let worktree_id = project.update(cx, |p, cx| p.worktrees().next().unwrap().read(cx).id());
+
+    // Cause worktree to start the fake language server
+    let _buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
+        .await
+        .unwrap();
+
+    let mut events = cx.events(&project);
+
+    let fake_server = fake_servers.next().await.unwrap();
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::LanguageServerAdded(LanguageServerId(0)),
+    );
+
+    fake_server
+        .start_progress(format!("{}/0", progress_token))
+        .await;
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::DiskBasedDiagnosticsStarted {
+            language_server_id: LanguageServerId(0),
+        }
+    );
+
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        version: None,
+        diagnostics: vec![lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+            severity: Some(lsp::DiagnosticSeverity::ERROR),
+            message: "undefined variable 'A'".to_string(),
+            ..Default::default()
+        }],
+    });
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::DiagnosticsUpdated {
+            language_server_id: LanguageServerId(0),
+            path: (worktree_id, Path::new("a.rs")).into()
+        }
+    );
+
+    fake_server.end_progress(format!("{}/0", progress_token));
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::DiskBasedDiagnosticsFinished {
+            language_server_id: LanguageServerId(0)
+        }
+    );
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, _| {
+        let snapshot = buffer.snapshot();
+        let diagnostics = snapshot
+            .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            diagnostics,
+            &[DiagnosticEntry {
+                range: Point::new(0, 9)..Point::new(0, 10),
+                diagnostic: Diagnostic {
+                    severity: lsp::DiagnosticSeverity::ERROR,
+                    message: "undefined variable 'A'".to_string(),
+                    group_id: 0,
+                    is_primary: true,
+                    ..Default::default()
+                }
+            }]
+        )
+    });
+
+    // Ensure publishing empty diagnostics twice only results in one update event.
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        version: None,
+        diagnostics: Default::default(),
+    });
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::DiagnosticsUpdated {
+            language_server_id: LanguageServerId(0),
+            path: (worktree_id, Path::new("a.rs")).into()
+        }
+    );
+
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        version: None,
+        diagnostics: Default::default(),
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(futures::poll!(events.next()), Poll::Pending);
+}
+
+#[gpui::test]
+async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let progress_token = "the-progress-token";
+    let mut language = Language::new(
+        LanguageConfig {
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        None,
+    );
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            disk_based_diagnostics_sources: vec!["disk".into()],
+            disk_based_diagnostics_progress_token: Some(progress_token.into()),
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    // Simulate diagnostics starting to update.
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server.start_progress(progress_token).await;
+
+    // Restart the server before the diagnostics finish updating.
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers([buffer], cx);
+    });
+    let mut events = cx.events(&project);
+
+    // Simulate the newly started server sending more diagnostics.
+    let fake_server = fake_servers.next().await.unwrap();
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::LanguageServerAdded(LanguageServerId(1))
+    );
+    fake_server.start_progress(progress_token).await;
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::DiskBasedDiagnosticsStarted {
+            language_server_id: LanguageServerId(1)
+        }
+    );
+    project.update(cx, |project, _| {
+        assert_eq!(
+            project
+                .language_servers_running_disk_based_diagnostics()
+                .collect::<Vec<_>>(),
+            [LanguageServerId(1)]
+        );
+    });
+
+    // All diagnostics are considered done, despite the old server's diagnostic
+    // task never completing.
+    fake_server.end_progress(progress_token);
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::DiskBasedDiagnosticsFinished {
+            language_server_id: LanguageServerId(1)
+        }
+    );
+    project.update(cx, |project, _| {
+        assert_eq!(
+            project
+                .language_servers_running_disk_based_diagnostics()
+                .collect::<Vec<_>>(),
+            [LanguageServerId(0); 0]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut language = Language::new(
+        LanguageConfig {
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        None,
+    );
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree("/dir", json!({ "a.rs": "x" })).await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    // Publish diagnostics
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        version: None,
+        diagnostics: vec![lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+            severity: Some(lsp::DiagnosticSeverity::ERROR),
+            message: "the message".to_string(),
+            ..Default::default()
+        }],
+    });
+
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, usize>(0..1, false)
+                .map(|entry| entry.diagnostic.message.clone())
+                .collect::<Vec<_>>(),
+            ["the message".to_string()]
+        );
+    });
+    project.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(cx),
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+            }
+        );
+    });
+
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers([buffer.clone()], cx);
+    });
+
+    // The diagnostics are cleared.
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, usize>(0..1, false)
+                .map(|entry| entry.diagnostic.message.clone())
+                .collect::<Vec<_>>(),
+            Vec::<String>::new(),
+        );
+    });
+    project.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(cx),
+            DiagnosticSummary {
+                error_count: 0,
+                warning_count: 0,
+            }
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut language = Language::new(
+        LanguageConfig {
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        None,
+    );
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            name: "the-lsp",
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    // Before restarting the server, report diagnostics with an unknown buffer version.
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+        version: Some(10000),
+        diagnostics: Vec::new(),
+    });
+    cx.executor().run_until_parked();
+
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers([buffer.clone()], cx);
+    });
+    let mut fake_server = fake_servers.next().await.unwrap();
+    let notification = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await
+        .text_document;
+    assert_eq!(notification.version, 0);
+}
+
+#[gpui::test]
+async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut rust = Language::new(
+        LanguageConfig {
+            name: Arc::from("Rust"),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        None,
+    );
+    let mut fake_rust_servers = rust
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            name: "rust-lsp",
+            ..Default::default()
+        }))
+        .await;
+    let mut js = Language::new(
+        LanguageConfig {
+            name: Arc::from("JavaScript"),
+            path_suffixes: vec!["js".to_string()],
+            ..Default::default()
+        },
+        None,
+    );
+    let mut fake_js_servers = js
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            name: "js-lsp",
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree("/dir", json!({ "a.rs": "", "b.js": "" }))
+        .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| {
+        project.languages.add(Arc::new(rust));
+        project.languages.add(Arc::new(js));
+    });
+
+    let _rs_buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+    let _js_buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/b.js", cx))
+        .await
+        .unwrap();
+
+    let mut fake_rust_server_1 = fake_rust_servers.next().await.unwrap();
+    assert_eq!(
+        fake_rust_server_1
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document
+            .uri
+            .as_str(),
+        "file:///dir/a.rs"
+    );
+
+    let mut fake_js_server = fake_js_servers.next().await.unwrap();
+    assert_eq!(
+        fake_js_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document
+            .uri
+            .as_str(),
+        "file:///dir/b.js"
+    );
+
+    // Disable Rust language server, ensuring only that server gets stopped.
+    cx.update(|cx| {
+        cx.update_global(|settings: &mut SettingsStore, cx| {
+            settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                settings.languages.insert(
+                    Arc::from("Rust"),
+                    LanguageSettingsContent {
+                        enable_language_server: Some(false),
+                        ..Default::default()
+                    },
+                );
+            });
+        })
+    });
+    fake_rust_server_1
+        .receive_notification::<lsp::notification::Exit>()
+        .await;
+
+    // Enable Rust and disable JavaScript language servers, ensuring that the
+    // former gets started again and that the latter stops.
+    cx.update(|cx| {
+        cx.update_global(|settings: &mut SettingsStore, cx| {
+            settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                settings.languages.insert(
+                    Arc::from("Rust"),
+                    LanguageSettingsContent {
+                        enable_language_server: Some(true),
+                        ..Default::default()
+                    },
+                );
+                settings.languages.insert(
+                    Arc::from("JavaScript"),
+                    LanguageSettingsContent {
+                        enable_language_server: Some(false),
+                        ..Default::default()
+                    },
+                );
+            });
+        })
+    });
+    let mut fake_rust_server_2 = fake_rust_servers.next().await.unwrap();
+    assert_eq!(
+        fake_rust_server_2
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document
+            .uri
+            .as_str(),
+        "file:///dir/a.rs"
+    );
+    fake_js_server
+        .receive_notification::<lsp::notification::Exit>()
+        .await;
+}
+
+#[gpui::test(iterations = 3)]
+async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            disk_based_diagnostics_sources: vec!["disk".into()],
+            ..Default::default()
+        }))
+        .await;
+
+    let text = "
+        fn a() { A }
+        fn b() { BB }
+        fn c() { CCC }
+    "
+    .unindent();
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree("/dir", json!({ "a.rs": text })).await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    let mut fake_server = fake_servers.next().await.unwrap();
+    let open_notification = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+
+    // Edit the buffer, moving the content down
+    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "\n\n")], None, cx));
+    let change_notification_1 = fake_server
+        .receive_notification::<lsp::notification::DidChangeTextDocument>()
+        .await;
+    assert!(change_notification_1.text_document.version > open_notification.text_document.version);
+
+    // Report some diagnostics for the initial version of the buffer
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+        version: Some(open_notification.text_document.version),
+        diagnostics: vec![
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                severity: Some(DiagnosticSeverity::ERROR),
+                message: "undefined variable 'A'".to_string(),
+                source: Some("disk".to_string()),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
+                severity: Some(DiagnosticSeverity::ERROR),
+                message: "undefined variable 'BB'".to_string(),
+                source: Some("disk".to_string()),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(2, 9), lsp::Position::new(2, 12)),
+                severity: Some(DiagnosticSeverity::ERROR),
+                source: Some("disk".to_string()),
+                message: "undefined variable 'CCC'".to_string(),
+                ..Default::default()
+            },
+        ],
+    });
+
+    // The diagnostics have moved down since they were created.
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(5, 0), false)
+                .collect::<Vec<_>>(),
+            &[
+                DiagnosticEntry {
+                    range: Point::new(3, 9)..Point::new(3, 11),
+                    diagnostic: Diagnostic {
+                        source: Some("disk".into()),
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'BB'".to_string(),
+                        is_disk_based: true,
+                        group_id: 1,
+                        is_primary: true,
+                        ..Default::default()
+                    },
+                },
+                DiagnosticEntry {
+                    range: Point::new(4, 9)..Point::new(4, 12),
+                    diagnostic: Diagnostic {
+                        source: Some("disk".into()),
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'CCC'".to_string(),
+                        is_disk_based: true,
+                        group_id: 2,
+                        is_primary: true,
+                        ..Default::default()
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            chunks_with_diagnostics(buffer, 0..buffer.len()),
+            [
+                ("\n\nfn a() { ".to_string(), None),
+                ("A".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }\nfn b() { ".to_string(), None),
+                ("BB".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }\nfn c() { ".to_string(), None),
+                ("CCC".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }\n".to_string(), None),
+            ]
+        );
+        assert_eq!(
+            chunks_with_diagnostics(buffer, Point::new(3, 10)..Point::new(4, 11)),
+            [
+                ("B".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }\nfn c() { ".to_string(), None),
+                ("CC".to_string(), Some(DiagnosticSeverity::ERROR)),
+            ]
+        );
+    });
+
+    // Ensure overlapping diagnostics are highlighted correctly.
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+        version: Some(open_notification.text_document.version),
+        diagnostics: vec![
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                severity: Some(DiagnosticSeverity::ERROR),
+                message: "undefined variable 'A'".to_string(),
+                source: Some("disk".to_string()),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 12)),
+                severity: Some(DiagnosticSeverity::WARNING),
+                message: "unreachable statement".to_string(),
+                source: Some("disk".to_string()),
+                ..Default::default()
+            },
+        ],
+    });
+
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, Point>(Point::new(2, 0)..Point::new(3, 0), false)
+                .collect::<Vec<_>>(),
+            &[
+                DiagnosticEntry {
+                    range: Point::new(2, 9)..Point::new(2, 12),
+                    diagnostic: Diagnostic {
+                        source: Some("disk".into()),
+                        severity: DiagnosticSeverity::WARNING,
+                        message: "unreachable statement".to_string(),
+                        is_disk_based: true,
+                        group_id: 4,
+                        is_primary: true,
+                        ..Default::default()
+                    }
+                },
+                DiagnosticEntry {
+                    range: Point::new(2, 9)..Point::new(2, 10),
+                    diagnostic: Diagnostic {
+                        source: Some("disk".into()),
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'A'".to_string(),
+                        is_disk_based: true,
+                        group_id: 3,
+                        is_primary: true,
+                        ..Default::default()
+                    },
+                }
+            ]
+        );
+        assert_eq!(
+            chunks_with_diagnostics(buffer, Point::new(2, 0)..Point::new(3, 0)),
+            [
+                ("fn a() { ".to_string(), None),
+                ("A".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }".to_string(), Some(DiagnosticSeverity::WARNING)),
+                ("\n".to_string(), None),
+            ]
+        );
+        assert_eq!(
+            chunks_with_diagnostics(buffer, Point::new(2, 10)..Point::new(3, 0)),
+            [
+                (" }".to_string(), Some(DiagnosticSeverity::WARNING)),
+                ("\n".to_string(), None),
+            ]
+        );
+    });
+
+    // Keep editing the buffer and ensure disk-based diagnostics get translated according to the
+    // changes since the last save.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "    ")], None, cx);
+        buffer.edit(
+            [(Point::new(2, 8)..Point::new(2, 10), "(x: usize)")],
+            None,
+            cx,
+        );
+        buffer.edit([(Point::new(3, 10)..Point::new(3, 10), "xxx")], None, cx);
+    });
+    let change_notification_2 = fake_server
+        .receive_notification::<lsp::notification::DidChangeTextDocument>()
+        .await;
+    assert!(
+        change_notification_2.text_document.version > change_notification_1.text_document.version
+    );
+
+    // Handle out-of-order diagnostics
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+        version: Some(change_notification_2.text_document.version),
+        diagnostics: vec![
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
+                severity: Some(DiagnosticSeverity::ERROR),
+                message: "undefined variable 'BB'".to_string(),
+                source: Some("disk".to_string()),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                severity: Some(DiagnosticSeverity::WARNING),
+                message: "undefined variable 'A'".to_string(),
+                source: Some("disk".to_string()),
+                ..Default::default()
+            },
+        ],
+    });
+
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
+                .collect::<Vec<_>>(),
+            &[
+                DiagnosticEntry {
+                    range: Point::new(2, 21)..Point::new(2, 22),
+                    diagnostic: Diagnostic {
+                        source: Some("disk".into()),
+                        severity: DiagnosticSeverity::WARNING,
+                        message: "undefined variable 'A'".to_string(),
+                        is_disk_based: true,
+                        group_id: 6,
+                        is_primary: true,
+                        ..Default::default()
+                    }
+                },
+                DiagnosticEntry {
+                    range: Point::new(3, 9)..Point::new(3, 14),
+                    diagnostic: Diagnostic {
+                        source: Some("disk".into()),
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'BB'".to_string(),
+                        is_disk_based: true,
+                        group_id: 5,
+                        is_primary: true,
+                        ..Default::default()
+                    },
+                }
+            ]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let text = concat!(
+        "let one = ;\n", //
+        "let two = \n",
+        "let three = 3;\n",
+    );
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree("/dir", json!({ "a.rs": text })).await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    project.update(cx, |project, cx| {
+        project
+            .update_buffer_diagnostics(
+                &buffer,
+                LanguageServerId(0),
+                None,
+                vec![
+                    DiagnosticEntry {
+                        range: Unclipped(PointUtf16::new(0, 10))..Unclipped(PointUtf16::new(0, 10)),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::ERROR,
+                            message: "syntax error 1".to_string(),
+                            ..Default::default()
+                        },
+                    },
+                    DiagnosticEntry {
+                        range: Unclipped(PointUtf16::new(1, 10))..Unclipped(PointUtf16::new(1, 10)),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::ERROR,
+                            message: "syntax error 2".to_string(),
+                            ..Default::default()
+                        },
+                    },
+                ],
+                cx,
+            )
+            .unwrap();
+    });
+
+    // An empty range is extended forward to include the following character.
+    // At the end of a line, an empty range is extended backward to include
+    // the preceding character.
+    buffer.update(cx, |buffer, _| {
+        let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|(s, d)| (s.as_str(), *d))
+                .collect::<Vec<_>>(),
+            &[
+                ("let one = ", None),
+                (";", Some(DiagnosticSeverity::ERROR)),
+                ("\nlet two =", None),
+                (" ", Some(DiagnosticSeverity::ERROR)),
+                ("\nlet three = 3;\n", None)
+            ]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree("/dir", json!({ "a.rs": "one two three" }))
+        .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+
+    project.update(cx, |project, cx| {
+        project
+            .update_diagnostic_entries(
+                LanguageServerId(0),
+                Path::new("/dir/a.rs").to_owned(),
+                None,
+                vec![DiagnosticEntry {
+                    range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        is_primary: true,
+                        message: "syntax error a1".to_string(),
+                        ..Default::default()
+                    },
+                }],
+                cx,
+            )
+            .unwrap();
+        project
+            .update_diagnostic_entries(
+                LanguageServerId(1),
+                Path::new("/dir/a.rs").to_owned(),
+                None,
+                vec![DiagnosticEntry {
+                    range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        is_primary: true,
+                        message: "syntax error b1".to_string(),
+                        ..Default::default()
+                    },
+                }],
+                cx,
+            )
+            .unwrap();
+
+        assert_eq!(
+            project.diagnostic_summary(cx),
+            DiagnosticSummary {
+                error_count: 2,
+                warning_count: 0,
+            }
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_servers = language.set_fake_lsp_adapter(Default::default()).await;
+
+    let text = "
+        fn a() {
+            f1();
+        }
+        fn b() {
+            f2();
+        }
+        fn c() {
+            f3();
+        }
+    "
+    .unindent();
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.rs": text.clone(),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    let mut fake_server = fake_servers.next().await.unwrap();
+    let lsp_document_version = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await
+        .text_document
+        .version;
+
+    // Simulate editing the buffer after the language server computes some edits.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(
+            [(
+                Point::new(0, 0)..Point::new(0, 0),
+                "// above first function\n",
+            )],
+            None,
+            cx,
+        );
+        buffer.edit(
+            [(
+                Point::new(2, 0)..Point::new(2, 0),
+                "    // inside first function\n",
+            )],
+            None,
+            cx,
+        );
+        buffer.edit(
+            [(
+                Point::new(6, 4)..Point::new(6, 4),
+                "// inside second function ",
+            )],
+            None,
+            cx,
+        );
+
+        assert_eq!(
+            buffer.text(),
+            "
+                // above first function
+                fn a() {
+                    // inside first function
+                    f1();
+                }
+                fn b() {
+                    // inside second function f2();
+                }
+                fn c() {
+                    f3();
+                }
+            "
+            .unindent()
+        );
+    });
+
+    let edits = project
+        .update(cx, |project, cx| {
+            project.edits_from_lsp(
+                &buffer,
+                vec![
+                    // replace body of first function
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(3, 0)),
+                        new_text: "
+                            fn a() {
+                                f10();
+                            }
+                            "
+                        .unindent(),
+                    },
+                    // edit inside second function
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(4, 6), lsp::Position::new(4, 6)),
+                        new_text: "00".into(),
+                    },
+                    // edit inside third function via two distinct edits
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(7, 5), lsp::Position::new(7, 5)),
+                        new_text: "4000".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(7, 5), lsp::Position::new(7, 6)),
+                        new_text: "".into(),
+                    },
+                ],
+                LanguageServerId(0),
+                Some(lsp_document_version),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        for (range, new_text) in edits {
+            buffer.edit([(range, new_text)], None, cx);
+        }
+        assert_eq!(
+            buffer.text(),
+            "
+                // above first function
+                fn a() {
+                    // inside first function
+                    f10();
+                }
+                fn b() {
+                    // inside second function f200();
+                }
+                fn c() {
+                    f4000();
+                }
+                "
+            .unindent()
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let text = "
+        use a::b;
+        use a::c;
+
+        fn f() {
+            b();
+            c();
+        }
+    "
+    .unindent();
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.rs": text.clone(),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    // Simulate the language server sending us a small edit in the form of a very large diff.
+    // Rust-analyzer does this when performing a merge-imports code action.
+    let edits = project
+        .update(cx, |project, cx| {
+            project.edits_from_lsp(
+                &buffer,
+                [
+                    // Replace the first use statement without editing the semicolon.
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 8)),
+                        new_text: "a::{b, c}".into(),
+                    },
+                    // Reinsert the remainder of the file between the semicolon and the final
+                    // newline of the file.
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 9)),
+                        new_text: "\n\n".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 9)),
+                        new_text: "
+                            fn f() {
+                                b();
+                                c();
+                            }"
+                        .unindent(),
+                    },
+                    // Delete everything after the first newline of the file.
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(7, 0)),
+                        new_text: "".into(),
+                    },
+                ],
+                LanguageServerId(0),
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        let edits = edits
+            .into_iter()
+            .map(|(range, text)| {
+                (
+                    range.start.to_point(buffer)..range.end.to_point(buffer),
+                    text,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            edits,
+            [
+                (Point::new(0, 4)..Point::new(0, 8), "a::{b, c}".into()),
+                (Point::new(1, 0)..Point::new(2, 0), "".into())
+            ]
+        );
+
+        for (range, new_text) in edits {
+            buffer.edit([(range, new_text)], None, cx);
+        }
+        assert_eq!(
+            buffer.text(),
+            "
+                use a::{b, c};
+
+                fn f() {
+                    b();
+                    c();
+                }
+            "
+            .unindent()
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let text = "
+        use a::b;
+        use a::c;
+
+        fn f() {
+            b();
+            c();
+        }
+    "
+    .unindent();
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.rs": text.clone(),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    // Simulate the language server sending us edits in a non-ordered fashion,
+    // with ranges sometimes being inverted or pointing to invalid locations.
+    let edits = project
+        .update(cx, |project, cx| {
+            project.edits_from_lsp(
+                &buffer,
+                [
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 9)),
+                        new_text: "\n\n".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 4)),
+                        new_text: "a::{b, c}".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(99, 0)),
+                        new_text: "".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 9)),
+                        new_text: "
+                            fn f() {
+                                b();
+                                c();
+                            }"
+                        .unindent(),
+                    },
+                ],
+                LanguageServerId(0),
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        let edits = edits
+            .into_iter()
+            .map(|(range, text)| {
+                (
+                    range.start.to_point(buffer)..range.end.to_point(buffer),
+                    text,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            edits,
+            [
+                (Point::new(0, 4)..Point::new(0, 8), "a::{b, c}".into()),
+                (Point::new(1, 0)..Point::new(2, 0), "".into())
+            ]
+        );
+
+        for (range, new_text) in edits {
+            buffer.edit([(range, new_text)], None, cx);
+        }
+        assert_eq!(
+            buffer.text(),
+            "
+                use a::{b, c};
+
+                fn f() {
+                    b();
+                    c();
+                }
+            "
+            .unindent()
+        );
+    });
+}
+
+fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
+    buffer: &Buffer,
+    range: Range<T>,
+) -> Vec<(String, Option<DiagnosticSeverity>)> {
+    let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
+    for chunk in buffer.snapshot().chunks(range, true) {
+        if chunks.last().map_or(false, |prev_chunk| {
+            prev_chunk.1 == chunk.diagnostic_severity
+        }) {
+            chunks.last_mut().unwrap().0.push_str(chunk.text);
+        } else {
+            chunks.push((chunk.text.to_string(), chunk.diagnostic_severity));
+        }
+    }
+    chunks
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_definition(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_servers = language.set_fake_lsp_adapter(Default::default()).await;
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.rs": "const fn a() { A }",
+            "b.rs": "const y: i32 = crate::a()",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir/b.rs".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server.handle_request::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
+        let params = params.text_document_position_params;
+        assert_eq!(
+            params.text_document.uri.to_file_path().unwrap(),
+            Path::new("/dir/b.rs"),
+        );
+        assert_eq!(params.position, lsp::Position::new(0, 22));
+
+        Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+            lsp::Location::new(
+                lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+                lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+            ),
+        )))
+    });
+
+    let mut definitions = project
+        .update(cx, |project, cx| project.definition(&buffer, 22, cx))
+        .await
+        .unwrap();
+
+    // Assert no new language server started
+    cx.executor().run_until_parked();
+    assert!(fake_servers.try_next().is_err());
+
+    assert_eq!(definitions.len(), 1);
+    let definition = definitions.pop().unwrap();
+    cx.update(|cx| {
+        let target_buffer = definition.target.buffer.read(cx);
+        assert_eq!(
+            target_buffer
+                .file()
+                .unwrap()
+                .as_local()
+                .unwrap()
+                .abs_path(cx),
+            Path::new("/dir/a.rs"),
+        );
+        assert_eq!(definition.target.range.to_offset(target_buffer), 9..10);
+        assert_eq!(
+            list_worktrees(&project, cx),
+            [("/dir/b.rs".as_ref(), true), ("/dir/a.rs".as_ref(), false)]
+        );
+
+        drop(definition);
+    });
+    cx.update(|cx| {
+        assert_eq!(list_worktrees(&project, cx), [("/dir/b.rs".as_ref(), true)]);
+    });
+
+    fn list_worktrees<'a>(
+        project: &'a Model<Project>,
+        cx: &'a AppContext,
+    ) -> Vec<(&'a Path, bool)> {
+        project
+            .read(cx)
+            .worktrees()
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                (
+                    worktree.as_local().unwrap().abs_path().as_ref(),
+                    worktree.is_visible(),
+                )
+            })
+            .collect::<Vec<_>>()
+    }
+}
+
+#[gpui::test]
+async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            path_suffixes: vec!["ts".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::language_typescript()),
+    );
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.ts": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .await
+        .unwrap();
+
+    let fake_server = fake_language_servers.next().await.unwrap();
+
+    let text = "let a = b.fqn";
+    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+    let completions = project.update(cx, |project, cx| {
+        project.completions(&buffer, text.len(), cx)
+    });
+
+    fake_server
+        .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "fullyQualifiedName?".into(),
+                    insert_text: Some("fullyQualifiedName".into()),
+                    ..Default::default()
+                },
+            ])))
+        })
+        .next()
+        .await;
+    let completions = completions.await.unwrap();
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    assert_eq!(completions.len(), 1);
+    assert_eq!(completions[0].new_text, "fullyQualifiedName");
+    assert_eq!(
+        completions[0].old_range.to_offset(&snapshot),
+        text.len() - 3..text.len()
+    );
+
+    let text = "let a = \"atoms/cmp\"";
+    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+    let completions = project.update(cx, |project, cx| {
+        project.completions(&buffer, text.len() - 1, cx)
+    });
+
+    fake_server
+        .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "component".into(),
+                    ..Default::default()
+                },
+            ])))
+        })
+        .next()
+        .await;
+    let completions = completions.await.unwrap();
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    assert_eq!(completions.len(), 1);
+    assert_eq!(completions[0].new_text, "component");
+    assert_eq!(
+        completions[0].old_range.to_offset(&snapshot),
+        text.len() - 4..text.len() - 1
+    );
+}
+
+#[gpui::test]
+async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            path_suffixes: vec!["ts".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::language_typescript()),
+    );
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.ts": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .await
+        .unwrap();
+
+    let fake_server = fake_language_servers.next().await.unwrap();
+
+    let text = "let a = b.fqn";
+    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+    let completions = project.update(cx, |project, cx| {
+        project.completions(&buffer, text.len(), cx)
+    });
+
+    fake_server
+        .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "fullyQualifiedName?".into(),
+                    insert_text: Some("fully\rQualified\r\nName".into()),
+                    ..Default::default()
+                },
+            ])))
+        })
+        .next()
+        .await;
+    let completions = completions.await.unwrap();
+    assert_eq!(completions.len(), 1);
+    assert_eq!(completions[0].new_text, "fully\nQualified\nName");
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            path_suffixes: vec!["ts".to_string()],
+            ..Default::default()
+        },
+        None,
+    );
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.ts": "a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .await
+        .unwrap();
+
+    let fake_server = fake_language_servers.next().await.unwrap();
+
+    // Language server returns code actions that contain commands, and not edits.
+    let actions = project.update(cx, |project, cx| project.code_actions(&buffer, 0..0, cx));
+    fake_server
+        .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
+            Ok(Some(vec![
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    title: "The code action".into(),
+                    command: Some(lsp::Command {
+                        title: "The command".into(),
+                        command: "_the/command".into(),
+                        arguments: Some(vec![json!("the-argument")]),
+                    }),
+                    ..Default::default()
+                }),
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    title: "two".into(),
+                    ..Default::default()
+                }),
+            ]))
+        })
+        .next()
+        .await;
+
+    let action = actions.await.unwrap()[0].clone();
+    let apply = project.update(cx, |project, cx| {
+        project.apply_code_action(buffer.clone(), action, true, cx)
+    });
+
+    // Resolving the code action does not populate its edits. In absence of
+    // edits, we must execute the given command.
+    fake_server.handle_request::<lsp::request::CodeActionResolveRequest, _, _>(
+        |action, _| async move { Ok(action) },
+    );
+
+    // While executing the command, the language server sends the editor
+    // a `workspaceEdit` request.
+    fake_server
+        .handle_request::<lsp::request::ExecuteCommand, _, _>({
+            let fake = fake_server.clone();
+            move |params, _| {
+                assert_eq!(params.command, "_the/command");
+                let fake = fake.clone();
+                async move {
+                    fake.server
+                        .request::<lsp::request::ApplyWorkspaceEdit>(
+                            lsp::ApplyWorkspaceEditParams {
+                                label: None,
+                                edit: lsp::WorkspaceEdit {
+                                    changes: Some(
+                                        [(
+                                            lsp::Url::from_file_path("/dir/a.ts").unwrap(),
+                                            vec![lsp::TextEdit {
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(0, 0),
+                                                    lsp::Position::new(0, 0),
+                                                ),
+                                                new_text: "X".into(),
+                                            }],
+                                        )]
+                                        .into_iter()
+                                        .collect(),
+                                    ),
+                                    ..Default::default()
+                                },
+                            },
+                        )
+                        .await
+                        .unwrap();
+                    Ok(Some(json!(null)))
+                }
+            }
+        })
+        .next()
+        .await;
+
+    // Applying the code action returns a project transaction containing the edits
+    // sent by the language server in its `workspaceEdit` request.
+    let transaction = apply.await.unwrap();
+    assert!(transaction.0.contains_key(&buffer));
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "Xa");
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "a");
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_save_file(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "file1": "the old contents",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "the old contents");
+        buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
+    });
+
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+
+    let new_text = fs.load(Path::new("/dir/file1")).await.unwrap();
+    assert_eq!(new_text, buffer.update(cx, |buffer, _| buffer.text()));
+}
+
+#[gpui::test]
+async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "file1": "the old contents",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/dir/file1".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
+    });
+
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+
+    let new_text = fs.load(Path::new("/dir/file1")).await.unwrap();
+    assert_eq!(new_text, buffer.update(cx, |buffer, _| buffer.text()));
+}
+
+#[gpui::test]
+async fn test_save_as(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree("/dir", json!({})).await;
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let languages = project.update(cx, |project, _| project.languages().clone());
+    languages.register(
+        "/some/path",
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".into()],
+            ..Default::default()
+        },
+        tree_sitter_rust::language(),
+        vec![],
+        |_| Default::default(),
+    );
+
+    let buffer = project.update(cx, |project, cx| {
+        project.create_buffer("", None, cx).unwrap()
+    });
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "abc")], None, cx);
+        assert!(buffer.is_dirty());
+        assert!(!buffer.has_conflict());
+        assert_eq!(buffer.language().unwrap().name().as_ref(), "Plain Text");
+    });
+    project
+        .update(cx, |project, cx| {
+            project.save_buffer_as(buffer.clone(), "/dir/file1.rs".into(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(fs.load(Path::new("/dir/file1.rs")).await.unwrap(), "abc");
+
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(
+            buffer.file().unwrap().full_path(cx),
+            Path::new("dir/file1.rs")
+        );
+        assert!(!buffer.is_dirty());
+        assert!(!buffer.has_conflict());
+        assert_eq!(buffer.language().unwrap().name().as_ref(), "Rust");
+    });
+
+    let opened_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file1.rs", cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(opened_buffer, buffer);
+}
+
+#[gpui::test(retries = 5)]
+async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = temp_tree(json!({
+        "a": {
+            "file1": "",
+            "file2": "",
+            "file3": "",
+        },
+        "b": {
+            "c": {
+                "file4": "",
+                "file5": "",
+            }
+        }
+    }));
+
+    let project = Project::test(Arc::new(RealFs), [dir.path()], cx).await;
+    let rpc = project.update(cx, |p, _| p.client.clone());
+
+    let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
+        let buffer = project.update(cx, |p, cx| p.open_local_buffer(dir.path().join(path), cx));
+        async move { buffer.await.unwrap() }
+    };
+    let id_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
+        project.update(cx, |project, cx| {
+            let tree = project.worktrees().next().unwrap();
+            tree.read(cx)
+                .entry_for_path(path)
+                .unwrap_or_else(|| panic!("no entry for path {}", path))
+                .id
+        })
+    };
+
+    let buffer2 = buffer_for_path("a/file2", cx).await;
+    let buffer3 = buffer_for_path("a/file3", cx).await;
+    let buffer4 = buffer_for_path("b/c/file4", cx).await;
+    let buffer5 = buffer_for_path("b/c/file5", cx).await;
+
+    let file2_id = id_for_path("a/file2", cx);
+    let file3_id = id_for_path("a/file3", cx);
+    let file4_id = id_for_path("b/c/file4", cx);
+
+    // Create a remote copy of this worktree.
+    let tree = project.update(cx, |project, _| project.worktrees().next().unwrap());
+
+    let metadata = tree.update(cx, |tree, _| tree.as_local().unwrap().metadata_proto());
+
+    let updates = Arc::new(Mutex::new(Vec::new()));
+    tree.update(cx, |tree, cx| {
+        let _ = tree.as_local_mut().unwrap().observe_updates(0, cx, {
+            let updates = updates.clone();
+            move |update| {
+                updates.lock().push(update);
+                async { true }
+            }
+        });
+    });
+
+    let remote = cx.update(|cx| Worktree::remote(1, 1, metadata, rpc.clone(), cx));
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        assert!(!buffer2.read(cx).is_dirty());
+        assert!(!buffer3.read(cx).is_dirty());
+        assert!(!buffer4.read(cx).is_dirty());
+        assert!(!buffer5.read(cx).is_dirty());
+    });
+
+    // Rename and delete files and directories.
+    tree.flush_fs_events(cx).await;
+    std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
+    std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
+    std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
+    std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
+    tree.flush_fs_events(cx).await;
+
+    let expected_paths = vec![
+        "a",
+        "a/file1",
+        "a/file2.new",
+        "b",
+        "d",
+        "d/file3",
+        "d/file4",
+    ];
+
+    cx.update(|app| {
+        assert_eq!(
+            tree.read(app)
+                .paths()
+                .map(|p| p.to_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected_paths
+        );
+    });
+
+    assert_eq!(id_for_path("a/file2.new", cx), file2_id);
+    assert_eq!(id_for_path("d/file3", cx), file3_id);
+    assert_eq!(id_for_path("d/file4", cx), file4_id);
+
+    cx.update(|cx| {
+        assert_eq!(
+            buffer2.read(cx).file().unwrap().path().as_ref(),
+            Path::new("a/file2.new")
+        );
+        assert_eq!(
+            buffer3.read(cx).file().unwrap().path().as_ref(),
+            Path::new("d/file3")
+        );
+        assert_eq!(
+            buffer4.read(cx).file().unwrap().path().as_ref(),
+            Path::new("d/file4")
+        );
+        assert_eq!(
+            buffer5.read(cx).file().unwrap().path().as_ref(),
+            Path::new("b/c/file5")
+        );
+
+        assert!(!buffer2.read(cx).file().unwrap().is_deleted());
+        assert!(!buffer3.read(cx).file().unwrap().is_deleted());
+        assert!(!buffer4.read(cx).file().unwrap().is_deleted());
+        assert!(buffer5.read(cx).file().unwrap().is_deleted());
+    });
+
+    // Update the remote worktree. Check that it becomes consistent with the
+    // local worktree.
+    cx.executor().run_until_parked();
+
+    remote.update(cx, |remote, _| {
+        for update in updates.lock().drain(..) {
+            remote.as_remote_mut().unwrap().update_from_remote(update);
+        }
+    });
+    cx.executor().run_until_parked();
+    remote.update(cx, |remote, _| {
+        assert_eq!(
+            remote
+                .paths()
+                .map(|p| p.to_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected_paths
+        );
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a": {
+                "file1": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [Path::new("/dir")], cx).await;
+    let tree = project.update(cx, |project, _| project.worktrees().next().unwrap());
+    let tree_id = tree.update(cx, |tree, _| tree.id());
+
+    let id_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
+        project.update(cx, |project, cx| {
+            let tree = project.worktrees().next().unwrap();
+            tree.read(cx)
+                .entry_for_path(path)
+                .unwrap_or_else(|| panic!("no entry for path {}", path))
+                .id
+        })
+    };
+
+    let dir_id = id_for_path("a", cx);
+    let file_id = id_for_path("a/file1", cx);
+    let buffer = project
+        .update(cx, |p, cx| p.open_buffer((tree_id, "a/file1"), cx))
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
+
+    project
+        .update(cx, |project, cx| {
+            project.rename_entry(dir_id, Path::new("b"), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(id_for_path("b", cx), dir_id);
+    assert_eq!(id_for_path("b/file1", cx), file_id);
+    buffer.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
+}
+
+#[gpui::test]
+async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.txt": "a-contents",
+            "b.txt": "b-contents",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    // Spawn multiple tasks to open paths, repeating some paths.
+    let (buffer_a_1, buffer_b, buffer_a_2) = project.update(cx, |p, cx| {
+        (
+            p.open_local_buffer("/dir/a.txt", cx),
+            p.open_local_buffer("/dir/b.txt", cx),
+            p.open_local_buffer("/dir/a.txt", cx),
+        )
+    });
+
+    let buffer_a_1 = buffer_a_1.await.unwrap();
+    let buffer_a_2 = buffer_a_2.await.unwrap();
+    let buffer_b = buffer_b.await.unwrap();
+    assert_eq!(buffer_a_1.update(cx, |b, _| b.text()), "a-contents");
+    assert_eq!(buffer_b.update(cx, |b, _| b.text()), "b-contents");
+
+    // There is only one buffer per path.
+    let buffer_a_id = buffer_a_1.entity_id();
+    assert_eq!(buffer_a_2.entity_id(), buffer_a_id);
+
+    // Open the same path again while it is still open.
+    drop(buffer_a_1);
+    let buffer_a_3 = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.txt", cx))
+        .await
+        .unwrap();
+
+    // There's still only one buffer per path.
+    assert_eq!(buffer_a_3.entity_id(), buffer_a_id);
+}
+
+#[gpui::test]
+async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "file1": "abc",
+            "file2": "def",
+            "file3": "ghi",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let buffer1 = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .await
+        .unwrap();
+    let events = Arc::new(Mutex::new(Vec::new()));
+
+    // initially, the buffer isn't dirty.
+    buffer1.update(cx, |buffer, cx| {
+        cx.subscribe(&buffer1, {
+            let events = events.clone();
+            move |_, _, event, _| match event {
+                BufferEvent::Operation(_) => {}
+                _ => events.lock().push(event.clone()),
+            }
+        })
+        .detach();
+
+        assert!(!buffer.is_dirty());
+        assert!(events.lock().is_empty());
+
+        buffer.edit([(1..2, "")], None, cx);
+    });
+
+    // after the first edit, the buffer is dirty, and emits a dirtied event.
+    buffer1.update(cx, |buffer, cx| {
+        assert!(buffer.text() == "ac");
+        assert!(buffer.is_dirty());
+        assert_eq!(
+            *events.lock(),
+            &[language::Event::Edited, language::Event::DirtyChanged]
+        );
+        events.lock().clear();
+        buffer.did_save(
+            buffer.version(),
+            buffer.as_rope().fingerprint(),
+            buffer.file().unwrap().mtime(),
+            cx,
+        );
+    });
+
+    // after saving, the buffer is not dirty, and emits a saved event.
+    buffer1.update(cx, |buffer, cx| {
+        assert!(!buffer.is_dirty());
+        assert_eq!(*events.lock(), &[language::Event::Saved]);
+        events.lock().clear();
+
+        buffer.edit([(1..1, "B")], None, cx);
+        buffer.edit([(2..2, "D")], None, cx);
+    });
+
+    // after editing again, the buffer is dirty, and emits another dirty event.
+    buffer1.update(cx, |buffer, cx| {
+        assert!(buffer.text() == "aBDc");
+        assert!(buffer.is_dirty());
+        assert_eq!(
+            *events.lock(),
+            &[
+                language::Event::Edited,
+                language::Event::DirtyChanged,
+                language::Event::Edited,
+            ],
+        );
+        events.lock().clear();
+
+        // After restoring the buffer to its previously-saved state,
+        // the buffer is not considered dirty anymore.
+        buffer.edit([(1..3, "")], None, cx);
+        assert!(buffer.text() == "ac");
+        assert!(!buffer.is_dirty());
+    });
+
+    assert_eq!(
+        *events.lock(),
+        &[language::Event::Edited, language::Event::DirtyChanged]
+    );
+
+    // When a file is deleted, the buffer is considered dirty.
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let buffer2 = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/file2", cx))
+        .await
+        .unwrap();
+    buffer2.update(cx, |_, cx| {
+        cx.subscribe(&buffer2, {
+            let events = events.clone();
+            move |_, _, event, _| events.lock().push(event.clone())
+        })
+        .detach();
+    });
+
+    fs.remove_file("/dir/file2".as_ref(), Default::default())
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    buffer2.update(cx, |buffer, _| assert!(buffer.is_dirty()));
+    assert_eq!(
+        *events.lock(),
+        &[
+            language::Event::DirtyChanged,
+            language::Event::FileHandleChanged
+        ]
+    );
+
+    // When a file is already dirty when deleted, we don't emit a Dirtied event.
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let buffer3 = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/file3", cx))
+        .await
+        .unwrap();
+    buffer3.update(cx, |_, cx| {
+        cx.subscribe(&buffer3, {
+            let events = events.clone();
+            move |_, _, event, _| events.lock().push(event.clone())
+        })
+        .detach();
+    });
+
+    buffer3.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "x")], None, cx);
+    });
+    events.lock().clear();
+    fs.remove_file("/dir/file3".as_ref(), Default::default())
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert_eq!(*events.lock(), &[language::Event::FileHandleChanged]);
+    cx.update(|cx| assert!(buffer3.read(cx).is_dirty()));
+}
+
+#[gpui::test]
+async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let initial_contents = "aaa\nbbbbb\nc\n";
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "the-file": initial_contents,
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/the-file", cx))
+        .await
+        .unwrap();
+
+    let anchors = (0..3)
+        .map(|row| buffer.update(cx, |b, _| b.anchor_before(Point::new(row, 1))))
+        .collect::<Vec<_>>();
+
+    // Change the file on disk, adding two new lines of text, and removing
+    // one line.
+    buffer.update(cx, |buffer, _| {
+        assert!(!buffer.is_dirty());
+        assert!(!buffer.has_conflict());
+    });
+    let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
+    fs.save(
+        "/dir/the-file".as_ref(),
+        &new_contents.into(),
+        LineEnding::Unix,
+    )
+    .await
+    .unwrap();
+
+    // Because the buffer was not modified, it is reloaded from disk. Its
+    // contents are edited according to the diff between the old and new
+    // file contents.
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), new_contents);
+        assert!(!buffer.is_dirty());
+        assert!(!buffer.has_conflict());
+
+        let anchor_positions = anchors
+            .iter()
+            .map(|anchor| anchor.to_point(&*buffer))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            anchor_positions,
+            [Point::new(1, 1), Point::new(3, 1), Point::new(3, 5)]
+        );
+    });
+
+    // Modify the buffer
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, " ")], None, cx);
+        assert!(buffer.is_dirty());
+        assert!(!buffer.has_conflict());
+    });
+
+    // Change the file on disk again, adding blank lines to the beginning.
+    fs.save(
+        "/dir/the-file".as_ref(),
+        &"\n\n\nAAAA\naaa\nBB\nbbbbb\n".into(),
+        LineEnding::Unix,
+    )
+    .await
+    .unwrap();
+
+    // Because the buffer is modified, it doesn't reload from disk, but is
+    // marked as having a conflict.
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert!(buffer.has_conflict());
+    });
+}
+
+#[gpui::test]
+async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "file1": "a\nb\nc\n",
+            "file2": "one\r\ntwo\r\nthree\r\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer1 = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .await
+        .unwrap();
+    let buffer2 = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/file2", cx))
+        .await
+        .unwrap();
+
+    buffer1.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "a\nb\nc\n");
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+    buffer2.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "one\ntwo\nthree\n");
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+
+    // Change a file's line endings on disk from unix to windows. The buffer's
+    // state updates correctly.
+    fs.save(
+        "/dir/file1".as_ref(),
+        &"aaa\nb\nc\n".into(),
+        LineEnding::Windows,
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+    buffer1.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "aaa\nb\nc\n");
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+
+    // Save a file with windows line endings. The file is written correctly.
+    buffer2.update(cx, |buffer, cx| {
+        buffer.set_text("one\ntwo\nthree\nfour\n", cx);
+    });
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer2, cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.load("/dir/file2".as_ref()).await.unwrap(),
+        "one\r\ntwo\r\nthree\r\nfour\r\n",
+    );
+}
+
+#[gpui::test]
+async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/the-dir",
+        json!({
+            "a.rs": "
+                fn foo(mut v: Vec<usize>) {
+                    for x in &v {
+                        v.push(1);
+                    }
+                }
+            "
+            .unindent(),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/the-dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/the-dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    let buffer_uri = Url::from_file_path("/the-dir/a.rs").unwrap();
+    let message = lsp::PublishDiagnosticsParams {
+        uri: buffer_uri.clone(),
+        diagnostics: vec![
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
+                severity: Some(DiagnosticSeverity::WARNING),
+                message: "error 1".to_string(),
+                related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location {
+                        uri: buffer_uri.clone(),
+                        range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
+                    },
+                    message: "error 1 hint 1".to_string(),
+                }]),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
+                severity: Some(DiagnosticSeverity::HINT),
+                message: "error 1 hint 1".to_string(),
+                related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location {
+                        uri: buffer_uri.clone(),
+                        range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
+                    },
+                    message: "original diagnostic".to_string(),
+                }]),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 17)),
+                severity: Some(DiagnosticSeverity::ERROR),
+                message: "error 2".to_string(),
+                related_information: Some(vec![
+                    lsp::DiagnosticRelatedInformation {
+                        location: lsp::Location {
+                            uri: buffer_uri.clone(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 13),
+                                lsp::Position::new(1, 15),
+                            ),
+                        },
+                        message: "error 2 hint 1".to_string(),
+                    },
+                    lsp::DiagnosticRelatedInformation {
+                        location: lsp::Location {
+                            uri: buffer_uri.clone(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 13),
+                                lsp::Position::new(1, 15),
+                            ),
+                        },
+                        message: "error 2 hint 2".to_string(),
+                    },
+                ]),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(1, 13), lsp::Position::new(1, 15)),
+                severity: Some(DiagnosticSeverity::HINT),
+                message: "error 2 hint 1".to_string(),
+                related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location {
+                        uri: buffer_uri.clone(),
+                        range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 17)),
+                    },
+                    message: "original diagnostic".to_string(),
+                }]),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(1, 13), lsp::Position::new(1, 15)),
+                severity: Some(DiagnosticSeverity::HINT),
+                message: "error 2 hint 2".to_string(),
+                related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location {
+                        uri: buffer_uri,
+                        range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 17)),
+                    },
+                    message: "original diagnostic".to_string(),
+                }]),
+                ..Default::default()
+            },
+        ],
+        version: None,
+    };
+
+    project
+        .update(cx, |p, cx| {
+            p.update_diagnostics(LanguageServerId(0), message, &[], cx)
+        })
+        .unwrap();
+    let buffer = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    assert_eq!(
+        buffer
+            .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
+            .collect::<Vec<_>>(),
+        &[
+            DiagnosticEntry {
+                range: Point::new(1, 8)..Point::new(1, 9),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::WARNING,
+                    message: "error 1".to_string(),
+                    group_id: 1,
+                    is_primary: true,
+                    ..Default::default()
+                }
+            },
+            DiagnosticEntry {
+                range: Point::new(1, 8)..Point::new(1, 9),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::HINT,
+                    message: "error 1 hint 1".to_string(),
+                    group_id: 1,
+                    is_primary: false,
+                    ..Default::default()
+                }
+            },
+            DiagnosticEntry {
+                range: Point::new(1, 13)..Point::new(1, 15),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::HINT,
+                    message: "error 2 hint 1".to_string(),
+                    group_id: 0,
+                    is_primary: false,
+                    ..Default::default()
+                }
+            },
+            DiagnosticEntry {
+                range: Point::new(1, 13)..Point::new(1, 15),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::HINT,
+                    message: "error 2 hint 2".to_string(),
+                    group_id: 0,
+                    is_primary: false,
+                    ..Default::default()
+                }
+            },
+            DiagnosticEntry {
+                range: Point::new(2, 8)..Point::new(2, 17),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::ERROR,
+                    message: "error 2".to_string(),
+                    group_id: 0,
+                    is_primary: true,
+                    ..Default::default()
+                }
+            }
+        ]
+    );
+
+    assert_eq!(
+        buffer.diagnostic_group::<Point>(0).collect::<Vec<_>>(),
+        &[
+            DiagnosticEntry {
+                range: Point::new(1, 13)..Point::new(1, 15),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::HINT,
+                    message: "error 2 hint 1".to_string(),
+                    group_id: 0,
+                    is_primary: false,
+                    ..Default::default()
+                }
+            },
+            DiagnosticEntry {
+                range: Point::new(1, 13)..Point::new(1, 15),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::HINT,
+                    message: "error 2 hint 2".to_string(),
+                    group_id: 0,
+                    is_primary: false,
+                    ..Default::default()
+                }
+            },
+            DiagnosticEntry {
+                range: Point::new(2, 8)..Point::new(2, 17),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::ERROR,
+                    message: "error 2".to_string(),
+                    group_id: 0,
+                    is_primary: true,
+                    ..Default::default()
+                }
+            }
+        ]
+    );
+
+    assert_eq!(
+        buffer.diagnostic_group::<Point>(1).collect::<Vec<_>>(),
+        &[
+            DiagnosticEntry {
+                range: Point::new(1, 8)..Point::new(1, 9),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::WARNING,
+                    message: "error 1".to_string(),
+                    group_id: 1,
+                    is_primary: true,
+                    ..Default::default()
+                }
+            },
+            DiagnosticEntry {
+                range: Point::new(1, 8)..Point::new(1, 9),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::HINT,
+                    message: "error 1 hint 1".to_string(),
+                    group_id: 1,
+                    is_primary: false,
+                    ..Default::default()
+                }
+            },
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_rename(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+            "two.rs": "const TWO: usize = one::ONE + one::ONE;"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/one.rs", cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    let response = project.update(cx, |project, cx| {
+        project.prepare_rename(buffer.clone(), 7, cx)
+    });
+    fake_server
+        .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
+            assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
+            assert_eq!(params.position, lsp::Position::new(0, 7));
+            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                lsp::Position::new(0, 6),
+                lsp::Position::new(0, 9),
+            ))))
+        })
+        .next()
+        .await
+        .unwrap();
+    let range = response.await.unwrap().unwrap();
+    let range = buffer.update(cx, |buffer, _| range.to_offset(buffer));
+    assert_eq!(range, 6..9);
+
+    let response = project.update(cx, |project, cx| {
+        project.perform_rename(buffer.clone(), 7, "THREE".to_string(), true, cx)
+    });
+    fake_server
+        .handle_request::<lsp::request::Rename, _, _>(|params, _| async move {
+            assert_eq!(
+                params.text_document_position.text_document.uri.as_str(),
+                "file:///dir/one.rs"
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(0, 7)
+            );
+            assert_eq!(params.new_name, "THREE");
+            Ok(Some(lsp::WorkspaceEdit {
+                changes: Some(
+                    [
+                        (
+                            lsp::Url::from_file_path("/dir/one.rs").unwrap(),
+                            vec![lsp::TextEdit::new(
+                                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                                "THREE".to_string(),
+                            )],
+                        ),
+                        (
+                            lsp::Url::from_file_path("/dir/two.rs").unwrap(),
+                            vec![
+                                lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 24),
+                                        lsp::Position::new(0, 27),
+                                    ),
+                                    "THREE".to_string(),
+                                ),
+                                lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 35),
+                                        lsp::Position::new(0, 38),
+                                    ),
+                                    "THREE".to_string(),
+                                ),
+                            ],
+                        ),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..Default::default()
+            }))
+        })
+        .next()
+        .await
+        .unwrap();
+    let mut transaction = response.await.unwrap().0;
+    assert_eq!(transaction.len(), 2);
+    assert_eq!(
+        transaction
+            .remove_entry(&buffer)
+            .unwrap()
+            .0
+            .update(cx, |buffer, _| buffer.text()),
+        "const THREE: usize = 1;"
+    );
+    assert_eq!(
+        transaction
+            .into_keys()
+            .next()
+            .unwrap()
+            .update(cx, |buffer, _| buffer.text()),
+        "const TWO: usize = one::THREE + one::THREE;"
+    );
+}
+
+#[gpui::test]
+async fn test_search(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+            "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+            "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+            "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text("TWO", false, true, Vec::new(), Vec::new()).unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("two.rs".to_string(), vec![6..9]),
+            ("three.rs".to_string(), vec![37..40])
+        ])
+    );
+
+    let buffer_4 = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/four.rs", cx)
+        })
+        .await
+        .unwrap();
+    buffer_4.update(cx, |buffer, cx| {
+        let text = "two::TWO";
+        buffer.edit([(20..28, text), (31..43, text)], None, cx);
+    });
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text("TWO", false, true, Vec::new(), Vec::new()).unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("two.rs".to_string(), vec![6..9]),
+            ("three.rs".to_string(), vec![37..40]),
+            ("four.rs".to_string(), vec![25..28, 36..39])
+        ])
+    );
+}
+
+#[gpui::test]
+async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let search_query = "file";
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "one.rs": r#"// Rust file one"#,
+            "one.ts": r#"// TypeScript file one"#,
+            "two.rs": r#"// Rust file two"#,
+            "two.ts": r#"// TypeScript file two"#,
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    assert!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![PathMatcher::new("*.odd").unwrap()],
+                Vec::new()
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap()
+        .is_empty(),
+        "If no inclusions match, no files should be returned"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![PathMatcher::new("*.rs").unwrap()],
+                Vec::new()
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.rs".to_string(), vec![8..12]),
+            ("two.rs".to_string(), vec![8..12]),
+        ]),
+        "Rust only search should give only Rust files"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap(),
+                ],
+                Vec::new()
+            ).unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.ts".to_string(), vec![14..18]),
+            ("two.ts".to_string(), vec![14..18]),
+        ]),
+        "TypeScript only search should give only TypeScript files, even if other inclusions don't match anything"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![
+                    PathMatcher::new("*.rs").unwrap(),
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap(),
+                ],
+                Vec::new()
+            ).unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.rs".to_string(), vec![8..12]),
+            ("one.ts".to_string(), vec![14..18]),
+            ("two.rs".to_string(), vec![8..12]),
+            ("two.ts".to_string(), vec![14..18]),
+        ]),
+        "Rust and typescript search should give both Rust and TypeScript files, even if other inclusions don't match anything"
+    );
+}
+
+#[gpui::test]
+async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let search_query = "file";
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "one.rs": r#"// Rust file one"#,
+            "one.ts": r#"// TypeScript file one"#,
+            "two.rs": r#"// Rust file two"#,
+            "two.ts": r#"// TypeScript file two"#,
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                Vec::new(),
+                vec![PathMatcher::new("*.odd").unwrap()],
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.rs".to_string(), vec![8..12]),
+            ("one.ts".to_string(), vec![14..18]),
+            ("two.rs".to_string(), vec![8..12]),
+            ("two.ts".to_string(), vec![14..18]),
+        ]),
+        "If no exclusions match, all files should be returned"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                Vec::new(),
+                vec![PathMatcher::new("*.rs").unwrap()],
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.ts".to_string(), vec![14..18]),
+            ("two.ts".to_string(), vec![14..18]),
+        ]),
+        "Rust exclusion search should give only TypeScript files"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                Vec::new(),
+                vec![
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap(),
+                ],
+            ).unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.rs".to_string(), vec![8..12]),
+            ("two.rs".to_string(), vec![8..12]),
+        ]),
+        "TypeScript exclusion search should give only Rust files, even if other exclusions don't match anything"
+    );
+
+    assert!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                Vec::new(),
+                vec![
+                    PathMatcher::new("*.rs").unwrap(),
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap(),
+                ],
+            ).unwrap(),
+            cx
+        )
+        .await
+        .unwrap().is_empty(),
+        "Rust and typescript exclusion should give no files, even if other exclusions don't match anything"
+    );
+}
+
+#[gpui::test]
+async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let search_query = "file";
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "one.rs": r#"// Rust file one"#,
+            "one.ts": r#"// TypeScript file one"#,
+            "two.rs": r#"// Rust file two"#,
+            "two.ts": r#"// TypeScript file two"#,
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    assert!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![PathMatcher::new("*.odd").unwrap()],
+                vec![PathMatcher::new("*.odd").unwrap()],
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap()
+        .is_empty(),
+        "If both no exclusions and inclusions match, exclusions should win and return nothing"
+    );
+
+    assert!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![PathMatcher::new("*.ts").unwrap()],
+                vec![PathMatcher::new("*.ts").unwrap()],
+            ).unwrap(),
+            cx
+        )
+        .await
+        .unwrap()
+        .is_empty(),
+        "If both TypeScript exclusions and inclusions match, exclusions should win and return nothing files."
+    );
+
+    assert!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap()
+                ],
+                vec![
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap()
+                ],
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap()
+        .is_empty(),
+        "Non-matching inclusions and exclusions should not change that."
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![
+                    PathMatcher::new("*.ts").unwrap(),
+                    PathMatcher::new("*.odd").unwrap()
+                ],
+                vec![
+                    PathMatcher::new("*.rs").unwrap(),
+                    PathMatcher::new("*.odd").unwrap()
+                ],
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.ts".to_string(), vec![14..18]),
+            ("two.ts".to_string(), vec![14..18]),
+        ]),
+        "Non-intersecting TypeScript inclusions and Rust exclusions should return TypeScript files"
+    );
+}
+
+#[test]
+fn test_glob_literal_prefix() {
+    assert_eq!(glob_literal_prefix("**/*.js"), "");
+    assert_eq!(glob_literal_prefix("node_modules/**/*.js"), "node_modules");
+    assert_eq!(glob_literal_prefix("foo/{bar,baz}.js"), "foo");
+    assert_eq!(glob_literal_prefix("foo/bar/baz.js"), "foo/bar/baz.js");
+}
+
+async fn search(
+    project: &Model<Project>,
+    query: SearchQuery,
+    cx: &mut gpui::TestAppContext,
+) -> Result<HashMap<String, Vec<Range<usize>>>> {
+    let mut search_rx = project.update(cx, |project, cx| project.search(query, cx));
+    let mut result = HashMap::default();
+    while let Some((buffer, range)) = search_rx.next().await {
+        result.entry(buffer).or_insert(range);
+    }
+    Ok(result
+        .into_iter()
+        .map(|(buffer, ranges)| {
+            buffer.update(cx, |buffer, _| {
+                let path = buffer.file().unwrap().path().to_string_lossy().to_string();
+                let ranges = ranges
+                    .into_iter()
+                    .map(|range| range.to_offset(buffer))
+                    .collect::<Vec<_>>();
+                (path, ranges)
+            })
+        })
+        .collect())
+}
+
+fn init_test(cx: &mut gpui::TestAppContext) {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::init();
+    }
+
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        language::init(cx);
+        Project::init_settings(cx);
+    });
+}

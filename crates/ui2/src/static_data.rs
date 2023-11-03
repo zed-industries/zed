@@ -1,17 +1,20 @@
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 
-use gpui2::ViewContext;
+use chrono::DateTime;
+use gpui2::{AppContext, ViewContext};
 use rand::Rng;
-use theme2::Theme;
+use theme2::ActiveTheme;
 
 use crate::{
-    theme, Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
-    HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListItem,
-    Livestream, MicStatus, ModifierKeys, PaletteItem, Player, PlayerCallStatus,
-    PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, ToggleState, VideoStatus,
+    Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
+    HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListSubHeader,
+    Livestream, MicStatus, ModifierKeys, Notification, PaletteItem, Player, PlayerCallStatus,
+    PlayerWithCallStatus, PublicActor, ScreenShareStatus, Symbol, Tab, ToggleState, VideoStatus,
 };
 use crate::{HighlightedText, ListDetailsEntry};
+use crate::{ListItem, NotificationAction};
 
 pub fn static_tabs_example() -> Vec<Tab> {
     vec![
@@ -325,27 +328,227 @@ pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
     ]
 }
 
-pub fn static_new_notification_items<V: 'static>() -> Vec<ListItem<V>> {
+pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
     vec![
-        ListDetailsEntry::new("maxdeviant invited you to join a stream in #design.")
-            .meta("4 people in stream."),
-        ListDetailsEntry::new("nathansobo accepted your contact request."),
+        Notification::new_icon_message(
+            "notif-1",
+            "You were mentioned in a note.",
+            DateTime::parse_from_rfc3339("2023-11-02T11:59:57Z")
+                .unwrap()
+                .naive_local(),
+            Icon::AtSign,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-2",
+            "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("2023-11-02T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
+        Notification::new_icon_message(
+            "notif-3",
+            "You were mentioned #design.",
+            DateTime::parse_from_rfc3339("2023-11-02T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            Icon::MessageBubbles,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-4",
+            "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("2023-11-01T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
+        Notification::new_icon_message(
+            "notif-5",
+            "You were mentioned in a note.",
+            DateTime::parse_from_rfc3339("2023-10-28T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            Icon::AtSign,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-6",
+            "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("2022-10-25T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
+        Notification::new_icon_message(
+            "notif-7",
+            "You were mentioned in a note.",
+            DateTime::parse_from_rfc3339("2022-10-14T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            Icon::AtSign,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-8",
+            "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("2021-10-12T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
+        Notification::new_icon_message(
+            "notif-9",
+            "You were mentioned in a note.",
+            DateTime::parse_from_rfc3339("2021-02-02T12:09:07Z")
+                .unwrap()
+                .naive_local(),
+            Icon::AtSign,
+            Arc::new(|_, _| {}),
+        ),
+        Notification::new_actor_with_actions(
+            "notif-10",
+            "as-cii sent you a contact request.",
+            DateTime::parse_from_rfc3339("1969-07-20T00:00:00Z")
+                .unwrap()
+                .naive_local(),
+            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            [
+                NotificationAction::new(
+                    Button::new("Decline"),
+                    "Decline Request",
+                    (Some(Icon::XCircle), "Declined"),
+                ),
+                NotificationAction::new(
+                    Button::new("Accept").variant(crate::ButtonVariant::Filled),
+                    "Accept Request",
+                    (Some(Icon::Check), "Accepted"),
+                ),
+            ],
+        ),
     ]
-    .into_iter()
-    .map(From::from)
-    .collect()
 }
 
-pub fn static_read_notification_items<V: 'static>() -> Vec<ListItem<V>> {
+pub fn static_new_notification_items<V: 'static>() -> Vec<ListItem<V>> {
     vec![
-        ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
-            Button::new("Decline"),
-            Button::new("Accept").variant(crate::ButtonVariant::Filled),
-        ]),
-        ListDetailsEntry::new("maxdeviant invited you to a stream in #design.")
-            .seen(true)
-            .meta("This stream has ended."),
-        ListDetailsEntry::new("as-cii accepted your contact request."),
+        ListItem::Header(ListSubHeader::new("New")),
+        ListItem::Details(
+            ListDetailsEntry::new("maxdeviant invited you to join a stream in #design.")
+                .meta("4 people in stream."),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "nathansobo accepted your contact request.",
+        )),
+        ListItem::Header(ListSubHeader::new("Earlier")),
+        ListItem::Details(
+            ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
+                Button::new("Decline"),
+                Button::new("Accept").variant(crate::ButtonVariant::Filled),
+            ]),
+        ),
+        ListItem::Details(
+            ListDetailsEntry::new("maxdeviant invited you to a stream in #design.")
+                .seen(true)
+                .meta("This stream has ended."),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "as-cii accepted your contact request.",
+        )),
+        ListItem::Details(
+            ListDetailsEntry::new("You were added as an admin on the #gpui2 channel.").seen(true),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "osiewicz accepted your contact request.",
+        )),
+        ListItem::Details(ListDetailsEntry::new(
+            "ConradIrwin accepted your contact request.",
+        )),
+        ListItem::Details(
+            ListDetailsEntry::new("nathansobo invited you to a stream in #gpui2.")
+                .seen(true)
+                .meta("This stream has ended."),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "nathansobo accepted your contact request.",
+        )),
+        ListItem::Header(ListSubHeader::new("Earlier")),
+        ListItem::Details(
+            ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
+                Button::new("Decline"),
+                Button::new("Accept").variant(crate::ButtonVariant::Filled),
+            ]),
+        ),
+        ListItem::Details(
+            ListDetailsEntry::new("maxdeviant invited you to a stream in #design.")
+                .seen(true)
+                .meta("This stream has ended."),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "as-cii accepted your contact request.",
+        )),
+        ListItem::Details(
+            ListDetailsEntry::new("You were added as an admin on the #gpui2 channel.").seen(true),
+        ),
+        ListItem::Details(ListDetailsEntry::new(
+            "osiewicz accepted your contact request.",
+        )),
+        ListItem::Details(ListDetailsEntry::new(
+            "ConradIrwin accepted your contact request.",
+        )),
+        ListItem::Details(
+            ListDetailsEntry::new("nathansobo invited you to a stream in #gpui2.")
+                .seen(true)
+                .meta("This stream has ended."),
+        ),
     ]
     .into_iter()
     .map(From::from)
@@ -643,8 +846,6 @@ pub fn empty_buffer_example() -> Buffer {
 }
 
 pub fn hello_world_rust_editor_example(cx: &mut ViewContext<EditorPane>) -> EditorPane {
-    let theme = theme(cx);
-
     EditorPane::new(
         cx,
         static_tabs_example(),
@@ -652,29 +853,29 @@ pub fn hello_world_rust_editor_example(cx: &mut ViewContext<EditorPane>) -> Edit
         vec![Symbol(vec![
             HighlightedText {
                 text: "fn ".to_string(),
-                color: theme.syntax.color("keyword"),
+                color: cx.theme().syntax_color("keyword"),
             },
             HighlightedText {
                 text: "main".to_string(),
-                color: theme.syntax.color("function"),
+                color: cx.theme().syntax_color("function"),
             },
         ])],
-        hello_world_rust_buffer_example(&theme),
+        hello_world_rust_buffer_example(cx),
     )
 }
 
-pub fn hello_world_rust_buffer_example(theme: &Theme) -> Buffer {
+pub fn hello_world_rust_buffer_example(cx: &AppContext) -> Buffer {
     Buffer::new("hello-world-rust-buffer")
         .set_title("hello_world.rs".to_string())
         .set_path("src/hello_world.rs".to_string())
         .set_language("rust".to_string())
         .set_rows(Some(BufferRows {
             show_line_numbers: true,
-            rows: hello_world_rust_buffer_rows(theme),
+            rows: hello_world_rust_buffer_rows(cx),
         }))
 }
 
-pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
+pub fn hello_world_rust_buffer_rows(cx: &AppContext) -> Vec<BufferRow> {
     let show_line_number = true;
 
     vec![
@@ -686,15 +887,15 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "fn ".to_string(),
-                        color: theme.syntax.color("keyword"),
+                        color: cx.theme().syntax_color("keyword"),
                     },
                     HighlightedText {
                         text: "main".to_string(),
-                        color: theme.syntax.color("function"),
+                        color: cx.theme().syntax_color("function"),
                     },
                     HighlightedText {
                         text: "() {".to_string(),
-                        color: theme.text,
+                        color: cx.theme().colors().text,
                     },
                 ],
             }),
@@ -710,7 +911,7 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Statements here are executed when the compiled binary is called."
                         .to_string(),
-                    color: theme.syntax.color("comment"),
+                    color: cx.theme().syntax_color("comment"),
                 }],
             }),
             cursors: None,
@@ -733,7 +934,7 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Print text to the console.".to_string(),
-                    color: theme.syntax.color("comment"),
+                    color: cx.theme().syntax_color("comment"),
                 }],
             }),
             cursors: None,
@@ -748,15 +949,15 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "    println!(".to_string(),
-                        color: theme.text,
+                        color: cx.theme().colors().text,
                     },
                     HighlightedText {
                         text: "\"Hello, world!\"".to_string(),
-                        color: theme.syntax.color("string"),
+                        color: cx.theme().syntax_color("string"),
                     },
                     HighlightedText {
                         text: ");".to_string(),
-                        color: theme.text,
+                        color: cx.theme().colors().text,
                     },
                 ],
             }),
@@ -771,7 +972,7 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "}".to_string(),
-                    color: theme.text,
+                    color: cx.theme().colors().text,
                 }],
             }),
             cursors: None,
@@ -782,8 +983,6 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
 }
 
 pub fn hello_world_rust_editor_with_status_example(cx: &mut ViewContext<EditorPane>) -> EditorPane {
-    let theme = theme(cx);
-
     EditorPane::new(
         cx,
         static_tabs_example(),
@@ -791,29 +990,29 @@ pub fn hello_world_rust_editor_with_status_example(cx: &mut ViewContext<EditorPa
         vec![Symbol(vec![
             HighlightedText {
                 text: "fn ".to_string(),
-                color: theme.syntax.color("keyword"),
+                color: cx.theme().syntax_color("keyword"),
             },
             HighlightedText {
                 text: "main".to_string(),
-                color: theme.syntax.color("function"),
+                color: cx.theme().syntax_color("function"),
             },
         ])],
-        hello_world_rust_buffer_with_status_example(&theme),
+        hello_world_rust_buffer_with_status_example(cx),
     )
 }
 
-pub fn hello_world_rust_buffer_with_status_example(theme: &Theme) -> Buffer {
+pub fn hello_world_rust_buffer_with_status_example(cx: &AppContext) -> Buffer {
     Buffer::new("hello-world-rust-buffer-with-status")
         .set_title("hello_world.rs".to_string())
         .set_path("src/hello_world.rs".to_string())
         .set_language("rust".to_string())
         .set_rows(Some(BufferRows {
             show_line_numbers: true,
-            rows: hello_world_rust_with_status_buffer_rows(theme),
+            rows: hello_world_rust_with_status_buffer_rows(cx),
         }))
 }
 
-pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
+pub fn hello_world_rust_with_status_buffer_rows(cx: &AppContext) -> Vec<BufferRow> {
     let show_line_number = true;
 
     vec![
@@ -825,15 +1024,15 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "fn ".to_string(),
-                        color: theme.syntax.color("keyword"),
+                        color: cx.theme().syntax_color("keyword"),
                     },
                     HighlightedText {
                         text: "main".to_string(),
-                        color: theme.syntax.color("function"),
+                        color: cx.theme().syntax_color("function"),
                     },
                     HighlightedText {
                         text: "() {".to_string(),
-                        color: theme.text,
+                        color: cx.theme().colors().text,
                     },
                 ],
             }),
@@ -849,7 +1048,7 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
                 highlighted_texts: vec![HighlightedText {
                     text: "// Statements here are executed when the compiled binary is called."
                         .to_string(),
-                    color: theme.syntax.color("comment"),
+                    color: cx.theme().syntax_color("comment"),
                 }],
             }),
             cursors: None,
@@ -872,7 +1071,7 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Print text to the console.".to_string(),
-                    color: theme.syntax.color("comment"),
+                    color: cx.theme().syntax_color("comment"),
                 }],
             }),
             cursors: None,
@@ -887,15 +1086,15 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "    println!(".to_string(),
-                        color: theme.text,
+                        color: cx.theme().colors().text,
                     },
                     HighlightedText {
                         text: "\"Hello, world!\"".to_string(),
-                        color: theme.syntax.color("string"),
+                        color: cx.theme().syntax_color("string"),
                     },
                     HighlightedText {
                         text: ");".to_string(),
-                        color: theme.text,
+                        color: cx.theme().colors().text,
                     },
                 ],
             }),
@@ -910,7 +1109,7 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "}".to_string(),
-                    color: theme.text,
+                    color: cx.theme().colors().text,
                 }],
             }),
             cursors: None,
@@ -924,7 +1123,7 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "".to_string(),
-                    color: theme.text,
+                    color: cx.theme().colors().text,
                 }],
             }),
             cursors: None,
@@ -938,7 +1137,7 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "// Marshall and Nate were here".to_string(),
-                    color: theme.syntax.color("comment"),
+                    color: cx.theme().syntax_color("comment"),
                 }],
             }),
             cursors: None,
@@ -948,16 +1147,16 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
     ]
 }
 
-pub fn terminal_buffer(theme: &Theme) -> Buffer {
+pub fn terminal_buffer(cx: &AppContext) -> Buffer {
     Buffer::new("terminal")
         .set_title("zed — fish".to_string())
         .set_rows(Some(BufferRows {
             show_line_numbers: false,
-            rows: terminal_buffer_rows(theme),
+            rows: terminal_buffer_rows(cx),
         }))
 }
 
-pub fn terminal_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
+pub fn terminal_buffer_rows(cx: &AppContext) -> Vec<BufferRow> {
     let show_line_number = false;
 
     vec![
@@ -969,31 +1168,31 @@ pub fn terminal_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "maxdeviant ".to_string(),
-                        color: theme.syntax.color("keyword"),
+                        color: cx.theme().syntax_color("keyword"),
                     },
                     HighlightedText {
                         text: "in ".to_string(),
-                        color: theme.text,
+                        color: cx.theme().colors().text,
                     },
                     HighlightedText {
                         text: "profaned-capital ".to_string(),
-                        color: theme.syntax.color("function"),
+                        color: cx.theme().syntax_color("function"),
                     },
                     HighlightedText {
                         text: "in ".to_string(),
-                        color: theme.text,
+                        color: cx.theme().colors().text,
                     },
                     HighlightedText {
                         text: "~/p/zed ".to_string(),
-                        color: theme.syntax.color("function"),
+                        color: cx.theme().syntax_color("function"),
                     },
                     HighlightedText {
                         text: "on ".to_string(),
-                        color: theme.text,
+                        color: cx.theme().colors().text,
                     },
                     HighlightedText {
                         text: " gpui2-ui ".to_string(),
-                        color: theme.syntax.color("keyword"),
+                        color: cx.theme().syntax_color("keyword"),
                     },
                 ],
             }),
@@ -1008,7 +1207,7 @@ pub fn terminal_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "λ ".to_string(),
-                    color: theme.syntax.color("string"),
+                    color: cx.theme().syntax_color("string"),
                 }],
             }),
             cursors: None,

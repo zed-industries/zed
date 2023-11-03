@@ -10,26 +10,26 @@ doctest = false
 
 [features]
 test-support = [
-    "client2/test-support",
+    "client/test-support",
     "collections/test-support",
-    "gpui2/test-support",
+    "gpui/test-support",
     "live_kit_client/test-support",
-    "project2/test-support",
+    "project/test-support",
     "util/test-support"
 ]
 
 [dependencies]
-audio2 = { path = "../audio2" }
-client2 = { path = "../client2" }
+audio = { package = "audio2", path = "../audio2" }
+client = { package = "client2", path = "../client2" }
 collections = { path = "../collections" }
-gpui2 = { path = "../gpui2" }
+gpui = { package = "gpui2", path = "../gpui2" }
 log.workspace = true
-live_kit_client = { path = "../live_kit_client" }
-fs2 = { path = "../fs2" }
-language2 = { path = "../language2" }
+live_kit_client = { package = "live_kit_client2", path = "../live_kit_client2" }
+fs = { package = "fs2", path = "../fs2" }
+language = { package = "language2", path = "../language2" }
 media = { path = "../media" }
-project2 = { path = "../project2" }
-settings2 = { path = "../settings2" }
+project = { package = "project2", path = "../project2" }
+settings = { package = "settings2", path = "../settings2" }
 util = { path = "../util" }
 
 anyhow.workspace = true
@@ -42,11 +42,11 @@ serde_json.workspace = true
 serde_derive.workspace = true
 
 [dev-dependencies]
-client2 = { path = "../client2", features = ["test-support"] }
-fs2 = { path = "../fs2", features = ["test-support"] }
-language2 = { path = "../language2", features = ["test-support"] }
+client = { package = "client2", path = "../client2", features = ["test-support"] }
+fs = { package = "fs2", path = "../fs2", features = ["test-support"] }
+language = { package = "language2", path = "../language2", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
-gpui2 = { path = "../gpui2", features = ["test-support"] }
-live_kit_client = { path = "../live_kit_client", features = ["test-support"] }
-project2 = { path = "../project2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+live_kit_client = { package = "live_kit_client2", path = "../live_kit_client2", features = ["test-support"] }
+project = { package = "project2", path = "../project2", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }

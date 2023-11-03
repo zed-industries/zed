@@ -4,8 +4,8 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
-use lsp2::{DiagnosticSeverity, LanguageServerId};
-use rpc2::proto;
+use lsp::{DiagnosticSeverity, LanguageServerId};
+use rpc::proto;
 use std::{ops::Range, sync::Arc};
 use text::*;
 

@@ -21,8 +21,8 @@ struct SubscriberSetState<EmitterKey, Callback> {
 
 impl<EmitterKey, Callback> SubscriberSet<EmitterKey, Callback>
 where
-    EmitterKey: 'static + Send + Ord + Clone + Debug,
-    Callback: 'static + Send,
+    EmitterKey: 'static + Ord + Clone + Debug,
+    Callback: 'static,
 {
     pub fn new() -> Self {
         Self(Arc::new(Mutex::new(SubscriberSetState {
@@ -47,8 +47,8 @@ where
                     subscribers.remove(&subscriber_id);
                     if subscribers.is_empty() {
                         lock.subscribers.remove(&emitter_key);
-                        return;
                     }
+                    return;
                 }
 
                 // We didn't manage to remove the subscription, which means it was dropped
@@ -96,7 +96,7 @@ where
 
 #[must_use]
 pub struct Subscription {
-    unsubscribe: Option<Box<dyn FnOnce() + Send + 'static>>,
+    unsubscribe: Option<Box<dyn FnOnce() + 'static>>,
 }
 
 impl Subscription {

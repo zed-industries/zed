@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use language2::{LanguageServerName, LspAdapter, LspAdapterDelegate};
-use lsp2::LanguageServerBinary;
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use smol::fs;
 use std::{
@@ -81,7 +81,7 @@ impl LspAdapter for PythonLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    async fn process_completion(&self, item: &mut lsp2::CompletionItem) {
+    async fn process_completion(&self, item: &mut lsp::CompletionItem) {
         // Pyright assigns each completion item a `sortText` of the form `XX.YYYY.name`.
         // Where `XX` is the sorting category, `YYYY` is based on most recent usage,
         // and `name` is the symbol name itself.
@@ -104,19 +104,19 @@ impl LspAdapter for PythonLspAdapter {
 
     async fn label_for_completion(
         &self,
-        item: &lsp2::CompletionItem,
-        language: &Arc<language2::Language>,
-    ) -> Option<language2::CodeLabel> {
+        item: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
         let label = &item.label;
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
-            lsp2::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
-            lsp2::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function")?,
-            lsp2::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type")?,
-            lsp2::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
+            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
+            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function")?,
+            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type")?,
+            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
             _ => return None,
         };
-        Some(language2::CodeLabel {
+        Some(language::CodeLabel {
             text: label.clone(),
             runs: vec![(0..label.len(), highlight_id)],
             filter_range: 0..label.len(),
@@ -126,23 +126,23 @@ impl LspAdapter for PythonLspAdapter {
     async fn label_for_symbol(
         &self,
         name: &str,
-        kind: lsp2::SymbolKind,
-        language: &Arc<language2::Language>,
-    ) -> Option<language2::CodeLabel> {
+        kind: lsp::SymbolKind,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
         let (text, filter_range, display_range) = match kind {
-            lsp2::SymbolKind::METHOD | lsp2::SymbolKind::FUNCTION => {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("def {}():\n", name);
                 let filter_range = 4..4 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::CLASS => {
+            lsp::SymbolKind::CLASS => {
                 let text = format!("class {}:", name);
                 let filter_range = 6..6 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::CONSTANT => {
+            lsp::SymbolKind::CONSTANT => {
                 let text = format!("{} = 0", name);
                 let filter_range = 0..name.len();
                 let display_range = 0..filter_range.end;
@@ -151,7 +151,7 @@ impl LspAdapter for PythonLspAdapter {
             _ => return None,
         };
 
-        Some(language2::CodeLabel {
+        Some(language::CodeLabel {
             runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
             text: text[display_range].to_string(),
             filter_range,
@@ -177,12 +177,12 @@ async fn get_cached_server_binary(
 
 #[cfg(test)]
 mod tests {
-    use gpui2::{Context, ModelContext, TestAppContext};
-    use language2::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
-    use settings2::SettingsStore;
+    use gpui::{Context, ModelContext, TestAppContext};
+    use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
+    use settings::SettingsStore;
     use std::num::NonZeroU32;
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
         // cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
         let language =
@@ -190,7 +190,7 @@ mod tests {
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);
-            language2::init(cx);
+            language::init(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |s| {
                     s.defaults.tab_size = NonZeroU32::new(2);

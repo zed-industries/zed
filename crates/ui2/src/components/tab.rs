@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::{Icon, IconColor, IconElement, Label, LabelColor};
-use gpui2::{black, red, Div, ElementId, Render, View, VisualContext};
+use gpui2::{red, Div, ElementId, Render, View, VisualContext};
 
 #[derive(Component, Clone)]
 pub struct Tab {
@@ -87,7 +87,6 @@ impl Tab {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
         let has_fs_conflict = self.fs_status == FileSystemStatus::Conflict;
         let is_deleted = self.fs_status == FileSystemStatus::Deleted;
 
@@ -109,15 +108,15 @@ impl Tab {
         let close_icon = || IconElement::new(Icon::Close).color(IconColor::Muted);
 
         let (tab_bg, tab_hover_bg, tab_active_bg) = match self.current {
-            true => (
-                theme.ghost_element,
-                theme.ghost_element_hover,
-                theme.ghost_element_active,
-            ),
             false => (
-                theme.filled_element,
-                theme.filled_element_hover,
-                theme.filled_element_active,
+                cx.theme().colors().tab_inactive,
+                cx.theme().colors().ghost_element_hover,
+                cx.theme().colors().ghost_element_active,
+            ),
+            true => (
+                cx.theme().colors().tab_active,
+                cx.theme().colors().element_hover,
+                cx.theme().colors().element_active,
             ),
         };
 
@@ -128,9 +127,9 @@ impl Tab {
         div()
             .id(self.id.clone())
             .on_drag(move |_view, cx| cx.build_view(|cx| drag_state.clone()))
-            .drag_over::<TabDragState>(|d| d.bg(black()))
+            .drag_over::<TabDragState>(|d| d.bg(cx.theme().colors().element_drop_target))
             .on_drop(|_view, state: View<TabDragState>, cx| {
-                dbg!(state.read(cx));
+                eprintln!("{:?}", state.read(cx));
             })
             .px_2()
             .py_0p5()
@@ -145,7 +144,7 @@ impl Tab {
                     .px_1()
                     .flex()
                     .items_center()
-                    .gap_1()
+                    .gap_1p5()
                     .children(has_fs_conflict.then(|| {
                         IconElement::new(Icon::ExclamationTriangle)
                             .size(crate::IconSize::Small)

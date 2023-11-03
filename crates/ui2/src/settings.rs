@@ -58,7 +58,6 @@ pub struct FakeSettings {
     pub list_disclosure_style: SettingValue<DisclosureControlStyle>,
     pub list_indent_depth: SettingValue<AbsoluteLength>,
     pub titlebar: TitlebarSettings,
-    pub ui_scale: SettingValue<f32>,
 }
 
 impl Default for FakeSettings {
@@ -68,7 +67,6 @@ impl Default for FakeSettings {
             list_disclosure_style: SettingValue::Default(DisclosureControlStyle::ChevronOnHover),
             list_indent_depth: SettingValue::Default(rems(0.3).into()),
             default_panel_size: SettingValue::Default(rems(16.).into()),
-            ui_scale: SettingValue::Default(1.),
         }
     }
 }

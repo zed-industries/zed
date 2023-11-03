@@ -1,23 +1,55 @@
 use crate::{AppState, FollowerState, Pane, Workspace};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use call2::ActiveCall;
 use collections::HashMap;
-use gpui2::{size, AnyElement, AnyView, Bounds, Handle, Pixels, Point, View, ViewContext};
+use db2::sqlez::{
+    bindable::{Bind, Column, StaticColumnCount},
+    statement::Statement,
+};
+use gpui::{point, size, AnyElement, AnyWeakView, Bounds, Model, Pixels, Point, View, ViewContext};
+use parking_lot::Mutex;
 use project2::Project;
 use serde::Deserialize;
-use std::{cell::RefCell, rc::Rc, sync::Arc};
-use theme2::Theme;
+use std::sync::Arc;
+use ui::prelude::*;
 
 const HANDLE_HITBOX_SIZE: f32 = 4.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
 const VERTICAL_MIN_SIZE: f32 = 100.;
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Axis {
     Vertical,
     Horizontal,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+impl StaticColumnCount for Axis {}
+impl Bind for Axis {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        match self {
+            Axis::Horizontal => "Horizontal",
+            Axis::Vertical => "Vertical",
+        }
+        .bind(statement, start_index)
+    }
+}
+
+impl Column for Axis {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        String::column(statement, start_index).and_then(|(axis_text, next_index)| {
+            Ok((
+                match axis_text.as_str() {
+                    "Horizontal" => Axis::Horizontal,
+                    "Vertical" => Axis::Vertical,
+                    _ => bail!("Stored serialized item kind is incorrect"),
+                },
+                next_index,
+            ))
+        })
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub struct PaneGroup {
     pub(crate) root: Member,
 }
@@ -91,19 +123,17 @@ impl PaneGroup {
 
     pub(crate) fn render(
         &self,
-        project: &Handle<Project>,
-        theme: &Theme,
+        project: &Model<Project>,
         follower_states: &HashMap<View<Pane>, FollowerState>,
-        active_call: Option<&Handle<ActiveCall>>,
+        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
-        zoomed: Option<&AnyView>,
+        zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> AnyElement<Workspace> {
+    ) -> impl Component<Workspace> {
         self.root.render(
             project,
             0,
-            theme,
             follower_states,
             active_call,
             active_pane,
@@ -120,7 +150,7 @@ impl PaneGroup {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub(crate) enum Member {
     Axis(PaneAxis),
     Pane(View<Pane>),
@@ -153,17 +183,51 @@ impl Member {
 
     pub fn render(
         &self,
-        project: &Handle<Project>,
+        project: &Model<Project>,
         basis: usize,
-        theme: &Theme,
         follower_states: &HashMap<View<Pane>, FollowerState>,
-        active_call: Option<&Handle<ActiveCall>>,
+        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
-        zoomed: Option<&AnyView>,
+        zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> AnyElement<Workspace> {
-        todo!()
+    ) -> impl Component<Workspace> {
+        match self {
+            Member::Pane(pane) => {
+                // todo!()
+                // let pane_element = if Some(pane.into()) == zoomed {
+                //     None
+                // } else {
+                //     Some(pane)
+                // };
+
+                div().child(pane.clone()).render()
+
+                //         Stack::new()
+                //             .with_child(pane_element.contained().with_border(leader_border))
+                //             .with_children(leader_status_box)
+                //             .into_any()
+
+                // let el = div()
+                //     .flex()
+                //     .flex_1()
+                //     .gap_px()
+                //     .w_full()
+                //     .h_full()
+                //     .bg(cx.theme().colors().editor)
+                //     .children();
+            }
+            Member::Axis(axis) => axis.render(
+                project,
+                basis + 1,
+                follower_states,
+                active_call,
+                active_pane,
+                zoomed,
+                app_state,
+                cx,
+            ),
+        }
 
         // enum FollowIntoExternalProject {}
 
@@ -305,18 +369,24 @@ impl Member {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 pub(crate) struct PaneAxis {
     pub axis: Axis,
     pub members: Vec<Member>,
-    pub flexes: Rc<RefCell<Vec<f32>>>,
-    pub bounding_boxes: Rc<RefCell<Vec<Option<Bounds<Pixels>>>>>,
+    pub flexes: Arc<Mutex<Vec<f32>>>,
+    pub bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
+}
+
+impl PartialEq for PaneAxis {
+    fn eq(&self, other: &Self) -> bool {
+        todo!()
+    }
 }
 
 impl PaneAxis {
     pub fn new(axis: Axis, members: Vec<Member>) -> Self {
-        let flexes = Rc::new(RefCell::new(vec![1.; members.len()]));
-        let bounding_boxes = Rc::new(RefCell::new(vec![None; members.len()]));
+        let flexes = Arc::new(Mutex::new(vec![1.; members.len()]));
+        let bounding_boxes = Arc::new(Mutex::new(vec![None; members.len()]));
         Self {
             axis,
             members,
@@ -329,8 +399,8 @@ impl PaneAxis {
         let flexes = flexes.unwrap_or_else(|| vec![1.; members.len()]);
         debug_assert!(members.len() == flexes.len());
 
-        let flexes = Rc::new(RefCell::new(flexes));
-        let bounding_boxes = Rc::new(RefCell::new(vec![None; members.len()]));
+        let flexes = Arc::new(Mutex::new(flexes));
+        let bounding_boxes = Arc::new(Mutex::new(vec![None; members.len()]));
         Self {
             axis,
             members,
@@ -360,7 +430,7 @@ impl PaneAxis {
                             }
 
                             self.members.insert(idx, Member::Pane(new_pane.clone()));
-                            *self.flexes.borrow_mut() = vec![1.; self.members.len()];
+                            *self.flexes.lock() = vec![1.; self.members.len()];
                         } else {
                             *member =
                                 Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
@@ -400,12 +470,12 @@ impl PaneAxis {
         if found_pane {
             if let Some(idx) = remove_member {
                 self.members.remove(idx);
-                *self.flexes.borrow_mut() = vec![1.; self.members.len()];
+                *self.flexes.lock() = vec![1.; self.members.len()];
             }
 
             if self.members.len() == 1 {
                 let result = self.members.pop();
-                *self.flexes.borrow_mut() = vec![1.; self.members.len()];
+                *self.flexes.lock() = vec![1.; self.members.len()];
                 Ok(result)
             } else {
                 Ok(None)
@@ -431,13 +501,13 @@ impl PaneAxis {
     }
 
     fn bounding_box_for_pane(&self, pane: &View<Pane>) -> Option<Bounds<Pixels>> {
-        debug_assert!(self.members.len() == self.bounding_boxes.borrow().len());
+        debug_assert!(self.members.len() == self.bounding_boxes.lock().len());
 
         for (idx, member) in self.members.iter().enumerate() {
             match member {
                 Member::Pane(found) => {
                     if pane == found {
-                        return self.bounding_boxes.borrow()[idx];
+                        return self.bounding_boxes.lock()[idx];
                     }
                 }
                 Member::Axis(axis) => {
@@ -451,9 +521,9 @@ impl PaneAxis {
     }
 
     fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&View<Pane>> {
-        debug_assert!(self.members.len() == self.bounding_boxes.borrow().len());
+        debug_assert!(self.members.len() == self.bounding_boxes.lock().len());
 
-        let bounding_boxes = self.bounding_boxes.borrow();
+        let bounding_boxes = self.bounding_boxes.lock();
 
         for (idx, member) in self.members.iter().enumerate() {
             if let Some(coordinates) = bounding_boxes[idx] {
@@ -470,17 +540,16 @@ impl PaneAxis {
 
     fn render(
         &self,
-        project: &Handle<Project>,
+        project: &Model<Project>,
         basis: usize,
-        theme: &Theme,
         follower_states: &HashMap<View<Pane>, FollowerState>,
-        active_call: Option<&Handle<ActiveCall>>,
+        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
-        zoomed: Option<&AnyView>,
+        zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
-        debug_assert!(self.members.len() == self.flexes.borrow().len());
+        debug_assert!(self.members.len() == self.flexes.lock().len());
 
         todo!()
         // let mut pane_axis = PaneAxisElement::new(
@@ -546,32 +615,32 @@ impl SplitDirection {
         [Self::Up, Self::Down, Self::Left, Self::Right]
     }
 
-    pub fn edge(&self, rect: Bounds<Pixels>) -> f32 {
+    pub fn edge(&self, rect: Bounds<Pixels>) -> Pixels {
         match self {
-            Self::Up => rect.min_y(),
-            Self::Down => rect.max_y(),
-            Self::Left => rect.min_x(),
-            Self::Right => rect.max_x(),
+            Self::Up => rect.origin.y,
+            Self::Down => rect.lower_left().y,
+            Self::Left => rect.lower_left().x,
+            Self::Right => rect.lower_right().x,
         }
     }
 
     pub fn along_edge(&self, bounds: Bounds<Pixels>, length: Pixels) -> Bounds<Pixels> {
         match self {
             Self::Up => Bounds {
-                origin: bounds.origin(),
-                size: size(bounds.width(), length),
+                origin: bounds.origin,
+                size: size(bounds.size.width, length),
             },
             Self::Down => Bounds {
-                origin: size(bounds.min_x(), bounds.max_y() - length),
-                size: size(bounds.width(), length),
+                origin: point(bounds.lower_left().x, bounds.lower_left().y - length),
+                size: size(bounds.size.width, length),
             },
             Self::Left => Bounds {
-                origin: bounds.origin(),
-                size: size(length, bounds.height()),
+                origin: bounds.origin,
+                size: size(length, bounds.size.height),
             },
             Self::Right => Bounds {
-                origin: size(bounds.max_x() - length, bounds.min_y()),
-                size: size(length, bounds.height()),
+                origin: point(bounds.lower_right().x - length, bounds.lower_left().y),
+                size: size(length, bounds.size.height),
             },
         }
     }

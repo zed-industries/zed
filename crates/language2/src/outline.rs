@@ -1,5 +1,5 @@
-use fuzzy2::{StringMatch, StringMatchCandidate};
-use gpui2::{Executor, HighlightStyle};
+use fuzzy::{StringMatch, StringMatchCandidate};
+use gpui::{BackgroundExecutor, HighlightStyle};
 use std::ops::Range;
 
 #[derive(Debug)]
@@ -57,11 +57,11 @@ impl<T> Outline<T> {
         }
     }
 
-    pub async fn search(&self, query: &str, executor: Executor) -> Vec<StringMatch> {
+    pub async fn search(&self, query: &str, executor: BackgroundExecutor) -> Vec<StringMatch> {
         let query = query.trim_start();
         let is_path_query = query.contains(' ');
         let smart_case = query.chars().any(|c| c.is_uppercase());
-        let mut matches = fuzzy2::match_strings(
+        let mut matches = fuzzy::match_strings(
             if is_path_query {
                 &self.path_candidates
             } else {

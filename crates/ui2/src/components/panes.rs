@@ -51,7 +51,7 @@ impl<V: 'static> Pane<V> {
                     .id("drag-target")
                     .drag_over::<ExternalPaths>(|d| d.bg(red()))
                     .on_drop(|_, files: View<ExternalPaths>, cx| {
-                        dbg!("dropped files!", files.read(cx));
+                        eprintln!("dropped files! {:?}", files.read(cx));
                     })
                     .absolute()
                     .inset_0(),
@@ -90,8 +90,6 @@ impl<V: 'static> PaneGroup<V> {
     }
 
     fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let theme = theme(cx);
-
         if !self.panes.is_empty() {
             let el = div()
                 .flex()
@@ -115,7 +113,7 @@ impl<V: 'static> PaneGroup<V> {
                 .gap_px()
                 .w_full()
                 .h_full()
-                .bg(theme.editor)
+                .bg(cx.theme().colors().editor)
                 .children(self.groups.into_iter().map(|group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {

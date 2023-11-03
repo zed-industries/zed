@@ -118,7 +118,7 @@ impl Codegen {
 
                     let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
                     let diff = cx.background().spawn(async move {
-                        let chunks = strip_markdown_codeblock(response.await?);
+                        let chunks = strip_invalid_spans_from_codeblock(response.await?);
                         futures::pin_mut!(chunks);
                         let mut diff = StreamingDiff::new(selected_text.to_string());
 
@@ -279,12 +279,13 @@ impl Codegen {
     }
 }
 
-fn strip_markdown_codeblock(
+fn strip_invalid_spans_from_codeblock(
     stream: impl Stream<Item = Result<String>>,
 ) -> impl Stream<Item = Result<String>> {
     let mut first_line = true;
     let mut buffer = String::new();
-    let mut starts_with_fenced_code_block = false;
+    let mut starts_with_markdown_codeblock = false;
+    let mut includes_start_or_end_span = false;
     stream.filter_map(move |chunk| {
         let chunk = match chunk {
             Ok(chunk) => chunk,
@@ -292,11 +293,31 @@ fn strip_markdown_codeblock(
         };
         buffer.push_str(&chunk);
 
+        if buffer.len() > "<|S|".len() && buffer.starts_with("<|S|") {
+            includes_start_or_end_span = true;
+
+            buffer = buffer
+                .strip_prefix("<|S|>")
+                .or_else(|| buffer.strip_prefix("<|S|"))
+                .unwrap_or(&buffer)
+                .to_string();
+        } else if buffer.ends_with("|E|>") {
+            includes_start_or_end_span = true;
+        } else if buffer.starts_with("<|")
+            || buffer.starts_with("<|S")
+            || buffer.starts_with("<|S|")
+            || buffer.ends_with("|")
+            || buffer.ends_with("|E")
+            || buffer.ends_with("|E|")
+        {
+            return future::ready(None);
+        }
+
         if first_line {
             if buffer == "" || buffer == "`" || buffer == "``" {
                 return future::ready(None);
             } else if buffer.starts_with("```") {
-                starts_with_fenced_code_block = true;
+                starts_with_markdown_codeblock = true;
                 if let Some(newline_ix) = buffer.find('\n') {
                     buffer.replace_range(..newline_ix + 1, "");
                     first_line = false;
@@ -306,16 +327,26 @@ fn strip_markdown_codeblock(
             }
         }
 
-        let text = if starts_with_fenced_code_block {
-            buffer
+        let mut text = buffer.to_string();
+        if starts_with_markdown_codeblock {
+            text = text
                 .strip_suffix("\n```\n")
-                .or_else(|| buffer.strip_suffix("\n```"))
-                .or_else(|| buffer.strip_suffix("\n``"))
-                .or_else(|| buffer.strip_suffix("\n`"))
-                .or_else(|| buffer.strip_suffix('\n'))
-                .unwrap_or(&buffer)
-        } else {
-            &buffer
+                .or_else(|| text.strip_suffix("\n```"))
+                .or_else(|| text.strip_suffix("\n``"))
+                .or_else(|| text.strip_suffix("\n`"))
+                .or_else(|| text.strip_suffix('\n'))
+                .unwrap_or(&text)
+                .to_string();
+        }
+
+        if includes_start_or_end_span {
+            text = text
+                .strip_suffix("|E|>")
+                .or_else(|| text.strip_suffix("E|>"))
+                .or_else(|| text.strip_prefix("|>"))
+                .or_else(|| text.strip_prefix(">"))
+                .unwrap_or(&text)
+                .to_string();
         };
 
         if text.contains('\n') {
@@ -328,6 +359,7 @@ fn strip_markdown_codeblock(
         } else {
             Some(Ok(buffer.clone()))
         };
+
         buffer = remainder;
         future::ready(result)
     })
@@ -335,6 +367,8 @@ fn strip_markdown_codeblock(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use ai::test::FakeCompletionProvider;
     use futures::stream::{self};
@@ -405,6 +439,7 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
+            println!("CHUNK: {:?}", &chunk);
             provider.send_completion(chunk);
             new_text = suffix;
             deterministic.run_until_parked();
@@ -537,6 +572,7 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
+            println!("{:?}", &chunk);
             provider.send_completion(chunk);
             new_text = suffix;
             deterministic.run_until_parked();
@@ -558,50 +594,82 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_strip_markdown_codeblock() {
+    async fn test_strip_invalid_spans_from_codeblock() {
         assert_eq!(
-            strip_markdown_codeblock(chunks("Lorem ipsum dolor", 2))
+            strip_invalid_spans_from_codeblock(chunks("Lorem ipsum dolor", 2))
                 .map(|chunk| chunk.unwrap())
                 .collect::<String>()
                 .await,
             "Lorem ipsum dolor"
         );
         assert_eq!(
-            strip_markdown_codeblock(chunks("```\nLorem ipsum dolor", 2))
+            strip_invalid_spans_from_codeblock(chunks("```\nLorem ipsum dolor", 2))
                 .map(|chunk| chunk.unwrap())
                 .collect::<String>()
                 .await,
             "Lorem ipsum dolor"
         );
         assert_eq!(
-            strip_markdown_codeblock(chunks("```\nLorem ipsum dolor\n```", 2))
+            strip_invalid_spans_from_codeblock(chunks("```\nLorem ipsum dolor\n```", 2))
                 .map(|chunk| chunk.unwrap())
                 .collect::<String>()
                 .await,
             "Lorem ipsum dolor"
         );
         assert_eq!(
-            strip_markdown_codeblock(chunks("```\nLorem ipsum dolor\n```\n", 2))
+            strip_invalid_spans_from_codeblock(chunks("```\nLorem ipsum dolor\n```\n", 2))
                 .map(|chunk| chunk.unwrap())
                 .collect::<String>()
                 .await,
             "Lorem ipsum dolor"
         );
         assert_eq!(
-            strip_markdown_codeblock(chunks("```html\n```js\nLorem ipsum dolor\n```\n```", 2))
-                .map(|chunk| chunk.unwrap())
-                .collect::<String>()
-                .await,
+            strip_invalid_spans_from_codeblock(chunks(
+                "```html\n```js\nLorem ipsum dolor\n```\n```",
+                2
+            ))
+            .map(|chunk| chunk.unwrap())
+            .collect::<String>()
+            .await,
             "```js\nLorem ipsum dolor\n```"
         );
         assert_eq!(
-            strip_markdown_codeblock(chunks("``\nLorem ipsum dolor\n```", 2))
+            strip_invalid_spans_from_codeblock(chunks("``\nLorem ipsum dolor\n```", 2))
                 .map(|chunk| chunk.unwrap())
                 .collect::<String>()
                 .await,
             "``\nLorem ipsum dolor\n```"
         );
+        assert_eq!(
+            strip_invalid_spans_from_codeblock(chunks("<|S|Lorem ipsum|E|>", 2))
+                .map(|chunk| chunk.unwrap())
+                .collect::<String>()
+                .await,
+            "Lorem ipsum"
+        );
 
+        assert_eq!(
+            strip_invalid_spans_from_codeblock(chunks("<|S|>Lorem ipsum", 2))
+                .map(|chunk| chunk.unwrap())
+                .collect::<String>()
+                .await,
+            "Lorem ipsum"
+        );
+
+        assert_eq!(
+            strip_invalid_spans_from_codeblock(chunks("```\n<|S|>Lorem ipsum\n```", 2))
+                .map(|chunk| chunk.unwrap())
+                .collect::<String>()
+                .await,
+            "Lorem ipsum"
+        );
+        assert_eq!(
+            strip_invalid_spans_from_codeblock(chunks("```\n<|S|Lorem ipsum|E|>\n```", 2))
+                .map(|chunk| chunk.unwrap())
+                .collect::<String>()
+                .await,
+            "Lorem ipsum"
+        );
         fn chunks(text: &str, size: usize) -> impl Stream<Item = Result<String>> {
             stream::iter(
                 text.chars()

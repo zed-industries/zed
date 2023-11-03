@@ -4,7 +4,7 @@ use collections::{HashMap, HashSet};
 use serde::Deserialize;
 use std::any::{type_name, Any};
 
-pub trait Action: Any + Send {
+pub trait Action: 'static {
     fn qualified_name() -> SharedString
     where
         Self: Sized;
@@ -19,7 +19,7 @@ pub trait Action: Any + Send {
 
 impl<A> Action for A
 where
-    A: for<'a> Deserialize<'a> + PartialEq + Any + Send + Clone + Default,
+    A: for<'a> Deserialize<'a> + PartialEq + Clone + Default + 'static,
 {
     fn qualified_name() -> SharedString {
         type_name::<A>().into()
