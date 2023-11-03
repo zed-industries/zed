@@ -3,7 +3,7 @@ use crate::{
     ElementInteraction, FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable,
     GlobalElementId, GroupBounds, InteractiveElementState, LayoutId, Overflow, ParentElement,
     Pixels, Point, SharedString, StatefulInteraction, StatefulInteractive, StatelessInteraction,
-    StatelessInteractive, Style, StyleRefinement, Styled, ViewContext,
+    StatelessInteractive, Style, StyleRefinement, Styled, ViewContext, Visibility,
 };
 use refineable::Refineable;
 use smallvec::SmallVec;
@@ -249,11 +249,15 @@ where
         cx: &mut ViewContext<V>,
     ) {
         self.with_element_id(cx, |this, _global_id, cx| {
+            let style = this.compute_style(bounds, element_state, cx);
+            if style.visibility == Visibility::Hidden {
+                return;
+            }
+
             if let Some(group) = this.group.clone() {
                 GroupBounds::push(group, bounds, cx);
             }
 
-            let style = this.compute_style(bounds, element_state, cx);
             let z_index = style.z_index.unwrap_or(0);
 
             let mut child_min = point(Pixels::MAX, Pixels::MAX);

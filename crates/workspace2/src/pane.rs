@@ -1361,9 +1361,16 @@ impl Pane {
         let label = item.tab_content(Some(detail), cx);
         let close_icon = || {
             let id = item.id();
+
             div()
                 .id(item.id())
-                .child(IconElement::new(Icon::Close).color(IconColor::Muted))
+                .invisible()
+                .group_hover("", |style| style.visible())
+                .child(
+                    IconElement::new(Icon::Close)
+                        .color(IconColor::Muted)
+                        .hover_color(IconColor::Accent),
+                )
                 .on_click(move |pane: &mut Self, _, cx| {
                     pane.close_item_by_id(id, SaveIntent::Close, cx)
                         .detach_and_log_err(cx);
@@ -1388,6 +1395,7 @@ impl Pane {
         let close_right = ItemSettings::get_global(cx).close_position.right();
 
         div()
+            .group("")
             .id(item.id())
             // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
             // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))

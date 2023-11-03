@@ -19,6 +19,9 @@ pub struct Style {
     /// What layout strategy should be used?
     pub display: Display,
 
+    /// Should the element be painted on screen?
+    pub visibility: Visibility,
+
     // Overflow properties
     /// How children overflowing their container should affect layout
     #[refineable]
@@ -105,6 +108,13 @@ impl Styled for StyleRefinement {
     fn style(&mut self) -> &mut StyleRefinement {
         self
     }
+}
+
+#[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Visibility {
+    #[default]
+    Visible,
+    Hidden,
 }
 
 #[derive(Clone, Debug)]
@@ -297,6 +307,7 @@ impl Default for Style {
     fn default() -> Self {
         Style {
             display: Display::Block,
+            visibility: Visibility::Visible,
             overflow: Point {
                 x: Overflow::Visible,
                 y: Overflow::Visible,

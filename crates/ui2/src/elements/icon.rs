@@ -159,6 +159,7 @@ impl Icon {
 pub struct IconElement {
     icon: Icon,
     color: IconColor,
+    hover_color: Option<IconColor>,
     size: IconSize,
 }
 
@@ -167,6 +168,7 @@ impl IconElement {
         Self {
             icon,
             color: IconColor::default(),
+            hover_color: None,
             size: IconSize::default(),
         }
     }
@@ -176,13 +178,17 @@ impl IconElement {
         self
     }
 
+    pub fn hover_color(mut self, hover_color: impl Into<Option<IconColor>>) -> Self {
+        self.hover_color = hover_color.into();
+        self
+    }
+
     pub fn size(mut self, size: IconSize) -> Self {
         self.size = size;
         self
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let fill = self.color.color(cx);
         let svg_size = match self.size {
             IconSize::Small => rems(0.75),
             IconSize::Medium => rems(0.9375),
@@ -192,7 +198,10 @@ impl IconElement {
             .size(svg_size)
             .flex_none()
             .path(self.icon.path())
-            .text_color(fill)
+            .text_color(self.color.color(cx))
+            .when_some(self.hover_color, |this, hover_color| {
+                this.hover(|style| style.text_color(hover_color.color(cx)))
+            })
     }
 }
 

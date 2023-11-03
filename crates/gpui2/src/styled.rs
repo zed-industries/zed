@@ -1,6 +1,7 @@
 use crate::{
     self as gpui2, hsla, point, px, relative, rems, AlignItems, DefiniteLength, Display, Fill,
     FlexDirection, Hsla, JustifyContent, Length, Position, Rems, SharedString, StyleRefinement,
+    Visibility,
 };
 use crate::{BoxShadow, TextStyleRefinement};
 use smallvec::smallvec;
@@ -57,6 +58,26 @@ pub trait Styled {
         Self: Sized,
     {
         self.style().display = Some(Display::Flex);
+        self
+    }
+
+    /// Sets the visibility of the element to `visible`.
+    /// [Docs](https://tailwindcss.com/docs/visibility)
+    fn visible(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.style().visibility = Some(Visibility::Visible);
+        self
+    }
+
+    /// Sets the visibility of the element to `hidden`.
+    /// [Docs](https://tailwindcss.com/docs/visibility)
+    fn invisible(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.style().visibility = Some(Visibility::Hidden);
         self
     }
 
