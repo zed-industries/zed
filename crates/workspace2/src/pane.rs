@@ -1366,7 +1366,7 @@ impl Pane {
                 .id(item.id())
                 .invisible()
                 .group_hover("", |style| style.visible())
-                .child(IconButton::<Self>::new("close_tab", Icon::Close).on_click(
+                .child(IconButton::new("close_tab", Icon::Close).on_click(
                     move |pane: &mut Self, cx| {
                         pane.close_item_by_id(id, SaveIntent::Close, cx)
                             .detach_and_log_err(cx);
