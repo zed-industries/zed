@@ -9,8 +9,8 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    AnyView, AppContext, AsyncWindowContext, Component, Div, EntityId, EventEmitter, FocusHandle,
-    Model, PromptLevel, Render, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    AppContext, AsyncWindowContext, Component, Div, EntityId, EventEmitter, FocusHandle, Model,
+    PromptLevel, Render, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -1366,15 +1366,12 @@ impl Pane {
                 .id(item.id())
                 .invisible()
                 .group_hover("", |style| style.visible())
-                .child(
-                    IconElement::new(Icon::Close)
-                        .color(IconColor::Muted)
-                        .hover_color(IconColor::Accent),
-                )
-                .on_click(move |pane: &mut Self, _, cx| {
-                    pane.close_item_by_id(id, SaveIntent::Close, cx)
-                        .detach_and_log_err(cx);
-                })
+                .child(IconButton::<Self>::new("close_tab", Icon::Close).on_click(
+                    move |pane: &mut Self, cx| {
+                        pane.close_item_by_id(id, SaveIntent::Close, cx)
+                            .detach_and_log_err(cx);
+                    },
+                ))
         };
 
         let (text_color, tab_bg, tab_hover_bg, tab_active_bg) = match ix == self.active_item_index {

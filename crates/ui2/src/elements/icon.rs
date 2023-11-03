@@ -159,7 +159,6 @@ impl Icon {
 pub struct IconElement {
     icon: Icon,
     color: IconColor,
-    hover_color: Option<IconColor>,
     size: IconSize,
 }
 
@@ -168,18 +167,12 @@ impl IconElement {
         Self {
             icon,
             color: IconColor::default(),
-            hover_color: None,
             size: IconSize::default(),
         }
     }
 
     pub fn color(mut self, color: IconColor) -> Self {
         self.color = color;
-        self
-    }
-
-    pub fn hover_color(mut self, hover_color: impl Into<Option<IconColor>>) -> Self {
-        self.hover_color = hover_color.into();
         self
     }
 
@@ -199,9 +192,6 @@ impl IconElement {
             .flex_none()
             .path(self.icon.path())
             .text_color(self.color.color(cx))
-            .when_some(self.hover_color, |this, hover_color| {
-                this.hover(|style| style.text_color(hover_color.color(cx)))
-            })
     }
 }
 
