@@ -9,7 +9,7 @@ path = "src/fs2.rs"
 
 [dependencies]
 collections = { path = "../collections" }
-rope = { path = "../rope" }
+rope = { package = "rope2", path = "../rope2" }
 text = { package = "text2", path = "../text2" }
 util = { path = "../util" }
 sum_tree = { path = "../sum_tree" }

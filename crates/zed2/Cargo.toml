@@ -58,6 +58,7 @@ project = { package = "project2", path = "../project2" }
 # project_symbols = { path = "../project_symbols" }
 # quick_action_bar = { path = "../quick_action_bar" }
 # recent_projects = { path = "../recent_projects" }
+rope = { package = "rope2", path = "../rope2"}
 rpc = { package = "rpc2", path = "../rpc2" }
 settings = { package = "settings2", path = "../settings2" }
 feature_flags = { package = "feature_flags2", path = "../feature_flags2" }
