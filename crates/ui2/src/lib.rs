@@ -7,13 +7,10 @@
 //! This crate is still a work in progress. The initial primitives and components are built for getting all the UI on the screen,
 //! much of the state and functionality is mocked or hard codeded, and performance has not been a focus.
 //!
-//! Expect some inconsistencies from component to component as we work out the best way to build these components.
-//!
-//! ## Design Philosophy
-//!
-//! Work in Progress!
-//!
 
+#![doc = include_str!("../docs/hello-world.md")]
+#![doc = include_str!("../docs/building-ui.md")]
+#![doc = include_str!("../docs/todo.md")]
 // TODO: Fix warnings instead of supressing.
 #![allow(dead_code, unused_variables)]
 
