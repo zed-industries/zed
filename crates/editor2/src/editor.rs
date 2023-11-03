@@ -19,7 +19,6 @@ pub mod selections_collection;
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-
 use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
@@ -38,8 +37,9 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    serde_json, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, Hsla,
-    Model, Quad, Subscription, Task, Text, View, ViewContext, WeakView, WindowContext,
+    serde_json, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity,
+    EventEmitter, FontWeight, HighlightStyle, Hsla, Model, Pixels, Quad, Render, Subscription,
+    Task, Text, View, ViewContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -74,30 +74,17 @@ use rpc::proto::{self, PeerId};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
-use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
+use selections_collection::SelectionsCollection;
 use serde::{Deserialize, Serialize};
-use settings::SettingsStore;
-use smallvec::SmallVec;
-use snippet::Snippet;
+use settings::Settings;
 use std::{
-    any::TypeId,
-    borrow::Cow,
-    cmp::{self, Ordering, Reverse},
-    mem,
-    num::NonZeroU32,
-    ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
-    path::Path,
+    ops::{Deref, DerefMut, Range},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 pub use sum_tree::Bias;
-use sum_tree::TreeMap;
-use text::Rope;
-use theme::{DiagnosticStyle, Theme, ThemeSettings};
-use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, SplitDirection, ViewId, Workspace};
-
-use crate::git::diff_hunk_to_display;
+use util::TryFutureExt;
+use workspace::{ItemNavHistory, ViewId, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -109,70 +96,70 @@ pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
-pub fn render_parsed_markdown<Tag: 'static>(
-    parsed: &language::ParsedMarkdown,
-    editor_style: &EditorStyle,
-    workspace: Option<WeakView<Workspace>>,
-    cx: &mut ViewContext<Editor>,
-) -> Text {
-    enum RenderedMarkdown {}
+// pub fn render_parsed_markdown<Tag: 'static>(
+//     parsed: &language::ParsedMarkdown,
+//     editor_style: &EditorStyle,
+//     workspace: Option<WeakView<Workspace>>,
+//     cx: &mut ViewContext<Editor>,
+// ) -> Text {
+//     enum RenderedMarkdown {}
 
-    let parsed = parsed.clone();
-    let view_id = cx.view_id();
-    let code_span_background_color = editor_style.document_highlight_read_background;
+//     let parsed = parsed.clone();
+//     let view_id = cx.view_id();
+//     let code_span_background_color = editor_style.document_highlight_read_background;
 
-    let mut region_id = 0;
+//     let mut region_id = 0;
 
-    todo!()
-    // Text::new(parsed.text, editor_style.text.clone())
-    //     .with_highlights(
-    //         parsed
-    //             .highlights
-    //             .iter()
-    //             .filter_map(|(range, highlight)| {
-    //                 let highlight = highlight.to_highlight_style(&editor_style.syntax)?;
-    //                 Some((range.clone(), highlight))
-    //             })
-    //             .collect::<Vec<_>>(),
-    //     )
-    //     .with_custom_runs(parsed.region_ranges, move |ix, bounds, cx| {
-    //         region_id += 1;
-    //         let region = parsed.regions[ix].clone();
+//     todo!()
+//     // Text::new(parsed.text, editor_style.text.clone())
+//     //     .with_highlights(
+//     //         parsed
+//     //             .highlights
+//     //             .iter()
+//     //             .filter_map(|(range, highlight)| {
+//     //                 let highlight = highlight.to_highlight_style(&editor_style.syntax)?;
+//     //                 Some((range.clone(), highlight))
+//     //             })
+//     //             .collect::<Vec<_>>(),
+//     //     )
+//     //     .with_custom_runs(parsed.region_ranges, move |ix, bounds, cx| {
+//     //         region_id += 1;
+//     //         let region = parsed.regions[ix].clone();
 
-    //         if let Some(link) = region.link {
-    //             cx.scene().push_cursor_region(CursorRegion {
-    //                 bounds,
-    //                 style: CursorStyle::PointingHand,
-    //             });
-    //             cx.scene().push_mouse_region(
-    //                 MouseRegion::new::<(RenderedMarkdown, Tag)>(view_id, region_id, bounds)
-    //                     .on_down::<Editor, _>(MouseButton::Left, move |_, _, cx| match &link {
-    //                         markdown::Link::Web { url } => cx.platform().open_url(url),
-    //                         markdown::Link::Path { path } => {
-    //                             if let Some(workspace) = &workspace {
-    //                                 _ = workspace.update(cx, |workspace, cx| {
-    //                                     workspace.open_abs_path(path.clone(), false, cx).detach();
-    //                                 });
-    //                             }
-    //                         }
-    //                     }),
-    //             );
-    //         }
+//     //         if let Some(link) = region.link {
+//     //             cx.scene().push_cursor_region(CursorRegion {
+//     //                 bounds,
+//     //                 style: CursorStyle::PointingHand,
+//     //             });
+//     //             cx.scene().push_mouse_region(
+//     //                 MouseRegion::new::<(RenderedMarkdown, Tag)>(view_id, region_id, bounds)
+//     //                     .on_down::<Editor, _>(MouseButton::Left, move |_, _, cx| match &link {
+//     //                         markdown::Link::Web { url } => cx.platform().open_url(url),
+//     //                         markdown::Link::Path { path } => {
+//     //                             if let Some(workspace) = &workspace {
+//     //                                 _ = workspace.update(cx, |workspace, cx| {
+//     //                                     workspace.open_abs_path(path.clone(), false, cx).detach();
+//     //                                 });
+//     //                             }
+//     //                         }
+//     //                     }),
+//     //             );
+//     //         }
 
-    //         if region.code {
-    //             cx.draw_quad(Quad {
-    //                 bounds,
-    //                 background: Some(code_span_background_color),
-    //                 corner_radii: (2.0).into(),
-    //                 order: todo!(),
-    //                 content_mask: todo!(),
-    //                 border_color: todo!(),
-    //                 border_widths: todo!(),
-    //             });
-    //         }
-    //     })
-    //     .with_soft_wrap(true)
-}
+//     //         if region.code {
+//     //             cx.draw_quad(Quad {
+//     //                 bounds,
+//     //                 background: Some(code_span_background_color),
+//     //                 corner_radii: (2.0).into(),
+//     //                 order: todo!(),
+//     //                 content_mask: todo!(),
+//     //                 border_color: todo!(),
+//     //                 border_widths: todo!(),
+//     //             });
+//     //         }
+//     //     })
+//     //     .with_soft_wrap(true)
+// }
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
 pub struct SelectNext {
@@ -270,138 +257,138 @@ impl InlayId {
     }
 }
 
-actions!(
-    editor,
-    [
-        Cancel,
-        Backspace,
-        Delete,
-        Newline,
-        NewlineAbove,
-        NewlineBelow,
-        GoToDiagnostic,
-        GoToPrevDiagnostic,
-        GoToHunk,
-        GoToPrevHunk,
-        Indent,
-        Outdent,
-        DeleteLine,
-        DeleteToPreviousWordStart,
-        DeleteToPreviousSubwordStart,
-        DeleteToNextWordEnd,
-        DeleteToNextSubwordEnd,
-        DeleteToBeginningOfLine,
-        DeleteToEndOfLine,
-        CutToEndOfLine,
-        DuplicateLine,
-        MoveLineUp,
-        MoveLineDown,
-        JoinLines,
-        SortLinesCaseSensitive,
-        SortLinesCaseInsensitive,
-        ReverseLines,
-        ShuffleLines,
-        ConvertToUpperCase,
-        ConvertToLowerCase,
-        ConvertToTitleCase,
-        ConvertToSnakeCase,
-        ConvertToKebabCase,
-        ConvertToUpperCamelCase,
-        ConvertToLowerCamelCase,
-        Transpose,
-        Cut,
-        Copy,
-        Paste,
-        Undo,
-        Redo,
-        MoveUp,
-        PageUp,
-        MoveDown,
-        PageDown,
-        MoveLeft,
-        MoveRight,
-        MoveToPreviousWordStart,
-        MoveToPreviousSubwordStart,
-        MoveToNextWordEnd,
-        MoveToNextSubwordEnd,
-        MoveToBeginningOfLine,
-        MoveToEndOfLine,
-        MoveToStartOfParagraph,
-        MoveToEndOfParagraph,
-        MoveToBeginning,
-        MoveToEnd,
-        SelectUp,
-        SelectDown,
-        SelectLeft,
-        SelectRight,
-        SelectToPreviousWordStart,
-        SelectToPreviousSubwordStart,
-        SelectToNextWordEnd,
-        SelectToNextSubwordEnd,
-        SelectToStartOfParagraph,
-        SelectToEndOfParagraph,
-        SelectToBeginning,
-        SelectToEnd,
-        SelectAll,
-        SelectLine,
-        SplitSelectionIntoLines,
-        AddSelectionAbove,
-        AddSelectionBelow,
-        Tab,
-        TabPrev,
-        ShowCharacterPalette,
-        SelectLargerSyntaxNode,
-        SelectSmallerSyntaxNode,
-        GoToDefinition,
-        GoToDefinitionSplit,
-        GoToTypeDefinition,
-        GoToTypeDefinitionSplit,
-        MoveToEnclosingBracket,
-        UndoSelection,
-        RedoSelection,
-        FindAllReferences,
-        Rename,
-        ConfirmRename,
-        Fold,
-        UnfoldLines,
-        FoldSelectedRanges,
-        ShowCompletions,
-        OpenExcerpts,
-        RestartLanguageServer,
-        Hover,
-        Format,
-        ToggleSoftWrap,
-        ToggleInlayHints,
-        RevealInFinder,
-        CopyPath,
-        CopyRelativePath,
-        CopyHighlightJson,
-        ContextMenuFirst,
-        ContextMenuPrev,
-        ContextMenuNext,
-        ContextMenuLast,
-    ]
-);
+// actions!(
+//     editor,
+//     [
+//         Cancel,
+//         Backspace,
+//         Delete,
+//         Newline,
+//         NewlineAbove,
+//         NewlineBelow,
+//         GoToDiagnostic,
+//         GoToPrevDiagnostic,
+//         GoToHunk,
+//         GoToPrevHunk,
+//         Indent,
+//         Outdent,
+//         DeleteLine,
+//         DeleteToPreviousWordStart,
+//         DeleteToPreviousSubwordStart,
+//         DeleteToNextWordEnd,
+//         DeleteToNextSubwordEnd,
+//         DeleteToBeginningOfLine,
+//         DeleteToEndOfLine,
+//         CutToEndOfLine,
+//         DuplicateLine,
+//         MoveLineUp,
+//         MoveLineDown,
+//         JoinLines,
+//         SortLinesCaseSensitive,
+//         SortLinesCaseInsensitive,
+//         ReverseLines,
+//         ShuffleLines,
+//         ConvertToUpperCase,
+//         ConvertToLowerCase,
+//         ConvertToTitleCase,
+//         ConvertToSnakeCase,
+//         ConvertToKebabCase,
+//         ConvertToUpperCamelCase,
+//         ConvertToLowerCamelCase,
+//         Transpose,
+//         Cut,
+//         Copy,
+//         Paste,
+//         Undo,
+//         Redo,
+//         MoveUp,
+//         PageUp,
+//         MoveDown,
+//         PageDown,
+//         MoveLeft,
+//         MoveRight,
+//         MoveToPreviousWordStart,
+//         MoveToPreviousSubwordStart,
+//         MoveToNextWordEnd,
+//         MoveToNextSubwordEnd,
+//         MoveToBeginningOfLine,
+//         MoveToEndOfLine,
+//         MoveToStartOfParagraph,
+//         MoveToEndOfParagraph,
+//         MoveToBeginning,
+//         MoveToEnd,
+//         SelectUp,
+//         SelectDown,
+//         SelectLeft,
+//         SelectRight,
+//         SelectToPreviousWordStart,
+//         SelectToPreviousSubwordStart,
+//         SelectToNextWordEnd,
+//         SelectToNextSubwordEnd,
+//         SelectToStartOfParagraph,
+//         SelectToEndOfParagraph,
+//         SelectToBeginning,
+//         SelectToEnd,
+//         SelectAll,
+//         SelectLine,
+//         SplitSelectionIntoLines,
+//         AddSelectionAbove,
+//         AddSelectionBelow,
+//         Tab,
+//         TabPrev,
+//         ShowCharacterPalette,
+//         SelectLargerSyntaxNode,
+//         SelectSmallerSyntaxNode,
+//         GoToDefinition,
+//         GoToDefinitionSplit,
+//         GoToTypeDefinition,
+//         GoToTypeDefinitionSplit,
+//         MoveToEnclosingBracket,
+//         UndoSelection,
+//         RedoSelection,
+//         FindAllReferences,
+//         Rename,
+//         ConfirmRename,
+//         Fold,
+//         UnfoldLines,
+//         FoldSelectedRanges,
+//         ShowCompletions,
+//         OpenExcerpts,
+//         RestartLanguageServer,
+//         Hover,
+//         Format,
+//         ToggleSoftWrap,
+//         ToggleInlayHints,
+//         RevealInFinder,
+//         CopyPath,
+//         CopyRelativePath,
+//         CopyHighlightJson,
+//         ContextMenuFirst,
+//         ContextMenuPrev,
+//         ContextMenuNext,
+//         ContextMenuLast,
+//     ]
+// );
 
-impl_actions!(
-    editor,
-    [
-        SelectNext,
-        SelectPrevious,
-        SelectAllMatches,
-        SelectToBeginningOfLine,
-        SelectToEndOfLine,
-        ToggleCodeActions,
-        MovePageUp,
-        MovePageDown,
-        ConfirmCompletion,
-        ConfirmCodeAction,
-        ToggleComments,
-        FoldAt,
-        UnfoldAt,
-        GutterHover
-    ]
-);
+// impl_actions!(
+//     editor,
+//     [
+//         SelectNext,
+//         SelectPrevious,
+//         SelectAllMatches,
+//         SelectToBeginningOfLine,
+//         SelectToEndOfLine,
+//         ToggleCodeActions,
+//         MovePageUp,
+//         MovePageDown,
+//         ConfirmCompletion,
+//         ConfirmCodeAction,
+//         ToggleComments,
+//         FoldAt,
+//         UnfoldAt,
+//         GutterHover
+//     ]
+// );
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -414,7 +401,7 @@ pub enum Direction {
 }
 
 pub fn init_settings(cx: &mut AppContext) {
-    settings::register::<EditorSettings>(cx);
+    EditorSettings::register(cx);
 }
 
 pub fn init(cx: &mut AppContext) {
@@ -574,7 +561,7 @@ pub enum SelectPhase {
     Update {
         position: DisplayPoint,
         goal_column: u32,
-        scroll_position: Point<Pixels>,
+        scroll_position: gpui::Point<Pixels>,
     },
     End,
 }
@@ -603,20 +590,20 @@ pub enum SoftWrap {
 
 #[derive(Clone)]
 pub struct EditorStyle {
-    pub text: TextStyle,
+    //  pub text: TextStyle,
     pub line_height_scalar: f32,
-    pub placeholder_text: Option<TextStyle>,
-    pub theme: theme::Editor,
+    // pub placeholder_text: Option<TextStyle>,
+    //  pub theme: theme::Editor,
     pub theme_id: usize,
 }
 
 type CompletionId = usize;
 
-type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
-type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
+// type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
+// type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
-type BackgroundHighlight = (fn(&Theme) -> Hsla, Vec<Range<Anchor>>);
-type InlayBackgroundHighlight = (fn(&Theme) -> Hsla, Vec<InlayHighlight>);
+// type BackgroundHighlight = (fn(&Theme) -> Hsla, Vec<Range<Anchor>>);
+// type InlayBackgroundHighlight = (fn(&Theme) -> Hsla, Vec<InlayHighlight>);
 
 pub struct Editor {
     handle: WeakView<Self>,
@@ -635,8 +622,8 @@ pub struct Editor {
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
-    get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
-    override_text_style: Option<Box<OverrideTextStyle>>,
+    // get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
+    // override_text_style: Option<Box<OverrideTextStyle>>,
     project: Option<Model<Project>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     focused: bool,
@@ -647,8 +634,8 @@ pub struct Editor {
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
-    background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
-    inlay_background_highlights: TreeMap<Option<TypeId>, InlayBackgroundHighlight>,
+    // background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
+    // inlay_background_highlights: TreeMap<Option<TypeId>, InlayBackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: View<context_menu::ContextMenu>,
@@ -663,7 +650,7 @@ pub struct Editor {
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakView<Workspace>, i64)>,
-    keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
+    // keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
     read_only: bool,
     leader_peer_id: Option<PeerId>,
@@ -675,7 +662,7 @@ pub struct Editor {
     // inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
-    pixel_position_of_newest_cursor: Option<Point<Pixels>>,
+    pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
 }
 
 pub struct EditorSnapshot {
@@ -937,688 +924,688 @@ struct CompletionsMenu {
     match_candidates: Arc<[StringMatchCandidate]>,
     matches: Arc<[StringMatch]>,
     selected_item: usize,
-    list: UniformListState,
+    // list: UniformListState,
 }
 
-impl CompletionsMenu {
-    fn select_first(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
-        self.selected_item = 0;
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        self.attempt_resolve_selected_completion_documentation(project, cx);
-        cx.notify();
-    }
+// impl CompletionsMenu {
+//     fn select_first(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
+//         self.selected_item = 0;
+//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+//         self.attempt_resolve_selected_completion_documentation(project, cx);
+//         cx.notify();
+//     }
 
-    fn select_prev(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
-        if self.selected_item > 0 {
-            self.selected_item -= 1;
-        } else {
-            self.selected_item = self.matches.len() - 1;
-        }
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        self.attempt_resolve_selected_completion_documentation(project, cx);
-        cx.notify();
-    }
+//     fn select_prev(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
+//         if self.selected_item > 0 {
+//             self.selected_item -= 1;
+//         } else {
+//             self.selected_item = self.matches.len() - 1;
+//         }
+//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+//         self.attempt_resolve_selected_completion_documentation(project, cx);
+//         cx.notify();
+//     }
 
-    fn select_next(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
-        if self.selected_item + 1 < self.matches.len() {
-            self.selected_item += 1;
-        } else {
-            self.selected_item = 0;
-        }
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        self.attempt_resolve_selected_completion_documentation(project, cx);
-        cx.notify();
-    }
+//     fn select_next(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
+//         if self.selected_item + 1 < self.matches.len() {
+//             self.selected_item += 1;
+//         } else {
+//             self.selected_item = 0;
+//         }
+//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+//         self.attempt_resolve_selected_completion_documentation(project, cx);
+//         cx.notify();
+//     }
 
-    fn select_last(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
-        self.selected_item = self.matches.len() - 1;
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        self.attempt_resolve_selected_completion_documentation(project, cx);
-        cx.notify();
-    }
+//     fn select_last(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
+//         self.selected_item = self.matches.len() - 1;
+//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+//         self.attempt_resolve_selected_completion_documentation(project, cx);
+//         cx.notify();
+//     }
 
-    fn pre_resolve_completion_documentation(
-        &self,
-        project: Option<Model<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        let settings = settings::get::<EditorSettings>(cx);
-        if !settings.show_completion_documentation {
-            return;
-        }
+//     fn pre_resolve_completion_documentation(
+//         &self,
+//         project: Option<Model<Project>>,
+//         cx: &mut ViewContext<Editor>,
+//     ) {
+//         let settings = settings::get::<EditorSettings>(cx);
+//         if !settings.show_completion_documentation {
+//             return;
+//         }
 
-        let Some(project) = project else {
-            return;
-        };
-        let client = project.read(cx).client();
-        let language_registry = project.read(cx).languages().clone();
+//         let Some(project) = project else {
+//             return;
+//         };
+//         let client = project.read(cx).client();
+//         let language_registry = project.read(cx).languages().clone();
 
-        let is_remote = project.read(cx).is_remote();
-        let project_id = project.read(cx).remote_id();
+//         let is_remote = project.read(cx).is_remote();
+//         let project_id = project.read(cx).remote_id();
 
-        let completions = self.completions.clone();
-        let completion_indices: Vec<_> = self.matches.iter().map(|m| m.candidate_id).collect();
+//         let completions = self.completions.clone();
+//         let completion_indices: Vec<_> = self.matches.iter().map(|m| m.candidate_id).collect();
 
-        cx.spawn(move |this, mut cx| async move {
-            if is_remote {
-                let Some(project_id) = project_id else {
-                    log::error!("Remote project without remote_id");
-                    return;
-                };
+//         cx.spawn(move |this, mut cx| async move {
+//             if is_remote {
+//                 let Some(project_id) = project_id else {
+//                     log::error!("Remote project without remote_id");
+//                     return;
+//                 };
 
-                for completion_index in completion_indices {
-                    let completions_guard = completions.read();
-                    let completion = &completions_guard[completion_index];
-                    if completion.documentation.is_some() {
-                        continue;
-                    }
+//                 for completion_index in completion_indices {
+//                     let completions_guard = completions.read();
+//                     let completion = &completions_guard[completion_index];
+//                     if completion.documentation.is_some() {
+//                         continue;
+//                     }
 
-                    let server_id = completion.server_id;
-                    let completion = completion.lsp_completion.clone();
-                    drop(completions_guard);
+//                     let server_id = completion.server_id;
+//                     let completion = completion.lsp_completion.clone();
+//                     drop(completions_guard);
 
-                    Self::resolve_completion_documentation_remote(
-                        project_id,
-                        server_id,
-                        completions.clone(),
-                        completion_index,
-                        completion,
-                        client.clone(),
-                        language_registry.clone(),
-                    )
-                    .await;
+//                     Self::resolve_completion_documentation_remote(
+//                         project_id,
+//                         server_id,
+//                         completions.clone(),
+//                         completion_index,
+//                         completion,
+//                         client.clone(),
+//                         language_registry.clone(),
+//                     )
+//                     .await;
 
-                    _ = this.update(&mut cx, |_, cx| cx.notify());
-                }
-            } else {
-                for completion_index in completion_indices {
-                    let completions_guard = completions.read();
-                    let completion = &completions_guard[completion_index];
-                    if completion.documentation.is_some() {
-                        continue;
-                    }
+//                     _ = this.update(&mut cx, |_, cx| cx.notify());
+//                 }
+//             } else {
+//                 for completion_index in completion_indices {
+//                     let completions_guard = completions.read();
+//                     let completion = &completions_guard[completion_index];
+//                     if completion.documentation.is_some() {
+//                         continue;
+//                     }
 
-                    let server_id = completion.server_id;
-                    let completion = completion.lsp_completion.clone();
-                    drop(completions_guard);
+//                     let server_id = completion.server_id;
+//                     let completion = completion.lsp_completion.clone();
+//                     drop(completions_guard);
 
-                    let server = project.read_with(&mut cx, |project, _| {
-                        project.language_server_for_id(server_id)
-                    });
-                    let Some(server) = server else {
-                        return;
-                    };
+//                     let server = project.read_with(&mut cx, |project, _| {
+//                         project.language_server_for_id(server_id)
+//                     });
+//                     let Some(server) = server else {
+//                         return;
+//                     };
 
-                    Self::resolve_completion_documentation_local(
-                        server,
-                        completions.clone(),
-                        completion_index,
-                        completion,
-                        language_registry.clone(),
-                    )
-                    .await;
+//                     Self::resolve_completion_documentation_local(
+//                         server,
+//                         completions.clone(),
+//                         completion_index,
+//                         completion,
+//                         language_registry.clone(),
+//                     )
+//                     .await;
 
-                    _ = this.update(&mut cx, |_, cx| cx.notify());
-                }
-            }
-        })
-        .detach();
-    }
+//                     _ = this.update(&mut cx, |_, cx| cx.notify());
+//                 }
+//             }
+//         })
+//         .detach();
+//     }
 
-    fn attempt_resolve_selected_completion_documentation(
-        &mut self,
-        project: Option<&Model<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        let settings = settings::get::<EditorSettings>(cx);
-        if !settings.show_completion_documentation {
-            return;
-        }
+//     fn attempt_resolve_selected_completion_documentation(
+//         &mut self,
+//         project: Option<&Model<Project>>,
+//         cx: &mut ViewContext<Editor>,
+//     ) {
+//         let settings = settings::get::<EditorSettings>(cx);
+//         if !settings.show_completion_documentation {
+//             return;
+//         }
 
-        let completion_index = self.matches[self.selected_item].candidate_id;
-        let Some(project) = project else {
-            return;
-        };
-        let language_registry = project.read(cx).languages().clone();
+//         let completion_index = self.matches[self.selected_item].candidate_id;
+//         let Some(project) = project else {
+//             return;
+//         };
+//         let language_registry = project.read(cx).languages().clone();
 
-        let completions = self.completions.clone();
-        let completions_guard = completions.read();
-        let completion = &completions_guard[completion_index];
-        if completion.documentation.is_some() {
-            return;
-        }
+//         let completions = self.completions.clone();
+//         let completions_guard = completions.read();
+//         let completion = &completions_guard[completion_index];
+//         if completion.documentation.is_some() {
+//             return;
+//         }
 
-        let server_id = completion.server_id;
-        let completion = completion.lsp_completion.clone();
-        drop(completions_guard);
+//         let server_id = completion.server_id;
+//         let completion = completion.lsp_completion.clone();
+//         drop(completions_guard);
 
-        if project.read(cx).is_remote() {
-            let Some(project_id) = project.read(cx).remote_id() else {
-                log::error!("Remote project without remote_id");
-                return;
-            };
+//         if project.read(cx).is_remote() {
+//             let Some(project_id) = project.read(cx).remote_id() else {
+//                 log::error!("Remote project without remote_id");
+//                 return;
+//             };
 
-            let client = project.read(cx).client();
+//             let client = project.read(cx).client();
 
-            cx.spawn(move |this, mut cx| async move {
-                Self::resolve_completion_documentation_remote(
-                    project_id,
-                    server_id,
-                    completions.clone(),
-                    completion_index,
-                    completion,
-                    client,
-                    language_registry.clone(),
-                )
-                .await;
+//             cx.spawn(move |this, mut cx| async move {
+//                 Self::resolve_completion_documentation_remote(
+//                     project_id,
+//                     server_id,
+//                     completions.clone(),
+//                     completion_index,
+//                     completion,
+//                     client,
+//                     language_registry.clone(),
+//                 )
+//                 .await;
 
-                _ = this.update(&mut cx, |_, cx| cx.notify());
-            })
-            .detach();
-        } else {
-            let Some(server) = project.read(cx).language_server_for_id(server_id) else {
-                return;
-            };
+//                 _ = this.update(&mut cx, |_, cx| cx.notify());
+//             })
+//             .detach();
+//         } else {
+//             let Some(server) = project.read(cx).language_server_for_id(server_id) else {
+//                 return;
+//             };
 
-            cx.spawn(move |this, mut cx| async move {
-                Self::resolve_completion_documentation_local(
-                    server,
-                    completions,
-                    completion_index,
-                    completion,
-                    language_registry,
-                )
-                .await;
+//             cx.spawn(move |this, mut cx| async move {
+//                 Self::resolve_completion_documentation_local(
+//                     server,
+//                     completions,
+//                     completion_index,
+//                     completion,
+//                     language_registry,
+//                 )
+//                 .await;
 
-                _ = this.update(&mut cx, |_, cx| cx.notify());
-            })
-            .detach();
-        }
-    }
+//                 _ = this.update(&mut cx, |_, cx| cx.notify());
+//             })
+//             .detach();
+//         }
+//     }
 
-    async fn resolve_completion_documentation_remote(
-        project_id: u64,
-        server_id: LanguageServerId,
-        completions: Arc<RwLock<Box<[Completion]>>>,
-        completion_index: usize,
-        completion: lsp::CompletionItem,
-        client: Arc<Client>,
-        language_registry: Arc<LanguageRegistry>,
-    ) {
-        let request = proto::ResolveCompletionDocumentation {
-            project_id,
-            language_server_id: server_id.0 as u64,
-            lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
-        };
+//     async fn resolve_completion_documentation_remote(
+//         project_id: u64,
+//         server_id: LanguageServerId,
+//         completions: Arc<RwLock<Box<[Completion]>>>,
+//         completion_index: usize,
+//         completion: lsp::CompletionItem,
+//         client: Arc<Client>,
+//         language_registry: Arc<LanguageRegistry>,
+//     ) {
+//         let request = proto::ResolveCompletionDocumentation {
+//             project_id,
+//             language_server_id: server_id.0 as u64,
+//             lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
+//         };
 
-        let Some(response) = client
-            .request(request)
-            .await
-            .context("completion documentation resolve proto request")
-            .log_err()
-        else {
-            return;
-        };
+//         let Some(response) = client
+//             .request(request)
+//             .await
+//             .context("completion documentation resolve proto request")
+//             .log_err()
+//         else {
+//             return;
+//         };
 
-        if response.text.is_empty() {
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
-        }
+//         if response.text.is_empty() {
+//             let mut completions = completions.write();
+//             let completion = &mut completions[completion_index];
+//             completion.documentation = Some(Documentation::Undocumented);
+//         }
 
-        let documentation = if response.is_markdown {
-            Documentation::MultiLineMarkdown(
-                markdown::parse_markdown(&response.text, &language_registry, None).await,
-            )
-        } else if response.text.lines().count() <= 1 {
-            Documentation::SingleLine(response.text)
-        } else {
-            Documentation::MultiLinePlainText(response.text)
-        };
+//         let documentation = if response.is_markdown {
+//             Documentation::MultiLineMarkdown(
+//                 markdown::parse_markdown(&response.text, &language_registry, None).await,
+//             )
+//         } else if response.text.lines().count() <= 1 {
+//             Documentation::SingleLine(response.text)
+//         } else {
+//             Documentation::MultiLinePlainText(response.text)
+//         };
 
-        let mut completions = completions.write();
-        let completion = &mut completions[completion_index];
-        completion.documentation = Some(documentation);
-    }
+//         let mut completions = completions.write();
+//         let completion = &mut completions[completion_index];
+//         completion.documentation = Some(documentation);
+//     }
 
-    async fn resolve_completion_documentation_local(
-        server: Arc<lsp::LanguageServer>,
-        completions: Arc<RwLock<Box<[Completion]>>>,
-        completion_index: usize,
-        completion: lsp::CompletionItem,
-        language_registry: Arc<LanguageRegistry>,
-    ) {
-        let can_resolve = server
-            .capabilities()
-            .completion_provider
-            .as_ref()
-            .and_then(|options| options.resolve_provider)
-            .unwrap_or(false);
-        if !can_resolve {
-            return;
-        }
+//     async fn resolve_completion_documentation_local(
+//         server: Arc<lsp::LanguageServer>,
+//         completions: Arc<RwLock<Box<[Completion]>>>,
+//         completion_index: usize,
+//         completion: lsp::CompletionItem,
+//         language_registry: Arc<LanguageRegistry>,
+//     ) {
+//         let can_resolve = server
+//             .capabilities()
+//             .completion_provider
+//             .as_ref()
+//             .and_then(|options| options.resolve_provider)
+//             .unwrap_or(false);
+//         if !can_resolve {
+//             return;
+//         }
 
-        let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
-        let Some(completion_item) = request.await.log_err() else {
-            return;
-        };
+//         let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
+//         let Some(completion_item) = request.await.log_err() else {
+//             return;
+//         };
 
-        if let Some(lsp_documentation) = completion_item.documentation {
-            let documentation = language::prepare_completion_documentation(
-                &lsp_documentation,
-                &language_registry,
-                None, // TODO: Try to reasonably work out which language the completion is for
-            )
-            .await;
+//         if let Some(lsp_documentation) = completion_item.documentation {
+//             let documentation = language::prepare_completion_documentation(
+//                 &lsp_documentation,
+//                 &language_registry,
+//                 None, // TODO: Try to reasonably work out which language the completion is for
+//             )
+//             .await;
 
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(documentation);
-        } else {
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
-        }
-    }
+//             let mut completions = completions.write();
+//             let completion = &mut completions[completion_index];
+//             completion.documentation = Some(documentation);
+//         } else {
+//             let mut completions = completions.write();
+//             let completion = &mut completions[completion_index];
+//             completion.documentation = Some(Documentation::Undocumented);
+//         }
+//     }
 
-    fn visible(&self) -> bool {
-        !self.matches.is_empty()
-    }
+//     fn visible(&self) -> bool {
+//         !self.matches.is_empty()
+//     }
 
-    fn render(
-        &self,
-        style: EditorStyle,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut ViewContext<Editor>,
-    ) -> AnyElement<Editor> {
-        enum CompletionTag {}
+//     fn render(
+//         &self,
+//         style: EditorStyle,
+//         workspace: Option<WeakView<Workspace>>,
+//         cx: &mut ViewContext<Editor>,
+//     ) -> AnyElement<Editor> {
+//         enum CompletionTag {}
 
-        let settings = settings::get::<EditorSettings>(cx);
-        let show_completion_documentation = settings.show_completion_documentation;
+//         let settings = settings::get::<EditorSettings>(cx);
+//         let show_completion_documentation = settings.show_completion_documentation;
 
-        let widest_completion_ix = self
-            .matches
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, mat)| {
-                let completions = self.completions.read();
-                let completion = &completions[mat.candidate_id];
-                let documentation = &completion.documentation;
+//         let widest_completion_ix = self
+//             .matches
+//             .iter()
+//             .enumerate()
+//             .max_by_key(|(_, mat)| {
+//                 let completions = self.completions.read();
+//                 let completion = &completions[mat.candidate_id];
+//                 let documentation = &completion.documentation;
 
-                let mut len = completion.label.text.chars().count();
-                if let Some(Documentation::SingleLine(text)) = documentation {
-                    if show_completion_documentation {
-                        len += text.chars().count();
-                    }
-                }
+//                 let mut len = completion.label.text.chars().count();
+//                 if let Some(Documentation::SingleLine(text)) = documentation {
+//                     if show_completion_documentation {
+//                         len += text.chars().count();
+//                     }
+//                 }
 
-                len
-            })
-            .map(|(ix, _)| ix);
+//                 len
+//             })
+//             .map(|(ix, _)| ix);
 
-        let completions = self.completions.clone();
-        let matches = self.matches.clone();
-        let selected_item = self.selected_item;
+//         let completions = self.completions.clone();
+//         let matches = self.matches.clone();
+//         let selected_item = self.selected_item;
 
-        let list = UniformList::new(self.list.clone(), matches.len(), cx, {
-            let style = style.clone();
-            move |_, range, items, cx| {
-                let start_ix = range.start;
-                let completions_guard = completions.read();
+//         let list = UniformList::new(self.list.clone(), matches.len(), cx, {
+//             let style = style.clone();
+//             move |_, range, items, cx| {
+//                 let start_ix = range.start;
+//                 let completions_guard = completions.read();
 
-                for (ix, mat) in matches[range].iter().enumerate() {
-                    let item_ix = start_ix + ix;
-                    let candidate_id = mat.candidate_id;
-                    let completion = &completions_guard[candidate_id];
+//                 for (ix, mat) in matches[range].iter().enumerate() {
+//                     let item_ix = start_ix + ix;
+//                     let candidate_id = mat.candidate_id;
+//                     let completion = &completions_guard[candidate_id];
 
-                    let documentation = if show_completion_documentation {
-                        &completion.documentation
-                    } else {
-                        &None
-                    };
+//                     let documentation = if show_completion_documentation {
+//                         &completion.documentation
+//                     } else {
+//                         &None
+//                     };
 
-                    items.push(
-                        MouseEventHandler::new::<CompletionTag, _>(
-                            mat.candidate_id,
-                            cx,
-                            |state, _| {
-                                let item_style = if item_ix == selected_item {
-                                    style.autocomplete.selected_item
-                                } else if state.hovered() {
-                                    style.autocomplete.hovered_item
-                                } else {
-                                    style.autocomplete.item
-                                };
+//                     items.push(
+//                         MouseEventHandler::new::<CompletionTag, _>(
+//                             mat.candidate_id,
+//                             cx,
+//                             |state, _| {
+//                                 let item_style = if item_ix == selected_item {
+//                                     style.autocomplete.selected_item
+//                                 } else if state.hovered() {
+//                                     style.autocomplete.hovered_item
+//                                 } else {
+//                                     style.autocomplete.item
+//                                 };
 
-                                let completion_label =
-                                    Text::new(completion.label.text.clone(), style.text.clone())
-                                        .with_soft_wrap(false)
-                                        .with_highlights(
-                                            combine_syntax_and_fuzzy_match_highlights(
-                                                &completion.label.text,
-                                                style.text.color.into(),
-                                                styled_runs_for_code_label(
-                                                    &completion.label,
-                                                    &style.syntax,
-                                                ),
-                                                &mat.positions,
-                                            ),
-                                        );
+//                                 let completion_label =
+//                                     Text::new(completion.label.text.clone(), style.text.clone())
+//                                         .with_soft_wrap(false)
+//                                         .with_highlights(
+//                                             combine_syntax_and_fuzzy_match_highlights(
+//                                                 &completion.label.text,
+//                                                 style.text.color.into(),
+//                                                 styled_runs_for_code_label(
+//                                                     &completion.label,
+//                                                     &style.syntax,
+//                                                 ),
+//                                                 &mat.positions,
+//                                             ),
+//                                         );
 
-                                if let Some(Documentation::SingleLine(text)) = documentation {
-                                    Flex::row()
-                                        .with_child(completion_label)
-                                        .with_children((|| {
-                                            let text_style = TextStyle {
-                                                color: style.autocomplete.inline_docs_color,
-                                                font_size: style.text.font_size
-                                                    * style.autocomplete.inline_docs_size_percent,
-                                                ..style.text.clone()
-                                            };
+//                                 if let Some(Documentation::SingleLine(text)) = documentation {
+//                                     Flex::row()
+//                                         .with_child(completion_label)
+//                                         .with_children((|| {
+//                                             let text_style = TextStyle {
+//                                                 color: style.autocomplete.inline_docs_color,
+//                                                 font_size: style.text.font_size
+//                                                     * style.autocomplete.inline_docs_size_percent,
+//                                                 ..style.text.clone()
+//                                             };
 
-                                            let label = Text::new(text.clone(), text_style)
-                                                .aligned()
-                                                .constrained()
-                                                .dynamically(move |constraint, _, _| {
-                                                    gpui::SizeConstraint {
-                                                        min: constraint.min,
-                                                        max: vec2f(
-                                                            constraint.max.x(),
-                                                            constraint.min.y(),
-                                                        ),
-                                                    }
-                                                });
+//                                             let label = Text::new(text.clone(), text_style)
+//                                                 .aligned()
+//                                                 .constrained()
+//                                                 .dynamically(move |constraint, _, _| {
+//                                                     gpui::SizeConstraint {
+//                                                         min: constraint.min,
+//                                                         max: vec2f(
+//                                                             constraint.max.x(),
+//                                                             constraint.min.y(),
+//                                                         ),
+//                                                     }
+//                                                 });
 
-                                            if Some(item_ix) == widest_completion_ix {
-                                                Some(
-                                                    label
-                                                        .contained()
-                                                        .with_style(
-                                                            style
-                                                                .autocomplete
-                                                                .inline_docs_container,
-                                                        )
-                                                        .into_any(),
-                                                )
-                                            } else {
-                                                Some(label.flex_float().into_any())
-                                            }
-                                        })())
-                                        .into_any()
-                                } else {
-                                    completion_label.into_any()
-                                }
-                                .contained()
-                                .with_style(item_style)
-                                .constrained()
-                                .dynamically(
-                                    move |constraint, _, _| {
-                                        if Some(item_ix) == widest_completion_ix {
-                                            constraint
-                                        } else {
-                                            gpui::SizeConstraint {
-                                                min: constraint.min,
-                                                max: constraint.min,
-                                            }
-                                        }
-                                    },
-                                )
-                            },
-                        )
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .on_down(MouseButton::Left, move |_, this, cx| {
-                            this.confirm_completion(
-                                &ConfirmCompletion {
-                                    item_ix: Some(item_ix),
-                                },
-                                cx,
-                            )
-                            .map(|task| task.detach());
-                        })
-                        .constrained()
-                        .with_min_width(style.autocomplete.completion_min_width)
-                        .with_max_width(style.autocomplete.completion_max_width)
-                        .into_any(),
-                    );
-                }
-            }
-        })
-        .with_width_from_item(widest_completion_ix);
+//                                             if Some(item_ix) == widest_completion_ix {
+//                                                 Some(
+//                                                     label
+//                                                         .contained()
+//                                                         .with_style(
+//                                                             style
+//                                                                 .autocomplete
+//                                                                 .inline_docs_container,
+//                                                         )
+//                                                         .into_any(),
+//                                                 )
+//                                             } else {
+//                                                 Some(label.flex_float().into_any())
+//                                             }
+//                                         })())
+//                                         .into_any()
+//                                 } else {
+//                                     completion_label.into_any()
+//                                 }
+//                                 .contained()
+//                                 .with_style(item_style)
+//                                 .constrained()
+//                                 .dynamically(
+//                                     move |constraint, _, _| {
+//                                         if Some(item_ix) == widest_completion_ix {
+//                                             constraint
+//                                         } else {
+//                                             gpui::SizeConstraint {
+//                                                 min: constraint.min,
+//                                                 max: constraint.min,
+//                                             }
+//                                         }
+//                                     },
+//                                 )
+//                             },
+//                         )
+//                         .with_cursor_style(CursorStyle::PointingHand)
+//                         .on_down(MouseButton::Left, move |_, this, cx| {
+//                             this.confirm_completion(
+//                                 &ConfirmCompletion {
+//                                     item_ix: Some(item_ix),
+//                                 },
+//                                 cx,
+//                             )
+//                             .map(|task| task.detach());
+//                         })
+//                         .constrained()
+//                         .with_min_width(style.autocomplete.completion_min_width)
+//                         .with_max_width(style.autocomplete.completion_max_width)
+//                         .into_any(),
+//                     );
+//                 }
+//             }
+//         })
+//         .with_width_from_item(widest_completion_ix);
 
-        enum MultiLineDocumentation {}
+//         enum MultiLineDocumentation {}
 
-        Flex::row()
-            .with_child(list.flex(1., false))
-            .with_children({
-                let mat = &self.matches[selected_item];
-                let completions = self.completions.read();
-                let completion = &completions[mat.candidate_id];
-                let documentation = &completion.documentation;
+//         Flex::row()
+//             .with_child(list.flex(1., false))
+//             .with_children({
+//                 let mat = &self.matches[selected_item];
+//                 let completions = self.completions.read();
+//                 let completion = &completions[mat.candidate_id];
+//                 let documentation = &completion.documentation;
 
-                match documentation {
-                    Some(Documentation::MultiLinePlainText(text)) => Some(
-                        Flex::column()
-                            .scrollable::<MultiLineDocumentation>(0, None, cx)
-                            .with_child(
-                                Text::new(text.clone(), style.text.clone()).with_soft_wrap(true),
-                            )
-                            .contained()
-                            .with_style(style.autocomplete.alongside_docs_container)
-                            .constrained()
-                            .with_max_width(style.autocomplete.alongside_docs_max_width)
-                            .flex(1., false),
-                    ),
+//                 match documentation {
+//                     Some(Documentation::MultiLinePlainText(text)) => Some(
+//                         Flex::column()
+//                             .scrollable::<MultiLineDocumentation>(0, None, cx)
+//                             .with_child(
+//                                 Text::new(text.clone(), style.text.clone()).with_soft_wrap(true),
+//                             )
+//                             .contained()
+//                             .with_style(style.autocomplete.alongside_docs_container)
+//                             .constrained()
+//                             .with_max_width(style.autocomplete.alongside_docs_max_width)
+//                             .flex(1., false),
+//                     ),
 
-                    Some(Documentation::MultiLineMarkdown(parsed)) => Some(
-                        Flex::column()
-                            .scrollable::<MultiLineDocumentation>(0, None, cx)
-                            .with_child(render_parsed_markdown::<MultiLineDocumentation>(
-                                parsed, &style, workspace, cx,
-                            ))
-                            .contained()
-                            .with_style(style.autocomplete.alongside_docs_container)
-                            .constrained()
-                            .with_max_width(style.autocomplete.alongside_docs_max_width)
-                            .flex(1., false),
-                    ),
+//                     Some(Documentation::MultiLineMarkdown(parsed)) => Some(
+//                         Flex::column()
+//                             .scrollable::<MultiLineDocumentation>(0, None, cx)
+//                             .with_child(render_parsed_markdown::<MultiLineDocumentation>(
+//                                 parsed, &style, workspace, cx,
+//                             ))
+//                             .contained()
+//                             .with_style(style.autocomplete.alongside_docs_container)
+//                             .constrained()
+//                             .with_max_width(style.autocomplete.alongside_docs_max_width)
+//                             .flex(1., false),
+//                     ),
 
-                    _ => None,
-                }
-            })
-            .contained()
-            .with_style(style.autocomplete.container)
-            .into_any()
-    }
+//                     _ => None,
+//                 }
+//             })
+//             .contained()
+//             .with_style(style.autocomplete.container)
+//             .into_any()
+//     }
 
-    pub async fn filter(&mut self, query: Option<&str>, executor: Arc<executor::Background>) {
-        let mut matches = if let Some(query) = query {
-            fuzzy::match_strings(
-                &self.match_candidates,
-                query,
-                query.chars().any(|c| c.is_uppercase()),
-                100,
-                &Default::default(),
-                executor,
-            )
-            .await
-        } else {
-            self.match_candidates
-                .iter()
-                .enumerate()
-                .map(|(candidate_id, candidate)| StringMatch {
-                    candidate_id,
-                    score: Default::default(),
-                    positions: Default::default(),
-                    string: candidate.string.clone(),
-                })
-                .collect()
-        };
+//     pub async fn filter(&mut self, query: Option<&str>, executor: Arc<executor::Background>) {
+//         let mut matches = if let Some(query) = query {
+//             fuzzy::match_strings(
+//                 &self.match_candidates,
+//                 query,
+//                 query.chars().any(|c| c.is_uppercase()),
+//                 100,
+//                 &Default::default(),
+//                 executor,
+//             )
+//             .await
+//         } else {
+//             self.match_candidates
+//                 .iter()
+//                 .enumerate()
+//                 .map(|(candidate_id, candidate)| StringMatch {
+//                     candidate_id,
+//                     score: Default::default(),
+//                     positions: Default::default(),
+//                     string: candidate.string.clone(),
+//                 })
+//                 .collect()
+//         };
 
-        // Remove all candidates where the query's start does not match the start of any word in the candidate
-        if let Some(query) = query {
-            if let Some(query_start) = query.chars().next() {
-                matches.retain(|string_match| {
-                    split_words(&string_match.string).any(|word| {
-                        // Check that the first codepoint of the word as lowercase matches the first
-                        // codepoint of the query as lowercase
-                        word.chars()
-                            .flat_map(|codepoint| codepoint.to_lowercase())
-                            .zip(query_start.to_lowercase())
-                            .all(|(word_cp, query_cp)| word_cp == query_cp)
-                    })
-                });
-            }
-        }
+//         // Remove all candidates where the query's start does not match the start of any word in the candidate
+//         if let Some(query) = query {
+//             if let Some(query_start) = query.chars().next() {
+//                 matches.retain(|string_match| {
+//                     split_words(&string_match.string).any(|word| {
+//                         // Check that the first codepoint of the word as lowercase matches the first
+//                         // codepoint of the query as lowercase
+//                         word.chars()
+//                             .flat_map(|codepoint| codepoint.to_lowercase())
+//                             .zip(query_start.to_lowercase())
+//                             .all(|(word_cp, query_cp)| word_cp == query_cp)
+//                     })
+//                 });
+//             }
+//         }
 
-        let completions = self.completions.read();
-        matches.sort_unstable_by_key(|mat| {
-            let completion = &completions[mat.candidate_id];
-            (
-                completion.lsp_completion.sort_text.as_ref(),
-                Reverse(OrderedFloat(mat.score)),
-                completion.sort_key(),
-            )
-        });
-        drop(completions);
+//         let completions = self.completions.read();
+//         matches.sort_unstable_by_key(|mat| {
+//             let completion = &completions[mat.candidate_id];
+//             (
+//                 completion.lsp_completion.sort_text.as_ref(),
+//                 Reverse(OrderedFloat(mat.score)),
+//                 completion.sort_key(),
+//             )
+//         });
+//         drop(completions);
 
-        for mat in &mut matches {
-            let completions = self.completions.read();
-            let filter_start = completions[mat.candidate_id].label.filter_range.start;
-            for position in &mut mat.positions {
-                *position += filter_start;
-            }
-        }
+//         for mat in &mut matches {
+//             let completions = self.completions.read();
+//             let filter_start = completions[mat.candidate_id].label.filter_range.start;
+//             for position in &mut mat.positions {
+//                 *position += filter_start;
+//             }
+//         }
 
-        self.matches = matches.into();
-        self.selected_item = 0;
-    }
-}
+//         self.matches = matches.into();
+//         self.selected_item = 0;
+//     }
+// }
 
 #[derive(Clone)]
 struct CodeActionsMenu {
     actions: Arc<[CodeAction]>,
     buffer: Model<Buffer>,
     selected_item: usize,
-    list: UniformListState,
+    // list: UniformListState,
     deployed_from_indicator: bool,
 }
 
-impl CodeActionsMenu {
-    fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
-        self.selected_item = 0;
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        cx.notify()
-    }
+// impl CodeActionsMenu {
+//     fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
+//         self.selected_item = 0;
+//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+//         cx.notify()
+//     }
 
-    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
-        if self.selected_item > 0 {
-            self.selected_item -= 1;
-        } else {
-            self.selected_item = self.actions.len() - 1;
-        }
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        cx.notify();
-    }
+//     fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
+//         if self.selected_item > 0 {
+//             self.selected_item -= 1;
+//         } else {
+//             self.selected_item = self.actions.len() - 1;
+//         }
+//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+//         cx.notify();
+//     }
 
-    fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
-        if self.selected_item + 1 < self.actions.len() {
-            self.selected_item += 1;
-        } else {
-            self.selected_item = 0;
-        }
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        cx.notify();
-    }
+//     fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
+//         if self.selected_item + 1 < self.actions.len() {
+//             self.selected_item += 1;
+//         } else {
+//             self.selected_item = 0;
+//         }
+//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+//         cx.notify();
+//     }
 
-    fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
-        self.selected_item = self.actions.len() - 1;
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        cx.notify()
-    }
+//     fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
+//         self.selected_item = self.actions.len() - 1;
+//         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+//         cx.notify()
+//     }
 
-    fn visible(&self) -> bool {
-        !self.actions.is_empty()
-    }
+//     fn visible(&self) -> bool {
+//         !self.actions.is_empty()
+//     }
 
-    fn render(
-        &self,
-        mut cursor_position: DisplayPoint,
-        style: EditorStyle,
-        cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, AnyElement<Editor>) {
-        enum ActionTag {}
+//     fn render(
+//         &self,
+//         mut cursor_position: DisplayPoint,
+//         style: EditorStyle,
+//         cx: &mut ViewContext<Editor>,
+//     ) -> (DisplayPoint, AnyElement<Editor>) {
+//         enum ActionTag {}
 
-        let container_style = style.autocomplete.container;
-        let actions = self.actions.clone();
-        let selected_item = self.selected_item;
-        let element = UniformList::new(
-            self.list.clone(),
-            actions.len(),
-            cx,
-            move |_, range, items, cx| {
-                let start_ix = range.start;
-                for (ix, action) in actions[range].iter().enumerate() {
-                    let item_ix = start_ix + ix;
-                    items.push(
-                        MouseEventHandler::new::<ActionTag, _>(item_ix, cx, |state, _| {
-                            let item_style = if item_ix == selected_item {
-                                style.autocomplete.selected_item
-                            } else if state.hovered() {
-                                style.autocomplete.hovered_item
-                            } else {
-                                style.autocomplete.item
-                            };
+//         let container_style = style.autocomplete.container;
+//         let actions = self.actions.clone();
+//         let selected_item = self.selected_item;
+//         let element = UniformList::new(
+//             self.list.clone(),
+//             actions.len(),
+//             cx,
+//             move |_, range, items, cx| {
+//                 let start_ix = range.start;
+//                 for (ix, action) in actions[range].iter().enumerate() {
+//                     let item_ix = start_ix + ix;
+//                     items.push(
+//                         MouseEventHandler::new::<ActionTag, _>(item_ix, cx, |state, _| {
+//                             let item_style = if item_ix == selected_item {
+//                                 style.autocomplete.selected_item
+//                             } else if state.hovered() {
+//                                 style.autocomplete.hovered_item
+//                             } else {
+//                                 style.autocomplete.item
+//                             };
 
-                            Text::new(action.lsp_action.title.clone(), style.text.clone())
-                                .with_soft_wrap(false)
-                                .contained()
-                                .with_style(item_style)
-                        })
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .on_down(MouseButton::Left, move |_, this, cx| {
-                            let workspace = this
-                                .workspace
-                                .as_ref()
-                                .and_then(|(workspace, _)| workspace.upgrade(cx));
-                            cx.window_context().defer(move |cx| {
-                                if let Some(workspace) = workspace {
-                                    workspace.update(cx, |workspace, cx| {
-                                        if let Some(task) = Editor::confirm_code_action(
-                                            workspace,
-                                            &ConfirmCodeAction {
-                                                item_ix: Some(item_ix),
-                                            },
-                                            cx,
-                                        ) {
-                                            task.detach_and_log_err(cx);
-                                        }
-                                    });
-                                }
-                            });
-                        })
-                        .into_any(),
-                    );
-                }
-            },
-        )
-        .with_width_from_item(
-            self.actions
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
-                .map(|(ix, _)| ix),
-        )
-        .contained()
-        .with_style(container_style)
-        .into_any();
+//                             Text::new(action.lsp_action.title.clone(), style.text.clone())
+//                                 .with_soft_wrap(false)
+//                                 .contained()
+//                                 .with_style(item_style)
+//                         })
+//                         .with_cursor_style(CursorStyle::PointingHand)
+//                         .on_down(MouseButton::Left, move |_, this, cx| {
+//                             let workspace = this
+//                                 .workspace
+//                                 .as_ref()
+//                                 .and_then(|(workspace, _)| workspace.upgrade(cx));
+//                             cx.window_context().defer(move |cx| {
+//                                 if let Some(workspace) = workspace {
+//                                     workspace.update(cx, |workspace, cx| {
+//                                         if let Some(task) = Editor::confirm_code_action(
+//                                             workspace,
+//                                             &ConfirmCodeAction {
+//                                                 item_ix: Some(item_ix),
+//                                             },
+//                                             cx,
+//                                         ) {
+//                                             task.detach_and_log_err(cx);
+//                                         }
+//                                     });
+//                                 }
+//                             });
+//                         })
+//                         .into_any(),
+//                     );
+//                 }
+//             },
+//         )
+//         .with_width_from_item(
+//             self.actions
+//                 .iter()
+//                 .enumerate()
+//                 .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
+//                 .map(|(ix, _)| ix),
+//         )
+//         .contained()
+//         .with_style(container_style)
+//         .into_any();
 
-        if self.deployed_from_indicator {
-            *cursor_position.column_mut() = 0;
-        }
+//         if self.deployed_from_indicator {
+//             *cursor_position.column_mut() = 0;
+//         }
 
-        (cursor_position, element)
-    }
-}
+//         (cursor_position, element)
+//     }
+// }
 
 pub struct CopilotState {
     excerpt_id: Option<ExcerptId>,
@@ -2040,9 +2027,9 @@ impl InlayHintRefreshReason {
 //         self.leader_peer_id
 //     }
 
-//     pub fn buffer(&self) -> &Model<MultiBuffer> {
-//         &self.buffer
-//     }
+pub fn buffer(&self) -> &Model<MultiBuffer> {
+    &self.buffer
+}
 
 //     fn workspace(&self, cx: &AppContext) -> Option<ViewHandle<Workspace>> {
 //         self.workspace.as_ref()?.0.upgrade(cx)
@@ -9224,7 +9211,7 @@ impl EditorSnapshot {
         self.placeholder_text.as_ref()
     }
 
-    pub fn scroll_position(&self) -> Point<Pixels> {
+    pub fn scroll_position(&self) -> gpui::Point<Pixels> {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
     }
 }
@@ -9277,425 +9264,438 @@ pub struct EditorFocused(pub View<Editor>);
 pub struct EditorBlurred(pub View<Editor>);
 pub struct EditorReleased(pub WeakView<Editor>);
 
-impl Entity for Editor {
+// impl Entity for Editor {
+//     type Event = Event;
+
+//     fn release(&mut self, cx: &mut AppContext) {
+//         cx.emit_global(EditorReleased(self.handle.clone()));
+//     }
+// }
+//
+impl EventEmitter for Editor {
     type Event = Event;
+}
 
-    fn release(&mut self, cx: &mut AppContext) {
-        cx.emit_global(EditorReleased(self.handle.clone()));
+impl Render for Editor {
+    type Element = EditorElement;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        todo!()
     }
 }
 
-impl View for Editor {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let style = self.style(cx);
-        let font_changed = self.display_map.update(cx, |map, cx| {
-            map.set_fold_ellipses_color(style.folds.ellipses.text_color);
-            map.set_font(style.text.font_id, style.text.font_size, cx)
-        });
+// impl View for Editor {
+//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+//         let style = self.style(cx);
+//         let font_changed = self.display_map.update(cx, |map, cx| {
+//             map.set_fold_ellipses_color(style.folds.ellipses.text_color);
+//             map.set_font(style.text.font_id, style.text.font_size, cx)
+//         });
 
-        if font_changed {
-            cx.defer(move |editor, cx: &mut ViewContext<Editor>| {
-                hide_hover(editor, cx);
-                hide_link_definition(editor, cx);
-            });
-        }
+//         if font_changed {
+//             cx.defer(move |editor, cx: &mut ViewContext<Editor>| {
+//                 hide_hover(editor, cx);
+//                 hide_link_definition(editor, cx);
+//             });
+//         }
 
-        Stack::new()
-            .with_child(EditorElement::new(style.clone()))
-            .with_child(ChildView::new(&self.mouse_context_menu, cx))
-            .into_any()
-    }
+//         Stack::new()
+//             .with_child(EditorElement::new(style.clone()))
+//             .with_child(ChildView::new(&self.mouse_context_menu, cx))
+//             .into_any()
+//     }
 
-    fn ui_name() -> &'static str {
-        "Editor"
-    }
+//     fn ui_name() -> &'static str {
+//         "Editor"
+//     }
 
-    fn focus_in(&mut self, focused: AnyView, cx: &mut ViewContext<Self>) {
-        if cx.is_self_focused() {
-            let focused_event = EditorFocused(cx.handle());
-            cx.emit(Event::Focused);
-            cx.emit_global(focused_event);
-        }
-        if let Some(rename) = self.pending_rename.as_ref() {
-            cx.focus(&rename.editor);
-        } else if cx.is_self_focused() || !focused.is::<Editor>() {
-            if !self.focused {
-                self.blink_manager.update(cx, BlinkManager::enable);
-            }
-            self.focused = true;
-            self.buffer.update(cx, |buffer, cx| {
-                buffer.finalize_last_transaction(cx);
-                if self.leader_peer_id.is_none() {
-                    buffer.set_active_selections(
-                        &self.selections.disjoint_anchors(),
-                        self.selections.line_mode,
-                        self.cursor_shape,
-                        cx,
-                    );
-                }
-            });
-        }
-    }
+//     fn focus_in(&mut self, focused: AnyView, cx: &mut ViewContext<Self>) {
+//         if cx.is_self_focused() {
+//             let focused_event = EditorFocused(cx.handle());
+//             cx.emit(Event::Focused);
+//             cx.emit_global(focused_event);
+//         }
+//         if let Some(rename) = self.pending_rename.as_ref() {
+//             cx.focus(&rename.editor);
+//         } else if cx.is_self_focused() || !focused.is::<Editor>() {
+//             if !self.focused {
+//                 self.blink_manager.update(cx, BlinkManager::enable);
+//             }
+//             self.focused = true;
+//             self.buffer.update(cx, |buffer, cx| {
+//                 buffer.finalize_last_transaction(cx);
+//                 if self.leader_peer_id.is_none() {
+//                     buffer.set_active_selections(
+//                         &self.selections.disjoint_anchors(),
+//                         self.selections.line_mode,
+//                         self.cursor_shape,
+//                         cx,
+//                     );
+//                 }
+//             });
+//         }
+//     }
 
-    fn focus_out(&mut self, _: AnyView, cx: &mut ViewContext<Self>) {
-        let blurred_event = EditorBlurred(cx.handle());
-        cx.emit_global(blurred_event);
-        self.focused = false;
-        self.blink_manager.update(cx, BlinkManager::disable);
-        self.buffer
-            .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
-        self.hide_context_menu(cx);
-        hide_hover(self, cx);
-        cx.emit(Event::Blurred);
-        cx.notify();
-    }
+//     fn focus_out(&mut self, _: AnyView, cx: &mut ViewContext<Self>) {
+//         let blurred_event = EditorBlurred(cx.handle());
+//         cx.emit_global(blurred_event);
+//         self.focused = false;
+//         self.blink_manager.update(cx, BlinkManager::disable);
+//         self.buffer
+//             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
+//         self.hide_context_menu(cx);
+//         hide_hover(self, cx);
+//         cx.emit(Event::Blurred);
+//         cx.notify();
+//     }
 
-    fn modifiers_changed(
-        &mut self,
-        event: &gpui::platform::ModifiersChangedEvent,
-        cx: &mut ViewContext<Self>,
-    ) -> bool {
-        let pending_selection = self.has_pending_selection();
+//     fn modifiers_changed(
+//         &mut self,
+//         event: &gpui::platform::ModifiersChangedEvent,
+//         cx: &mut ViewContext<Self>,
+//     ) -> bool {
+//         let pending_selection = self.has_pending_selection();
 
-        if let Some(point) = &self.link_go_to_definition_state.last_trigger_point {
-            if event.cmd && !pending_selection {
-                let point = point.clone();
-                let snapshot = self.snapshot(cx);
-                let kind = point.definition_kind(event.shift);
+//         if let Some(point) = &self.link_go_to_definition_state.last_trigger_point {
+//             if event.cmd && !pending_selection {
+//                 let point = point.clone();
+//                 let snapshot = self.snapshot(cx);
+//                 let kind = point.definition_kind(event.shift);
 
-                show_link_definition(kind, self, point, snapshot, cx);
-                return false;
-            }
-        }
+//                 show_link_definition(kind, self, point, snapshot, cx);
+//                 return false;
+//             }
+//         }
 
-        {
-            if self.link_go_to_definition_state.symbol_range.is_some()
-                || !self.link_go_to_definition_state.definitions.is_empty()
-            {
-                self.link_go_to_definition_state.symbol_range.take();
-                self.link_go_to_definition_state.definitions.clear();
-                cx.notify();
-            }
+//         {
+//             if self.link_go_to_definition_state.symbol_range.is_some()
+//                 || !self.link_go_to_definition_state.definitions.is_empty()
+//             {
+//                 self.link_go_to_definition_state.symbol_range.take();
+//                 self.link_go_to_definition_state.definitions.clear();
+//                 cx.notify();
+//             }
 
-            self.link_go_to_definition_state.task = None;
+//             self.link_go_to_definition_state.task = None;
 
-            self.clear_highlights::<LinkGoToDefinitionState>(cx);
-        }
+//             self.clear_highlights::<LinkGoToDefinitionState>(cx);
+//         }
 
-        false
-    }
+//         false
+//     }
 
-    fn update_keymap_context(&self, keymap: &mut KeymapContext, cx: &AppContext) {
-        Self::reset_to_default_keymap_context(keymap);
-        let mode = match self.mode {
-            EditorMode::SingleLine => "single_line",
-            EditorMode::AutoHeight { .. } => "auto_height",
-            EditorMode::Full => "full",
-        };
-        keymap.add_key("mode", mode);
-        if self.pending_rename.is_some() {
-            keymap.add_identifier("renaming");
-        }
-        if self.context_menu_visible() {
-            match self.context_menu.read().as_ref() {
-                Some(ContextMenu::Completions(_)) => {
-                    keymap.add_identifier("menu");
-                    keymap.add_identifier("showing_completions")
-                }
-                Some(ContextMenu::CodeActions(_)) => {
-                    keymap.add_identifier("menu");
-                    keymap.add_identifier("showing_code_actions")
-                }
-                None => {}
-            }
-        }
+//     fn update_keymap_context(&self, keymap: &mut KeymapContext, cx: &AppContext) {
+//         Self::reset_to_default_keymap_context(keymap);
+//         let mode = match self.mode {
+//             EditorMode::SingleLine => "single_line",
+//             EditorMode::AutoHeight { .. } => "auto_height",
+//             EditorMode::Full => "full",
+//         };
+//         keymap.add_key("mode", mode);
+//         if self.pending_rename.is_some() {
+//             keymap.add_identifier("renaming");
+//         }
+//         if self.context_menu_visible() {
+//             match self.context_menu.read().as_ref() {
+//                 Some(ContextMenu::Completions(_)) => {
+//                     keymap.add_identifier("menu");
+//                     keymap.add_identifier("showing_completions")
+//                 }
+//                 Some(ContextMenu::CodeActions(_)) => {
+//                     keymap.add_identifier("menu");
+//                     keymap.add_identifier("showing_code_actions")
+//                 }
+//                 None => {}
+//             }
+//         }
 
-        for layer in self.keymap_context_layers.values() {
-            keymap.extend(layer);
-        }
+//         for layer in self.keymap_context_layers.values() {
+//             keymap.extend(layer);
+//         }
 
-        if let Some(extension) = self
-            .buffer
-            .read(cx)
-            .as_singleton()
-            .and_then(|buffer| buffer.read(cx).file()?.path().extension()?.to_str())
-        {
-            keymap.add_key("extension", extension.to_string());
-        }
-    }
+//         if let Some(extension) = self
+//             .buffer
+//             .read(cx)
+//             .as_singleton()
+//             .and_then(|buffer| buffer.read(cx).file()?.path().extension()?.to_str())
+//         {
+//             keymap.add_key("extension", extension.to_string());
+//         }
+//     }
 
-    fn text_for_range(&self, range_utf16: Range<usize>, cx: &AppContext) -> Option<String> {
-        Some(
-            self.buffer
-                .read(cx)
-                .read(cx)
-                .text_for_range(OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end))
-                .collect(),
-        )
-    }
+//     fn text_for_range(&self, range_utf16: Range<usize>, cx: &AppContext) -> Option<String> {
+//         Some(
+//             self.buffer
+//                 .read(cx)
+//                 .read(cx)
+//                 .text_for_range(OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end))
+//                 .collect(),
+//         )
+//     }
 
-    fn selected_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
-        // Prevent the IME menu from appearing when holding down an alphabetic key
-        // while input is disabled.
-        if !self.input_enabled {
-            return None;
-        }
+//     fn selected_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
+//         // Prevent the IME menu from appearing when holding down an alphabetic key
+//         // while input is disabled.
+//         if !self.input_enabled {
+//             return None;
+//         }
 
-        let range = self.selections.newest::<OffsetUtf16>(cx).range();
-        Some(range.start.0..range.end.0)
-    }
+//         let range = self.selections.newest::<OffsetUtf16>(cx).range();
+//         Some(range.start.0..range.end.0)
+//     }
 
-    fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
-        let snapshot = self.buffer.read(cx).read(cx);
-        let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
-        Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
-    }
+//     fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
+//         let snapshot = self.buffer.read(cx).read(cx);
+//         let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
+//         Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
+//     }
 
-    fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
-        self.clear_highlights::<InputComposition>(cx);
-        self.ime_transaction.take();
-    }
+//     fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
+//         self.clear_highlights::<InputComposition>(cx);
+//         self.ime_transaction.take();
+//     }
 
-    fn replace_text_in_range(
-        &mut self,
-        range_utf16: Option<Range<usize>>,
-        text: &str,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if !self.input_enabled {
-            cx.emit(Event::InputIgnored { text: text.into() });
-            return;
-        }
+//     fn replace_text_in_range(
+//         &mut self,
+//         range_utf16: Option<Range<usize>>,
+//         text: &str,
+//         cx: &mut ViewContext<Self>,
+//     ) {
+//         if !self.input_enabled {
+//             cx.emit(Event::InputIgnored { text: text.into() });
+//             return;
+//         }
 
-        self.transact(cx, |this, cx| {
-            let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
-                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
-                Some(this.selection_replacement_ranges(range_utf16, cx))
-            } else {
-                this.marked_text_ranges(cx)
-            };
+//         self.transact(cx, |this, cx| {
+//             let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
+//                 let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+//                 Some(this.selection_replacement_ranges(range_utf16, cx))
+//             } else {
+//                 this.marked_text_ranges(cx)
+//             };
 
-            let range_to_replace = new_selected_ranges.as_ref().and_then(|ranges_to_replace| {
-                let newest_selection_id = this.selections.newest_anchor().id;
-                this.selections
-                    .all::<OffsetUtf16>(cx)
-                    .iter()
-                    .zip(ranges_to_replace.iter())
-                    .find_map(|(selection, range)| {
-                        if selection.id == newest_selection_id {
-                            Some(
-                                (range.start.0 as isize - selection.head().0 as isize)
-                                    ..(range.end.0 as isize - selection.head().0 as isize),
-                            )
-                        } else {
-                            None
-                        }
-                    })
-            });
+//             let range_to_replace = new_selected_ranges.as_ref().and_then(|ranges_to_replace| {
+//                 let newest_selection_id = this.selections.newest_anchor().id;
+//                 this.selections
+//                     .all::<OffsetUtf16>(cx)
+//                     .iter()
+//                     .zip(ranges_to_replace.iter())
+//                     .find_map(|(selection, range)| {
+//                         if selection.id == newest_selection_id {
+//                             Some(
+//                                 (range.start.0 as isize - selection.head().0 as isize)
+//                                     ..(range.end.0 as isize - selection.head().0 as isize),
+//                             )
+//                         } else {
+//                             None
+//                         }
+//                     })
+//             });
 
-            cx.emit(Event::InputHandled {
-                utf16_range_to_replace: range_to_replace,
-                text: text.into(),
-            });
+//             cx.emit(Event::InputHandled {
+//                 utf16_range_to_replace: range_to_replace,
+//                 text: text.into(),
+//             });
 
-            if let Some(new_selected_ranges) = new_selected_ranges {
-                this.change_selections(None, cx, |selections| {
-                    selections.select_ranges(new_selected_ranges)
-                });
-            }
+//             if let Some(new_selected_ranges) = new_selected_ranges {
+//                 this.change_selections(None, cx, |selections| {
+//                     selections.select_ranges(new_selected_ranges)
+//                 });
+//             }
 
-            this.handle_input(text, cx);
-        });
+//             this.handle_input(text, cx);
+//         });
 
-        if let Some(transaction) = self.ime_transaction {
-            self.buffer.update(cx, |buffer, cx| {
-                buffer.group_until_transaction(transaction, cx);
-            });
-        }
+//         if let Some(transaction) = self.ime_transaction {
+//             self.buffer.update(cx, |buffer, cx| {
+//                 buffer.group_until_transaction(transaction, cx);
+//             });
+//         }
 
-        self.unmark_text(cx);
-    }
+//         self.unmark_text(cx);
+//     }
 
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        range_utf16: Option<Range<usize>>,
-        text: &str,
-        new_selected_range_utf16: Option<Range<usize>>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if !self.input_enabled {
-            cx.emit(Event::InputIgnored { text: text.into() });
-            return;
-        }
+//     fn replace_and_mark_text_in_range(
+//         &mut self,
+//         range_utf16: Option<Range<usize>>,
+//         text: &str,
+//         new_selected_range_utf16: Option<Range<usize>>,
+//         cx: &mut ViewContext<Self>,
+//     ) {
+//         if !self.input_enabled {
+//             cx.emit(Event::InputIgnored { text: text.into() });
+//             return;
+//         }
 
-        let transaction = self.transact(cx, |this, cx| {
-            let ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx) {
-                let snapshot = this.buffer.read(cx).read(cx);
-                if let Some(relative_range_utf16) = range_utf16.as_ref() {
-                    for marked_range in &mut marked_ranges {
-                        marked_range.end.0 = marked_range.start.0 + relative_range_utf16.end;
-                        marked_range.start.0 += relative_range_utf16.start;
-                        marked_range.start =
-                            snapshot.clip_offset_utf16(marked_range.start, Bias::Left);
-                        marked_range.end =
-                            snapshot.clip_offset_utf16(marked_range.end, Bias::Right);
-                    }
-                }
-                Some(marked_ranges)
-            } else if let Some(range_utf16) = range_utf16 {
-                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
-                Some(this.selection_replacement_ranges(range_utf16, cx))
-            } else {
-                None
-            };
+//         let transaction = self.transact(cx, |this, cx| {
+//             let ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx) {
+//                 let snapshot = this.buffer.read(cx).read(cx);
+//                 if let Some(relative_range_utf16) = range_utf16.as_ref() {
+//                     for marked_range in &mut marked_ranges {
+//                         marked_range.end.0 = marked_range.start.0 + relative_range_utf16.end;
+//                         marked_range.start.0 += relative_range_utf16.start;
+//                         marked_range.start =
+//                             snapshot.clip_offset_utf16(marked_range.start, Bias::Left);
+//                         marked_range.end =
+//                             snapshot.clip_offset_utf16(marked_range.end, Bias::Right);
+//                     }
+//                 }
+//                 Some(marked_ranges)
+//             } else if let Some(range_utf16) = range_utf16 {
+//                 let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+//                 Some(this.selection_replacement_ranges(range_utf16, cx))
+//             } else {
+//                 None
+//             };
 
-            let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
-                let newest_selection_id = this.selections.newest_anchor().id;
-                this.selections
-                    .all::<OffsetUtf16>(cx)
-                    .iter()
-                    .zip(ranges_to_replace.iter())
-                    .find_map(|(selection, range)| {
-                        if selection.id == newest_selection_id {
-                            Some(
-                                (range.start.0 as isize - selection.head().0 as isize)
-                                    ..(range.end.0 as isize - selection.head().0 as isize),
-                            )
-                        } else {
-                            None
-                        }
-                    })
-            });
+//             let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
+//                 let newest_selection_id = this.selections.newest_anchor().id;
+//                 this.selections
+//                     .all::<OffsetUtf16>(cx)
+//                     .iter()
+//                     .zip(ranges_to_replace.iter())
+//                     .find_map(|(selection, range)| {
+//                         if selection.id == newest_selection_id {
+//                             Some(
+//                                 (range.start.0 as isize - selection.head().0 as isize)
+//                                     ..(range.end.0 as isize - selection.head().0 as isize),
+//                             )
+//                         } else {
+//                             None
+//                         }
+//                     })
+//             });
 
-            cx.emit(Event::InputHandled {
-                utf16_range_to_replace: range_to_replace,
-                text: text.into(),
-            });
+//             cx.emit(Event::InputHandled {
+//                 utf16_range_to_replace: range_to_replace,
+//                 text: text.into(),
+//             });
 
-            if let Some(ranges) = ranges_to_replace {
-                this.change_selections(None, cx, |s| s.select_ranges(ranges));
-            }
+//             if let Some(ranges) = ranges_to_replace {
+//                 this.change_selections(None, cx, |s| s.select_ranges(ranges));
+//             }
 
-            let marked_ranges = {
-                let snapshot = this.buffer.read(cx).read(cx);
-                this.selections
-                    .disjoint_anchors()
-                    .iter()
-                    .map(|selection| {
-                        selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
-                    })
-                    .collect::<Vec<_>>()
-            };
+//             let marked_ranges = {
+//                 let snapshot = this.buffer.read(cx).read(cx);
+//                 this.selections
+//                     .disjoint_anchors()
+//                     .iter()
+//                     .map(|selection| {
+//                         selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
+//                     })
+//                     .collect::<Vec<_>>()
+//             };
 
-            if text.is_empty() {
-                this.unmark_text(cx);
-            } else {
-                this.highlight_text::<InputComposition>(
-                    marked_ranges.clone(),
-                    this.style(cx).composition_mark,
-                    cx,
-                );
-            }
+//             if text.is_empty() {
+//                 this.unmark_text(cx);
+//             } else {
+//                 this.highlight_text::<InputComposition>(
+//                     marked_ranges.clone(),
+//                     this.style(cx).composition_mark,
+//                     cx,
+//                 );
+//             }
 
-            this.handle_input(text, cx);
+//             this.handle_input(text, cx);
 
-            if let Some(new_selected_range) = new_selected_range_utf16 {
-                let snapshot = this.buffer.read(cx).read(cx);
-                let new_selected_ranges = marked_ranges
-                    .into_iter()
-                    .map(|marked_range| {
-                        let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
-                        let new_start = OffsetUtf16(new_selected_range.start + insertion_start);
-                        let new_end = OffsetUtf16(new_selected_range.end + insertion_start);
-                        snapshot.clip_offset_utf16(new_start, Bias::Left)
-                            ..snapshot.clip_offset_utf16(new_end, Bias::Right)
-                    })
-                    .collect::<Vec<_>>();
+//             if let Some(new_selected_range) = new_selected_range_utf16 {
+//                 let snapshot = this.buffer.read(cx).read(cx);
+//                 let new_selected_ranges = marked_ranges
+//                     .into_iter()
+//                     .map(|marked_range| {
+//                         let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
+//                         let new_start = OffsetUtf16(new_selected_range.start + insertion_start);
+//                         let new_end = OffsetUtf16(new_selected_range.end + insertion_start);
+//                         snapshot.clip_offset_utf16(new_start, Bias::Left)
+//                             ..snapshot.clip_offset_utf16(new_end, Bias::Right)
+//                     })
+//                     .collect::<Vec<_>>();
 
-                drop(snapshot);
-                this.change_selections(None, cx, |selections| {
-                    selections.select_ranges(new_selected_ranges)
-                });
-            }
-        });
+//                 drop(snapshot);
+//                 this.change_selections(None, cx, |selections| {
+//                     selections.select_ranges(new_selected_ranges)
+//                 });
+//             }
+//         });
 
-        self.ime_transaction = self.ime_transaction.or(transaction);
-        if let Some(transaction) = self.ime_transaction {
-            self.buffer.update(cx, |buffer, cx| {
-                buffer.group_until_transaction(transaction, cx);
-            });
-        }
+//         self.ime_transaction = self.ime_transaction.or(transaction);
+//         if let Some(transaction) = self.ime_transaction {
+//             self.buffer.update(cx, |buffer, cx| {
+//                 buffer.group_until_transaction(transaction, cx);
+//             });
+//         }
 
-        if self.text_highlights::<InputComposition>(cx).is_none() {
-            self.ime_transaction.take();
-        }
-    }
-}
+//         if self.text_highlights::<InputComposition>(cx).is_none() {
+//             self.ime_transaction.take();
+//         }
+//     }
+// }
 
-fn build_style(
-    settings: &ThemeSettings,
-    get_field_editor_theme: Option<&GetFieldEditorTheme>,
-    override_text_style: Option<&OverrideTextStyle>,
-    cx: &mut AppContext,
-) -> EditorStyle {
-    let font_cache = cx.font_cache();
-    let line_height_scalar = settings.line_height();
-    let theme_id = settings.theme.meta.id;
-    let mut theme = settings.theme.editor.clone();
-    let mut style = if let Some(get_field_editor_theme) = get_field_editor_theme {
-        let field_editor_theme = get_field_editor_theme(&settings.theme);
-        theme.text_color = field_editor_theme.text.color;
-        theme.selection = field_editor_theme.selection;
-        theme.background = field_editor_theme
-            .container
-            .background_color
-            .unwrap_or_default();
-        EditorStyle {
-            text: field_editor_theme.text,
-            placeholder_text: field_editor_theme.placeholder_text,
-            line_height_scalar,
-            theme,
-            theme_id,
-        }
-    } else {
-        let font_family_id = settings.buffer_font_family;
-        let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
-        let font_properties = Default::default();
-        let font_id = font_cache
-            .select_font(font_family_id, &font_properties)
-            .unwrap();
-        let font_size = settings.buffer_font_size(cx);
-        EditorStyle {
-            text: TextStyle {
-                color: settings.theme.editor.text_color,
-                font_family_name,
-                font_family_id,
-                font_id,
-                font_size,
-                font_properties,
-                underline: Default::default(),
-                soft_wrap: false,
-            },
-            placeholder_text: None,
-            line_height_scalar,
-            theme,
-            theme_id,
-        }
-    };
+// fn build_style(
+//     settings: &ThemeSettings,
+//     get_field_editor_theme: Option<&GetFieldEditorTheme>,
+//     override_text_style: Option<&OverrideTextStyle>,
+//     cx: &mut AppContext,
+// ) -> EditorStyle {
+//     let font_cache = cx.font_cache();
+//     let line_height_scalar = settings.line_height();
+//     let theme_id = settings.theme.meta.id;
+//     let mut theme = settings.theme.editor.clone();
+//     let mut style = if let Some(get_field_editor_theme) = get_field_editor_theme {
+//         let field_editor_theme = get_field_editor_theme(&settings.theme);
+//         theme.text_color = field_editor_theme.text.color;
+//         theme.selection = field_editor_theme.selection;
+//         theme.background = field_editor_theme
+//             .container
+//             .background_color
+//             .unwrap_or_default();
+//         EditorStyle {
+//             text: field_editor_theme.text,
+//             placeholder_text: field_editor_theme.placeholder_text,
+//             line_height_scalar,
+//             theme,
+//             theme_id,
+//         }
+//     } else {
+//         todo!();
+//         // let font_family_id = settings.buffer_font_family;
+//         // let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
+//         // let font_properties = Default::default();
+//         // let font_id = font_cache
+//         //     .select_font(font_family_id, &font_properties)
+//         //     .unwrap();
+//         // let font_size = settings.buffer_font_size(cx);
+//         // EditorStyle {
+//         //     text: TextStyle {
+//         //         color: settings.theme.editor.text_color,
+//         //         font_family_name,
+//         //         font_family_id,
+//         //         font_id,
+//         //         font_size,
+//         //         font_properties,
+//         //         underline: Default::default(),
+//         //         soft_wrap: false,
+//         //     },
+//         //     placeholder_text: None,
+//         //     line_height_scalar,
+//         //     theme,
+//         //     theme_id,
+//         // }
+//     };
 
-    if let Some(highlight_style) = override_text_style.and_then(|build_style| build_style(&style)) {
-        if let Some(highlighted) = style
-            .text
-            .clone()
-            .highlight(highlight_style, font_cache)
-            .log_err()
-        {
-            style.text = highlighted;
-        }
-    }
+//     if let Some(highlight_style) = override_text_style.and_then(|build_style| build_style(&style)) {
+//         if let Some(highlighted) = style
+//             .text
+//             .clone()
+//             .highlight(highlight_style, font_cache)
+//             .log_err()
+//         {
+//             style.text = highlighted;
+//         }
+//     }
 
-    style
-}
+//     style
+// }
 
 trait SelectionExt {
     fn offset_range(&self, buffer: &MultiBufferSnapshot) -> Range<usize>;
@@ -9813,68 +9813,68 @@ impl InvalidationRegion for SnippetState {
     }
 }
 
-impl Deref for EditorStyle {
-    type Target = theme::Editor;
+// impl Deref for EditorStyle {
+//     type Target = theme::Editor;
 
-    fn deref(&self) -> &Self::Target {
-        &self.theme
-    }
-}
+//     fn deref(&self) -> &Self::Target {
+//         &self.theme
+//     }
+// }
 
-pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> RenderBlock {
-    let mut highlighted_lines = Vec::new();
+// pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> RenderBlock {
+//     let mut highlighted_lines = Vec::new();
 
-    for (index, line) in diagnostic.message.lines().enumerate() {
-        let line = match &diagnostic.source {
-            Some(source) if index == 0 => {
-                let source_highlight = Vec::from_iter(0..source.len());
-                highlight_diagnostic_message(source_highlight, &format!("{source}: {line}"))
-            }
+//     for (index, line) in diagnostic.message.lines().enumerate() {
+//         let line = match &diagnostic.source {
+//             Some(source) if index == 0 => {
+//                 let source_highlight = Vec::from_iter(0..source.len());
+//                 highlight_diagnostic_message(source_highlight, &format!("{source}: {line}"))
+//             }
 
-            _ => highlight_diagnostic_message(Vec::new(), line),
-        };
-        highlighted_lines.push(line);
-    }
-    let message = diagnostic.message;
-    Arc::new(move |cx: &mut BlockContext| {
-        let message = message.clone();
-        let settings = settings::get::<ThemeSettings>(cx);
-        let tooltip_style = settings.theme.tooltip.clone();
-        let theme = &settings.theme.editor;
-        let style = diagnostic_style(diagnostic.severity, is_valid, theme);
-        let font_size = (style.text_scale_factor * settings.buffer_font_size(cx)).round();
-        let anchor_x = cx.anchor_x;
-        enum BlockContextToolip {}
-        MouseEventHandler::new::<BlockContext, _>(cx.block_id, cx, |_, _| {
-            Flex::column()
-                .with_children(highlighted_lines.iter().map(|(line, highlights)| {
-                    Label::new(
-                        line.clone(),
-                        style.message.clone().with_font_size(font_size),
-                    )
-                    .with_highlights(highlights.clone())
-                    .contained()
-                    .with_margin_left(anchor_x)
-                }))
-                .aligned()
-                .left()
-                .into_any()
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, _, cx| {
-            cx.write_to_clipboard(ClipboardItem::new(message.clone()));
-        })
-        // We really need to rethink this ID system...
-        .with_tooltip::<BlockContextToolip>(
-            cx.block_id,
-            "Copy diagnostic message",
-            None,
-            tooltip_style,
-            cx,
-        )
-        .into_any()
-    })
-}
+//             _ => highlight_diagnostic_message(Vec::new(), line),
+//         };
+//         highlighted_lines.push(line);
+//     }
+//     let message = diagnostic.message;
+//     Arc::new(move |cx: &mut BlockContext| {
+//         let message = message.clone();
+//         let settings = ThemeSettings::get_global(cx);
+//         let tooltip_style = settings.theme.tooltip.clone();
+//         let theme = &settings.theme.editor;
+//         let style = diagnostic_style(diagnostic.severity, is_valid, theme);
+//         let font_size = (style.text_scale_factor * settings.buffer_font_size(cx)).round();
+//         let anchor_x = cx.anchor_x;
+//         enum BlockContextToolip {}
+//         MouseEventHandler::new::<BlockContext, _>(cx.block_id, cx, |_, _| {
+//             Flex::column()
+//                 .with_children(highlighted_lines.iter().map(|(line, highlights)| {
+//                     Label::new(
+//                         line.clone(),
+//                         style.message.clone().with_font_size(font_size),
+//                     )
+//                     .with_highlights(highlights.clone())
+//                     .contained()
+//                     .with_margin_left(anchor_x)
+//                 }))
+//                 .aligned()
+//                 .left()
+//                 .into_any()
+//         })
+//         .with_cursor_style(CursorStyle::PointingHand)
+//         .on_click(MouseButton::Left, move |_, _, cx| {
+//             cx.write_to_clipboard(ClipboardItem::new(message.clone()));
+//         })
+//         // We really need to rethink this ID system...
+//         .with_tooltip::<BlockContextToolip>(
+//             cx.block_id,
+//             "Copy diagnostic message",
+//             None,
+//             tooltip_style,
+//             cx,
+//         )
+//         .into_any()
+//     })
+// }
 
 pub fn highlight_diagnostic_message(
     initial_highlights: Vec<usize>,
@@ -9901,139 +9901,139 @@ pub fn highlight_diagnostic_message(
     (message_without_backticks, highlights)
 }
 
-pub fn diagnostic_style(
-    severity: DiagnosticSeverity,
-    valid: bool,
-    theme: &theme::Editor,
-) -> DiagnosticStyle {
-    match (severity, valid) {
-        (DiagnosticSeverity::ERROR, true) => theme.error_diagnostic.clone(),
-        (DiagnosticSeverity::ERROR, false) => theme.invalid_error_diagnostic.clone(),
-        (DiagnosticSeverity::WARNING, true) => theme.warning_diagnostic.clone(),
-        (DiagnosticSeverity::WARNING, false) => theme.invalid_warning_diagnostic.clone(),
-        (DiagnosticSeverity::INFORMATION, true) => theme.information_diagnostic.clone(),
-        (DiagnosticSeverity::INFORMATION, false) => theme.invalid_information_diagnostic.clone(),
-        (DiagnosticSeverity::HINT, true) => theme.hint_diagnostic.clone(),
-        (DiagnosticSeverity::HINT, false) => theme.invalid_hint_diagnostic.clone(),
-        _ => theme.invalid_hint_diagnostic.clone(),
-    }
-}
+// pub fn diagnostic_style(
+//     severity: DiagnosticSeverity,
+//     valid: bool,
+//     theme: &theme::Editor,
+// ) -> DiagnosticStyle {
+//     match (severity, valid) {
+//         (DiagnosticSeverity::ERROR, true) => theme.error_diagnostic.clone(),
+//         (DiagnosticSeverity::ERROR, false) => theme.invalid_error_diagnostic.clone(),
+//         (DiagnosticSeverity::WARNING, true) => theme.warning_diagnostic.clone(),
+//         (DiagnosticSeverity::WARNING, false) => theme.invalid_warning_diagnostic.clone(),
+//         (DiagnosticSeverity::INFORMATION, true) => theme.information_diagnostic.clone(),
+//         (DiagnosticSeverity::INFORMATION, false) => theme.invalid_information_diagnostic.clone(),
+//         (DiagnosticSeverity::HINT, true) => theme.hint_diagnostic.clone(),
+//         (DiagnosticSeverity::HINT, false) => theme.invalid_hint_diagnostic.clone(),
+//         _ => theme.invalid_hint_diagnostic.clone(),
+//     }
+// }
 
-pub fn combine_syntax_and_fuzzy_match_highlights(
-    text: &str,
-    default_style: HighlightStyle,
-    syntax_ranges: impl Iterator<Item = (Range<usize>, HighlightStyle)>,
-    match_indices: &[usize],
-) -> Vec<(Range<usize>, HighlightStyle)> {
-    let mut result = Vec::new();
-    let mut match_indices = match_indices.iter().copied().peekable();
+// pub fn combine_syntax_and_fuzzy_match_highlights(
+//     text: &str,
+//     default_style: HighlightStyle,
+//     syntax_ranges: impl Iterator<Item = (Range<usize>, HighlightStyle)>,
+//     match_indices: &[usize],
+// ) -> Vec<(Range<usize>, HighlightStyle)> {
+//     let mut result = Vec::new();
+//     let mut match_indices = match_indices.iter().copied().peekable();
 
-    for (range, mut syntax_highlight) in syntax_ranges.chain([(usize::MAX..0, Default::default())])
-    {
-        syntax_highlight.weight = None;
+//     for (range, mut syntax_highlight) in syntax_ranges.chain([(usize::MAX..0, Default::default())])
+//     {
+//         syntax_highlight.weight = None;
 
-        // Add highlights for any fuzzy match characters before the next
-        // syntax highlight range.
-        while let Some(&match_index) = match_indices.peek() {
-            if match_index >= range.start {
-                break;
-            }
-            match_indices.next();
-            let end_index = char_ix_after(match_index, text);
-            let mut match_style = default_style;
-            match_style.weight = Some(fonts::Weight::BOLD);
-            result.push((match_index..end_index, match_style));
-        }
+//         // Add highlights for any fuzzy match characters before the next
+//         // syntax highlight range.
+//         while let Some(&match_index) = match_indices.peek() {
+//             if match_index >= range.start {
+//                 break;
+//             }
+//             match_indices.next();
+//             let end_index = char_ix_after(match_index, text);
+//             let mut match_style = default_style;
+//             match_style.weight = Some(FontWeight::BOLD);
+//             result.push((match_index..end_index, match_style));
+//         }
 
-        if range.start == usize::MAX {
-            break;
-        }
+//         if range.start == usize::MAX {
+//             break;
+//         }
 
-        // Add highlights for any fuzzy match characters within the
-        // syntax highlight range.
-        let mut offset = range.start;
-        while let Some(&match_index) = match_indices.peek() {
-            if match_index >= range.end {
-                break;
-            }
+//         // Add highlights for any fuzzy match characters within the
+//         // syntax highlight range.
+//         let mut offset = range.start;
+//         while let Some(&match_index) = match_indices.peek() {
+//             if match_index >= range.end {
+//                 break;
+//             }
 
-            match_indices.next();
-            if match_index > offset {
-                result.push((offset..match_index, syntax_highlight));
-            }
+//             match_indices.next();
+//             if match_index > offset {
+//                 result.push((offset..match_index, syntax_highlight));
+//             }
 
-            let mut end_index = char_ix_after(match_index, text);
-            while let Some(&next_match_index) = match_indices.peek() {
-                if next_match_index == end_index && next_match_index < range.end {
-                    end_index = char_ix_after(next_match_index, text);
-                    match_indices.next();
-                } else {
-                    break;
-                }
-            }
+//             let mut end_index = char_ix_after(match_index, text);
+//             while let Some(&next_match_index) = match_indices.peek() {
+//                 if next_match_index == end_index && next_match_index < range.end {
+//                     end_index = char_ix_after(next_match_index, text);
+//                     match_indices.next();
+//                 } else {
+//                     break;
+//                 }
+//             }
 
-            let mut match_style = syntax_highlight;
-            match_style.weight = Some(fonts::Weight::BOLD);
-            result.push((match_index..end_index, match_style));
-            offset = end_index;
-        }
+//             let mut match_style = syntax_highlight;
+//             match_style.weight = Some(FontWeight::BOLD);
+//             result.push((match_index..end_index, match_style));
+//             offset = end_index;
+//         }
 
-        if offset < range.end {
-            result.push((offset..range.end, syntax_highlight));
-        }
-    }
+//         if offset < range.end {
+//             result.push((offset..range.end, syntax_highlight));
+//         }
+//     }
 
-    fn char_ix_after(ix: usize, text: &str) -> usize {
-        ix + text[ix..].chars().next().unwrap().len_utf8()
-    }
+//     fn char_ix_after(ix: usize, text: &str) -> usize {
+//         ix + text[ix..].chars().next().unwrap().len_utf8()
+//     }
 
-    result
-}
+//     result
+// }
 
-pub fn styled_runs_for_code_label<'a>(
-    label: &'a CodeLabel,
-    syntax_theme: &'a theme::SyntaxTheme,
-) -> impl 'a + Iterator<Item = (Range<usize>, HighlightStyle)> {
-    let fade_out = HighlightStyle {
-        fade_out: Some(0.35),
-        ..Default::default()
-    };
+// pub fn styled_runs_for_code_label<'a>(
+//     label: &'a CodeLabel,
+//     syntax_theme: &'a theme::SyntaxTheme,
+// ) -> impl 'a + Iterator<Item = (Range<usize>, HighlightStyle)> {
+//     let fade_out = HighlightStyle {
+//         fade_out: Some(0.35),
+//         ..Default::default()
+//     };
 
-    let mut prev_end = label.filter_range.end;
-    label
-        .runs
-        .iter()
-        .enumerate()
-        .flat_map(move |(ix, (range, highlight_id))| {
-            let style = if let Some(style) = highlight_id.style(syntax_theme) {
-                style
-            } else {
-                return Default::default();
-            };
-            let mut muted_style = style;
-            muted_style.highlight(fade_out);
+//     let mut prev_end = label.filter_range.end;
+//     label
+//         .runs
+//         .iter()
+//         .enumerate()
+//         .flat_map(move |(ix, (range, highlight_id))| {
+//             let style = if let Some(style) = highlight_id.style(syntax_theme) {
+//                 style
+//             } else {
+//                 return Default::default();
+//             };
+//             let mut muted_style = style;
+//             muted_style.highlight(fade_out);
 
-            let mut runs = SmallVec::<[(Range<usize>, HighlightStyle); 3]>::new();
-            if range.start >= label.filter_range.end {
-                if range.start > prev_end {
-                    runs.push((prev_end..range.start, fade_out));
-                }
-                runs.push((range.clone(), muted_style));
-            } else if range.end <= label.filter_range.end {
-                runs.push((range.clone(), style));
-            } else {
-                runs.push((range.start..label.filter_range.end, style));
-                runs.push((label.filter_range.end..range.end, muted_style));
-            }
-            prev_end = cmp::max(prev_end, range.end);
+//             let mut runs = SmallVec::<[(Range<usize>, HighlightStyle); 3]>::new();
+//             if range.start >= label.filter_range.end {
+//                 if range.start > prev_end {
+//                     runs.push((prev_end..range.start, fade_out));
+//                 }
+//                 runs.push((range.clone(), muted_style));
+//             } else if range.end <= label.filter_range.end {
+//                 runs.push((range.clone(), style));
+//             } else {
+//                 runs.push((range.start..label.filter_range.end, style));
+//                 runs.push((label.filter_range.end..range.end, muted_style));
+//             }
+//             prev_end = cmp::max(prev_end, range.end);
 
-            if ix + 1 == label.runs.len() && label.text.len() > prev_end {
-                runs.push((prev_end..label.text.len(), fade_out));
-            }
+//             if ix + 1 == label.runs.len() && label.text.len() > prev_end {
+//                 runs.push((prev_end..label.text.len(), fade_out));
+//             }
 
-            runs
-        })
-}
+//             runs
+//         })
+// }
 
 pub fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str> + 'a {
     let mut index = 0;

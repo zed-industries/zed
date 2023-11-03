@@ -3,9 +3,11 @@ use super::{
 };
 use crate::{
     display_map::{BlockStyle, DisplaySnapshot},
-    mouse_context_menu, EditorSettings, EditorStyle, GutterHover, UnfoldAt,
+    EditorStyle,
 };
-use gpui::{AnyElement, Bounds, Element, Hsla, Line, Pixels, Size, Style, TextRun, TextSystem};
+use gpui::{
+    px, relative, AnyElement, Bounds, Element, Hsla, Line, Pixels, Size, Style, TextRun, TextSystem,
+};
 use language::{CursorShape, Selection};
 use std::{ops::Range, sync::Arc};
 use sum_tree::Bias;
@@ -1997,7 +1999,10 @@ impl Element<Editor> for EditorElement {
         element_state: &mut Self::ElementState,
         cx: &mut gpui::ViewContext<Editor>,
     ) -> gpui::LayoutId {
-        cx.request_layout(Style::default().size_full(), None)
+        let mut style = Style::default();
+        style.size.width = relative(1.).into();
+        style.size.height = relative(1.).into();
+        cx.request_layout(&style, None)
     }
 
     fn paint(
@@ -2011,13 +2016,8 @@ impl Element<Editor> for EditorElement {
 
         let layout_text = cx.text_system().layout_text(
             "hello world",
-            text_style.font_size,
-            &[TextRun {
-                len: "hello world".len(),
-                font: text_style.font,
-                color: text_style.color,
-                underline: text_style.underline,
-            }],
+            text_style.font_size * cx.rem_size(),
+            &[text_style.to_run("hello world".len())],
             None,
         );
     }
@@ -2697,19 +2697,19 @@ impl PositionMap {
         position: gpui::Point<Pixels>,
     ) -> PointForPosition {
         let scroll_position = self.snapshot.scroll_position();
-        let position = position - text_bounds.origin();
-        let y = position.y().max(0.0).min(self.size.y());
-        let x = position.x() + (scroll_position.x() * self.em_width);
-        let row = (y / self.line_height + scroll_position.y()) as u32;
+        let position = position - text_bounds.origin;
+        let y = position.y.max(px(0.)).min(self.size.width);
+        let x = position.x + (scroll_position.x * self.em_width);
+        let row = (y / self.line_height + scroll_position.y).into();
         let (column, x_overshoot_after_line_end) = if let Some(line) = self
             .line_layouts
-            .get(row as usize - scroll_position.y() as usize)
+            .get(row as usize - scroll_position.y.into())
             .map(|line_with_spaces| &line_with_spaces.line)
         {
             if let Some(ix) = line.index_for_x(x) {
                 (ix as u32, 0.0)
             } else {
-                (line.len() as u32, 0f32.max(x - line.width()))
+                (line.len() as u32, px(0.).max(x - line.width()))
             }
         } else {
             (0, x)

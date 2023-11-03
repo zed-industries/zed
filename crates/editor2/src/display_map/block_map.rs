@@ -932,15 +932,15 @@ impl BlockDisposition {
     }
 }
 
-impl<'a, 'b, 'c> Deref for BlockContext<'a, 'b, 'c> {
-    type Target = ViewContext<'a, 'b, Editor>;
+impl<'a> Deref for BlockContext<'a, '_> {
+    type Target = ViewContext<'a, Editor>;
 
     fn deref(&self) -> &Self::Target {
         self.view_context
     }
 }
 
-impl DerefMut for BlockContext<'_, '_, '_> {
+impl DerefMut for BlockContext<'_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.view_context
     }

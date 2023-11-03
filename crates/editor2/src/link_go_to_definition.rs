@@ -168,7 +168,7 @@ pub fn update_inlay_link_and_hover_points(
     editor: &mut Editor,
     cmd_held: bool,
     shift_held: bool,
-    cx: &mut ViewContext<'_, '_, Editor>,
+    cx: &mut ViewContext<'_, Editor>,
 ) {
     let hovered_offset = if point_for_position.column_overshoot_after_line_end == 0 {
         Some(snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left))

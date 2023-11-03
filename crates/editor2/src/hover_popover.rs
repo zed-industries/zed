@@ -466,35 +466,35 @@ pub struct InfoPopover {
     parsed_content: ParsedMarkdown,
 }
 
-impl InfoPopover {
-    pub fn render(
-        &mut self,
-        style: &EditorStyle,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut ViewContext<Editor>,
-    ) -> AnyElement<Editor> {
-        MouseEventHandler::new::<InfoPopover, _>(0, cx, |_, cx| {
-            Flex::column()
-                .scrollable::<HoverBlock>(0, None, cx)
-                .with_child(crate::render_parsed_markdown::<HoverBlock>(
-                    &self.parsed_content,
-                    style,
-                    workspace,
-                    cx,
-                ))
-                .contained()
-                .with_style(style.hover_popover.container)
-        })
-        .on_move(|_, _, _| {}) // Consume move events so they don't reach regions underneath.
-        .with_cursor_style(CursorStyle::Arrow)
-        .with_padding(Padding {
-            bottom: HOVER_POPOVER_GAP,
-            top: HOVER_POPOVER_GAP,
-            ..Default::default()
-        })
-        .into_any()
-    }
-}
+// impl InfoPopover {
+//     pub fn render(
+//         &mut self,
+//         style: &EditorStyle,
+//         workspace: Option<WeakView<Workspace>>,
+//         cx: &mut ViewContext<Editor>,
+//     ) -> AnyElement<Editor> {
+//         MouseEventHandler::new::<InfoPopover, _>(0, cx, |_, cx| {
+//             Flex::column()
+//                 .scrollable::<HoverBlock>(0, None, cx)
+//                 .with_child(crate::render_parsed_markdown::<HoverBlock>(
+//                     &self.parsed_content,
+//                     style,
+//                     workspace,
+//                     cx,
+//                 ))
+//                 .contained()
+//                 .with_style(style.hover_popover.container)
+//         })
+//         .on_move(|_, _, _| {}) // Consume move events so they don't reach regions underneath.
+//         .with_cursor_style(CursorStyle::Arrow)
+//         .with_padding(Padding {
+//             bottom: HOVER_POPOVER_GAP,
+//             top: HOVER_POPOVER_GAP,
+//             ..Default::default()
+//         })
+//         .into_any()
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub struct DiagnosticPopover {

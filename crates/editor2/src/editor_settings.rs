@@ -1,6 +1,6 @@
-use gpui::Settings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 
 #[derive(Deserialize)]
 pub struct EditorSettings {
@@ -55,7 +55,7 @@ impl Settings for EditorSettings {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _: &gpui::AppContext,
+        _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
         Self::load_via_json_merge(default_value, user_values)
     }

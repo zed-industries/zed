@@ -497,62 +497,63 @@ impl DisplaySnapshot {
         )
     }
 
-    pub fn highlighted_chunks<'a>(
-        &'a self,
-        display_rows: Range<u32>,
-        language_aware: bool,
-        style: &'a EditorStyle,
-    ) -> impl Iterator<Item = HighlightedChunk<'a>> {
-        self.chunks(
-            display_rows,
-            language_aware,
-            Some(style.theme.hint),
-            Some(style.theme.suggestion),
-        )
-        .map(|chunk| {
-            let mut highlight_style = chunk
-                .syntax_highlight_id
-                .and_then(|id| id.style(&style.syntax));
+    // pub fn highlighted_chunks<'a>(
+    //     &'a self,
+    //     display_rows: Range<u32>,
+    //     language_aware: bool,
+    //     style: &'a EditorStyle,
+    // ) -> impl Iterator<Item = HighlightedChunk<'a>> {
+    //     self.chunks(
+    //         display_rows,
+    //         language_aware,
+    //         Some(style.theme.hint),
+    //         Some(style.theme.suggestion),
+    //     )
+    //     .map(|chunk| {
+    //         let mut highlight_style = chunk
+    //             .syntax_highlight_id
+    //             .and_then(|id| id.style(&style.syntax));
 
-            if let Some(chunk_highlight) = chunk.highlight_style {
-                if let Some(highlight_style) = highlight_style.as_mut() {
-                    highlight_style.highlight(chunk_highlight);
-                } else {
-                    highlight_style = Some(chunk_highlight);
-                }
-            }
+    //         if let Some(chunk_highlight) = chunk.highlight_style {
+    //             if let Some(highlight_style) = highlight_style.as_mut() {
+    //                 highlight_style.highlight(chunk_highlight);
+    //             } else {
+    //                 highlight_style = Some(chunk_highlight);
+    //             }
+    //         }
 
-            let mut diagnostic_highlight = HighlightStyle::default();
+    //         let mut diagnostic_highlight = HighlightStyle::default();
 
-            if chunk.is_unnecessary {
-                diagnostic_highlight.fade_out = Some(style.unnecessary_code_fade);
-            }
+    //         if chunk.is_unnecessary {
+    //             diagnostic_highlight.fade_out = Some(style.unnecessary_code_fade);
+    //         }
 
-            if let Some(severity) = chunk.diagnostic_severity {
-                // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
-                if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
-                    let diagnostic_style = super::diagnostic_style(severity, true, style);
-                    diagnostic_highlight.underline = Some(UnderlineStyle {
-                        color: Some(diagnostic_style.message.text.color),
-                        thickness: 1.0.into(),
-                        wavy: true,
-                    });
-                }
-            }
+    //         if let Some(severity) = chunk.diagnostic_severity {
+    //             // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
+    //             if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
+    //                 todo!()
+    //                 // let diagnostic_style = super::diagnostic_style(severity, true, style);
+    //                 // diagnostic_highlight.underline = Some(UnderlineStyle {
+    //                 //     color: Some(diagnostic_style.message.text.color),
+    //                 //     thickness: 1.0.into(),
+    //                 //     wavy: true,
+    //                 // });
+    //             }
+    //         }
 
-            if let Some(highlight_style) = highlight_style.as_mut() {
-                highlight_style.highlight(diagnostic_highlight);
-            } else {
-                highlight_style = Some(diagnostic_highlight);
-            }
+    //         if let Some(highlight_style) = highlight_style.as_mut() {
+    //             highlight_style.highlight(diagnostic_highlight);
+    //         } else {
+    //             highlight_style = Some(diagnostic_highlight);
+    //         }
 
-            HighlightedChunk {
-                chunk: chunk.text,
-                style: highlight_style,
-                is_tab: chunk.is_tab,
-            }
-        })
-    }
+    //         HighlightedChunk {
+    //             chunk: chunk.text,
+    //             style: highlight_style,
+    //             is_tab: chunk.is_tab,
+    //         }
+    //     })
+    // }
 
     pub fn lay_out_line_for_row(
         &self,
@@ -606,7 +607,7 @@ impl DisplaySnapshot {
             // });
         }
 
-        text_layout_cache.layout_text(&line, editor_style.text.font_size, &styles)
+        text_layout_cache.layout_text(&line, editor_style.text.font_size, &styles, None)
     }
 
     pub fn x_for_point(

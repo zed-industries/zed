@@ -4,7 +4,7 @@ use super::{
     Highlights,
 };
 use crate::MultiBufferSnapshot;
-use gpui::{AppContext, FontId, Model, ModelContext, Pixels, Task};
+use gpui::{AppContext, FontId, LineWrapper, Model, ModelContext, Pixels, Task};
 use language::{Chunk, Point};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
@@ -20,7 +20,7 @@ pub struct WrapMap {
     pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
     interpolated_edits: Patch<u32>,
     edits_since_sync: Patch<u32>,
-    wrap_width: Option<f32>,
+    wrap_width: Option<Pixels>,
     background_task: Option<Task<()>>,
     font: (FontId, Pixels),
 }
@@ -130,7 +130,11 @@ impl WrapMap {
         }
     }
 
-    pub fn set_wrap_width(&mut self, wrap_width: Option<f32>, cx: &mut ModelContext<Self>) -> bool {
+    pub fn set_wrap_width(
+        &mut self,
+        wrap_width: Option<Pixels>,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
         if wrap_width == self.wrap_width {
             return false;
         }
@@ -379,7 +383,7 @@ impl WrapSnapshot {
         &mut self,
         new_tab_snapshot: TabSnapshot,
         tab_edits: &[TabEdit],
-        wrap_width: f32,
+        wrap_width: Pixels,
         line_wrapper: &mut LineWrapper,
     ) -> Patch<u32> {
         #[derive(Debug)]
