@@ -1,20 +1,22 @@
-use super::{
-    display_map::ToDisplayPoint, DisplayPoint, Editor, EditorSnapshot, ToPoint, MAX_LINE_LEN,
-};
 use crate::{
-    display_map::{BlockStyle, DisplaySnapshot},
-    EditorMode, EditorStyle, SoftWrap,
+    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, ToDisplayPoint},
+    editor_settings::ShowScrollbar,
+    CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
+    Point, Selection, SoftWrap, ToPoint, MAX_LINE_LEN,
 };
 use anyhow::Result;
+use collections::{BTreeMap, HashMap};
 use gpui::{
     black, point, px, relative, size, AnyElement, Bounds, Element, Hsla, Line, Pixels, Size, Style,
     TextRun, TextSystem, ViewContext,
 };
-use language::{CursorShape, Selection};
+use multi_buffer::Anchor;
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{cmp, ops::Range, sync::Arc};
 use sum_tree::Bias;
-use theme::ActiveTheme;
+use theme::{ActiveTheme, PlayerColor};
+use workspace::item::Item;
 
 enum FoldMarkers {}
 
@@ -1371,131 +1373,133 @@ impl EditorElement {
     //         .collect()
     // }
 
-    // fn calculate_relative_line_numbers(
-    //     &self,
-    //     snapshot: &EditorSnapshot,
-    //     rows: &Range<u32>,
-    //     relative_to: Option<u32>,
-    // ) -> HashMap<u32, u32> {
-    //     let mut relative_rows: HashMap<u32, u32> = Default::default();
-    //     let Some(relative_to) = relative_to else {
-    //         return relative_rows;
-    //     };
+    fn calculate_relative_line_numbers(
+        &self,
+        snapshot: &EditorSnapshot,
+        rows: &Range<u32>,
+        relative_to: Option<u32>,
+    ) -> HashMap<u32, u32> {
+        let mut relative_rows: HashMap<u32, u32> = Default::default();
+        let Some(relative_to) = relative_to else {
+            return relative_rows;
+        };
 
-    //     let start = rows.start.min(relative_to);
-    //     let end = rows.end.max(relative_to);
+        let start = rows.start.min(relative_to);
+        let end = rows.end.max(relative_to);
 
-    //     let buffer_rows = snapshot
-    //         .buffer_rows(start)
-    //         .take(1 + (end - start) as usize)
-    //         .collect::<Vec<_>>();
+        let buffer_rows = snapshot
+            .buffer_rows(start)
+            .take(1 + (end - start) as usize)
+            .collect::<Vec<_>>();
 
-    //     let head_idx = relative_to - start;
-    //     let mut delta = 1;
-    //     let mut i = head_idx + 1;
-    //     while i < buffer_rows.len() as u32 {
-    //         if buffer_rows[i as usize].is_some() {
-    //             if rows.contains(&(i + start)) {
-    //                 relative_rows.insert(i + start, delta);
-    //             }
-    //             delta += 1;
-    //         }
-    //         i += 1;
-    //     }
-    //     delta = 1;
-    //     i = head_idx.min(buffer_rows.len() as u32 - 1);
-    //     while i > 0 && buffer_rows[i as usize].is_none() {
-    //         i -= 1;
-    //     }
+        let head_idx = relative_to - start;
+        let mut delta = 1;
+        let mut i = head_idx + 1;
+        while i < buffer_rows.len() as u32 {
+            if buffer_rows[i as usize].is_some() {
+                if rows.contains(&(i + start)) {
+                    relative_rows.insert(i + start, delta);
+                }
+                delta += 1;
+            }
+            i += 1;
+        }
+        delta = 1;
+        i = head_idx.min(buffer_rows.len() as u32 - 1);
+        while i > 0 && buffer_rows[i as usize].is_none() {
+            i -= 1;
+        }
 
-    //     while i > 0 {
-    //         i -= 1;
-    //         if buffer_rows[i as usize].is_some() {
-    //             if rows.contains(&(i + start)) {
-    //                 relative_rows.insert(i + start, delta);
-    //             }
-    //             delta += 1;
-    //         }
-    //     }
+        while i > 0 {
+            i -= 1;
+            if buffer_rows[i as usize].is_some() {
+                if rows.contains(&(i + start)) {
+                    relative_rows.insert(i + start, delta);
+                }
+                delta += 1;
+            }
+        }
 
-    //     relative_rows
-    // }
+        relative_rows
+    }
 
-    // fn layout_line_numbers(
-    //     &self,
-    //     rows: Range<u32>,
-    //     active_rows: &BTreeMap<u32, bool>,
-    //     newest_selection_head: DisplayPoint,
-    //     is_singleton: bool,
-    //     snapshot: &EditorSnapshot,
-    //     cx: &ViewContext<Editor>,
-    // ) -> (
-    //     Vec<Option<text_layout::Line>>,
-    //     Vec<Option<(FoldStatus, BufferRow, bool)>>,
-    // ) {
-    //     let style = &self.style;
-    //     let include_line_numbers = snapshot.mode == EditorMode::Full;
-    //     let mut line_number_layouts = Vec::with_capacity(rows.len());
-    //     let mut fold_statuses = Vec::with_capacity(rows.len());
-    //     let mut line_number = String::new();
-    //     let is_relative = settings::get::<EditorSettings>(cx).relative_line_numbers;
-    //     let relative_to = if is_relative {
-    //         Some(newest_selection_head.row())
-    //     } else {
-    //         None
-    //     };
+    fn layout_line_numbers(
+        &self,
+        rows: Range<u32>,
+        active_rows: &BTreeMap<u32, bool>,
+        newest_selection_head: DisplayPoint,
+        is_singleton: bool,
+        snapshot: &EditorSnapshot,
+        cx: &ViewContext<Editor>,
+    ) -> (
+        Vec<Option<gpui::Line>>,
+        Vec<Option<(FoldStatus, BufferRow, bool)>>,
+    ) {
+        let include_line_numbers = snapshot.mode == EditorMode::Full;
+        let mut line_number_layouts = Vec::with_capacity(rows.len());
+        let mut fold_statuses = Vec::with_capacity(rows.len());
+        let mut line_number = String::new();
+        let is_relative = EditorSettings::get_global(cx).relative_line_numbers;
+        let relative_to = if is_relative {
+            Some(newest_selection_head.row())
+        } else {
+            None
+        };
 
-    //     let relative_rows = self.calculate_relative_line_numbers(&snapshot, &rows, relative_to);
+        let relative_rows = self.calculate_relative_line_numbers(&snapshot, &rows, relative_to);
 
-    //     for (ix, row) in snapshot
-    //         .buffer_rows(rows.start)
-    //         .take((rows.end - rows.start) as usize)
-    //         .enumerate()
-    //     {
-    //         let display_row = rows.start + ix as u32;
-    //         let (active, color) = if active_rows.contains_key(&display_row) {
-    //             (true, style.line_number_active)
-    //         } else {
-    //             (false, style.line_number)
-    //         };
-    //         if let Some(buffer_row) = row {
-    //             if include_line_numbers {
-    //                 line_number.clear();
-    //                 let default_number = buffer_row + 1;
-    //                 let number = relative_rows
-    //                     .get(&(ix as u32 + rows.start))
-    //                     .unwrap_or(&default_number);
-    //                 write!(&mut line_number, "{}", number).unwrap();
-    //                 line_number_layouts.push(Some(cx.text_layout_cache().layout_str(
-    //                     &line_number,
-    //                     style.text.font_size,
-    //                     &[(
-    //                         line_number.len(),
-    //                         RunStyle {
-    //                             font_id: style.text.font_id,
-    //                             color,
-    //                             underline: Default::default(),
-    //                         },
-    //                     )],
-    //                 )));
-    //                 fold_statuses.push(
-    //                     is_singleton
-    //                         .then(|| {
-    //                             snapshot
-    //                                 .fold_for_line(buffer_row)
-    //                                 .map(|fold_status| (fold_status, buffer_row, active))
-    //                         })
-    //                         .flatten(),
-    //                 )
-    //             }
-    //         } else {
-    //             fold_statuses.push(None);
-    //             line_number_layouts.push(None);
-    //         }
-    //     }
+        for (ix, row) in snapshot
+            .buffer_rows(rows.start)
+            .take((rows.end - rows.start) as usize)
+            .enumerate()
+        {
+            let display_row = rows.start + ix as u32;
+            let (active, color) = if active_rows.contains_key(&display_row) {
+                (true, cx.theme().colors().editor_active_line_number)
+            } else {
+                (false, cx.theme().colors().editor_line_number)
+            };
+            if let Some(buffer_row) = row {
+                if include_line_numbers {
+                    line_number.clear();
+                    let default_number = buffer_row + 1;
+                    let number = relative_rows
+                        .get(&(ix as u32 + rows.start))
+                        .unwrap_or(&default_number);
+                    write!(&mut line_number, "{}", number).unwrap();
+                    let layout = cx
+                        .text_system()
+                        .layout_text(
+                            &line_number,
+                            self.style.text.font_size,
+                            &[TextRun {
+                                len: line_number.len(),
+                                font: self.style.text.font(),
+                                color,
+                                underline: None,
+                            }],
+                            None,
+                        )
+                        .unwrap();
+                    line_number_layouts.push(Some(layout));
+                    fold_statuses.push(
+                        is_singleton
+                            .then(|| {
+                                snapshot
+                                    .fold_for_line(buffer_row)
+                                    .map(|fold_status| (fold_status, buffer_row, active))
+                            })
+                            .flatten(),
+                    )
+                }
+            } else {
+                fold_statuses.push(None);
+                line_number_layouts.push(None);
+            }
+        }
 
-    //     (line_number_layouts, fold_statuses)
-    // }
+        (line_number_layouts, fold_statuses)
+    }
 
     // fn layout_lines(
     //     &mut self,
@@ -1788,194 +1792,192 @@ pub struct LineWithInvisibles {
     invisibles: Vec<Invisible>,
 }
 
-// impl LineWithInvisibles {
-//     fn from_chunks<'a>(
-//         chunks: impl Iterator<Item = HighlightedChunk<'a>>,
-//         text_style: &TextStyle,
-//         text_layout_cache: &TextLayoutCache,
-//         font_cache: &Arc<FontCache>,
-//         max_line_len: usize,
-//         max_line_count: usize,
-//         line_number_layouts: &[Option<Line>],
-//         editor_mode: EditorMode,
-//     ) -> Vec<Self> {
-//         let mut layouts = Vec::with_capacity(max_line_count);
-//         let mut line = String::new();
-//         let mut invisibles = Vec::new();
-//         let mut styles = Vec::new();
-//         let mut non_whitespace_added = false;
-//         let mut row = 0;
-//         let mut line_exceeded_max_len = false;
-//         for highlighted_chunk in chunks.chain([HighlightedChunk {
-//             chunk: "\n",
-//             style: None,
-//             is_tab: false,
-//         }]) {
-//             for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
-//                 if ix > 0 {
-//                     layouts.push(Self {
-//                         line: text_layout_cache.layout_str(&line, text_style.font_size, &styles),
-//                         invisibles: invisibles.drain(..).collect(),
-//                     });
+impl LineWithInvisibles {
+    fn from_chunks<'a>(
+        chunks: impl Iterator<Item = HighlightedChunk<'a>>,
+        text_style: &TextStyle,
+        text_layout_cache: &TextLayoutCache,
+        font_cache: &Arc<FontCache>,
+        max_line_len: usize,
+        max_line_count: usize,
+        line_number_layouts: &[Option<Line>],
+        editor_mode: EditorMode,
+    ) -> Vec<Self> {
+        let mut layouts = Vec::with_capacity(max_line_count);
+        let mut line = String::new();
+        let mut invisibles = Vec::new();
+        let mut styles = Vec::new();
+        let mut non_whitespace_added = false;
+        let mut row = 0;
+        let mut line_exceeded_max_len = false;
+        for highlighted_chunk in chunks.chain([HighlightedChunk {
+            chunk: "\n",
+            style: None,
+            is_tab: false,
+        }]) {
+            for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
+                if ix > 0 {
+                    layouts.push(Self {
+                        line: text_layout_cache.layout_str(&line, text_style.font_size, &styles),
+                        invisibles: invisibles.drain(..).collect(),
+                    });
 
-//                     line.clear();
-//                     styles.clear();
-//                     row += 1;
-//                     line_exceeded_max_len = false;
-//                     non_whitespace_added = false;
-//                     if row == max_line_count {
-//                         return layouts;
-//                     }
-//                 }
+                    line.clear();
+                    styles.clear();
+                    row += 1;
+                    line_exceeded_max_len = false;
+                    non_whitespace_added = false;
+                    if row == max_line_count {
+                        return layouts;
+                    }
+                }
 
-//                 if !line_chunk.is_empty() && !line_exceeded_max_len {
-//                     let text_style = if let Some(style) = highlighted_chunk.style {
-//                         text_style
-//                             .clone()
-//                             .highlight(style, font_cache)
-//                             .map(Cow::Owned)
-//                             .unwrap_or_else(|_| Cow::Borrowed(text_style))
-//                     } else {
-//                         Cow::Borrowed(text_style)
-//                     };
+                if !line_chunk.is_empty() && !line_exceeded_max_len {
+                    let text_style = if let Some(style) = highlighted_chunk.style {
+                        text_style
+                            .clone()
+                            .highlight(style, font_cache)
+                            .map(Cow::Owned)
+                            .unwrap_or_else(|_| Cow::Borrowed(text_style))
+                    } else {
+                        Cow::Borrowed(text_style)
+                    };
 
-//                     if line.len() + line_chunk.len() > max_line_len {
-//                         let mut chunk_len = max_line_len - line.len();
-//                         while !line_chunk.is_char_boundary(chunk_len) {
-//                             chunk_len -= 1;
-//                         }
-//                         line_chunk = &line_chunk[..chunk_len];
-//                         line_exceeded_max_len = true;
-//                     }
+                    if line.len() + line_chunk.len() > max_line_len {
+                        let mut chunk_len = max_line_len - line.len();
+                        while !line_chunk.is_char_boundary(chunk_len) {
+                            chunk_len -= 1;
+                        }
+                        line_chunk = &line_chunk[..chunk_len];
+                        line_exceeded_max_len = true;
+                    }
 
-//                     styles.push((
-//                         line_chunk.len(),
-//                         RunStyle {
-//                             font_id: text_style.font_id,
-//                             color: text_style.color,
-//                             underline: text_style.underline,
-//                         },
-//                     ));
+                    styles.push((
+                        line_chunk.len(),
+                        RunStyle {
+                            font_id: text_style.font_id,
+                            color: text_style.color,
+                            underline: text_style.underline,
+                        },
+                    ));
 
-//                     if editor_mode == EditorMode::Full {
-//                         // Line wrap pads its contents with fake whitespaces,
-//                         // avoid printing them
-//                         let inside_wrapped_string = line_number_layouts
-//                             .get(row)
-//                             .and_then(|layout| layout.as_ref())
-//                             .is_none();
-//                         if highlighted_chunk.is_tab {
-//                             if non_whitespace_added || !inside_wrapped_string {
-//                                 invisibles.push(Invisible::Tab {
-//                                     line_start_offset: line.len(),
-//                                 });
-//                             }
-//                         } else {
-//                             invisibles.extend(
-//                                 line_chunk
-//                                     .chars()
-//                                     .enumerate()
-//                                     .filter(|(_, line_char)| {
-//                                         let is_whitespace = line_char.is_whitespace();
-//                                         non_whitespace_added |= !is_whitespace;
-//                                         is_whitespace
-//                                             && (non_whitespace_added || !inside_wrapped_string)
-//                                     })
-//                                     .map(|(whitespace_index, _)| Invisible::Whitespace {
-//                                         line_offset: line.len() + whitespace_index,
-//                                     }),
-//                             )
-//                         }
-//                     }
+                    if editor_mode == EditorMode::Full {
+                        // Line wrap pads its contents with fake whitespaces,
+                        // avoid printing them
+                        let inside_wrapped_string = line_number_layouts
+                            .get(row)
+                            .and_then(|layout| layout.as_ref())
+                            .is_none();
+                        if highlighted_chunk.is_tab {
+                            if non_whitespace_added || !inside_wrapped_string {
+                                invisibles.push(Invisible::Tab {
+                                    line_start_offset: line.len(),
+                                });
+                            }
+                        } else {
+                            invisibles.extend(
+                                line_chunk
+                                    .chars()
+                                    .enumerate()
+                                    .filter(|(_, line_char)| {
+                                        let is_whitespace = line_char.is_whitespace();
+                                        non_whitespace_added |= !is_whitespace;
+                                        is_whitespace
+                                            && (non_whitespace_added || !inside_wrapped_string)
+                                    })
+                                    .map(|(whitespace_index, _)| Invisible::Whitespace {
+                                        line_offset: line.len() + whitespace_index,
+                                    }),
+                            )
+                        }
+                    }
 
-//                     line.push_str(line_chunk);
-//                 }
-//             }
-//         }
+                    line.push_str(line_chunk);
+                }
+            }
+        }
 
-//         layouts
-//     }
+        layouts
+    }
 
-//     fn draw(
-//         &self,
-//         layout: &LayoutState,
-//         row: u32,
-//         scroll_top: f32,
-//         content_origin: gpui::Point<Pixels>,
-//         scroll_left: f32,
-//         visible_text_bounds: Bounds<Pixels>,
-//         whitespace_setting: ShowWhitespaceSetting,
-//         selection_ranges: &[Range<DisplayPoint>],
-//         visible_bounds: Bounds<Pixels>,
-//         cx: &mut ViewContext<Editor>,
-//     ) {
-//         let line_height = layout.position_map.line_height;
-//         let line_y = row as f32 * line_height - scroll_top;
+    fn draw(
+        &self,
+        layout: &LayoutState,
+        row: u32,
+        scroll_top: Pixels,
+        content_origin: gpui::Point<Pixels>,
+        scroll_left: Pixels,
+        visible_text_bounds: Bounds<Pixels>,
+        whitespace_setting: ShowWhitespaceSetting,
+        selection_ranges: &[Range<DisplayPoint>],
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let line_height = layout.position_map.line_height;
+        let line_y = row as f32 * line_height - scroll_top;
 
-//         self.line.paint(
-//             content_origin + vec2f(-scroll_left, line_y),
-//             visible_text_bounds,
-//             line_height,
-//             cx,
-//         );
+        self.line.paint(
+            content_origin + vec2f(-scroll_left, line_y),
+            line_height,
+            cx,
+        );
 
-//         self.draw_invisibles(
-//             &selection_ranges,
-//             layout,
-//             content_origin,
-//             scroll_left,
-//             line_y,
-//             row,
-//             visible_bounds,
-//             line_height,
-//             whitespace_setting,
-//             cx,
-//         );
-//     }
+        self.draw_invisibles(
+            &selection_ranges,
+            layout,
+            content_origin,
+            scroll_left,
+            line_y,
+            row,
+            visible_bounds,
+            line_height,
+            whitespace_setting,
+            cx,
+        );
+    }
 
-//     fn draw_invisibles(
-//         &self,
-//         selection_ranges: &[Range<DisplayPoint>],
-//         layout: &LayoutState,
-//         content_origin: gpui::Point<Pixels>,
-//         scroll_left: f32,
-//         line_y: f32,
-//         row: u32,
-//         visible_bounds: Bounds<Pixels>,
-//         line_height: f32,
-//         whitespace_setting: ShowWhitespaceSetting,
-//         cx: &mut ViewContext<Editor>,
-//     ) {
-//         let allowed_invisibles_regions = match whitespace_setting {
-//             ShowWhitespaceSetting::None => return,
-//             ShowWhitespaceSetting::Selection => Some(selection_ranges),
-//             ShowWhitespaceSetting::All => None,
-//         };
+    fn draw_invisibles(
+        &self,
+        selection_ranges: &[Range<DisplayPoint>],
+        layout: &LayoutState,
+        content_origin: gpui::Point<Pixels>,
+        scroll_left: f32,
+        line_y: f32,
+        row: u32,
+        visible_bounds: Bounds<Pixels>,
+        line_height: f32,
+        whitespace_setting: ShowWhitespaceSetting,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let allowed_invisibles_regions = match whitespace_setting {
+            ShowWhitespaceSetting::None => return,
+            ShowWhitespaceSetting::Selection => Some(selection_ranges),
+            ShowWhitespaceSetting::All => None,
+        };
 
-//         for invisible in &self.invisibles {
-//             let (&token_offset, invisible_symbol) = match invisible {
-//                 Invisible::Tab { line_start_offset } => (line_start_offset, &layout.tab_invisible),
-//                 Invisible::Whitespace { line_offset } => (line_offset, &layout.space_invisible),
-//             };
+        for invisible in &self.invisibles {
+            let (&token_offset, invisible_symbol) = match invisible {
+                Invisible::Tab { line_start_offset } => (line_start_offset, &layout.tab_invisible),
+                Invisible::Whitespace { line_offset } => (line_offset, &layout.space_invisible),
+            };
 
-//             let x_offset = self.line.x_for_index(token_offset);
-//             let invisible_offset =
-//                 (layout.position_map.em_width - invisible_symbol.width()).max(0.0) / 2.0;
-//             let origin = content_origin + vec2f(-scroll_left + x_offset + invisible_offset, line_y);
+            let x_offset = self.line.x_for_index(token_offset);
+            let invisible_offset =
+                (layout.position_map.em_width - invisible_symbol.width()).max(0.0) / 2.0;
+            let origin = content_origin + vec2f(-scroll_left + x_offset + invisible_offset, line_y);
 
-//             if let Some(allowed_regions) = allowed_invisibles_regions {
-//                 let invisible_point = DisplayPoint::new(row, token_offset as u32);
-//                 if !allowed_regions
-//                     .iter()
-//                     .any(|region| region.start <= invisible_point && invisible_point < region.end)
-//                 {
-//                     continue;
-//                 }
-//             }
-//             invisible_symbol.paint(origin, visible_bounds, line_height, cx);
-//         }
-//     }
-// }
+            if let Some(allowed_regions) = allowed_invisibles_regions {
+                let invisible_point = DisplayPoint::new(row, token_offset as u32);
+                if !allowed_regions
+                    .iter()
+                    .any(|region| region.start <= invisible_point && invisible_point < region.end)
+                {
+                    continue;
+                }
+            }
+            invisible_symbol.paint(origin, visible_bounds, line_height, cx);
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Invisible {
@@ -2119,21 +2121,360 @@ impl Element<Editor> for EditorElement {
         // Add 1 to ensure selections bleed off screen
         let end_row = 1 + cmp::min((scroll_position.y + height_in_lines).ceil() as u32, max_row);
 
-        dbg!(start_row..end_row);
-        // let text_style = cx.text_style();
-        // let layout_text = cx.text_system().layout_text(
-        //     "hello world",
-        //     text_style.font_size * cx.rem_size(),
-        //     &[text_style.to_run("hello world".len())],
-        //     None,
-        // );
-        // let line_height = text_style
-        //     .line_height
-        //     .to_pixels(text_style.font_size.into(), cx.rem_size());
+        let start_anchor = if start_row == 0 {
+            Anchor::min()
+        } else {
+            snapshot
+                .buffer_snapshot
+                .anchor_before(DisplayPoint::new(start_row, 0).to_offset(&snapshot, Bias::Left))
+        };
+        let end_anchor = if end_row > max_row {
+            Anchor::max()
+        } else {
+            snapshot
+                .buffer_snapshot
+                .anchor_before(DisplayPoint::new(end_row, 0).to_offset(&snapshot, Bias::Right))
+        };
 
-        // layout_text.unwrap()[0]
-        //     .paint(bounds.origin, line_height, cx)
-        //     .unwrap();
+        let mut selections: Vec<(PlayerColor, Vec<SelectionLayout>)> = Vec::new();
+        let mut active_rows = BTreeMap::new();
+        let mut fold_ranges = Vec::new();
+        let is_singleton = editor.is_singleton(cx);
+
+        let highlighted_rows = editor.highlighted_rows();
+        let highlighted_ranges = editor.background_highlights_in_range(
+            start_anchor..end_anchor,
+            &snapshot.display_snapshot,
+            cx.theme().colors(),
+        );
+
+        fold_ranges.extend(
+            snapshot
+                .folds_in_range(start_anchor..end_anchor)
+                .map(|anchor| {
+                    let start = anchor.start.to_point(&snapshot.buffer_snapshot);
+                    (
+                        start.row,
+                        start.to_display_point(&snapshot.display_snapshot)
+                            ..anchor.end.to_display_point(&snapshot),
+                    )
+                }),
+        );
+
+        let mut newest_selection_head = None;
+
+        if editor.show_local_selections {
+            let mut local_selections: Vec<Selection<Point>> = editor
+                .selections
+                .disjoint_in_range(start_anchor..end_anchor, cx);
+            local_selections.extend(editor.selections.pending(cx));
+            let mut layouts = Vec::new();
+            let newest = editor.selections.newest(cx);
+            for selection in local_selections.drain(..) {
+                let is_empty = selection.start == selection.end;
+                let is_newest = selection == newest;
+
+                let layout = SelectionLayout::new(
+                    selection,
+                    editor.selections.line_mode,
+                    editor.cursor_shape,
+                    &snapshot.display_snapshot,
+                    is_newest,
+                    true,
+                );
+                if is_newest {
+                    newest_selection_head = Some(layout.head);
+                }
+
+                for row in cmp::max(layout.active_rows.start, start_row)
+                    ..=cmp::min(layout.active_rows.end, end_row)
+                {
+                    let contains_non_empty_selection = active_rows.entry(row).or_insert(!is_empty);
+                    *contains_non_empty_selection |= !is_empty;
+                }
+                layouts.push(layout);
+            }
+
+            selections.push((style.local_player, layouts));
+        }
+
+        if let Some(collaboration_hub) = &editor.collaboration_hub {
+            // When following someone, render the local selections in their color.
+            if let Some(leader_id) = editor.leader_peer_id {
+                if let Some(collaborator) = collaboration_hub.collaborators(cx).get(&leader_id) {
+                    if let Some(participant_index) = collaboration_hub
+                        .user_participant_indices(cx)
+                        .get(&collaborator.user_id)
+                    {
+                        if let Some((local_selection_style, _)) = selections.first_mut() {
+                            *local_selection_style = cx
+                                .theme()
+                                .players()
+                                .color_for_participant(participant_index.0);
+                        }
+                    }
+                }
+            }
+
+            let mut remote_selections = HashMap::default();
+            for selection in snapshot.remote_selections_in_range(
+                &(start_anchor..end_anchor),
+                collaboration_hub.as_ref(),
+                cx,
+            ) {
+                let selection_style = if let Some(participant_index) = selection.participant_index {
+                    cx.theme()
+                        .players()
+                        .color_for_participant(participant_index.0)
+                } else {
+                    cx.theme().players().absent()
+                };
+
+                // Don't re-render the leader's selections, since the local selections
+                // match theirs.
+                if Some(selection.peer_id) == editor.leader_peer_id {
+                    continue;
+                }
+
+                remote_selections
+                    .entry(selection.replica_id)
+                    .or_insert((selection_style, Vec::new()))
+                    .1
+                    .push(SelectionLayout::new(
+                        selection.selection,
+                        selection.line_mode,
+                        selection.cursor_shape,
+                        &snapshot.display_snapshot,
+                        false,
+                        false,
+                    ));
+            }
+
+            selections.extend(remote_selections.into_values());
+        }
+
+        let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
+        let show_scrollbars = match scrollbar_settings.show {
+            ShowScrollbar::Auto => {
+                // Git
+                (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
+                        ||
+                        // Selections
+                        (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty())
+                        // Scrollmanager
+                        || editor.scroll_manager.scrollbars_visible()
+            }
+            ShowScrollbar::System => editor.scroll_manager.scrollbars_visible(),
+            ShowScrollbar::Always => true,
+            ShowScrollbar::Never => false,
+        };
+
+        let fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Hsla)> = fold_ranges
+            .into_iter()
+            .map(|(id, fold)| {
+                todo!("folds!")
+                // let color = self
+                //     .style
+                //     .folds
+                //     .ellipses
+                //     .background
+                //     .style_for(&mut cx.mouse_state::<FoldMarkers>(id as usize))
+                //     .color;
+
+                // (id, fold, color)
+            })
+            .collect();
+
+        let head_for_relative = newest_selection_head.unwrap_or_else(|| {
+            let newest = editor.selections.newest::<Point>(cx);
+            SelectionLayout::new(
+                newest,
+                editor.selections.line_mode,
+                editor.cursor_shape,
+                &snapshot.display_snapshot,
+                true,
+                true,
+            )
+            .head
+        });
+
+        let (line_number_layouts, fold_statuses) = self.layout_line_numbers(
+            start_row..end_row,
+            &active_rows,
+            head_for_relative,
+            is_singleton,
+            &snapshot,
+            cx,
+        );
+
+        let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
+
+        let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
+
+        let mut max_visible_line_width = 0.0;
+        let line_layouts =
+            self.layout_lines(start_row..end_row, &line_number_layouts, &snapshot, cx);
+        for line_with_invisibles in &line_layouts {
+            if line_with_invisibles.line.width() > max_visible_line_width {
+                max_visible_line_width = line_with_invisibles.line.width();
+            }
+        }
+
+        // let style = self.style.clone();
+        // let longest_line_width = layout_line(
+        //     snapshot.longest_row(),
+        //     &snapshot,
+        //     &style,
+        //     cx.text_layout_cache(),
+        // )
+        // .width();
+        // let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.x();
+        // let em_width = style.text.em_width(cx.font_cache());
+        // let (scroll_width, blocks) = self.layout_blocks(
+        //     start_row..end_row,
+        //     &snapshot,
+        //     size.x(),
+        //     scroll_width,
+        //     gutter_padding,
+        //     gutter_width,
+        //     em_width,
+        //     gutter_width + gutter_margin,
+        //     line_height,
+        //     &style,
+        //     &line_layouts,
+        //     editor,
+        //     cx,
+        // );
+
+        // let scroll_max = vec2f(
+        //     ((scroll_width - text_size.x()) / em_width).max(0.0),
+        //     max_row as f32,
+        // );
+
+        // let clamped = editor.scroll_manager.clamp_scroll_left(scroll_max.x());
+
+        // let autoscrolled = if autoscroll_horizontally {
+        //     editor.autoscroll_horizontally(
+        //         start_row,
+        //         text_size.x(),
+        //         scroll_width,
+        //         em_width,
+        //         &line_layouts,
+        //         cx,
+        //     )
+        // } else {
+        //     false
+        // };
+
+        // if clamped || autoscrolled {
+        //     snapshot = editor.snapshot(cx);
+        // }
+
+        // let style = editor.style(cx);
+
+        // let mut context_menu = None;
+        // let mut code_actions_indicator = None;
+        // if let Some(newest_selection_head) = newest_selection_head {
+        //     if (start_row..end_row).contains(&newest_selection_head.row()) {
+        //         if editor.context_menu_visible() {
+        //             context_menu =
+        //                 editor.render_context_menu(newest_selection_head, style.clone(), cx);
+        //         }
+
+        //         let active = matches!(
+        //             editor.context_menu.read().as_ref(),
+        //             Some(crate::ContextMenu::CodeActions(_))
+        //         );
+
+        //         code_actions_indicator = editor
+        //             .render_code_actions_indicator(&style, active, cx)
+        //             .map(|indicator| (newest_selection_head.row(), indicator));
+        //     }
+        // }
+
+        // let visible_rows = start_row..start_row + line_layouts.len() as u32;
+        // let mut hover = editor.hover_state.render(
+        //     &snapshot,
+        //     &style,
+        //     visible_rows,
+        //     editor.workspace.as_ref().map(|(w, _)| w.clone()),
+        //     cx,
+        // );
+        // let mode = editor.mode;
+
+        // let mut fold_indicators = editor.render_fold_indicators(
+        //     fold_statuses,
+        //     &style,
+        //     editor.gutter_hovered,
+        //     line_height,
+        //     gutter_margin,
+        //     cx,
+        // );
+
+        // if let Some((_, context_menu)) = context_menu.as_mut() {
+        //     context_menu.layout(
+        //         SizeConstraint {
+        //             min: gpui::Point<Pixels>::zero(),
+        //             max: vec2f(
+        //                 cx.window_size().x() * 0.7,
+        //                 (12. * line_height).min((size.y() - line_height) / 2.),
+        //             ),
+        //         },
+        //         editor,
+        //         cx,
+        //     );
+        // }
+
+        // if let Some((_, indicator)) = code_actions_indicator.as_mut() {
+        //     indicator.layout(
+        //         SizeConstraint::strict_along(
+        //             Axis::Vertical,
+        //             line_height * style.code_actions.vertical_scale,
+        //         ),
+        //         editor,
+        //         cx,
+        //     );
+        // }
+
+        // for fold_indicator in fold_indicators.iter_mut() {
+        //     if let Some(indicator) = fold_indicator.as_mut() {
+        //         indicator.layout(
+        //             SizeConstraint::strict_along(
+        //                 Axis::Vertical,
+        //                 line_height * style.code_actions.vertical_scale,
+        //             ),
+        //             editor,
+        //             cx,
+        //         );
+        //     }
+        // }
+
+        // if let Some((_, hover_popovers)) = hover.as_mut() {
+        //     for hover_popover in hover_popovers.iter_mut() {
+        //         hover_popover.layout(
+        //             SizeConstraint {
+        //                 min: gpui::Point<Pixels>::zero(),
+        //                 max: vec2f(
+        //                     (120. * em_width) // Default size
+        //                         .min(size.x() / 2.) // Shrink to half of the editor width
+        //                         .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
+        //                     (16. * line_height) // Default size
+        //                         .min(size.y() / 2.) // Shrink to half of the editor height
+        //                         .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
+        //                 ),
+        //             },
+        //             editor,
+        //             cx,
+        //         );
+        //     }
+        // }
+
+        // let invisible_symbol_font_size = self.style.text.font_size / 2.0;
+        // let invisible_symbol_style = RunStyle {
+        //     color: self.style.whitespace,
+        //     font_id: self.style.text.font_id,
+        //     underline: Default::default(),
+        // };
     }
 }
 

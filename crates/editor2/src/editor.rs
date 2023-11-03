@@ -72,7 +72,7 @@ use smallvec::SmallVec;
 use std::{
     any::TypeId,
     borrow::Cow,
-    cmp::{self, Reverse},
+    cmp::{self, Ordering, Reverse},
     ops::{ControlFlow, Deref, DerefMut, Range},
     path::Path,
     sync::Arc,
@@ -81,7 +81,7 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::Rope;
-use theme::ThemeColors;
+use theme::{ActiveTheme, PlayerColor, ThemeColors};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, SplitDirection, ViewId, Workspace};
 
@@ -597,6 +597,7 @@ pub enum SoftWrap {
 
 #[derive(Clone)]
 pub struct EditorStyle {
+    pub local_player: PlayerColor,
     pub text: TextStyle,
     pub line_height_scalar: f32,
     // pub placeholder_text: Option<TextStyle>,
@@ -8445,13 +8446,13 @@ impl Editor {
     //         }
     //     }
 
-    //     pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
-    //         self.highlighted_rows = rows;
-    //     }
+    pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
+        self.highlighted_rows = rows;
+    }
 
-    //     pub fn highlighted_rows(&self) -> Option<Range<u32>> {
-    //         self.highlighted_rows.clone()
-    //     }
+    pub fn highlighted_rows(&self) -> Option<Range<u32>> {
+        self.highlighted_rows.clone()
+    }
 
     pub fn highlight_background<T: 'static>(
         &mut self,
@@ -8540,43 +8541,43 @@ impl Editor {
     //             })
     //     }
 
-    //     pub fn background_highlights_in_range(
-    //         &self,
-    //         search_range: Range<Anchor>,
-    //         display_snapshot: &DisplaySnapshot,
-    //         theme: &Theme,
-    //     ) -> Vec<(Range<DisplayPoint>, Color)> {
-    //         let mut results = Vec::new();
-    //         for (color_fetcher, ranges) in self.background_highlights.values() {
-    //             let color = color_fetcher(theme);
-    //             let start_ix = match ranges.binary_search_by(|probe| {
-    //                 let cmp = probe
-    //                     .end
-    //                     .cmp(&search_range.start, &display_snapshot.buffer_snapshot);
-    //                 if cmp.is_gt() {
-    //                     Ordering::Greater
-    //                 } else {
-    //                     Ordering::Less
-    //                 }
-    //             }) {
-    //                 Ok(i) | Err(i) => i,
-    //             };
-    //             for range in &ranges[start_ix..] {
-    //                 if range
-    //                     .start
-    //                     .cmp(&search_range.end, &display_snapshot.buffer_snapshot)
-    //                     .is_ge()
-    //                 {
-    //                     break;
-    //                 }
+    pub fn background_highlights_in_range(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        theme: &ThemeColors,
+    ) -> Vec<(Range<DisplayPoint>, Hsla)> {
+        let mut results = Vec::new();
+        for (color_fetcher, ranges) in self.background_highlights.values() {
+            let color = color_fetcher(theme);
+            let start_ix = match ranges.binary_search_by(|probe| {
+                let cmp = probe
+                    .end
+                    .cmp(&search_range.start, &display_snapshot.buffer_snapshot);
+                if cmp.is_gt() {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }) {
+                Ok(i) | Err(i) => i,
+            };
+            for range in &ranges[start_ix..] {
+                if range
+                    .start
+                    .cmp(&search_range.end, &display_snapshot.buffer_snapshot)
+                    .is_ge()
+                {
+                    break;
+                }
 
-    //                 let start = range.start.to_display_point(&display_snapshot);
-    //                 let end = range.end.to_display_point(&display_snapshot);
-    //                 results.push((start..end, color))
-    //             }
-    //         }
-    //         results
-    //     }
+                let start = range.start.to_display_point(&display_snapshot);
+                let end = range.end.to_display_point(&display_snapshot);
+                results.push((start..end, color))
+            }
+        }
+        results
+    }
 
     //     pub fn background_highlight_row_ranges<T: 'static>(
     //         &self,
@@ -9326,6 +9327,7 @@ impl Render for Editor {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         EditorElement::new(EditorStyle {
+            local_player: cx.theme().players().local(),
             text: cx.text_style(),
             line_height_scalar: 1.,
             theme_id: 0,

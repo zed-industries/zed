@@ -60,6 +60,12 @@ pub struct ThemeVariant {
 impl ThemeVariant {
     /// Returns the [`ThemeColors`] for the theme.
     #[inline(always)]
+    pub fn players(&self) -> &PlayerColors {
+        &self.styles.player
+    }
+
+    /// Returns the [`ThemeColors`] for the theme.
+    #[inline(always)]
     pub fn colors(&self) -> &ThemeColors {
         &self.styles.colors
     }

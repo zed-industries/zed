@@ -21,6 +21,22 @@ pub struct PlayerColor {
 #[derive(Clone)]
 pub struct PlayerColors(pub Vec<PlayerColor>);
 
+impl PlayerColors {
+    pub fn local(&self) -> PlayerColor {
+        *self.0.first().unwrap()
+    }
+
+    pub fn absent(&self) -> PlayerColor {
+        todo!("use a valid color");
+        *self.0.last().unwrap()
+    }
+
+    pub fn color_for_participant(&self, participant_index: u32) -> PlayerColor {
+        let len = self.0.len() - 1;
+        self.0[(participant_index as usize % len) + 1]
+    }
+}
+
 #[derive(Refineable, Clone, Debug)]
 #[refineable(debug)]
 pub struct StatusColors {
@@ -89,6 +105,8 @@ pub struct ThemeColors {
     pub editor: Hsla,
     pub editor_subheader: Hsla,
     pub editor_active_line: Hsla,
+    pub editor_line_number: Hsla,
+    pub editor_active_line_number: Hsla,
 }
 
 #[derive(Refineable, Clone)]
