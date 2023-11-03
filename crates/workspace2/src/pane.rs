@@ -1457,7 +1457,7 @@ impl Pane {
                     ),
             )
             .child(
-                div().w_0().flex_1().h_full().child(
+                div().flex_1().h_full().child(
                     div().id("tabs").flex().overflow_x_scroll().children(
                         self.items
                             .iter()
