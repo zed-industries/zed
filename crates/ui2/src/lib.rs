@@ -1,3 +1,29 @@
+// TODO:
+// Document these:
+// - [ ] - label
+// - [ ] - button
+// - [ ] - icon_button
+// - [ ] - icon
+// - [ ] - list
+// - [ ] - avatar
+// - [ ] - panel
+// - [ ] - modal
+// - [ ] - palette
+// - [ ] - input
+// - [ ] - facepile
+// - [ ] - player
+// - [ ] - stacks
+// - [ ] - context menu
+// - [ ] - input
+// - [ ] - textarea (not built)
+// - [ ] - indicator
+// - [ ] - public actor
+// - [ ] - keybinding
+// - [ ] - tab
+// - [ ] - toast
+// - [ ]     - status_toast (maybe not built?)
+// - [ ]     - notification_toast
+
 //! # UI – Zed UI Primitives & Components
 //!
 //! This crate provides a set of UI primitives and components that are used to build all of the elements in Zed's UI.
