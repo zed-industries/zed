@@ -1,8 +1,8 @@
 use crate::{
-    div, point, px, Action, AnyDrag, AnyView, AppContext, BorrowWindow, Bounds, Component,
-    DispatchContext, DispatchPhase, Div, Element, ElementId, FocusHandle, KeyMatch, Keystroke,
-    Modifiers, Overflow, Pixels, Point, Render, SharedString, Size, Style, StyleRefinement, View,
-    ViewContext,
+    div, point, px, Action, AnyDrag, AnyTooltip, AnyView, AppContext, BorrowWindow, Bounds,
+    Component, DispatchContext, DispatchPhase, Div, Element, ElementId, FocusHandle, KeyMatch,
+    Keystroke, Modifiers, Overflow, Pixels, Point, Render, SharedString, Size, Style,
+    StyleRefinement, View, ViewContext,
 };
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -17,9 +17,12 @@ use std::{
     ops::Deref,
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 const DRAG_THRESHOLD: f64 = 2.;
+const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
+const TOOLTIP_OFFSET: Point<Pixels> = Point::new(px(10.0), px(8.0));
 
 pub trait StatelessInteractive<V: 'static>: Element<V> {
     fn stateless_interaction(&mut self) -> &mut StatelessInteraction<V>;
@@ -621,7 +624,7 @@ pub trait ElementInteraction<V: 'static>: 'static {
             }
 
             if let Some(tooltip_builder) = stateful.tooltip_builder.take() {
-                let tooltip_view = element_state.tooltip_view.clone();
+                let active_tooltip = element_state.active_tooltip.clone();
                 let pending_mouse_down = element_state.pending_mouse_down.clone();
 
                 cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
@@ -631,19 +634,44 @@ pub trait ElementInteraction<V: 'static>: 'static {
 
                     let is_hovered = bounds.contains_point(&event.position)
                         && pending_mouse_down.lock().is_none();
-                    let mut tooltip_view = tooltip_view.lock();
+                    let mut tooltip_lock = active_tooltip.lock();
 
                     if is_hovered {
-                        if tooltip_view.is_none() {
-                            *tooltip_view = Some(tooltip_builder(view_state, cx));
+                        if tooltip_lock.is_none() {
+                            *tooltip_lock = Some(ActiveTooltip {
+                                view: tooltip_builder(view_state, cx),
+                                visible: false,
+                                coordinates: event.position,
+                            });
+
+                            let active_tooltip = active_tooltip.clone();
+                            cx.spawn(move |view, mut cx| async move {
+                                cx.background_executor().timer(TOOLTIP_DELAY).await;
+
+                                view.update(&mut cx, |_, cx| {
+                                    if let Some(active_tooltip) = active_tooltip.lock().as_mut() {
+                                        active_tooltip.visible = true;
+                                        active_tooltip.coordinates =
+                                            cx.mouse_position() + TOOLTIP_OFFSET;
+                                    }
+                                    cx.notify();
+                                })
+                                .ok()
+                            })
+                            .detach();
                         }
                     } else {
-                        tooltip_view.take();
+                        tooltip_lock.take();
                     }
                 });
 
-                if let Some(active_tooltip) = element_state.tooltip_view.lock().as_ref() {
-                    cx.active_tooltip = Some(active_tooltip.clone());
+                if let Some(active_tooltip) = element_state.active_tooltip.lock().as_ref() {
+                    if active_tooltip.visible {
+                        cx.active_tooltip = Some(AnyTooltip {
+                            view: active_tooltip.view.clone(),
+                            cursor_offset: active_tooltip.coordinates,
+                        });
+                    }
                 }
             }
 
@@ -834,7 +862,13 @@ pub struct InteractiveElementState {
     hover_state: Arc<Mutex<bool>>,
     pending_mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
     scroll_offset: Option<Arc<Mutex<Point<Pixels>>>>,
-    tooltip_view: Arc<Mutex<Option<AnyView>>>,
+    active_tooltip: Arc<Mutex<Option<ActiveTooltip>>>,
+}
+
+struct ActiveTooltip {
+    view: AnyView,
+    visible: bool,
+    coordinates: Point<Pixels>,
 }
 
 impl InteractiveElementState {
