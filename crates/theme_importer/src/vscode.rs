@@ -28,22 +28,39 @@ pub struct VsCodeColors {
     text: String,
     #[serde(rename = "editor.background")]
     editor_background: String,
+    #[serde(rename = "terminal.background")]
     terminal_background: String,
+    #[serde(rename = "terminal.ansiBrightBlack")]
     terminal_ansi_bright_black: String,
+    #[serde(rename = "terminal.ansiBrightRed")]
     terminal_ansi_bright_red: String,
+    #[serde(rename = "terminal.ansiBrightGreen")]
     terminal_ansi_bright_green: String,
+    #[serde(rename = "terminal.ansiBrightYellow")]
     terminal_ansi_bright_yellow: String,
+    #[serde(rename = "terminal.ansiBrightBlue")]
     terminal_ansi_bright_blue: String,
+    #[serde(rename = "terminal.ansiBrightMagenta")]
     terminal_ansi_bright_magenta: String,
+    #[serde(rename = "terminal.ansiBrightCyan")]
     terminal_ansi_bright_cyan: String,
+    #[serde(rename = "terminal.ansiBrightWhite")]
     terminal_ansi_bright_white: String,
+    #[serde(rename = "terminal.ansiBlack")]
     terminal_ansi_black: String,
+    #[serde(rename = "terminal.ansiRed")]
     terminal_ansi_red: String,
+    #[serde(rename = "terminal.ansiGreen")]
     terminal_ansi_green: String,
+    #[serde(rename = "terminal.ansiYellow")]
     terminal_ansi_yellow: String,
+    #[serde(rename = "terminal.ansiBlue")]
     terminal_ansi_blue: String,
+    #[serde(rename = "terminal.ansiMagenta")]
     terminal_ansi_magenta: String,
+    #[serde(rename = "terminal.ansiCyan")]
     terminal_ansi_cyan: String,
+    #[serde(rename = "terminal.ansiWhite")]
     terminal_ansi_white: String,
 }
 

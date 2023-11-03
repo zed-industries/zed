@@ -139,12 +139,18 @@ impl<'a> Debug for ThemeColorsPrinter<'a> {
                 &HslaPrinter(self.0.border_transparent),
             )
             .field(
-                "elevated_surface",
+                "elevated_surface_background",
                 &HslaPrinter(self.0.elevated_surface_background),
             )
-            .field("surface", &HslaPrinter(self.0.surface_background))
+            .field(
+                "surface_background",
+                &HslaPrinter(self.0.surface_background),
+            )
             .field("background", &HslaPrinter(self.0.background))
-            .field("element", &HslaPrinter(self.0.element_background))
+            .field(
+                "element_background",
+                &HslaPrinter(self.0.element_background),
+            )
             .field("element_hover", &HslaPrinter(self.0.element_hover))
             .field("element_active", &HslaPrinter(self.0.element_active))
             .field("element_selected", &HslaPrinter(self.0.element_selected))
@@ -158,7 +164,7 @@ impl<'a> Debug for ThemeColorsPrinter<'a> {
                 &HslaPrinter(self.0.element_drop_target),
             )
             .field(
-                "ghost_element",
+                "ghost_element_background",
                 &HslaPrinter(self.0.ghost_element_background),
             )
             .field(
@@ -187,20 +193,103 @@ impl<'a> Debug for ThemeColorsPrinter<'a> {
             .field("icon_disabled", &HslaPrinter(self.0.icon_disabled))
             .field("icon_placeholder", &HslaPrinter(self.0.icon_placeholder))
             .field("icon_accent", &HslaPrinter(self.0.icon_accent))
-            .field("status_bar", &HslaPrinter(self.0.status_bar_background))
-            .field("title_bar", &HslaPrinter(self.0.title_bar_background))
-            .field("toolbar", &HslaPrinter(self.0.toolbar_background))
-            .field("tab_bar", &HslaPrinter(self.0.tab_bar_background))
-            .field("tab_inactive", &HslaPrinter(self.0.tab_inactive_background))
-            .field("tab_active", &HslaPrinter(self.0.tab_active_background))
-            .field("editor", &HslaPrinter(self.0.editor_background))
             .field(
-                "editor_subheader",
+                "status_bar_background",
+                &HslaPrinter(self.0.status_bar_background),
+            )
+            .field(
+                "title_bar_background",
+                &HslaPrinter(self.0.title_bar_background),
+            )
+            .field(
+                "toolbar_background",
+                &HslaPrinter(self.0.toolbar_background),
+            )
+            .field(
+                "tab_bar_background",
+                &HslaPrinter(self.0.tab_bar_background),
+            )
+            .field(
+                "tab_inactive_background",
+                &HslaPrinter(self.0.tab_inactive_background),
+            )
+            .field(
+                "tab_active_background",
+                &HslaPrinter(self.0.tab_active_background),
+            )
+            .field("editor_background", &HslaPrinter(self.0.editor_background))
+            .field(
+                "editor_subheader_background",
                 &HslaPrinter(self.0.editor_subheader_background),
             )
             .field(
                 "editor_active_line",
                 &HslaPrinter(self.0.editor_active_line),
+            )
+            .field(
+                "terminal_background",
+                &HslaPrinter(self.0.terminal_background),
+            )
+            .field(
+                "terminal_ansi_bright_black",
+                &HslaPrinter(self.0.terminal_ansi_bright_black),
+            )
+            .field(
+                "terminal_ansi_bright_red",
+                &HslaPrinter(self.0.terminal_ansi_bright_red),
+            )
+            .field(
+                "terminal_ansi_bright_green",
+                &HslaPrinter(self.0.terminal_ansi_bright_green),
+            )
+            .field(
+                "terminal_ansi_bright_yellow",
+                &HslaPrinter(self.0.terminal_ansi_bright_yellow),
+            )
+            .field(
+                "terminal_ansi_bright_blue",
+                &HslaPrinter(self.0.terminal_ansi_bright_blue),
+            )
+            .field(
+                "terminal_ansi_bright_magenta",
+                &HslaPrinter(self.0.terminal_ansi_bright_magenta),
+            )
+            .field(
+                "terminal_ansi_bright_cyan",
+                &HslaPrinter(self.0.terminal_ansi_bright_cyan),
+            )
+            .field(
+                "terminal_ansi_bright_white",
+                &HslaPrinter(self.0.terminal_ansi_bright_white),
+            )
+            .field(
+                "terminal_ansi_black",
+                &HslaPrinter(self.0.terminal_ansi_black),
+            )
+            .field("terminal_ansi_red", &HslaPrinter(self.0.terminal_ansi_red))
+            .field(
+                "terminal_ansi_green",
+                &HslaPrinter(self.0.terminal_ansi_green),
+            )
+            .field(
+                "terminal_ansi_yellow",
+                &HslaPrinter(self.0.terminal_ansi_yellow),
+            )
+            .field(
+                "terminal_ansi_blue",
+                &HslaPrinter(self.0.terminal_ansi_blue),
+            )
+            .field(
+                "terminal_ansi_magenta",
+                &HslaPrinter(self.0.terminal_ansi_magenta),
+            )
+            .field(
+                "terminal_ansi_cyan",
+                &HslaPrinter(self.0.terminal_ansi_cyan),
+            )
+            .field(
+                "terminal_ansi_white",
+                &HslaPrinter(self.0.terminal_ansi_white),
             )
             .finish()
     }
