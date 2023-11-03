@@ -240,6 +240,8 @@ impl ThemeColors {
             editor: neutral().light().step_1(),
             editor_subheader: neutral().light().step_2(),
             editor_active_line: neutral().light_alpha().step_3(),
+            editor_line_number: neutral().light_alpha().step_3(), // todo!("pick the right colors")
+            editor_active_line_number: neutral().light_alpha().step_3(), // todo!("pick the right colors")
         }
     }
 
@@ -285,6 +287,8 @@ impl ThemeColors {
             editor: neutral().dark().step_1(),
             editor_subheader: neutral().dark().step_2(),
             editor_active_line: neutral().dark_alpha().step_3(),
+            editor_line_number: neutral().dark_alpha().step_3(), // todo!("pick the right colors")
+            editor_active_line_number: neutral().dark_alpha().step_3(), // todo!("pick the right colors")
         }
     }
 }

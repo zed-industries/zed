@@ -15,6 +15,8 @@ fn zed_pro_daylight() -> ThemeVariant {
             git: GitStatusColors::default(),
             player: PlayerColors::default(),
             syntax: SyntaxTheme::default_light(),
+            inlay_highlight_style: Default::default(),
+            suggestion_highlight_style: Default::default(),
         },
     }
 }
@@ -31,6 +33,8 @@ pub(crate) fn zed_pro_moonlight() -> ThemeVariant {
             git: GitStatusColors::default(),
             player: PlayerColors::default(),
             syntax: SyntaxTheme::default_dark(),
+            inlay_highlight_style: Default::default(),
+            suggestion_highlight_style: Default::default(),
         },
     }
 }

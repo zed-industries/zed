@@ -1,6 +1,7 @@
 use crate::{
-    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, ToDisplayPoint},
+    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint},
     editor_settings::ShowScrollbar,
+    git::{diff_hunk_to_display, DisplayDiffHunk},
     CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
     Point, Selection, SoftWrap, ToPoint, MAX_LINE_LEN,
 };
@@ -8,12 +9,14 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
     black, point, px, relative, size, AnyElement, Bounds, Element, Hsla, Line, Pixels, Size, Style,
-    TextRun, TextSystem, ViewContext,
+    TextRun, TextStyle, TextSystem, ViewContext, WindowContext,
 };
+use itertools::Itertools;
+use language::language_settings::ShowWhitespaceSetting;
 use multi_buffer::Anchor;
 use settings::Settings;
 use smallvec::SmallVec;
-use std::{cmp, ops::Range, sync::Arc};
+use std::{borrow::Cow, cmp, fmt::Write, iter, ops::Range, sync::Arc};
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
 use workspace::item::Item;
@@ -1352,26 +1355,26 @@ impl EditorElement {
 
     //Folds contained in a hunk are ignored apart from shrinking visual size
     //If a fold contains any hunks then that fold line is marked as modified
-    // fn layout_git_gutters(
-    //     &self,
-    //     display_rows: Range<u32>,
-    //     snapshot: &EditorSnapshot,
-    // ) -> Vec<DisplayDiffHunk> {
-    //     let buffer_snapshot = &snapshot.buffer_snapshot;
+    fn layout_git_gutters(
+        &self,
+        display_rows: Range<u32>,
+        snapshot: &EditorSnapshot,
+    ) -> Vec<DisplayDiffHunk> {
+        let buffer_snapshot = &snapshot.buffer_snapshot;
 
-    //     let buffer_start_row = DisplayPoint::new(display_rows.start, 0)
-    //         .to_point(snapshot)
-    //         .row;
-    //     let buffer_end_row = DisplayPoint::new(display_rows.end, 0)
-    //         .to_point(snapshot)
-    //         .row;
+        let buffer_start_row = DisplayPoint::new(display_rows.start, 0)
+            .to_point(snapshot)
+            .row;
+        let buffer_end_row = DisplayPoint::new(display_rows.end, 0)
+            .to_point(snapshot)
+            .row;
 
-    //     buffer_snapshot
-    //         .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
-    //         .map(|hunk| diff_hunk_to_display(hunk, snapshot))
-    //         .dedup()
-    //         .collect()
-    // }
+        buffer_snapshot
+            .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
+            .map(|hunk| diff_hunk_to_display(hunk, snapshot))
+            .dedup()
+            .collect()
+    }
 
     fn calculate_relative_line_numbers(
         &self,
@@ -1435,6 +1438,7 @@ impl EditorElement {
         Vec<Option<gpui::Line>>,
         Vec<Option<(FoldStatus, BufferRow, bool)>>,
     ) {
+        let font_size = self.style.text.font_size * cx.rem_size();
         let include_line_numbers = snapshot.mode == EditorMode::Full;
         let mut line_number_layouts = Vec::with_capacity(rows.len());
         let mut fold_statuses = Vec::with_capacity(rows.len());
@@ -1471,7 +1475,7 @@ impl EditorElement {
                         .text_system()
                         .layout_text(
                             &line_number,
-                            self.style.text.font_size,
+                            font_size,
                             &[TextRun {
                                 len: line_number.len(),
                                 font: self.style.text.font(),
@@ -1480,7 +1484,7 @@ impl EditorElement {
                             }],
                             None,
                         )
-                        .unwrap();
+                        .unwrap()[0];
                     line_number_layouts.push(Some(layout));
                     fold_statuses.push(
                         is_singleton
@@ -1501,68 +1505,64 @@ impl EditorElement {
         (line_number_layouts, fold_statuses)
     }
 
-    // fn layout_lines(
-    //     &mut self,
-    //     rows: Range<u32>,
-    //     line_number_layouts: &[Option<Line>],
-    //     snapshot: &EditorSnapshot,
-    //     cx: &ViewContext<Editor>,
-    // ) -> Vec<LineWithInvisibles> {
-    //     if rows.start >= rows.end {
-    //         return Vec::new();
-    //     }
+    fn layout_lines(
+        &mut self,
+        rows: Range<u32>,
+        line_number_layouts: &[Option<Line>],
+        snapshot: &EditorSnapshot,
+        cx: &ViewContext<Editor>,
+    ) -> Vec<LineWithInvisibles> {
+        if rows.start >= rows.end {
+            return Vec::new();
+        }
 
-    //     // When the editor is empty and unfocused, then show the placeholder.
-    //     if snapshot.is_empty() {
-    //         let placeholder_style = self
-    //             .style
-    //             .placeholder_text
-    //             .as_ref()
-    //             .unwrap_or(&self.style.text);
-    //         let placeholder_text = snapshot.placeholder_text();
-    //         let placeholder_lines = placeholder_text
-    //             .as_ref()
-    //             .map_or("", AsRef::as_ref)
-    //             .split('\n')
-    //             .skip(rows.start as usize)
-    //             .chain(iter::repeat(""))
-    //             .take(rows.len());
-    //         placeholder_lines
-    //             .map(|line| {
-    //                 cx.text_layout_cache().layout_str(
-    //                     line,
-    //                     placeholder_style.font_size,
-    //                     &[(
-    //                         line.len(),
-    //                         RunStyle {
-    //                             font_id: placeholder_style.font_id,
-    //                             color: placeholder_style.color,
-    //                             underline: Default::default(),
-    //                         },
-    //                     )],
-    //                 )
-    //             })
-    //             .map(|line| LineWithInvisibles {
-    //                 line,
-    //                 invisibles: Vec::new(),
-    //             })
-    //             .collect()
-    //     } else {
-    //         let style = &self.style;
-    //         let chunks = snapshot.highlighted_chunks(rows.clone(), true, style);
+        // When the editor is empty and unfocused, then show the placeholder.
+        if snapshot.is_empty() {
+            let placeholder_color = cx.theme().styles.colors.text_placeholder;
+            let placeholder_text = snapshot.placeholder_text();
+            let placeholder_lines = placeholder_text
+                .as_ref()
+                .map_or("", AsRef::as_ref)
+                .split('\n')
+                .skip(rows.start as usize)
+                .chain(iter::repeat(""))
+                .take(rows.len());
+            placeholder_lines
+                .map(|line| {
+                    cx.text_system()
+                        .layout_text(
+                            line,
+                            self.style.text.font_size * cx.rem_size(),
+                            &[TextRun {
+                                len: line.len(),
+                                font: self.style.text.font(),
+                                color: placeholder_color,
+                                underline: Default::default(),
+                            }],
+                            None,
+                        )
+                        .unwrap()[0]
+                })
+                .map(|line| LineWithInvisibles {
+                    line,
+                    invisibles: Vec::new(),
+                })
+                .collect()
+        } else {
+            let style = &self.style;
+            let chunks = snapshot.highlighted_chunks(rows.clone(), true, cx.theme());
 
-    //         LineWithInvisibles::from_chunks(
-    //             chunks,
-    //             &style.text,
-    //             cx.text_layout_cache(),
-    //             cx.font_cache(),
-    //             MAX_LINE_LEN,
-    //             rows.len() as usize,
-    //             line_number_layouts,
-    //             snapshot.mode,
-    //         )
-    //     }
-    // }
+            LineWithInvisibles::from_chunks(
+                chunks,
+                &style.text,
+                MAX_LINE_LEN,
+                rows.len() as usize,
+                line_number_layouts,
+                snapshot.mode,
+                cx.window_context(),
+            )
+        }
+    }
 
     // #[allow(clippy::too_many_arguments)]
     // fn layout_blocks(
@@ -1796,12 +1796,11 @@ impl LineWithInvisibles {
     fn from_chunks<'a>(
         chunks: impl Iterator<Item = HighlightedChunk<'a>>,
         text_style: &TextStyle,
-        text_layout_cache: &TextLayoutCache,
-        font_cache: &Arc<FontCache>,
         max_line_len: usize,
         max_line_count: usize,
         line_number_layouts: &[Option<Line>],
         editor_mode: EditorMode,
+        cx: &mut WindowContext,
     ) -> Vec<Self> {
         let mut layouts = Vec::with_capacity(max_line_count);
         let mut line = String::new();
@@ -1818,7 +1817,10 @@ impl LineWithInvisibles {
             for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
                 if ix > 0 {
                     layouts.push(Self {
-                        line: text_layout_cache.layout_str(&line, text_style.font_size, &styles),
+                        line: cx
+                            .text_system()
+                            .layout_text(&line, text_style.font_size * cx.rem_size(), &styles, None)
+                            .unwrap()[0],
                         invisibles: invisibles.drain(..).collect(),
                     });
 
@@ -1836,7 +1838,7 @@ impl LineWithInvisibles {
                     let text_style = if let Some(style) = highlighted_chunk.style {
                         text_style
                             .clone()
-                            .highlight(style, font_cache)
+                            .highlight(style)
                             .map(Cow::Owned)
                             .unwrap_or_else(|_| Cow::Borrowed(text_style))
                     } else {
@@ -1852,14 +1854,12 @@ impl LineWithInvisibles {
                         line_exceeded_max_len = true;
                     }
 
-                    styles.push((
-                        line_chunk.len(),
-                        RunStyle {
-                            font_id: text_style.font_id,
-                            color: text_style.color,
-                            underline: text_style.underline,
-                        },
-                    ));
+                    styles.push(TextRun {
+                        len: line_chunk.len(),
+                        font: text_style.font(),
+                        color: text_style.color,
+                        underline: text_style.underline,
+                    });
 
                     if editor_mode == EditorMode::Full {
                         // Line wrap pads its contents with fake whitespaces,
@@ -1913,10 +1913,10 @@ impl LineWithInvisibles {
         cx: &mut ViewContext<Editor>,
     ) {
         let line_height = layout.position_map.line_height;
-        let line_y = row as f32 * line_height - scroll_top;
+        let line_y = line_height * row as f32 - scroll_top;
 
         self.line.paint(
-            content_origin + vec2f(-scroll_left, line_y),
+            content_origin + gpui::point(-scroll_left, line_y),
             line_height,
             cx,
         );
@@ -1928,7 +1928,6 @@ impl LineWithInvisibles {
             scroll_left,
             line_y,
             row,
-            visible_bounds,
             line_height,
             whitespace_setting,
             cx,
@@ -1940,11 +1939,10 @@ impl LineWithInvisibles {
         selection_ranges: &[Range<DisplayPoint>],
         layout: &LayoutState,
         content_origin: gpui::Point<Pixels>,
-        scroll_left: f32,
-        line_y: f32,
+        scroll_left: Pixels,
+        line_y: Pixels,
         row: u32,
-        visible_bounds: Bounds<Pixels>,
-        line_height: f32,
+        line_height: Pixels,
         whitespace_setting: ShowWhitespaceSetting,
         cx: &mut ViewContext<Editor>,
     ) {
@@ -1961,9 +1959,11 @@ impl LineWithInvisibles {
             };
 
             let x_offset = self.line.x_for_index(token_offset);
-            let invisible_offset =
-                (layout.position_map.em_width - invisible_symbol.width()).max(0.0) / 2.0;
-            let origin = content_origin + vec2f(-scroll_left + x_offset + invisible_offset, line_y);
+            let invisible_offset = (layout.position_map.em_width - invisible_symbol.width())
+                .max(Pixels::from(0.0))
+                / 2.0;
+            let origin =
+                content_origin + gpui::point(-scroll_left + x_offset + invisible_offset, line_y);
 
             if let Some(allowed_regions) = allowed_invisibles_regions {
                 let invisible_point = DisplayPoint::new(row, token_offset as u32);
@@ -1974,7 +1974,7 @@ impl LineWithInvisibles {
                     continue;
                 }
             }
-            invisible_symbol.paint(origin, visible_bounds, line_height, cx);
+            invisible_symbol.paint(origin, line_height, cx);
         }
     }
 }
@@ -2309,9 +2309,9 @@ impl Element<Editor> for EditorElement {
 
         let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
-        let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
+        let scrollbar_row_range = scroll_position.y..(scroll_position.y + height_in_lines);
 
-        let mut max_visible_line_width = 0.0;
+        let mut max_visible_line_width = Pixels::ZERO;
         let line_layouts =
             self.layout_lines(start_row..end_row, &line_number_layouts, &snapshot, cx);
         for line_with_invisibles in &line_layouts {
@@ -3078,34 +3078,34 @@ impl Element<Editor> for EditorElement {
 
 type BufferRow = u32;
 
-// pub struct LayoutState {
-//     position_map: Arc<PositionMap>,
-//     gutter_size: gpui::Point<Pixels>,
-//     gutter_padding: f32,
-//     gutter_margin: f32,
-//     text_size: gpui::Point<Pixels>,
-//     mode: EditorMode,
-//     wrap_guides: SmallVec<[(f32, bool); 2]>,
-//     visible_display_row_range: Range<u32>,
-//     active_rows: BTreeMap<u32, bool>,
-//     highlighted_rows: Option<Range<u32>>,
-//     line_number_layouts: Vec<Option<text_layout::Line>>,
-//     display_hunks: Vec<DisplayDiffHunk>,
-//     blocks: Vec<BlockLayout>,
-//     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
-//     fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)>,
-//     selections: Vec<(SelectionStyle, Vec<SelectionLayout>)>,
-//     scrollbar_row_range: Range<f32>,
-//     show_scrollbars: bool,
-//     is_singleton: bool,
-//     max_row: u32,
-//     context_menu: Option<(DisplayPoint, AnyElement<Editor>)>,
-//     code_actions_indicator: Option<(u32, AnyElement<Editor>)>,
-//     hover_popovers: Option<(DisplayPoint, Vec<AnyElement<Editor>>)>,
-//     fold_indicators: Vec<Option<AnyElement<Editor>>>,
-//     tab_invisible: Line,
-//     space_invisible: Line,
-// }
+pub struct LayoutState {
+    position_map: Arc<PositionMap>,
+    gutter_size: gpui::Point<Pixels>,
+    gutter_padding: f32,
+    gutter_margin: f32,
+    text_size: gpui::Point<Pixels>,
+    mode: EditorMode,
+    wrap_guides: SmallVec<[(f32, bool); 2]>,
+    visible_display_row_range: Range<u32>,
+    active_rows: BTreeMap<u32, bool>,
+    highlighted_rows: Option<Range<u32>>,
+    line_number_layouts: Vec<Option<gpui::Line>>,
+    display_hunks: Vec<DisplayDiffHunk>,
+    blocks: Vec<BlockLayout>,
+    highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
+    fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Hsla)>,
+    selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
+    scrollbar_row_range: Range<f32>,
+    show_scrollbars: bool,
+    is_singleton: bool,
+    max_row: u32,
+    context_menu: Option<(DisplayPoint, AnyElement<Editor>)>,
+    code_actions_indicator: Option<(u32, AnyElement<Editor>)>,
+    hover_popovers: Option<(DisplayPoint, Vec<AnyElement<Editor>>)>,
+    fold_indicators: Vec<Option<AnyElement<Editor>>>,
+    tab_invisible: Line,
+    space_invisible: Line,
+}
 
 struct PositionMap {
     size: Size<Pixels>,

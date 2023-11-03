@@ -53,7 +53,7 @@ use language::{
     SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
-use lsp::{Documentation, LanguageServerId};
+use lsp::{DiagnosticSeverity, Documentation, LanguageServerId};
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
@@ -81,7 +81,7 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::Rope;
-use theme::{ActiveTheme, PlayerColor, ThemeColors};
+use theme::{ActiveTheme, PlayerColor, ThemeColors, ThemeVariant};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, SplitDirection, ViewId, Workspace};
 
@@ -9953,23 +9953,19 @@ pub fn highlight_diagnostic_message(
     (message_without_backticks, highlights)
 }
 
-// pub fn diagnostic_style(
-//     severity: DiagnosticSeverity,
-//     valid: bool,
-//     theme: &theme::Editor,
-// ) -> DiagnosticStyle {
-//     match (severity, valid) {
-//         (DiagnosticSeverity::ERROR, true) => theme.error_diagnostic.clone(),
-//         (DiagnosticSeverity::ERROR, false) => theme.invalid_error_diagnostic.clone(),
-//         (DiagnosticSeverity::WARNING, true) => theme.warning_diagnostic.clone(),
-//         (DiagnosticSeverity::WARNING, false) => theme.invalid_warning_diagnostic.clone(),
-//         (DiagnosticSeverity::INFORMATION, true) => theme.information_diagnostic.clone(),
-//         (DiagnosticSeverity::INFORMATION, false) => theme.invalid_information_diagnostic.clone(),
-//         (DiagnosticSeverity::HINT, true) => theme.hint_diagnostic.clone(),
-//         (DiagnosticSeverity::HINT, false) => theme.invalid_hint_diagnostic.clone(),
-//         _ => theme.invalid_hint_diagnostic.clone(),
-//     }
-// }
+pub fn diagnostic_style(severity: DiagnosticSeverity, valid: bool, theme: &ThemeVariant) -> Hsla {
+    match (severity, valid) {
+        (DiagnosticSeverity::ERROR, true) => theme.status().error,
+        (DiagnosticSeverity::ERROR, false) => theme.status().error,
+        (DiagnosticSeverity::WARNING, true) => theme.status().warning,
+        (DiagnosticSeverity::WARNING, false) => theme.status().warning,
+        (DiagnosticSeverity::INFORMATION, true) => theme.status().info,
+        (DiagnosticSeverity::INFORMATION, false) => theme.status().info,
+        (DiagnosticSeverity::HINT, true) => theme.status().info,
+        (DiagnosticSeverity::HINT, false) => theme.status().info,
+        _ => theme.status().ignored,
+    }
+}
 
 // pub fn combine_syntax_and_fuzzy_match_highlights(
 //     text: &str,

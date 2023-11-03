@@ -1,4 +1,4 @@
-use gpui::Hsla;
+use gpui::{HighlightStyle, Hsla};
 use refineable::Refineable;
 
 use crate::SyntaxTheme;
@@ -117,6 +117,8 @@ pub struct ThemeStyles {
     pub git: GitStatusColors,
     pub player: PlayerColors,
     pub syntax: SyntaxTheme,
+    pub inlay_highlight_style: HighlightStyle,
+    pub suggestion_highlight_style: HighlightStyle,
 }
 
 #[cfg(test)]
