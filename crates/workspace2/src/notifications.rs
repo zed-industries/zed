@@ -1,6 +1,6 @@
 use crate::{Toast, Workspace};
 use collections::HashMap;
-use gpui2::{AnyView, AppContext, Entity, EntityId, EventEmitter, Render, View, ViewContext};
+use gpui::{AnyView, AppContext, Entity, EntityId, EventEmitter, Render, View, ViewContext};
 use std::{any::TypeId, ops::DerefMut};
 
 pub fn init(cx: &mut AppContext) {
@@ -160,7 +160,7 @@ impl Workspace {
 
 pub mod simple_message_notification {
     use super::Notification;
-    use gpui2::{AnyElement, AppContext, Div, EventEmitter, Render, TextStyle, ViewContext};
+    use gpui::{AnyElement, AppContext, Div, EventEmitter, Render, TextStyle, ViewContext};
     use serde::Deserialize;
     use std::{borrow::Cow, sync::Arc};
 
@@ -220,36 +220,36 @@ pub mod simple_message_notification {
             }
         }
 
+        pub fn new_element(
+            message: fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>,
+        ) -> MessageNotification {
+            Self {
+                message: NotificationMessage::Element(message),
+                on_click: None,
+                click_message: None,
+            }
+        }
+
+        pub fn with_click_message<S>(mut self, message: S) -> Self
+        where
+            S: Into<Cow<'static, str>>,
+        {
+            self.click_message = Some(message.into());
+            self
+        }
+
+        pub fn on_click<F>(mut self, on_click: F) -> Self
+        where
+            F: 'static + Send + Sync + Fn(&mut ViewContext<Self>),
+        {
+            self.on_click = Some(Arc::new(on_click));
+            self
+        }
+
         // todo!()
-        //         pub fn new_element(
-        //             message: fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>,
-        //         ) -> MessageNotification {
-        //             Self {
-        //                 message: NotificationMessage::Element(message),
-        //                 on_click: None,
-        //                 click_message: None,
-        //             }
-        //         }
-
-        //         pub fn with_click_message<S>(mut self, message: S) -> Self
-        //         where
-        //             S: Into<Cow<'static, str>>,
-        //         {
-        //             self.click_message = Some(message.into());
-        //             self
-        //         }
-
-        //         pub fn on_click<F>(mut self, on_click: F) -> Self
-        //         where
-        //             F: 'static + Fn(&mut ViewContext<Self>),
-        //         {
-        //             self.on_click = Some(Arc::new(on_click));
-        //             self
-        //         }
-
-        //         pub fn dismiss(&mut self, _: &CancelMessageNotification, cx: &mut ViewContext<Self>) {
-        //             cx.emit(MessageNotificationEvent::Dismiss);
-        //         }
+        // pub fn dismiss(&mut self, _: &CancelMessageNotification, cx: &mut ViewContext<Self>) {
+        //     cx.emit(MessageNotificationEvent::Dismiss);
+        // }
     }
 
     impl Render for MessageNotification {
@@ -265,7 +265,7 @@ pub mod simple_message_notification {
     //             "MessageNotification"
     //         }
 
-    //         fn render(&mut self, cx: &mut gpui2::ViewContext<Self>) -> gpui::AnyElement<Self> {
+    //         fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
     //             let theme = theme2::current(cx).clone();
     //             let theme = &theme.simple_message_notification;
 

@@ -4284,7 +4284,7 @@ dependencies = [
  "settings2",
  "shellexpand",
  "util",
- "workspace",
+ "workspace2",
 ]
 
 [[package]]
@@ -7633,7 +7633,6 @@ dependencies = [
  "collections",
  "editor",
  "futures 0.3.28",
- "globset",
  "gpui",
  "language",
  "log",
@@ -9940,6 +9939,7 @@ dependencies = [
  "dirs 3.0.2",
  "futures 0.3.28",
  "git2",
+ "globset",
  "isahc",
  "lazy_static",
  "log",

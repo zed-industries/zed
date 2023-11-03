@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use crate::{ItemHandle, Pane};
-use gpui2::{
+use gpui::{
     div, AnyView, Component, Div, ParentElement, Render, Styled, Subscription, View, ViewContext,
     WindowContext,
 };

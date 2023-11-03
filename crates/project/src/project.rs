@@ -54,7 +54,7 @@ use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use postage::watch;
-use prettier::{LocateStart, Prettier};
+use prettier::Prettier;
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
@@ -82,8 +82,11 @@ use std::{
 use terminals::Terminals;
 use text::Anchor;
 use util::{
-    debug_panic, defer, http::HttpClient, merge_json_value_into,
-    paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
+    debug_panic, defer,
+    http::HttpClient,
+    merge_json_value_into,
+    paths::{DEFAULT_PRETTIER_DIR, LOCAL_SETTINGS_RELATIVE_PATH},
+    post_inc, ResultExt, TryFutureExt as _,
 };
 
 pub use fs::*;
@@ -162,17 +165,15 @@ pub struct Project {
     copilot_log_subscription: Option<lsp::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
     node: Option<Arc<dyn NodeRuntime>>,
-    #[cfg(not(any(test, feature = "test-support")))]
     default_prettier: Option<DefaultPrettier>,
-    prettier_instances: HashMap<
-        (Option<WorktreeId>, PathBuf),
-        Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>,
-    >,
+    prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
+    prettier_instances: HashMap<PathBuf, Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>,
 }
 
-#[cfg(not(any(test, feature = "test-support")))]
 struct DefaultPrettier {
-    installation_process: Option<Shared<Task<()>>>,
+    instance: Option<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>,
+    installation_process: Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>>,
+    #[cfg(not(any(test, feature = "test-support")))]
     installed_plugins: HashSet<&'static str>,
 }
 
@@ -685,8 +686,8 @@ impl Project {
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
                 node: Some(node),
-                #[cfg(not(any(test, feature = "test-support")))]
                 default_prettier: None,
+                prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
             }
         })
@@ -786,8 +787,8 @@ impl Project {
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
                 node: None,
-                #[cfg(not(any(test, feature = "test-support")))]
                 default_prettier: None,
+                prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
             };
             for worktree in worktrees {
@@ -924,8 +925,7 @@ impl Project {
         }
 
         for (worktree, language, settings) in language_formatters_to_check {
-            self.install_default_formatters(worktree, &language, &settings, cx)
-                .detach_and_log_err(cx);
+            self.install_default_formatters(worktree, &language, &settings, cx);
         }
 
         // Start all the newly-enabled language servers.
@@ -2681,20 +2681,7 @@ impl Project {
         let buffer_file = File::from_dyn(buffer_file.as_ref());
         let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
 
-        let task_buffer = buffer.clone();
-        let prettier_installation_task =
-            self.install_default_formatters(worktree, &new_language, &settings, cx);
-        cx.spawn(|project, mut cx| async move {
-            prettier_installation_task.await?;
-            let _ = project
-                .update(&mut cx, |project, cx| {
-                    project.prettier_instance_for_buffer(&task_buffer, cx)
-                })
-                .await;
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-
+        self.install_default_formatters(worktree, &new_language, &settings, cx);
         if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
             if let Some(tree) = worktree.read(cx).as_local() {
@@ -4029,7 +4016,7 @@ impl Project {
     }
 
     pub fn format(
-        &self,
+        &mut self,
         buffers: HashSet<ModelHandle<Buffer>>,
         push_to_history: bool,
         trigger: FormatTrigger,
@@ -4049,10 +4036,10 @@ impl Project {
                 })
                 .collect::<Vec<_>>();
 
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn(|project, mut cx| async move {
                 // Do not allow multiple concurrent formatting requests for the
                 // same buffer.
-                this.update(&mut cx, |this, cx| {
+                project.update(&mut cx, |this, cx| {
                     buffers_with_paths_and_servers.retain(|(buffer, _, _)| {
                         this.buffers_being_formatted
                             .insert(buffer.read(cx).remote_id())
@@ -4060,7 +4047,7 @@ impl Project {
                 });
 
                 let _cleanup = defer({
-                    let this = this.clone();
+                    let this = project.clone();
                     let mut cx = cx.clone();
                     let buffers = &buffers_with_paths_and_servers;
                     move || {
@@ -4128,7 +4115,7 @@ impl Project {
                             {
                                 format_operation = Some(FormatOperation::Lsp(
                                     Self::format_via_lsp(
-                                        &this,
+                                        &project,
                                         &buffer,
                                         buffer_abs_path,
                                         &language_server,
@@ -4163,14 +4150,14 @@ impl Project {
                             }
                         }
                         (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
-                            if let Some(prettier_task) = this
+                            if let Some((prettier_path, prettier_task)) = project
                                 .update(&mut cx, |project, cx| {
                                     project.prettier_instance_for_buffer(buffer, cx)
                                 }).await {
                                     match prettier_task.await
                                     {
                                         Ok(prettier) => {
-                                            let buffer_path = buffer.read_with(&cx, |buffer, cx| {
+                                            let buffer_path = buffer.update(&mut cx, |buffer, cx| {
                                                 File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
                                             });
                                             format_operation = Some(FormatOperation::Prettier(
@@ -4180,16 +4167,35 @@ impl Project {
                                                     .context("formatting via prettier")?,
                                             ));
                                         }
-                                        Err(e) => anyhow::bail!(
-                                            "Failed to create prettier instance for buffer during autoformatting: {e:#}"
-                                        ),
+                                        Err(e) => {
+                                            project.update(&mut cx, |project, _| {
+                                                match &prettier_path {
+                                                    Some(prettier_path) => {
+                                                        project.prettier_instances.remove(prettier_path);
+                                                    },
+                                                    None => {
+                                                        if let Some(default_prettier) = project.default_prettier.as_mut() {
+                                                            default_prettier.instance = None;
+                                                        }
+                                                    },
+                                                }
+                                            });
+                                            match &prettier_path {
+                                                Some(prettier_path) => {
+                                                    log::error!("Failed to create prettier instance from {prettier_path:?} for buffer during autoformatting: {e:#}");
+                                                },
+                                                None => {
+                                                    log::error!("Failed to create default prettier instance for buffer during autoformatting: {e:#}");
+                                                },
+                                            }
+                                        }
                                     }
                             } else if let Some((language_server, buffer_abs_path)) =
                                 language_server.as_ref().zip(buffer_abs_path.as_ref())
                             {
                                 format_operation = Some(FormatOperation::Lsp(
                                     Self::format_via_lsp(
-                                        &this,
+                                        &project,
                                         &buffer,
                                         buffer_abs_path,
                                         &language_server,
@@ -4202,14 +4208,14 @@ impl Project {
                             }
                         }
                         (Formatter::Prettier { .. }, FormatOnSave::On | FormatOnSave::Off) => {
-                            if let Some(prettier_task) = this
+                            if let Some((prettier_path, prettier_task)) = project
                                 .update(&mut cx, |project, cx| {
                                     project.prettier_instance_for_buffer(buffer, cx)
                                 }).await {
                                     match prettier_task.await
                                     {
                                         Ok(prettier) => {
-                                            let buffer_path = buffer.read_with(&cx, |buffer, cx| {
+                                            let buffer_path = buffer.update(&mut cx, |buffer, cx| {
                                                 File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
                                             });
                                             format_operation = Some(FormatOperation::Prettier(
@@ -4219,9 +4225,28 @@ impl Project {
                                                     .context("formatting via prettier")?,
                                             ));
                                         }
-                                        Err(e) => anyhow::bail!(
-                                            "Failed to create prettier instance for buffer during formatting: {e:#}"
-                                        ),
+                                        Err(e) => {
+                                            project.update(&mut cx, |project, _| {
+                                                match &prettier_path {
+                                                    Some(prettier_path) => {
+                                                        project.prettier_instances.remove(prettier_path);
+                                                    },
+                                                    None => {
+                                                        if let Some(default_prettier) = project.default_prettier.as_mut() {
+                                                            default_prettier.instance = None;
+                                                        }
+                                                    },
+                                                }
+                                            });
+                                            match &prettier_path {
+                                                Some(prettier_path) => {
+                                                    log::error!("Failed to create prettier instance from {prettier_path:?} for buffer during autoformatting: {e:#}");
+                                                },
+                                                None => {
+                                                    log::error!("Failed to create default prettier instance for buffer during autoformatting: {e:#}");
+                                                },
+                                            }
+                                        }
                                     }
                                 }
                         }
@@ -6431,15 +6456,25 @@ impl Project {
                 "Prettier config file {config_path:?} changed, reloading prettier instances for worktree {current_worktree_id}"
             );
             let prettiers_to_reload = self
-                .prettier_instances
+                .prettiers_per_worktree
+                .get(&current_worktree_id)
                 .iter()
-                .filter_map(|((worktree_id, prettier_path), prettier_task)| {
-                    if worktree_id.is_none() || worktree_id == &Some(current_worktree_id) {
-                        Some((*worktree_id, prettier_path.clone(), prettier_task.clone()))
-                    } else {
-                        None
-                    }
+                .flat_map(|prettier_paths| prettier_paths.iter())
+                .flatten()
+                .filter_map(|prettier_path| {
+                    Some((
+                        current_worktree_id,
+                        Some(prettier_path.clone()),
+                        self.prettier_instances.get(prettier_path)?.clone(),
+                    ))
                 })
+                .chain(self.default_prettier.iter().filter_map(|default_prettier| {
+                    Some((
+                        current_worktree_id,
+                        None,
+                        default_prettier.instance.clone()?,
+                    ))
+                }))
                 .collect::<Vec<_>>();
 
             cx.background()
@@ -6450,9 +6485,15 @@ impl Project {
                                 .clear_cache()
                                 .await
                                 .with_context(|| {
-                                    format!(
-                                        "clearing prettier {prettier_path:?} cache for worktree {worktree_id:?} on prettier settings update"
-                                    )
+                                    match prettier_path {
+                                        Some(prettier_path) => format!(
+                                            "clearing prettier {prettier_path:?} cache for worktree {worktree_id:?} on prettier settings update"
+                                        ),
+                                        None => format!(
+                                            "clearing default prettier cache for worktree {worktree_id:?} on prettier settings update"
+                                        ),
+                                    }
+
                                 })
                                 .map_err(Arc::new)
                         }
@@ -8364,7 +8405,12 @@ impl Project {
         &mut self,
         buffer: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Option<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>> {
+    ) -> Task<
+        Option<(
+            Option<PathBuf>,
+            Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>,
+        )>,
+    > {
         let buffer = buffer.read(cx);
         let buffer_file = buffer.file();
         let Some(buffer_language) = buffer.language() else {
@@ -8374,136 +8420,119 @@ impl Project {
             return Task::ready(None);
         }
 
-        let buffer_file = File::from_dyn(buffer_file);
-        let buffer_path = buffer_file.map(|file| Arc::clone(file.path()));
-        let worktree_path = buffer_file
-            .as_ref()
-            .and_then(|file| Some(file.worktree.read(cx).abs_path()));
-        let worktree_id = buffer_file.map(|file| file.worktree_id(cx));
-        if self.is_local() || worktree_id.is_none() || worktree_path.is_none() {
+        if self.is_local() {
             let Some(node) = self.node.as_ref().map(Arc::clone) else {
                 return Task::ready(None);
             };
-            cx.spawn(|this, mut cx| async move {
-                let fs = this.update(&mut cx, |project, _| Arc::clone(&project.fs));
-                let prettier_dir = match cx
-                    .background()
-                    .spawn(Prettier::locate(
-                        worktree_path.zip(buffer_path).map(
-                            |(worktree_root_path, starting_path)| LocateStart {
-                                worktree_root_path,
-                                starting_path,
-                            },
-                        ),
-                        fs,
-                    ))
-                    .await
-                {
-                    Ok(path) => path,
-                    Err(e) => {
-                        return Some(
-                            Task::ready(Err(Arc::new(e.context(
-                                "determining prettier path for worktree {worktree_path:?}",
-                            ))))
-                            .shared(),
-                        );
-                    }
-                };
-
-                if let Some(existing_prettier) = this.update(&mut cx, |project, _| {
-                    project
-                        .prettier_instances
-                        .get(&(worktree_id, prettier_dir.clone()))
-                        .cloned()
-                }) {
-                    return Some(existing_prettier);
-                }
-
-                log::info!("Found prettier in {prettier_dir:?}, starting.");
-                let task_prettier_dir = prettier_dir.clone();
-                let weak_project = this.downgrade();
-                let new_server_id =
-                    this.update(&mut cx, |this, _| this.languages.next_language_server_id());
-                let new_prettier_task = cx
-                    .spawn(|mut cx| async move {
-                        let prettier = Prettier::start(
-                            worktree_id.map(|id| id.to_usize()),
-                            new_server_id,
-                            task_prettier_dir,
-                            node,
-                            cx.clone(),
-                        )
-                        .await
-                        .context("prettier start")
-                        .map_err(Arc::new)?;
-                        log::info!("Started prettier in {:?}", prettier.prettier_dir());
-
-                        if let Some((project, prettier_server)) =
-                            weak_project.upgrade(&mut cx).zip(prettier.server())
+            match File::from_dyn(buffer_file).map(|file| (file.worktree_id(cx), file.abs_path(cx)))
+            {
+                Some((worktree_id, buffer_path)) => {
+                    let fs = Arc::clone(&self.fs);
+                    let installed_prettiers = self.prettier_instances.keys().cloned().collect();
+                    return cx.spawn(|project, mut cx| async move {
+                        match cx
+                            .background()
+                            .spawn(async move {
+                                Prettier::locate_prettier_installation(
+                                    fs.as_ref(),
+                                    &installed_prettiers,
+                                    &buffer_path,
+                                )
+                                .await
+                            })
+                            .await
                         {
-                            project.update(&mut cx, |project, cx| {
-                                let name = if prettier.is_default() {
-                                    LanguageServerName(Arc::from("prettier (default)"))
-                                } else {
-                                    let prettier_dir = prettier.prettier_dir();
-                                    let worktree_path = prettier
-                                        .worktree_id()
-                                        .map(WorktreeId::from_usize)
-                                        .and_then(|id| project.worktree_for_id(id, cx))
-                                        .map(|worktree| worktree.read(cx).abs_path());
-                                    match worktree_path {
-                                        Some(worktree_path) => {
-                                            if worktree_path.as_ref() == prettier_dir {
-                                                LanguageServerName(Arc::from(format!(
-                                                    "prettier ({})",
-                                                    prettier_dir
-                                                        .file_name()
-                                                        .and_then(|name| name.to_str())
-                                                        .unwrap_or_default()
-                                                )))
-                                            } else {
-                                                let dir_to_display = match prettier_dir
-                                                    .strip_prefix(&worktree_path)
-                                                    .ok()
-                                                {
-                                                    Some(relative_path) => relative_path,
-                                                    None => prettier_dir,
-                                                };
-                                                LanguageServerName(Arc::from(format!(
-                                                    "prettier ({})",
-                                                    dir_to_display.display(),
-                                                )))
-                                            }
-                                        }
-                                        None => LanguageServerName(Arc::from(format!(
-                                            "prettier ({})",
-                                            prettier_dir.display(),
-                                        ))),
+                            Ok(None) => {
+                                let started_default_prettier =
+                                    project.update(&mut cx, |project, _| {
+                                        project
+                                            .prettiers_per_worktree
+                                            .entry(worktree_id)
+                                            .or_default()
+                                            .insert(None);
+                                        project.default_prettier.as_ref().and_then(
+                                            |default_prettier| default_prettier.instance.clone(),
+                                        )
+                                    });
+                                match started_default_prettier {
+                                    Some(old_task) => return Some((None, old_task)),
+                                    None => {
+                                        let new_default_prettier = project
+                                            .update(&mut cx, |_, cx| {
+                                                start_default_prettier(node, Some(worktree_id), cx)
+                                            })
+                                            .await;
+                                        return Some((None, new_default_prettier));
                                     }
-                                };
+                                }
+                            }
+                            Ok(Some(prettier_dir)) => {
+                                project.update(&mut cx, |project, _| {
+                                    project
+                                        .prettiers_per_worktree
+                                        .entry(worktree_id)
+                                        .or_default()
+                                        .insert(Some(prettier_dir.clone()))
+                                });
+                                if let Some(existing_prettier) =
+                                    project.update(&mut cx, |project, _| {
+                                        project.prettier_instances.get(&prettier_dir).cloned()
+                                    })
+                                {
+                                    log::debug!(
+                                        "Found already started prettier in {prettier_dir:?}"
+                                    );
+                                    return Some((Some(prettier_dir), existing_prettier));
+                                }
 
-                                project
-                                    .supplementary_language_servers
-                                    .insert(new_server_id, (name, Arc::clone(prettier_server)));
-                                cx.emit(Event::LanguageServerAdded(new_server_id));
-                            });
+                                log::info!("Found prettier in {prettier_dir:?}, starting.");
+                                let new_prettier_task = project.update(&mut cx, |project, cx| {
+                                    let new_prettier_task = start_prettier(
+                                        node,
+                                        prettier_dir.clone(),
+                                        Some(worktree_id),
+                                        cx,
+                                    );
+                                    project
+                                        .prettier_instances
+                                        .insert(prettier_dir.clone(), new_prettier_task.clone());
+                                    new_prettier_task
+                                });
+                                Some((Some(prettier_dir), new_prettier_task))
+                            }
+                            Err(e) => {
+                                return Some((
+                                    None,
+                                    Task::ready(Err(Arc::new(
+                                        e.context("determining prettier path"),
+                                    )))
+                                    .shared(),
+                                ));
+                            }
                         }
-                        Ok(Arc::new(prettier)).map_err(Arc::new)
-                    })
-                    .shared();
-                this.update(&mut cx, |project, _| {
-                    project
-                        .prettier_instances
-                        .insert((worktree_id, prettier_dir), new_prettier_task.clone());
-                });
-                Some(new_prettier_task)
-            })
+                    });
+                }
+                None => {
+                    let started_default_prettier = self
+                        .default_prettier
+                        .as_ref()
+                        .and_then(|default_prettier| default_prettier.instance.clone());
+                    match started_default_prettier {
+                        Some(old_task) => return Task::ready(Some((None, old_task))),
+                        None => {
+                            let new_task = start_default_prettier(node, None, cx);
+                            return cx.spawn(|_, _| async move { Some((None, new_task.await)) });
+                        }
+                    }
+                }
+            }
         } else if self.remote_id().is_some() {
             return Task::ready(None);
         } else {
-            Task::ready(Some(
+            Task::ready(Some((
+                None,
                 Task::ready(Err(Arc::new(anyhow!("project does not have a remote id")))).shared(),
-            ))
+            )))
         }
     }
 
@@ -8514,8 +8543,7 @@ impl Project {
         _new_language: &Language,
         _language_settings: &LanguageSettings,
         _cx: &mut ModelContext<Self>,
-    ) -> Task<anyhow::Result<()>> {
-        return Task::ready(Ok(()));
+    ) {
     }
 
     #[cfg(not(any(test, feature = "test-support")))]
@@ -8525,19 +8553,19 @@ impl Project {
         new_language: &Language,
         language_settings: &LanguageSettings,
         cx: &mut ModelContext<Self>,
-    ) -> Task<anyhow::Result<()>> {
+    ) {
         match &language_settings.formatter {
             Formatter::Prettier { .. } | Formatter::Auto => {}
-            Formatter::LanguageServer | Formatter::External { .. } => return Task::ready(Ok(())),
+            Formatter::LanguageServer | Formatter::External { .. } => return,
         };
         let Some(node) = self.node.as_ref().cloned() else {
-            return Task::ready(Ok(()));
+            return;
         };
 
         let mut prettier_plugins = None;
         if new_language.prettier_parser_name().is_some() {
             prettier_plugins
-                .get_or_insert_with(|| HashSet::default())
+                .get_or_insert_with(|| HashSet::<&'static str>::default())
                 .extend(
                     new_language
                         .lsp_adapters()
@@ -8546,112 +8574,268 @@ impl Project {
                 )
         }
         let Some(prettier_plugins) = prettier_plugins else {
-            return Task::ready(Ok(()));
+            return;
         };
 
+        let fs = Arc::clone(&self.fs);
+        let locate_prettier_installation = match worktree.and_then(|worktree_id| {
+            self.worktree_for_id(worktree_id, cx)
+                .map(|worktree| worktree.read(cx).abs_path())
+        }) {
+            Some(locate_from) => {
+                let installed_prettiers = self.prettier_instances.keys().cloned().collect();
+                cx.background().spawn(async move {
+                    Prettier::locate_prettier_installation(
+                        fs.as_ref(),
+                        &installed_prettiers,
+                        locate_from.as_ref(),
+                    )
+                    .await
+                })
+            }
+            None => Task::ready(Ok(None)),
+        };
         let mut plugins_to_install = prettier_plugins;
-        let (mut install_success_tx, mut install_success_rx) =
-            futures::channel::mpsc::channel::<HashSet<&'static str>>(1);
-        let new_installation_process = cx
-            .spawn(|this, mut cx| async move {
-                if let Some(installed_plugins) = install_success_rx.next().await {
-                    this.update(&mut cx, |this, _| {
-                        let default_prettier =
-                            this.default_prettier
-                                .get_or_insert_with(|| DefaultPrettier {
-                                    installation_process: None,
-                                    installed_plugins: HashSet::default(),
-                                });
-                        if !installed_plugins.is_empty() {
-                            log::info!("Installed new prettier plugins: {installed_plugins:?}");
-                            default_prettier.installed_plugins.extend(installed_plugins);
-                        }
-                    })
-                }
-            })
-            .shared();
         let previous_installation_process =
             if let Some(default_prettier) = &mut self.default_prettier {
                 plugins_to_install
                     .retain(|plugin| !default_prettier.installed_plugins.contains(plugin));
                 if plugins_to_install.is_empty() {
-                    return Task::ready(Ok(()));
+                    return;
                 }
-                std::mem::replace(
-                    &mut default_prettier.installation_process,
-                    Some(new_installation_process.clone()),
-                )
+                default_prettier.installation_process.clone()
             } else {
                 None
             };
-
-        let default_prettier_dir = util::paths::DEFAULT_PRETTIER_DIR.as_path();
-        let already_running_prettier = self
-            .prettier_instances
-            .get(&(worktree, default_prettier_dir.to_path_buf()))
-            .cloned();
         let fs = Arc::clone(&self.fs);
-        cx.spawn(|this, mut cx| async move {
-            if let Some(previous_installation_process) = previous_installation_process {
-                previous_installation_process.await;
-            }
-            let mut everything_was_installed = false;
-            this.update(&mut cx, |this, _| {
-                match &mut this.default_prettier {
-                    Some(default_prettier) => {
-                        plugins_to_install
-                            .retain(|plugin| !default_prettier.installed_plugins.contains(plugin));
-                        everything_was_installed = plugins_to_install.is_empty();
-                    },
-                    None => this.default_prettier = Some(DefaultPrettier { installation_process: Some(new_installation_process), installed_plugins: HashSet::default() }),
-                }
+        let default_prettier = self
+            .default_prettier
+            .get_or_insert_with(|| DefaultPrettier {
+                instance: None,
+                installation_process: None,
+                installed_plugins: HashSet::default(),
             });
-            if everything_was_installed {
-                return Ok(());
-            }
-
-            cx.background()
-                .spawn(async move {
-                    let prettier_wrapper_path = default_prettier_dir.join(prettier::PRETTIER_SERVER_FILE);
-                    // method creates parent directory if it doesn't exist
-                    fs.save(&prettier_wrapper_path, &text::Rope::from(prettier::PRETTIER_SERVER_JS), text::LineEnding::Unix).await
-                    .with_context(|| format!("writing {} file at {prettier_wrapper_path:?}", prettier::PRETTIER_SERVER_FILE))?;
-
-                    let packages_to_versions = future::try_join_all(
-                        plugins_to_install
-                            .iter()
-                            .chain(Some(&"prettier"))
-                            .map(|package_name| async {
-                                let returned_package_name = package_name.to_string();
-                                let latest_version = node.npm_package_latest_version(package_name)
-                                    .await
-                                    .with_context(|| {
-                                        format!("fetching latest npm version for package {returned_package_name}")
-                                    })?;
-                                anyhow::Ok((returned_package_name, latest_version))
-                            }),
-                    )
+        default_prettier.installation_process = Some(
+            cx.spawn(|this, mut cx| async move {
+                match locate_prettier_installation
                     .await
-                    .context("fetching latest npm versions")?;
-
-                    log::info!("Fetching default prettier and plugins: {packages_to_versions:?}");
-                    let borrowed_packages = packages_to_versions.iter().map(|(package, version)| {
-                        (package.as_str(), version.as_str())
-                    }).collect::<Vec<_>>();
-                    node.npm_install_packages(default_prettier_dir, &borrowed_packages).await.context("fetching formatter packages")?;
-                    let installed_packages = !plugins_to_install.is_empty();
-                    install_success_tx.try_send(plugins_to_install).ok();
-
-                    if !installed_packages {
-                        if let Some(prettier) = already_running_prettier {
-                            prettier.await.map_err(|e| anyhow::anyhow!("Default prettier startup await failure: {e:#}"))?.clear_cache().await.context("clearing default prettier cache after plugins install")?;
+                    .context("locate prettier installation")
+                    .map_err(Arc::new)?
+                {
+                    Some(_non_default_prettier) => return Ok(()),
+                    None => {
+                        let mut needs_install = match previous_installation_process {
+                            Some(previous_installation_process) => {
+                                previous_installation_process.await.is_err()
+                            }
+                            None => true,
+                        };
+                        this.update(&mut cx, |this, _| {
+                            if let Some(default_prettier) = &mut this.default_prettier {
+                                plugins_to_install.retain(|plugin| {
+                                    !default_prettier.installed_plugins.contains(plugin)
+                                });
+                                needs_install |= !plugins_to_install.is_empty();
+                            }
+                        });
+                        if needs_install {
+                            let installed_plugins = plugins_to_install.clone();
+                            cx.background()
+                                .spawn(async move {
+                                    install_default_prettier(plugins_to_install, node, fs).await
+                                })
+                                .await
+                                .context("prettier & plugins install")
+                                .map_err(Arc::new)?;
+                            this.update(&mut cx, |this, _| {
+                                let default_prettier =
+                                    this.default_prettier
+                                        .get_or_insert_with(|| DefaultPrettier {
+                                            instance: None,
+                                            installation_process: Some(
+                                                Task::ready(Ok(())).shared(),
+                                            ),
+                                            installed_plugins: HashSet::default(),
+                                        });
+                                default_prettier.instance = None;
+                                default_prettier.installed_plugins.extend(installed_plugins);
+                            });
                         }
                     }
-
-                    anyhow::Ok(())
-                }).await
-        })
+                }
+                Ok(())
+            })
+            .shared(),
+        );
     }
+}
+
+fn start_default_prettier(
+    node: Arc<dyn NodeRuntime>,
+    worktree_id: Option<WorktreeId>,
+    cx: &mut ModelContext<'_, Project>,
+) -> Task<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>> {
+    cx.spawn(|project, mut cx| async move {
+        loop {
+            let default_prettier_installing = project.update(&mut cx, |project, _| {
+                project
+                    .default_prettier
+                    .as_ref()
+                    .and_then(|default_prettier| default_prettier.installation_process.clone())
+            });
+            match default_prettier_installing {
+                Some(installation_task) => {
+                    if installation_task.await.is_ok() {
+                        break;
+                    }
+                }
+                None => break,
+            }
+        }
+
+        project.update(&mut cx, |project, cx| {
+            match project
+                .default_prettier
+                .as_mut()
+                .and_then(|default_prettier| default_prettier.instance.as_mut())
+            {
+                Some(default_prettier) => default_prettier.clone(),
+                None => {
+                    let new_default_prettier =
+                        start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), worktree_id, cx);
+                    project
+                        .default_prettier
+                        .get_or_insert_with(|| DefaultPrettier {
+                            instance: None,
+                            installation_process: None,
+                            #[cfg(not(any(test, feature = "test-support")))]
+                            installed_plugins: HashSet::default(),
+                        })
+                        .instance = Some(new_default_prettier.clone());
+                    new_default_prettier
+                }
+            }
+        })
+    })
+}
+
+fn start_prettier(
+    node: Arc<dyn NodeRuntime>,
+    prettier_dir: PathBuf,
+    worktree_id: Option<WorktreeId>,
+    cx: &mut ModelContext<'_, Project>,
+) -> Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>> {
+    cx.spawn(|project, mut cx| async move {
+        let new_server_id = project.update(&mut cx, |project, _| {
+            project.languages.next_language_server_id()
+        });
+        let new_prettier = Prettier::start(new_server_id, prettier_dir, node, cx.clone())
+            .await
+            .context("default prettier spawn")
+            .map(Arc::new)
+            .map_err(Arc::new)?;
+        register_new_prettier(&project, &new_prettier, worktree_id, new_server_id, &mut cx);
+        Ok(new_prettier)
+    })
+    .shared()
+}
+
+fn register_new_prettier(
+    project: &ModelHandle<Project>,
+    prettier: &Prettier,
+    worktree_id: Option<WorktreeId>,
+    new_server_id: LanguageServerId,
+    cx: &mut AsyncAppContext,
+) {
+    let prettier_dir = prettier.prettier_dir();
+    let is_default = prettier.is_default();
+    if is_default {
+        log::info!("Started default prettier in {prettier_dir:?}");
+    } else {
+        log::info!("Started prettier in {prettier_dir:?}");
+    }
+    if let Some(prettier_server) = prettier.server() {
+        project.update(cx, |project, cx| {
+            let name = if is_default {
+                LanguageServerName(Arc::from("prettier (default)"))
+            } else {
+                let worktree_path = worktree_id
+                    .and_then(|id| project.worktree_for_id(id, cx))
+                    .map(|worktree| worktree.update(cx, |worktree, _| worktree.abs_path()));
+                let name = match worktree_path {
+                    Some(worktree_path) => {
+                        if prettier_dir == worktree_path.as_ref() {
+                            let name = prettier_dir
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .unwrap_or_default();
+                            format!("prettier ({name})")
+                        } else {
+                            let dir_to_display = prettier_dir
+                                .strip_prefix(worktree_path.as_ref())
+                                .ok()
+                                .unwrap_or(prettier_dir);
+                            format!("prettier ({})", dir_to_display.display())
+                        }
+                    }
+                    None => format!("prettier ({})", prettier_dir.display()),
+                };
+                LanguageServerName(Arc::from(name))
+            };
+            project
+                .supplementary_language_servers
+                .insert(new_server_id, (name, Arc::clone(prettier_server)));
+            cx.emit(Event::LanguageServerAdded(new_server_id));
+        });
+    }
+}
+
+#[cfg(not(any(test, feature = "test-support")))]
+async fn install_default_prettier(
+    plugins_to_install: HashSet<&'static str>,
+    node: Arc<dyn NodeRuntime>,
+    fs: Arc<dyn Fs>,
+) -> anyhow::Result<()> {
+    let prettier_wrapper_path = DEFAULT_PRETTIER_DIR.join(prettier::PRETTIER_SERVER_FILE);
+    // method creates parent directory if it doesn't exist
+    fs.save(
+        &prettier_wrapper_path,
+        &text::Rope::from(prettier::PRETTIER_SERVER_JS),
+        text::LineEnding::Unix,
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "writing {} file at {prettier_wrapper_path:?}",
+            prettier::PRETTIER_SERVER_FILE
+        )
+    })?;
+
+    let packages_to_versions =
+        future::try_join_all(plugins_to_install.iter().chain(Some(&"prettier")).map(
+            |package_name| async {
+                let returned_package_name = package_name.to_string();
+                let latest_version = node
+                    .npm_package_latest_version(package_name)
+                    .await
+                    .with_context(|| {
+                        format!("fetching latest npm version for package {returned_package_name}")
+                    })?;
+                anyhow::Ok((returned_package_name, latest_version))
+            },
+        ))
+        .await
+        .context("fetching latest npm versions")?;
+
+    log::info!("Fetching default prettier and plugins: {packages_to_versions:?}");
+    let borrowed_packages = packages_to_versions
+        .iter()
+        .map(|(package, version)| (package.as_str(), version.as_str()))
+        .collect::<Vec<_>>();
+    node.npm_install_packages(DEFAULT_PRETTIER_DIR.as_path(), &borrowed_packages)
+        .await
+        .context("fetching formatter packages")?;
+    anyhow::Ok(())
 }
 
 fn subscribe_for_copilot_events(

@@ -1,4 +1,4 @@
-use crate::{search::PathMatcher, Event, *};
+use crate::{Event, *};
 use fs::FakeFs;
 use futures::{future, StreamExt};
 use gpui::AppContext;
@@ -13,7 +13,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::{os, task::Poll};
 use unindent::Unindent as _;
-use util::{assert_set_eq, test::temp_tree};
+use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {

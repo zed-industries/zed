@@ -1,6 +1,6 @@
 use std::{any::Any, sync::Arc};
 
-use gpui2::{AnyView, AppContext, Subscription, Task, View, ViewContext, WindowContext};
+use gpui::{AnyView, AppContext, Subscription, Task, View, ViewContext, WindowContext};
 use project2::search::SearchQuery;
 
 use crate::{

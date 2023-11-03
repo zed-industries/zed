@@ -21,7 +21,7 @@ use ordered_float::OrderedFloat;
 use parking_lot::Mutex;
 use parsing::{CodeContextRetriever, Span, SpanDigest, PARSEABLE_ENTIRE_FILE_TYPES};
 use postage::watch;
-use project::{search::PathMatcher, Fs, PathChange, Project, ProjectEntryId, Worktree, WorktreeId};
+use project::{Fs, PathChange, Project, ProjectEntryId, Worktree, WorktreeId};
 use smol::channel;
 use std::{
     cmp::Reverse,
@@ -33,6 +33,7 @@ use std::{
     sync::{Arc, Weak},
     time::{Duration, Instant, SystemTime},
 };
+use util::paths::PathMatcher;
 use util::{channel::RELEASE_CHANNEL_NAME, http::HttpClient, paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::WorkspaceCreated;
 

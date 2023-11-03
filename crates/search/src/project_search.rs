@@ -22,7 +22,7 @@ use gpui::{
 };
 use menu::Confirm;
 use project::{
-    search::{PathMatcher, SearchInputs, SearchQuery},
+    search::{SearchInputs, SearchQuery},
     Entry, Project,
 };
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
@@ -37,7 +37,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use util::ResultExt as _;
+use util::{paths::PathMatcher, ResultExt as _};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
     searchable::{Direction, SearchableItem, SearchableItemHandle},
