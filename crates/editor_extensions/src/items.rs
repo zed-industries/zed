@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use collections::HashSet;
+use editor::{BufferSearchHighlights, MAX_TAB_TITLE_LEN};
 use futures::future::try_join_all;
 use gpui::{
     elements::*,
@@ -40,8 +41,6 @@ use workspace::{
     ItemId, ItemNavHistory, Pane, StatusItemView, ToolbarItemLocation, ViewId, Workspace,
     WorkspaceId,
 };
-
-pub const MAX_TAB_TITLE_LEN: usize = 24;
 
 impl FollowableItem for Editor {
     fn remote_id(&self) -> Option<ViewId> {
@@ -884,7 +883,7 @@ impl Item for Editor {
                         cx.add_view(|cx| {
                             let mut editor =
                                 Editor::for_buffer(buffer, Some(Arc::new(project)), cx);
-                            editor.read_scroll_position_from_db(item_id, workspace_id, cx);
+                            editor.read_scroll_position_from_db(DB, item_id, workspace_id, cx);
                             editor
                         })
                     })?)
@@ -906,7 +905,6 @@ impl ProjectItem for Editor {
     }
 }
 
-pub(crate) enum BufferSearchHighlights {}
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 

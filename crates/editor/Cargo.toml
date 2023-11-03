@@ -30,13 +30,14 @@ db = { path = "../db" }
 drag_and_drop = { path = "../drag_and_drop" }
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
+workspace_types = {path = "../workspace_types"}
+project_types = {path = "../project_types"}
 fuzzy = { path = "../fuzzy" }
 git = { path = "../git" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
 multi_buffer = { path = "../multi_buffer" }
-project = { path = "../project" }
 rpc = { path = "../rpc" }
 rich_text = { path = "../rich_text" }
 settings = { path = "../settings" }
@@ -46,9 +47,9 @@ text = { path = "../text" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 sqlez = { path = "../sqlez" }
-workspace = { path = "../workspace" }
 
 aho-corasick = "1.1"
+async-trait.workspace = true
 anyhow.workspace = true
 convert_case = "0.6.0"
 futures.workspace = true

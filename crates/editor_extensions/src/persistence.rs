@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
 
-use workspace::{ItemId, WorkspaceDb, WorkspaceId};
+use workspace::WorkspaceDb;
+use workspace_types::{ItemId, WorkspaceId};
 
 define_connection!(
     // Current schema shape using pseudo-rust syntax:

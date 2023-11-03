@@ -7,7 +7,7 @@ use crate::{
 use gpui::{Task, ViewContext};
 use language::{Bias, ToOffset};
 use lsp::LanguageServerId;
-use project::{
+use project_types::{
     HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink,
     ResolveState,
 };
@@ -227,7 +227,7 @@ pub fn update_inlay_link_and_hover_points(
                             extra_shift_right += 1;
                         }
                         match cached_hint.label {
-                            project::InlayHintLabel::String(_) => {
+                            project_types::InlayHintLabel::String(_) => {
                                 if let Some(tooltip) = cached_hint.tooltip {
                                     hover_popover::hover_at_inlay(
                                         editor,
@@ -257,7 +257,7 @@ pub fn update_inlay_link_and_hover_points(
                                     hover_updated = true;
                                 }
                             }
-                            project::InlayHintLabel::LabelParts(label_parts) => {
+                            project_types::InlayHintLabel::LabelParts(label_parts) => {
                                 let hint_start =
                                     snapshot.anchor_to_inlay_offset(hovered_hint.position);
                                 if let Some((hovered_hint_part, part_range)) =

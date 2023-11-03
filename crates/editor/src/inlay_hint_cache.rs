@@ -14,7 +14,7 @@ use futures::future;
 use gpui::{ModelContext, ModelHandle, Task, ViewContext};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use parking_lot::RwLock;
-use project::{InlayHint, ResolveState};
+use project_types::{InlayHint, ResolveState};
 
 use collections::{hash_map, HashMap, HashSet};
 use language::language_settings::InlayHintSettings;

@@ -4,6 +4,7 @@ pub mod scroll_amount;
 
 use std::{
     cmp::Ordering,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -13,14 +14,13 @@ use gpui::{
 };
 use language::{Bias, Point};
 use util::ResultExt;
-use workspace::WorkspaceId;
+use workspace_types::WorkspaceId;
 
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
-    persistence::DB,
-    Anchor, DisplayPoint, Editor, EditorMode, Event, InlayHintRefreshReason, MultiBufferSnapshot,
-    ToPoint,
+    types, Anchor, DisplayPoint, Editor, EditorMode, Event, InlayHintRefreshReason,
+    MultiBufferSnapshot, ToPoint,
 };
 
 use self::{
@@ -176,7 +176,7 @@ impl ScrollManager {
         map: &DisplaySnapshot,
         local: bool,
         autoscroll: bool,
-        workspace_id: Option<i64>,
+        workspace_id: Option<&(Arc<dyn crate::types::Workspace>, i64)>,
         cx: &mut ViewContext<Editor>,
     ) {
         let (new_anchor, top_row) = if scroll_position.y() <= 0. {
@@ -215,19 +215,20 @@ impl ScrollManager {
         top_row: u32,
         local: bool,
         autoscroll: bool,
-        workspace_id: Option<i64>,
+        workspace_id: Option<&(Arc<dyn crate::types::Workspace>, i64)>,
         cx: &mut ViewContext<Editor>,
     ) {
         self.anchor = anchor;
         cx.emit(Event::ScrollPositionChanged { local, autoscroll });
         self.show_scrollbar(cx);
         self.autoscroll_request.take();
-        if let Some(workspace_id) = workspace_id {
+        if let Some((workspace, workspace_id)) = workspace_id {
             let item_id = cx.view_id();
-
+            let db = workspace.db();
+            let workspace_id = *workspace_id;
             cx.background()
                 .spawn(async move {
-                    DB.save_scroll_position(
+                    db.save_scroll_position(
                         item_id,
                         workspace_id,
                         top_row,
@@ -324,7 +325,7 @@ impl Editor {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         hide_hover(self, cx);
-        let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
+        let workspace_id = self.workspace.as_ref();
         self.scroll_manager.set_scroll_position(
             scroll_position,
             &map,
@@ -344,7 +345,7 @@ impl Editor {
 
     pub fn set_scroll_anchor(&mut self, scroll_anchor: ScrollAnchor, cx: &mut ViewContext<Self>) {
         hide_hover(self, cx);
-        let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
+        let workspace_id = self.workspace.as_ref();
         let top_row = scroll_anchor
             .anchor
             .to_point(&self.buffer().read(cx).snapshot(cx))
@@ -359,7 +360,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         hide_hover(self, cx);
-        let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
+        let workspace_id = self.workspace.as_ref();
         let top_row = scroll_anchor
             .anchor
             .to_point(&self.buffer().read(cx).snapshot(cx))
@@ -415,11 +416,12 @@ impl Editor {
 
     pub fn read_scroll_position_from_db(
         &mut self,
+        db: &dyn types::Db,
         item_id: usize,
         workspace_id: WorkspaceId,
         cx: &mut ViewContext<Editor>,
     ) {
-        let scroll_position = DB.get_scroll_position(item_id, workspace_id);
+        let scroll_position = db.get_scroll_position(item_id, workspace_id);
         if let Ok(Some((top_row, x, y))) = scroll_position {
             let top_anchor = self
                 .buffer()

@@ -1963,16 +1963,26 @@ impl View for Pane {
     }
 }
 
-impl ItemNavHistory {
-    pub fn push<D: 'static + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
+trait NavigationHistory {
+    fn push_any(&mut self, data: Option<Box<dyn Any>>, cx: &mut WindowContext);
+    fn pop_forward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry>;
+    fn pop_backward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry>;
+}
+impl dyn NavigationHistory {
+    fn push<D: 'static + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
+        self.push_any(data.map(|data| Box::new(data) as _), cx)
+    }
+}
+impl NavigationHistory for ItemNavHistory {
+    fn push_any(&mut self, data: Option<Box<dyn Any>>, cx: &mut WindowContext) {
         self.history.push(data, self.item.clone(), cx);
     }
 
-    pub fn pop_backward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
+    fn pop_backward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
         self.history.pop(NavigationMode::GoingBack, cx)
     }
 
-    pub fn pop_forward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
+    fn pop_forward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
         self.history.pop(NavigationMode::GoingForward, cx)
     }
 }
@@ -2037,7 +2047,7 @@ impl NavHistory {
 
     pub fn push<D: 'static + Any>(
         &mut self,
-        data: Option<D>,
+        data: Option<Box<dyn Any>>,
         item: Rc<dyn WeakItemHandle>,
         cx: &mut WindowContext,
     ) {
@@ -2050,7 +2060,7 @@ impl NavHistory {
                 }
                 state.backward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    data,
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
                 state.forward_stack.clear();
@@ -2061,7 +2071,7 @@ impl NavHistory {
                 }
                 state.forward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    data,
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
             }
@@ -2071,7 +2081,7 @@ impl NavHistory {
                 }
                 state.backward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    data,
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
             }
@@ -2081,7 +2091,7 @@ impl NavHistory {
                 }
                 state.closed_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    data,
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
             }

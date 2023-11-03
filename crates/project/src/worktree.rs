@@ -36,6 +36,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
+use project_types::WorktreeId;
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
@@ -56,10 +57,6 @@ use std::{
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use util::{paths::HOME, ResultExt};
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
-pub struct WorktreeId(usize);
-
 pub enum Worktree {
     Local(LocalWorktree),
     Remote(RemoteWorktree),
@@ -407,7 +404,7 @@ impl Worktree {
     ) -> ModelHandle<Self> {
         cx.add_model(|cx: &mut ModelContext<Self>| {
             let snapshot = Snapshot {
-                id: WorktreeId(worktree.id as usize),
+                id: WorktreeId::from_usize(worktree.id as usize),
                 abs_path: Arc::from(PathBuf::from(worktree.abs_path)),
                 root_name: worktree.root_name.clone(),
                 root_char_bag: worktree
@@ -2491,30 +2488,6 @@ async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
         builder.add_line(Some(abs_path.into()), line)?;
     }
     Ok(builder.build()?)
-}
-
-impl WorktreeId {
-    pub fn from_usize(handle_id: usize) -> Self {
-        Self(handle_id)
-    }
-
-    pub(crate) fn from_proto(id: u64) -> Self {
-        Self(id as usize)
-    }
-
-    pub fn to_proto(&self) -> u64 {
-        self.0 as u64
-    }
-
-    pub fn to_usize(&self) -> usize {
-        self.0
-    }
-}
-
-impl fmt::Display for WorktreeId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
 }
 
 impl Deref for Worktree {

@@ -15,6 +15,7 @@ use std::{
 };
 use util::ResultExt;
 use uuid::Uuid;
+use workspace_types::ItemId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceLocation(Arc<Vec<PathBuf>>);
@@ -284,7 +285,6 @@ impl SerializedPane {
 
 pub type GroupId = i64;
 pub type PaneId = i64;
-pub type ItemId = usize;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SerializedItem {

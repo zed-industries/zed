@@ -1,6 +1,6 @@
 use crate::{
-    pane, persistence::model::ItemId, searchable::SearchableItemHandle, FollowableItemBuilders,
-    ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    pane, searchable::SearchableItemHandle, FollowableItemBuilders, ItemNavHistory, Pane,
+    ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
 };
 use crate::{AutosaveSetting, DelayedDebouncedEditAction, WorkspaceSettings};
 use anyhow::Result;
@@ -34,6 +34,7 @@ use std::{
     time::Duration,
 };
 use theme::Theme;
+use workspace_types::ItemId;
 
 #[derive(Deserialize)]
 pub struct ItemSettings {

@@ -1,0 +1,19 @@
+[package]
+name = "project_types"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow.workspace = true
+gpui = {path = "../gpui"}
+lsp = {path = "../lsp"}
+language = {path = "../language"}
+itertools = "0.10"
+settings = {path = "../settings"}
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+collections = {path = "../collections"}
+rpc = {path = "../rpc"}

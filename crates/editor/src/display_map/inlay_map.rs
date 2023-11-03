@@ -42,7 +42,7 @@ pub struct Inlay {
 }
 
 impl Inlay {
-    pub fn hint(id: usize, position: Anchor, hint: &project::InlayHint) -> Self {
+    pub fn hint(id: usize, position: Anchor, hint: &project_types::InlayHint) -> Self {
         let mut text = hint.text();
         if hint.padding_right && !text.ends_with(' ') {
             text.push(' ');
@@ -1172,7 +1172,7 @@ mod tests {
         InlayId, MultiBuffer,
     };
     use gpui::AppContext;
-    use project::{InlayHint, InlayHintLabel, ResolveState};
+    use project_types::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::{cmp::Reverse, env, sync::Arc};

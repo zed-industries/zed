@@ -1,23 +1,23 @@
 use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
     link_go_to_definition::{InlayHighlight, RangeInEditor},
+    types::Workspace,
     Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
-    ExcerptId, ProjectT, RangeToAnchorExt, WorkspaceT,
+    ExcerptId, Project, RangeToAnchorExt,
 };
 use futures::FutureExt;
 use gpui::{
     actions,
     elements::{Flex, MouseEventHandler, Padding, ParentElement, Text},
     platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, Element, ModelHandle, Task, ViewContext, WeakViewHandle,
+    AnyElement, AppContext, Element, Task, ViewContext,
 };
 use language::{
     markdown, Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry, ParsedMarkdown,
 };
-use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
+use project_types::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use std::{ops::Range, sync::Arc, time::Duration};
 use util::TryFutureExt;
-use workspace::Workspace;
 
 pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
@@ -419,7 +419,7 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         visible_rows: Range<u32>,
-        workspace: Option<Arc<dyn WorkspaceT>>,
+        workspace: Option<Arc<dyn Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement<Editor>>)> {
         // If there is a diagnostic, position the popovers based on that.
@@ -458,7 +458,7 @@ impl HoverState {
 
 #[derive(Debug, Clone)]
 pub struct InfoPopover {
-    pub project: Arc<dyn ProjectT>,
+    pub project: Arc<dyn Project>,
     symbol_range: RangeInEditor,
     pub blocks: Vec<HoverBlock>,
     parsed_content: ParsedMarkdown,
@@ -468,7 +468,7 @@ impl InfoPopover {
     pub fn render(
         &mut self,
         style: &EditorStyle,
-        workspace: Option<Arc<dyn WorkspaceT>>,
+        workspace: Option<Arc<dyn Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement<Editor> {
         MouseEventHandler::new::<InfoPopover, _>(0, cx, |_, cx| {

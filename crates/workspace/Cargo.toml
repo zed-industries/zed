@@ -36,6 +36,7 @@ settings = { path = "../settings" }
 terminal = { path = "../terminal" }
 theme = { path = "../theme" }
 util = { path = "../util" }
+workspace_types = {path = "../workspace_types"}
 
 async-recursion = "1.0.0"
 itertools = "0.10"

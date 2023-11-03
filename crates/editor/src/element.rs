@@ -39,7 +39,7 @@ use json::json;
 use language::{
     language_settings::ShowWhitespaceSetting, Bias, CursorShape, OffsetUtf16, Selection,
 };
-use project::{
+use project_types::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
 };
@@ -54,7 +54,6 @@ use std::{
 };
 use text::Point;
 use theme::SelectionStyle;
-use workspace::item::Item;
 
 enum FoldMarkers {}
 
@@ -1159,7 +1158,7 @@ impl EditorElement {
                     })
                 };
                 let background_ranges = editor
-                    .background_highlight_row_ranges::<crate::items::BufferSearchHighlights>(
+                    .background_highlight_row_ranges::<crate::BufferSearchHighlights>(
                         start_anchor..end_anchor,
                         &layout.position_map.snapshot,
                         50000,
@@ -1664,53 +1663,63 @@ impl EditorElement {
                         .as_ref()
                         .map(|project| project.visible_worktrees_count(cx) > 1)
                         .unwrap_or_default();
-                    let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
-                        let jump_path = ProjectPath {
-                            worktree_id: file.worktree_id(cx),
-                            path: file.path.clone(),
-                        };
-                        let jump_anchor = range
-                            .primary
+                    //
+                    let jump_icon =
+                        editor
+                            .project
                             .as_ref()
-                            .map_or(range.context.start, |primary| primary.start);
-                        let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
+                            .zip(buffer.file())
+                            .map(|(project, buffer_file)| {
+                                let jump_path = project.project_file(&**buffer_file);
+                                //::from_dyn(buffer.file())
 
-                        enum JumpIcon {}
-                        MouseEventHandler::new::<JumpIcon, _>((*id).into(), cx, |state, _| {
-                            let style = style.jump_icon.style_for(state);
-                            Svg::new("icons/arrow_up_right.svg")
-                                .with_color(style.color)
-                                .constrained()
-                                .with_width(style.icon_width)
-                                .aligned()
-                                .contained()
-                                .with_style(style.container)
-                                .constrained()
-                                .with_width(style.button_width)
-                                .with_height(style.button_width)
-                        })
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, move |_, editor, cx| {
-                            if let Some((workspace, _)) = editor.workspace.as_mut() {
-                                Editor::jump(
-                                    &**workspace,
-                                    jump_path.clone(),
-                                    jump_position,
-                                    jump_anchor,
+                                let jump_anchor = range
+                                    .primary
+                                    .as_ref()
+                                    .map_or(range.context.start, |primary| primary.start);
+                                let jump_position =
+                                    language::ToPoint::to_point(&jump_anchor, buffer);
+
+                                enum JumpIcon {}
+                                MouseEventHandler::new::<JumpIcon, _>(
+                                    (*id).into(),
                                     cx,
-                                );
-                            }
-                        })
-                        .with_tooltip::<JumpIcon>(
-                            (*id).into(),
-                            "Jump to Buffer".to_string(),
-                            Some(Box::new(crate::OpenExcerpts)),
-                            tooltip_style.clone(),
-                            cx,
-                        )
-                        .aligned()
-                        .flex_float()
-                    });
+                                    |state, _| {
+                                        let style = style.jump_icon.style_for(state);
+                                        Svg::new("icons/arrow_up_right.svg")
+                                            .with_color(style.color)
+                                            .constrained()
+                                            .with_width(style.icon_width)
+                                            .aligned()
+                                            .contained()
+                                            .with_style(style.container)
+                                            .constrained()
+                                            .with_width(style.button_width)
+                                            .with_height(style.button_width)
+                                    },
+                                )
+                                .with_cursor_style(CursorStyle::PointingHand)
+                                .on_click(MouseButton::Left, move |_, editor, cx| {
+                                    if let Some((workspace, _)) = editor.workspace.as_mut() {
+                                        Editor::jump(
+                                            &**workspace,
+                                            jump_path.clone(),
+                                            jump_position,
+                                            jump_anchor,
+                                            cx,
+                                        );
+                                    }
+                                })
+                                .with_tooltip::<JumpIcon>(
+                                    (*id).into(),
+                                    "Jump to Buffer".to_string(),
+                                    Some(Box::new(crate::OpenExcerpts)),
+                                    tooltip_style.clone(),
+                                    cx,
+                                )
+                                .aligned()
+                                .flex_float()
+                            });
 
                     if *starts_new_buffer {
                         let editor_font_size = style.text.font_size;

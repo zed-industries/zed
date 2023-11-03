@@ -24,7 +24,6 @@ use futures::{
     FutureExt, StreamExt,
 };
 use gpui::{
-    actions,
     elements::*,
     geometry::{
         rect::RectF,
@@ -40,7 +39,6 @@ use gpui::{
     WeakViewHandle, WindowContext, WindowHandle,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
-use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
 use node_runtime::NodeRuntime;
 use std::{
@@ -54,6 +52,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
+use workspace_types::WorkspaceId;
 
 use crate::{
     notifications::{simple_message_notification::MessageNotification, NotificationTracker},
@@ -67,12 +66,10 @@ use notifications::{NotificationHandle, NotifyResultExt};
 pub use pane::*;
 pub use pane_group::*;
 use persistence::{model::SerializedItem, DB};
-pub use persistence::{
-    model::{ItemId, WorkspaceLocation},
-    WorkspaceDb, DB as WORKSPACE_DB,
-};
+pub use persistence::{model::WorkspaceLocation, WorkspaceDb, DB as WORKSPACE_DB};
 use postage::prelude::Stream;
-use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use project::{Project, ProjectEntryId, Worktree};
+use project_types::{ProjectPath, WorktreeId};
 use serde::Deserialize;
 use shared_screen::SharedScreen;
 use status_bar::StatusBar;
@@ -81,6 +78,7 @@ use theme::{Theme, ThemeSettings};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
 pub use workspace_settings::{AutosaveSetting, GitGutterSetting, WorkspaceSettings};
+use workspace_types::*;
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
@@ -115,36 +113,6 @@ impl<T: Modal> ModalHandle for ViewHandle<T> {
 
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
-
-actions!(
-    workspace,
-    [
-        Open,
-        NewFile,
-        NewWindow,
-        CloseWindow,
-        CloseInactiveTabsAndPanes,
-        AddFolderToProject,
-        Unfollow,
-        SaveAs,
-        ReloadActiveItem,
-        ActivatePreviousPane,
-        ActivateNextPane,
-        FollowNextCollaborator,
-        NewTerminal,
-        NewCenterTerminal,
-        ToggleTerminalFocus,
-        NewSearch,
-        Feedback,
-        Restart,
-        Welcome,
-        ToggleZoom,
-        ToggleLeftDock,
-        ToggleRightDock,
-        ToggleBottomDock,
-        CloseAllDocks,
-    ]
-);
 
 #[derive(Clone, PartialEq)]
 pub struct OpenPaths {
@@ -245,8 +213,6 @@ impl_actions!(
         CloseAllItemsAndPanes,
     ]
 );
-
-pub type WorkspaceId = i64;
 
 pub fn init_settings(cx: &mut AppContext) {
     settings::register::<WorkspaceSettings>(cx);
@@ -596,12 +562,6 @@ pub struct Workspace {
 struct ActiveModal {
     view: Box<dyn ModalHandle>,
     previously_focused_view_id: Option<usize>,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ViewId {
-    pub creator: PeerId,
-    pub id: u64,
 }
 
 #[derive(Default)]

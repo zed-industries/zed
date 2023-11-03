@@ -2575,6 +2575,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
+ "async-trait",
  "client",
  "clock",
  "collections",
@@ -2600,6 +2601,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "project",
+ "project_types",
  "rand 0.8.5",
  "rich_text",
  "rpc",
@@ -2621,6 +2623,7 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
+ "workspace_types",
 ]
 
 [[package]]
@@ -6165,6 +6168,7 @@ dependencies = [
  "postage",
  "prettier",
  "pretty_assertions",
+ "project_types",
  "rand 0.8.5",
  "regex",
  "rpc",
@@ -6291,6 +6295,23 @@ dependencies = [
  "theme",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "project_types"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "gpui",
+ "itertools 0.10.5",
+ "language",
+ "lsp",
+ "rpc",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
 ]
 
 [[package]]
@@ -10706,6 +10727,20 @@ dependencies = [
  "theme",
  "util",
  "uuid 1.4.1",
+ "workspace_types",
+]
+
+[[package]]
+name = "workspace_types"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "language",
+ "lsp",
+ "project_types",
+ "rpc",
+ "serde",
+ "text",
 ]
 
 [[package]]

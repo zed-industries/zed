@@ -34,6 +34,7 @@ language = { path = "../language" }
 lsp = { path = "../lsp" }
 node_runtime = { path = "../node_runtime" }
 prettier = { path = "../prettier" }
+project_types = {path = "../project_types"}
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }

@@ -9,9 +9,9 @@ use gpui::{
     AnyViewHandle, Axis, ModelHandle, ViewContext, ViewHandle,
 };
 use project::Project;
-use serde::Deserialize;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use theme::Theme;
+use workspace_types::SplitDirection;
 
 const HANDLE_HITBOX_SIZE: f32 = 4.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
@@ -531,59 +531,6 @@ impl PaneAxis {
         }
         pane_axis.set_active_pane(active_pane_ix);
         pane_axis.into_any()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
-pub enum SplitDirection {
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-impl SplitDirection {
-    pub fn all() -> [Self; 4] {
-        [Self::Up, Self::Down, Self::Left, Self::Right]
-    }
-
-    pub fn edge(&self, rect: RectF) -> f32 {
-        match self {
-            Self::Up => rect.min_y(),
-            Self::Down => rect.max_y(),
-            Self::Left => rect.min_x(),
-            Self::Right => rect.max_x(),
-        }
-    }
-
-    // Returns a new rectangle which shares an edge in SplitDirection and has `size` along SplitDirection
-    pub fn along_edge(&self, rect: RectF, size: f32) -> RectF {
-        match self {
-            Self::Up => RectF::new(rect.origin(), Vector2F::new(rect.width(), size)),
-            Self::Down => RectF::new(
-                rect.lower_left() - Vector2F::new(0., size),
-                Vector2F::new(rect.width(), size),
-            ),
-            Self::Left => RectF::new(rect.origin(), Vector2F::new(size, rect.height())),
-            Self::Right => RectF::new(
-                rect.upper_right() - Vector2F::new(size, 0.),
-                Vector2F::new(size, rect.height()),
-            ),
-        }
-    }
-
-    pub fn axis(&self) -> Axis {
-        match self {
-            Self::Up | Self::Down => Axis::Vertical,
-            Self::Left | Self::Right => Axis::Horizontal,
-        }
-    }
-
-    pub fn increasing(&self) -> bool {
-        match self {
-            Self::Left | Self::Up => false,
-            Self::Down | Self::Right => true,
-        }
     }
 }
 
