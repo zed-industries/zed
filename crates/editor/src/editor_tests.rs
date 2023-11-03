@@ -34,7 +34,7 @@ use util::{
     test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
 };
 use workspace::{
-    item::{FollowableItem, Item, ItemHandle},
+    item::{FollowableItem, Item},
     NavigationEntry, ViewId,
 };
 
