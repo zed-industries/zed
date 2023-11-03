@@ -1,12 +1,12 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui2::{AsyncAppContext, Task};
-pub use language2::*;
-use lsp2::{CompletionItemKind, LanguageServerBinary, SymbolKind};
+use gpui::{AsyncAppContext, Task};
+pub use language::*;
+use lsp::{CompletionItemKind, LanguageServerBinary, SymbolKind};
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings2::Settings;
+use settings::Settings;
 use smol::fs::{self, File};
 use std::{
     any::Any,
@@ -54,7 +54,7 @@ impl Settings for ElixirSettings {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _: &mut gpui2::AppContext,
+        _: &mut gpui::AppContext,
     ) -> Result<Self>
     where
         Self: Sized,
@@ -200,7 +200,7 @@ impl LspAdapter for ElixirLspAdapter {
 
     async fn label_for_completion(
         &self,
-        completion: &lsp2::CompletionItem,
+        completion: &lsp::CompletionItem,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         match completion.kind.zip(completion.detail.as_ref()) {
@@ -404,7 +404,7 @@ impl LspAdapter for NextLspAdapter {
 
     async fn label_for_completion(
         &self,
-        completion: &lsp2::CompletionItem,
+        completion: &lsp::CompletionItem,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         label_for_completion_elixir(completion, language)
@@ -506,7 +506,7 @@ impl LspAdapter for LocalLspAdapter {
 
     async fn label_for_completion(
         &self,
-        completion: &lsp2::CompletionItem,
+        completion: &lsp::CompletionItem,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         label_for_completion_elixir(completion, language)
@@ -523,7 +523,7 @@ impl LspAdapter for LocalLspAdapter {
 }
 
 fn label_for_completion_elixir(
-    completion: &lsp2::CompletionItem,
+    completion: &lsp::CompletionItem,
     language: &Arc<Language>,
 ) -> Option<CodeLabel> {
     return Some(CodeLabel {

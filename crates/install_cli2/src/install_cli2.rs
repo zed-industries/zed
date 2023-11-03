@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use gpui2::AsyncAppContext;
+use gpui::AsyncAppContext;
 use std::path::Path;
 use util::ResultExt;
 

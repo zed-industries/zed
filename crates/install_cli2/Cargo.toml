@@ -14,5 +14,5 @@ test-support = []
 smol.workspace = true
 anyhow.workspace = true
 log.workspace = true
-gpui2 = { path = "../gpui2" }
+gpui = { package = "gpui2", path = "../gpui2" }
 util = { path = "../util" }

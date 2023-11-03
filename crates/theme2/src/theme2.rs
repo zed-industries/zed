@@ -6,6 +6,7 @@ mod scale;
 mod settings;
 mod syntax;
 
+use ::settings::Settings;
 pub use colors::*;
 pub use default_colors::*;
 pub use default_theme::*;
@@ -14,8 +15,7 @@ pub use scale::*;
 pub use settings::*;
 pub use syntax::*;
 
-use gpui2::{AppContext, Hsla, SharedString};
-use settings2::Settings;
+use gpui::{AppContext, Hsla, SharedString};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Appearance {

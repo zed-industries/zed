@@ -14,7 +14,7 @@ use futures::{
     future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryFutureExt as _,
     TryStreamExt,
 };
-use gpui2::{
+use gpui::{
     serde_json, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Model, SemanticVersion, Task,
     WeakModel,
 };
@@ -22,10 +22,10 @@ use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
 use rand::prelude::*;
-use rpc2::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
+use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings2::Settings;
+use settings::Settings;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -44,7 +44,7 @@ use util::channel::ReleaseChannel;
 use util::http::HttpClient;
 use util::{ResultExt, TryFutureExt};
 
-pub use rpc2::*;
+pub use rpc::*;
 pub use telemetry::ClickhouseEvent;
 pub use user::*;
 
@@ -367,7 +367,7 @@ pub struct TelemetrySettingsContent {
     pub metrics: Option<bool>,
 }
 
-impl settings2::Settings for TelemetrySettings {
+impl settings::Settings for TelemetrySettings {
     const KEY: Option<&'static str> = Some("telemetry");
 
     type FileContent = TelemetrySettingsContent;
@@ -979,7 +979,7 @@ impl Client {
                 "Authorization",
                 format!("{} {}", credentials.user_id, credentials.access_token),
             )
-            .header("x-zed-protocol-version", rpc2::PROTOCOL_VERSION);
+            .header("x-zed-protocol-version", rpc::PROTOCOL_VERSION);
 
         let http = self.http.clone();
         cx.background_executor().spawn(async move {
@@ -1029,7 +1029,7 @@ impl Client {
             // zed server to encrypt the user's access token, so that it can'be intercepted by
             // any other app running on the user's device.
             let (public_key, private_key) =
-                rpc2::auth::keypair().expect("failed to generate keypair for auth");
+                rpc::auth::keypair().expect("failed to generate keypair for auth");
             let public_key_string =
                 String::try_from(public_key).expect("failed to serialize public key for auth");
 
@@ -1383,12 +1383,12 @@ mod tests {
     use super::*;
     use crate::test::FakeServer;
 
-    use gpui2::{BackgroundExecutor, Context, TestAppContext};
+    use gpui::{BackgroundExecutor, Context, TestAppContext};
     use parking_lot::Mutex;
     use std::future;
     use util::http::FakeHttpClient;
 
-    #[gpui2::test(iterations = 10)]
+    #[gpui::test(iterations = 10)]
     async fn test_reconnection(cx: &mut TestAppContext) {
         let user_id = 5;
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
@@ -1422,7 +1422,7 @@ mod tests {
         assert_eq!(server.auth_count(), 2); // Client re-authenticated due to an invalid token
     }
 
-    #[gpui2::test(iterations = 10)]
+    #[gpui::test(iterations = 10)]
     async fn test_connection_timeout(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         let user_id = 5;
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
@@ -1490,7 +1490,7 @@ mod tests {
         ));
     }
 
-    #[gpui2::test(iterations = 10)]
+    #[gpui::test(iterations = 10)]
     async fn test_authenticating_more_than_once(
         cx: &mut TestAppContext,
         executor: BackgroundExecutor,
@@ -1541,7 +1541,7 @@ mod tests {
         assert_eq!(decode_worktree_url("not://the-right-format"), None);
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_subscribing_to_entity(cx: &mut TestAppContext) {
         let user_id = 5;
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
@@ -1594,7 +1594,7 @@ mod tests {
         done_rx2.next().await.unwrap();
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_subscribing_after_dropping_subscription(cx: &mut TestAppContext) {
         let user_id = 5;
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
@@ -1622,7 +1622,7 @@ mod tests {
         done_rx2.next().await.unwrap();
     }
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_dropping_subscription_in_handler(cx: &mut TestAppContext) {
         let user_id = 5;
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));

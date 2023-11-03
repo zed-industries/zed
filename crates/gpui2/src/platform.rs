@@ -69,7 +69,7 @@ pub(crate) trait Platform: 'static {
     fn set_display_link_output_callback(
         &self,
         display_id: DisplayId,
-        callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>,
+        callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp) + Send>,
     );
     fn start_display_link(&self, display_id: DisplayId);
     fn stop_display_link(&self, display_id: DisplayId);

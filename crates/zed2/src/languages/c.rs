@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-pub use language2::*;
-use lsp2::LanguageServerBinary;
+pub use language::*;
+use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{
@@ -108,7 +108,7 @@ impl super::LspAdapter for CLspAdapter {
 
     async fn label_for_completion(
         &self,
-        completion: &lsp2::CompletionItem,
+        completion: &lsp::CompletionItem,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let label = completion
@@ -118,7 +118,7 @@ impl super::LspAdapter for CLspAdapter {
             .trim();
 
         match completion.kind {
-            Some(lsp2::CompletionItemKind::FIELD) if completion.detail.is_some() => {
+            Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
                 let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
@@ -129,7 +129,7 @@ impl super::LspAdapter for CLspAdapter {
                     runs,
                 });
             }
-            Some(lsp2::CompletionItemKind::CONSTANT | lsp2::CompletionItemKind::VARIABLE)
+            Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE)
                 if completion.detail.is_some() =>
             {
                 let detail = completion.detail.as_ref().unwrap();
@@ -141,7 +141,7 @@ impl super::LspAdapter for CLspAdapter {
                     runs,
                 });
             }
-            Some(lsp2::CompletionItemKind::FUNCTION | lsp2::CompletionItemKind::METHOD)
+            Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD)
                 if completion.detail.is_some() =>
             {
                 let detail = completion.detail.as_ref().unwrap();
@@ -155,13 +155,13 @@ impl super::LspAdapter for CLspAdapter {
             }
             Some(kind) => {
                 let highlight_name = match kind {
-                    lsp2::CompletionItemKind::STRUCT
-                    | lsp2::CompletionItemKind::INTERFACE
-                    | lsp2::CompletionItemKind::CLASS
-                    | lsp2::CompletionItemKind::ENUM => Some("type"),
-                    lsp2::CompletionItemKind::ENUM_MEMBER => Some("variant"),
-                    lsp2::CompletionItemKind::KEYWORD => Some("keyword"),
-                    lsp2::CompletionItemKind::VALUE | lsp2::CompletionItemKind::CONSTANT => {
+                    lsp::CompletionItemKind::STRUCT
+                    | lsp::CompletionItemKind::INTERFACE
+                    | lsp::CompletionItemKind::CLASS
+                    | lsp::CompletionItemKind::ENUM => Some("type"),
+                    lsp::CompletionItemKind::ENUM_MEMBER => Some("variant"),
+                    lsp::CompletionItemKind::KEYWORD => Some("keyword"),
+                    lsp::CompletionItemKind::VALUE | lsp::CompletionItemKind::CONSTANT => {
                         Some("constant")
                     }
                     _ => None,
@@ -186,47 +186,47 @@ impl super::LspAdapter for CLspAdapter {
     async fn label_for_symbol(
         &self,
         name: &str,
-        kind: lsp2::SymbolKind,
+        kind: lsp::SymbolKind,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let (text, filter_range, display_range) = match kind {
-            lsp2::SymbolKind::METHOD | lsp2::SymbolKind::FUNCTION => {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("void {} () {{}}", name);
                 let filter_range = 0..name.len();
                 let display_range = 5..5 + name.len();
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::STRUCT => {
+            lsp::SymbolKind::STRUCT => {
                 let text = format!("struct {} {{}}", name);
                 let filter_range = 7..7 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::ENUM => {
+            lsp::SymbolKind::ENUM => {
                 let text = format!("enum {} {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::INTERFACE | lsp2::SymbolKind::CLASS => {
+            lsp::SymbolKind::INTERFACE | lsp::SymbolKind::CLASS => {
                 let text = format!("class {} {{}}", name);
                 let filter_range = 6..6 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::CONSTANT => {
+            lsp::SymbolKind::CONSTANT => {
                 let text = format!("const int {} = 0;", name);
                 let filter_range = 10..10 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::MODULE => {
+            lsp::SymbolKind::MODULE => {
                 let text = format!("namespace {} {{}}", name);
                 let filter_range = 10..10 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp2::SymbolKind::TYPE_PARAMETER => {
+            lsp::SymbolKind::TYPE_PARAMETER => {
                 let text = format!("typename {} {{}};", name);
                 let filter_range = 9..9 + name.len();
                 let display_range = 0..filter_range.end;
@@ -273,18 +273,18 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
 #[cfg(test)]
 mod tests {
-    use gpui2::{Context, TestAppContext};
-    use language2::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
-    use settings2::SettingsStore;
+    use gpui::{Context, TestAppContext};
+    use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
+    use settings::SettingsStore;
     use std::num::NonZeroU32;
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_c_autoindent(cx: &mut TestAppContext) {
         // cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);
-            language2::init(cx);
+            language::init(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |s| {
                     s.defaults.tab_size = NonZeroU32::new(2);

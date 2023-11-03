@@ -1,6 +1,6 @@
 use crate::{ThemeRegistry, ThemeVariant};
 use anyhow::Result;
-use gpui2::{px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels};
+use gpui::{px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels};
 use schemars::{
     gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
@@ -8,7 +8,7 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings2::{Settings, SettingsJsonSchemaParams};
+use settings::{Settings, SettingsJsonSchemaParams};
 use std::sync::Arc;
 use util::ResultExt as _;
 
@@ -105,7 +105,7 @@ pub fn reset_font_size(cx: &mut AppContext) {
     }
 }
 
-impl settings2::Settings for ThemeSettings {
+impl settings::Settings for ThemeSettings {
     const KEY: Option<&'static str> = None;
 
     type FileContent = ThemeSettingsContent;

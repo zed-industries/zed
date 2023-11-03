@@ -1,9 +1,9 @@
 use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
-use gpui2::{serde_json, AppContext, AppMetadata, BackgroundExecutor, Task};
+use gpui::{serde_json, AppContext, AppMetadata, BackgroundExecutor, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
-use settings2::Settings;
+use settings::Settings;
 use std::{env, io::Write, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{
     CpuRefreshKind, Pid, PidExt, ProcessExt, ProcessRefreshKind, RefreshKind, System, SystemExt,

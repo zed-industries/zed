@@ -5,6 +5,7 @@ mod model_context;
 mod test_context;
 
 pub use async_context::*;
+use derive_more::{Deref, DerefMut};
 pub use entity_map::*;
 pub use model_context::*;
 use refineable::Refineable;
@@ -27,7 +28,7 @@ use parking_lot::Mutex;
 use slotmap::SlotMap;
 use std::{
     any::{type_name, Any, TypeId},
-    cell::RefCell,
+    cell::{Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
@@ -38,7 +39,31 @@ use std::{
 };
 use util::http::{self, HttpClient};
 
-pub struct App(Rc<RefCell<AppContext>>);
+/// Temporary(?) wrapper around RefCell<AppContext> to help us debug any double borrows.
+/// Strongly consider removing after stabilization.
+pub struct AppCell {
+    app: RefCell<AppContext>,
+}
+
+impl AppCell {
+    pub fn borrow(&self) -> AppRef {
+        AppRef(self.app.borrow())
+    }
+
+    pub fn borrow_mut(&self) -> AppRefMut {
+        // let thread_id = std::thread::current().id();
+        // dbg!("borrowed {thread_id:?}");
+        AppRefMut(self.app.borrow_mut())
+    }
+}
+
+#[derive(Deref, DerefMut)]
+pub struct AppRef<'a>(Ref<'a, AppContext>);
+
+#[derive(Deref, DerefMut)]
+pub struct AppRefMut<'a>(RefMut<'a, AppContext>);
+
+pub struct App(Rc<AppCell>);
 
 /// Represents an application before it is fully launched. Once your app is
 /// configured, you'll start the app with `App::run`.
@@ -112,14 +137,20 @@ impl App {
 }
 
 type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
-type FrameCallback = Box<dyn FnOnce(&mut WindowContext)>;
+pub(crate) type FrameCallback = Box<dyn FnOnce(&mut AppContext)>;
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 
+// struct FrameConsumer {
+//     next_frame_callbacks: Vec<FrameCallback>,
+//     task: Task<()>,
+//     display_linker
+// }
+
 pub struct AppContext {
-    this: Weak<RefCell<AppContext>>,
+    this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
     app_metadata: AppMetadata,
     text_system: Arc<TextSystem>,
@@ -127,6 +158,7 @@ pub struct AppContext {
     pending_updates: usize,
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
+    pub(crate) frame_consumers: HashMap<DisplayId, Task<()>>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) svg_renderer: SvgRenderer,
@@ -157,7 +189,7 @@ impl AppContext {
         platform: Rc<dyn Platform>,
         asset_source: Arc<dyn AssetSource>,
         http_client: Arc<dyn HttpClient>,
-    ) -> Rc<RefCell<Self>> {
+    ) -> Rc<AppCell> {
         let executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
         assert!(
@@ -174,15 +206,17 @@ impl AppContext {
             app_version: platform.app_version().ok(),
         };
 
-        Rc::new_cyclic(|this| {
-            RefCell::new(AppContext {
+        Rc::new_cyclic(|this| AppCell {
+            app: RefCell::new(AppContext {
                 this: this.clone(),
-                text_system,
                 platform,
                 app_metadata,
+                text_system,
                 flushing_effects: false,
                 pending_updates: 0,
-                next_frame_callbacks: Default::default(),
+                active_drag: None,
+                next_frame_callbacks: HashMap::default(),
+                frame_consumers: HashMap::default(),
                 background_executor: executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
@@ -205,8 +239,7 @@ impl AppContext {
                 quit_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
-                active_drag: None,
-            })
+            }),
         })
     }
 
@@ -789,10 +822,13 @@ impl Context for AppContext {
 
             let root_view = window.root_view.clone().unwrap();
             let result = update(root_view, &mut WindowContext::new(cx, &mut window));
-            cx.windows
-                .get_mut(handle.id)
-                .ok_or_else(|| anyhow!("window not found"))?
-                .replace(window);
+
+            if !window.removed {
+                cx.windows
+                    .get_mut(handle.id)
+                    .ok_or_else(|| anyhow!("window not found"))?
+                    .replace(window);
+            }
 
             Ok(result)
         })

@@ -288,7 +288,7 @@ impl Fs for RealFs {
 pub struct FakeFs {
     // Use an unfair lock to ensure tests are deterministic.
     state: Mutex<FakeFsState>,
-    executor: gpui2::BackgroundExecutor,
+    executor: gpui::BackgroundExecutor,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -434,7 +434,7 @@ lazy_static::lazy_static! {
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
-    pub fn new(executor: gpui2::BackgroundExecutor) -> Arc<Self> {
+    pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
         Arc::new(Self {
             executor,
             state: Mutex::new(FakeFsState {
@@ -1222,10 +1222,10 @@ pub fn copy_recursive<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui2::BackgroundExecutor;
+    use gpui::BackgroundExecutor;
     use serde_json::json;
 
-    #[gpui2::test]
+    #[gpui::test]
     async fn test_fake_fs(executor: BackgroundExecutor) {
         let fs = FakeFs::new(executor.clone());
         fs.insert_tree(

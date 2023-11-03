@@ -78,7 +78,7 @@ fn test_splice_included_ranges() {
     }
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_syntax_map_layers_for_range() {
     let registry = Arc::new(LanguageRegistry::test());
     let language = Arc::new(rust_lang());
@@ -175,7 +175,7 @@ fn test_syntax_map_layers_for_range() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_dynamic_language_injection() {
     let registry = Arc::new(LanguageRegistry::test());
     let markdown = Arc::new(markdown_lang());
@@ -253,7 +253,7 @@ fn test_dynamic_language_injection() {
     assert!(!syntax_map.contains_unknown_injections());
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_typing_multiple_new_injections() {
     let (buffer, syntax_map) = test_edit_sequence(
         "Rust",
@@ -282,7 +282,7 @@ fn test_typing_multiple_new_injections() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_pasting_new_injection_line_between_others() {
     let (buffer, syntax_map) = test_edit_sequence(
         "Rust",
@@ -329,7 +329,7 @@ fn test_pasting_new_injection_line_between_others() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_joining_injections_with_child_injections() {
     let (buffer, syntax_map) = test_edit_sequence(
         "Rust",
@@ -373,7 +373,7 @@ fn test_joining_injections_with_child_injections() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_editing_edges_of_injection() {
     test_edit_sequence(
         "Rust",
@@ -402,7 +402,7 @@ fn test_editing_edges_of_injection() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_edits_preceding_and_intersecting_injection() {
     test_edit_sequence(
         "Rust",
@@ -414,7 +414,7 @@ fn test_edits_preceding_and_intersecting_injection() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_non_local_changes_create_injections() {
     test_edit_sequence(
         "Rust",
@@ -433,7 +433,7 @@ fn test_non_local_changes_create_injections() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_creating_many_injections_in_one_edit() {
     test_edit_sequence(
         "Rust",
@@ -463,7 +463,7 @@ fn test_creating_many_injections_in_one_edit() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_editing_across_injection_boundary() {
     test_edit_sequence(
         "Rust",
@@ -491,7 +491,7 @@ fn test_editing_across_injection_boundary() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_removing_injection_by_replacing_across_boundary() {
     test_edit_sequence(
         "Rust",
@@ -517,7 +517,7 @@ fn test_removing_injection_by_replacing_across_boundary() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_combined_injections_simple() {
     let (buffer, syntax_map) = test_edit_sequence(
         "ERB",
@@ -564,7 +564,7 @@ fn test_combined_injections_simple() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_combined_injections_empty_ranges() {
     test_edit_sequence(
         "ERB",
@@ -582,7 +582,7 @@ fn test_combined_injections_empty_ranges() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_combined_injections_edit_edges_of_ranges() {
     let (buffer, syntax_map) = test_edit_sequence(
         "ERB",
@@ -613,7 +613,7 @@ fn test_combined_injections_edit_edges_of_ranges() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_combined_injections_splitting_some_injections() {
     let (_buffer, _syntax_map) = test_edit_sequence(
         "ERB",
@@ -638,7 +638,7 @@ fn test_combined_injections_splitting_some_injections() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_combined_injections_editing_after_last_injection() {
     test_edit_sequence(
         "ERB",
@@ -658,7 +658,7 @@ fn test_combined_injections_editing_after_last_injection() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_combined_injections_inside_injections() {
     let (buffer, syntax_map) = test_edit_sequence(
         "Markdown",
@@ -734,7 +734,7 @@ fn test_combined_injections_inside_injections() {
     );
 }
 
-#[gpui2::test]
+#[gpui::test]
 fn test_empty_combined_injections_inside_injections() {
     let (buffer, syntax_map) = test_edit_sequence(
         "Markdown",
@@ -762,7 +762,7 @@ fn test_empty_combined_injections_inside_injections() {
     );
 }
 
-#[gpui2::test(iterations = 50)]
+#[gpui::test(iterations = 50)]
 fn test_random_syntax_map_edits_rust_macros(rng: StdRng) {
     let text = r#"
         fn test_something() {
@@ -788,7 +788,7 @@ fn test_random_syntax_map_edits_rust_macros(rng: StdRng) {
     test_random_edits(text, registry, language, rng);
 }
 
-#[gpui2::test(iterations = 50)]
+#[gpui::test(iterations = 50)]
 fn test_random_syntax_map_edits_with_erb(rng: StdRng) {
     let text = r#"
         <div id="main">
@@ -817,7 +817,7 @@ fn test_random_syntax_map_edits_with_erb(rng: StdRng) {
     test_random_edits(text, registry, language, rng);
 }
 
-#[gpui2::test(iterations = 50)]
+#[gpui::test(iterations = 50)]
 fn test_random_syntax_map_edits_with_heex(rng: StdRng) {
     let text = r#"
         defmodule TheModule do

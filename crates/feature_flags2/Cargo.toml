@@ -8,5 +8,5 @@ publish = false
 path = "src/feature_flags2.rs"
 
 [dependencies]
-gpui2 = { path = "../gpui2" }
+gpui = { package = "gpui2", path = "../gpui2" }
 anyhow.workspace = true

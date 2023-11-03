@@ -6,20 +6,20 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use collections::{HashMap, HashSet};
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
-use gpui2::{
+use gpui::{
     AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Model, ModelContext,
     Task, WeakModel,
 };
-use language2::{
+use language::{
     language_settings::{all_language_settings, language_settings},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language,
     LanguageServerName, PointUtf16, ToPointUtf16,
 };
-use lsp2::{LanguageServer, LanguageServerBinary, LanguageServerId};
+use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use request::StatusNotification;
-use settings2::SettingsStore;
+use settings::SettingsStore;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     ffi::OsString,
@@ -172,11 +172,11 @@ impl Status {
 }
 
 struct RegisteredBuffer {
-    uri: lsp2::Url,
+    uri: lsp::Url,
     language_id: String,
     snapshot: BufferSnapshot,
     snapshot_version: i32,
-    _subscriptions: [gpui2::Subscription; 2],
+    _subscriptions: [gpui::Subscription; 2],
     pending_buffer_change: Task<Option<()>>,
 }
 
@@ -220,8 +220,8 @@ impl RegisteredBuffer {
                                     let new_text = new_snapshot
                                         .text_for_range(edit.new.start.1..edit.new.end.1)
                                         .collect();
-                                    lsp2::TextDocumentContentChangeEvent {
-                                        range: Some(lsp2::Range::new(
+                                    lsp::TextDocumentContentChangeEvent {
+                                        range: Some(lsp::Range::new(
                                             point_to_lsp(edit_start),
                                             point_to_lsp(edit_end),
                                         )),
@@ -243,9 +243,9 @@ impl RegisteredBuffer {
                             buffer.snapshot = new_snapshot;
                             server
                                 .lsp
-                                .notify::<lsp2::notification::DidChangeTextDocument>(
-                                    lsp2::DidChangeTextDocumentParams {
-                                        text_document: lsp2::VersionedTextDocumentIdentifier::new(
+                                .notify::<lsp::notification::DidChangeTextDocument>(
+                                    lsp::DidChangeTextDocumentParams {
+                                        text_document: lsp::VersionedTextDocumentIdentifier::new(
                                             buffer.uri.clone(),
                                             buffer.snapshot_version,
                                         ),
@@ -280,7 +280,7 @@ pub struct Copilot {
     server: CopilotServer,
     buffers: HashSet<WeakModel<Buffer>>,
     server_id: LanguageServerId,
-    _subscription: gpui2::Subscription,
+    _subscription: gpui::Subscription,
 }
 
 pub enum Event {
@@ -608,13 +608,13 @@ impl Copilot {
             registered_buffers
                 .entry(buffer.entity_id())
                 .or_insert_with(|| {
-                    let uri: lsp2::Url = uri_for_buffer(buffer, cx);
+                    let uri: lsp::Url = uri_for_buffer(buffer, cx);
                     let language_id = id_for_language(buffer.read(cx).language());
                     let snapshot = buffer.read(cx).snapshot();
                     server
-                        .notify::<lsp2::notification::DidOpenTextDocument>(
-                            lsp2::DidOpenTextDocumentParams {
-                                text_document: lsp2::TextDocumentItem {
+                        .notify::<lsp::notification::DidOpenTextDocument>(
+                            lsp::DidOpenTextDocumentParams {
+                                text_document: lsp::TextDocumentItem {
                                     uri: uri.clone(),
                                     language_id: language_id.clone(),
                                     version: 0,
@@ -647,29 +647,29 @@ impl Copilot {
     fn handle_buffer_event(
         &mut self,
         buffer: Model<Buffer>,
-        event: &language2::Event,
+        event: &language::Event,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         if let Ok(server) = self.server.as_running() {
             if let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
             {
                 match event {
-                    language2::Event::Edited => {
+                    language::Event::Edited => {
                         let _ = registered_buffer.report_changes(&buffer, cx);
                     }
-                    language2::Event::Saved => {
+                    language::Event::Saved => {
                         server
                             .lsp
-                            .notify::<lsp2::notification::DidSaveTextDocument>(
-                                lsp2::DidSaveTextDocumentParams {
-                                    text_document: lsp2::TextDocumentIdentifier::new(
+                            .notify::<lsp::notification::DidSaveTextDocument>(
+                                lsp::DidSaveTextDocumentParams {
+                                    text_document: lsp::TextDocumentIdentifier::new(
                                         registered_buffer.uri.clone(),
                                     ),
                                     text: None,
                                 },
                             )?;
                     }
-                    language2::Event::FileHandleChanged | language2::Event::LanguageChanged => {
+                    language::Event::FileHandleChanged | language::Event::LanguageChanged => {
                         let new_language_id = id_for_language(buffer.read(cx).language());
                         let new_uri = uri_for_buffer(&buffer, cx);
                         if new_uri != registered_buffer.uri
@@ -679,16 +679,16 @@ impl Copilot {
                             registered_buffer.language_id = new_language_id;
                             server
                                 .lsp
-                                .notify::<lsp2::notification::DidCloseTextDocument>(
-                                    lsp2::DidCloseTextDocumentParams {
-                                        text_document: lsp2::TextDocumentIdentifier::new(old_uri),
+                                .notify::<lsp::notification::DidCloseTextDocument>(
+                                    lsp::DidCloseTextDocumentParams {
+                                        text_document: lsp::TextDocumentIdentifier::new(old_uri),
                                     },
                                 )?;
                             server
                                 .lsp
-                                .notify::<lsp2::notification::DidOpenTextDocument>(
-                                    lsp2::DidOpenTextDocumentParams {
-                                        text_document: lsp2::TextDocumentItem::new(
+                                .notify::<lsp::notification::DidOpenTextDocument>(
+                                    lsp::DidOpenTextDocumentParams {
+                                        text_document: lsp::TextDocumentItem::new(
                                             registered_buffer.uri.clone(),
                                             registered_buffer.language_id.clone(),
                                             registered_buffer.snapshot_version,
@@ -711,9 +711,9 @@ impl Copilot {
             if let Some(buffer) = server.registered_buffers.remove(&buffer.entity_id()) {
                 server
                     .lsp
-                    .notify::<lsp2::notification::DidCloseTextDocument>(
-                        lsp2::DidCloseTextDocumentParams {
-                            text_document: lsp2::TextDocumentIdentifier::new(buffer.uri),
+                    .notify::<lsp::notification::DidCloseTextDocument>(
+                        lsp::DidCloseTextDocumentParams {
+                            text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
                         },
                     )
                     .log_err();
@@ -798,7 +798,7 @@ impl Copilot {
     ) -> Task<Result<Vec<Completion>>>
     where
         R: 'static
-            + lsp2::request::Request<
+            + lsp::request::Request<
                 Params = request::GetCompletionsParams,
                 Result = request::GetCompletionsResult,
             >,
@@ -926,9 +926,9 @@ fn id_for_language(language: Option<&Arc<Language>>) -> String {
     }
 }
 
-fn uri_for_buffer(buffer: &Model<Buffer>, cx: &AppContext) -> lsp2::Url {
+fn uri_for_buffer(buffer: &Model<Buffer>, cx: &AppContext) -> lsp::Url {
     if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
-        lsp2::Url::from_file_path(file.abs_path(cx)).unwrap()
+        lsp::Url::from_file_path(file.abs_path(cx)).unwrap()
     } else {
         format!("buffer://{}", buffer.entity_id()).parse().unwrap()
     }
