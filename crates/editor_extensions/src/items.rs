@@ -1,10 +1,11 @@
-use crate::{
-    display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
-    movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
-    Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
-};
+use crate::persistence::DB;
 use anyhow::{Context, Result};
 use collections::HashSet;
+use editor::{
+    display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
+    movement::surrounding_word, scroll::ScrollAnchor, Anchor, Autoscroll, Editor, Event, ExcerptId,
+    ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
+};
 use editor::{BufferSearchHighlights, MAX_TAB_TITLE_LEN};
 use futures::future::try_join_all;
 use gpui::{
@@ -17,7 +18,8 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
     SelectionGoal,
 };
-use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
+use project::{search::SearchQuery, FormatTrigger, Item as _, Project};
+use project_types::ProjectPath;
 use rpc::proto::{self, update_view, PeerId};
 use smallvec::SmallVec;
 use std::{
@@ -38,9 +40,9 @@ use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-    ItemId, ItemNavHistory, Pane, StatusItemView, ToolbarItemLocation, ViewId, Workspace,
-    WorkspaceId,
+    ItemNavHistory, Pane, StatusItemView, ToolbarItemLocation, Workspace,
 };
+use workspace_types::*;
 
 impl FollowableItem for Editor {
     fn remote_id(&self) -> Option<ViewId> {
@@ -85,7 +87,7 @@ impl FollowableItem for Editor {
                     let ids_match = editor.remote_id(&client, cx) == Some(remote_id);
                     let singleton_buffer_matches = state.singleton
                         && buffers.first()
-                            == editor.read(cx).buffer.read(cx).as_singleton().as_ref();
+                            == editor.read(cx).buffer().read(cx).as_singleton().as_ref();
                     ids_match || singleton_buffer_matches
                 })
             })?;
@@ -161,11 +163,11 @@ impl FollowableItem for Editor {
     fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>) {
         self.leader_peer_id = leader_peer_id;
         if self.leader_peer_id.is_some() {
-            self.buffer.update(cx, |buffer, cx| {
+            self.buffer().update(cx, |buffer, cx| {
                 buffer.remove_active_selections(cx);
             });
         } else {
-            self.buffer.update(cx, |buffer, cx| {
+            self.buffer().update(cx, |buffer, cx| {
                 if self.focused {
                     buffer.set_active_selections(
                         &self.selections.disjoint_anchors(),
@@ -180,7 +182,7 @@ impl FollowableItem for Editor {
     }
 
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
-        let buffer = self.buffer.read(cx);
+        let buffer = self.buffer().read(cx);
         let scroll_anchor = self.scroll_manager.anchor();
         let excerpts = buffer
             .read(cx)
@@ -335,7 +337,7 @@ async fn update_editor_from_message(
 
     // Update the editor's excerpts.
     this.update(cx, |editor, cx| {
-        editor.buffer.update(cx, |multibuffer, cx| {
+        editor.buffer().update(cx, |multibuffer, cx| {
             let mut removed_excerpt_ids = message
                 .deleted_excerpts
                 .into_iter()
@@ -392,7 +394,7 @@ async fn update_editor_from_message(
 
     // Deserialize the editor state.
     let (selections, pending_selection, scroll_top_anchor) = this.update(cx, |editor, cx| {
-        let buffer = editor.buffer.read(cx).read(cx);
+        let buffer = editor.buffer().read(cx).read(cx);
         let selections = message
             .selections
             .into_iter()
@@ -410,7 +412,7 @@ async fn update_editor_from_message(
     // Wait until the buffer has received all of the operations referenced by
     // the editor's new state.
     this.update(cx, |editor, cx| {
-        editor.buffer.update(cx, |buffer, cx| {
+        editor.buffer().update(cx, |buffer, cx| {
             buffer.wait_for_anchors(
                 selections
                     .iter()
@@ -521,7 +523,7 @@ impl Item for Editor {
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
         if let Ok(data) = data.downcast::<NavigationData>() {
             let newest_selection = self.selections.newest::<Point>(cx);
-            let buffer = self.buffer.read(cx).read(cx);
+            let buffer = self.buffer().read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
                 data.cursor_anchor.to_point(&buffer)
             } else {
@@ -569,7 +571,7 @@ impl Item for Editor {
     }
 
     fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<Cow<str>> {
-        match path_for_buffer(&self.buffer, detail, true, cx)? {
+        match path_for_buffer(&self.buffer(), detail, true, cx)? {
             Cow::Borrowed(path) => Some(path.to_string_lossy()),
             Cow::Owned(path) => Some(path.to_string_lossy().to_string().into()),
         }
@@ -584,7 +586,7 @@ impl Item for Editor {
         Flex::row()
             .with_child(Label::new(self.title(cx).to_string(), style.label.clone()).into_any())
             .with_children(detail.and_then(|detail| {
-                let path = path_for_buffer(&self.buffer, detail, false, cx)?;
+                let path = path_for_buffer(&self.buffer(), detail, false, cx)?;
                 let description = path.to_string_lossy();
                 Some(
                     Label::new(
@@ -601,13 +603,13 @@ impl Item for Editor {
     }
 
     fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
-        self.buffer
+        self.buffer()
             .read(cx)
             .for_each_buffer(|buffer| f(buffer.id(), buffer.read(cx)));
     }
 
     fn is_singleton(&self, cx: &AppContext) -> bool {
-        self.buffer.read(cx).is_singleton()
+        self.buffer().read(cx).is_singleton()
     }
 
     fn clone_on_split(&self, _workspace_id: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<Self>
@@ -618,7 +620,7 @@ impl Item for Editor {
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
-        self.nav_history = Some(history);
+        self.set_nav_history(Some(Box::new(history)));
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
@@ -718,7 +720,7 @@ impl Item for Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
-        let buffers = self.buffer.read(cx).all_buffers();
+        let buffers = self.buffer().read(cx).all_buffers();
         let reload_buffers =
             project.update(cx, |project, cx| project.reload_buffers(buffers, true, cx));
         cx.spawn(|this, mut cx| async move {
@@ -851,7 +853,7 @@ impl Item for Editor {
     fn deserialize(
         project: ModelHandle<Project>,
         _workspace: WeakViewHandle<Workspace>,
-        workspace_id: workspace::WorkspaceId,
+        workspace_id: WorkspaceId,
         item_id: ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<Result<ViewHandle<Self>>> {
@@ -987,7 +989,7 @@ impl SearchableItem for Editor {
         query: &SearchQuery,
         cx: &mut ViewContext<Self>,
     ) {
-        let text = self.buffer.read(cx);
+        let text = self.buffer().read(cx);
         let text = text.snapshot(cx);
         let text = text.text_for_range(identifier.clone()).collect::<Vec<_>>();
         let text: Cow<_> = if text.len() == 1 {

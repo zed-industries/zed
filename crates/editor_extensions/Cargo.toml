@@ -6,6 +6,21 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow.workspace = true
+collections = {path = "../collections"}
+client = {path = "../client"}
+db = {path = "../db"}
 editor = {path = "../editor"}
+gpui = {path = "../gpui"}
+lsp = {path = "../lsp"}
+language = {path = "../language"}
 project = {path = "../project"}
+project_types = {path = "../project_types"}
+text = {path = "../text"}
 workspace = {path = "../workspace"}
+workspace_types = {path = "../workspace_types"}
+util = {path = "../util"}
+theme = {path = "../theme"}
+smallvec.workspace = true
+rpc = {path = "../rpc"}
+futures.workspace = true

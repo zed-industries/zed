@@ -28,7 +28,8 @@ use gpui::{
     ModelHandle, MouseRegion, Quad, Task, View, ViewContext, ViewHandle, WeakViewHandle,
     WindowContext,
 };
-use project::{Project, ProjectEntryId, ProjectPath};
+use project::{Project, ProjectEntryId};
+use project_types::ProjectPath;
 use serde::Deserialize;
 use std::{
     any::Any,
@@ -2041,7 +2042,7 @@ impl NavHistory {
         entry
     }
 
-    pub fn push<D: 'static + Any>(
+    pub fn push(
         &mut self,
         data: Option<Box<dyn Any>>,
         item: Rc<dyn WeakItemHandle>,

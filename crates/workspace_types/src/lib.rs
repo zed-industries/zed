@@ -1,5 +1,7 @@
 use std::any::Any;
 
+use anyhow::anyhow;
+
 use gpui::{
     actions,
     geometry::{rect::RectF, vector::Vector2F},
@@ -99,7 +101,26 @@ pub struct ViewId {
     pub creator: rpc::proto::PeerId,
     pub id: u64,
 }
-pub trait NavigationHistorySink: Any {
+
+impl ViewId {
+    pub fn from_proto(message: rpc::proto::ViewId) -> anyhow::Result<Self> {
+        Ok(Self {
+            creator: message
+                .creator
+                .ok_or_else(|| anyhow!("creator is missing"))?,
+            id: message.id,
+        })
+    }
+
+    pub fn to_proto(&self) -> rpc::proto::ViewId {
+        rpc::proto::ViewId {
+            creator: Some(self.creator),
+            id: self.id,
+        }
+    }
+}
+
+pub trait NavigationHistorySink {
     fn push_any(&mut self, data: Option<Box<dyn Any>>, cx: &mut WindowContext);
 }
 

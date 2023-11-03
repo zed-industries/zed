@@ -32,6 +32,7 @@ language = { path = "../language" }
 menu = { path = "../menu" }
 node_runtime = { path = "../node_runtime" }
 project = { path = "../project" }
+project_types = {path = "../project_types"}
 settings = { path = "../settings" }
 terminal = { path = "../terminal" }
 theme = { path = "../theme" }

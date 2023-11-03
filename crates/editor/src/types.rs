@@ -1,9 +1,10 @@
-use crate::{CollaborationHub, Editor};
+use crate::Editor;
 use client::Client;
 
 use anyhow::Result;
 
-use collections::HashSet;
+use client::{proto::PeerId, Collaborator, ParticipantIndex};
+use collections::{HashMap, HashSet};
 use gpui::geometry::vector::Vector2F;
 use gpui::WeakViewHandle;
 use gpui::{AppContext, ModelHandle, Subscription, Task, ViewContext, ViewHandle};
@@ -42,7 +43,19 @@ pub trait Db: 'static + Send + Sync {
     ) -> Result<()>;
 }
 
-pub struct DisableUpdateHistoryGuard(pub Box<dyn Drop>);
+pub type DisableUpdateHistoryGuard = Box<dyn DisableUpdateHistory>;
+
+pub trait DisableUpdateHistory {
+    fn release(self, cx: &mut AppContext);
+}
+
+pub trait CollaborationHub {
+    fn collaborators<'a>(&self, cx: &'a AppContext) -> &'a HashMap<PeerId, Collaborator>;
+    fn user_participant_indices<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> &'a HashMap<u64, ParticipantIndex>;
+}
 
 pub trait Workspace: 'static {
     fn db(&self) -> Arc<dyn Db>;
@@ -63,7 +76,7 @@ pub trait Workspace: 'static {
     fn disable_update_history_for_current_pane(
         &self,
         cx: &mut AppContext,
-    ) -> DisableUpdateHistoryGuard;
+    ) -> Option<DisableUpdateHistoryGuard>;
     fn split_buffer(
         &self,
         buffer: ModelHandle<Buffer>,

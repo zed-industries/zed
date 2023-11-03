@@ -1,8 +1,29 @@
 mod items;
 mod persistence;
+use gpui::{AppContext, ModelHandle, Subscription, Task, ViewContext, ViewHandle, WeakViewHandle};
 pub use items::*;
 
-use editor::{CollaborationHub, Project, Workspace};
+use anyhow::{anyhow, Result};
+use client::{Client, Collaborator, ParticipantIndex};
+use collections::{HashMap, HashSet};
+use editor::scroll::autoscroll::Autoscroll;
+use editor::{
+    CollaborationHub, ConfirmRename, Editor, Event, InlayHintRefreshReason, OpenExcerpts, Project,
+};
+use language::{
+    Buffer, CachedLspAdapter, CodeAction, Completion, LanguageRegistry, LanguageServerName,
+};
+use lsp::{DocumentHighlight, LanguageServer, LanguageServerId};
+use project_types::*;
+use rpc::proto::PeerId;
+use std::mem;
+use std::ops::Range;
+use std::path::PathBuf;
+use std::sync::Arc;
+use util::ResultExt;
+use workspace::item::ItemHandle;
+use workspace::Workspace;
+use workspace_types::*;
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(new_file);
@@ -32,7 +53,7 @@ impl Project for ModelHandle<project::Project> {
         buffer_handle: ModelHandle<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut AppContext,
-    ) -> Task<anyhow::Result<Vec<project::InlayHint>>> {
+    ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         self.update(cx, |this, cx| this.inlay_hints(buffer_handle, range, cx))
     }
     fn visible_worktrees_count(&self, cx: &AppContext) -> usize {
@@ -40,11 +61,11 @@ impl Project for ModelHandle<project::Project> {
     }
     fn resolve_inlay_hint(
         &self,
-        hint: project::InlayHint,
+        hint: InlayHint,
         buffer_handle: ModelHandle<Buffer>,
         server_id: LanguageServerId,
         cx: &mut AppContext,
-    ) -> Task<anyhow::Result<project::InlayHint>> {
+    ) -> Task<anyhow::Result<InlayHint>> {
         self.update(cx, |this, cx| {
             this.resolve_inlay_hint(hint, buffer_handle, server_id, cx)
         })
@@ -57,7 +78,7 @@ impl Project for ModelHandle<project::Project> {
         buffer: &ModelHandle<Buffer>,
         position: text::Anchor,
         cx: &mut AppContext,
-    ) -> Task<Result<Option<project::Hover>>> {
+    ) -> Task<Result<Option<Hover>>> {
         self.update(cx, |this, cx| this.hover(buffer, position, cx))
     }
     fn definition(
@@ -65,7 +86,7 @@ impl Project for ModelHandle<project::Project> {
         buffer: &ModelHandle<Buffer>,
         position: text::Anchor,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<project::LocationLink>>> {
+    ) -> Task<Result<Vec<LocationLink>>> {
         self.update(cx, |this, cx| this.definition(buffer, position, cx))
     }
 
@@ -74,7 +95,7 @@ impl Project for ModelHandle<project::Project> {
         buffer: &ModelHandle<Buffer>,
         position: text::Anchor,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<project::LocationLink>>> {
+    ) -> Task<Result<Vec<LocationLink>>> {
         self.update(cx, |this, cx| this.type_definition(buffer, position, cx))
     }
 
@@ -144,7 +165,7 @@ impl Project for ModelHandle<project::Project> {
         buffer: &ModelHandle<Buffer>,
         position: text::Anchor,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<project::DocumentHighlight>>> {
+    ) -> Task<Result<Vec<DocumentHighlight>>> {
         self.update(cx, |this, cx| {
             this.document_highlights(buffer, position, cx)
         })
@@ -186,7 +207,7 @@ impl Project for ModelHandle<project::Project> {
         buffer: &ModelHandle<Buffer>,
         position: text::Anchor,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<project::Location>>> {
+    ) -> Task<Result<Vec<Location>>> {
         self.update(cx, |this, cx| this.references(buffer, position, cx))
     }
 
@@ -245,7 +266,7 @@ impl Project for ModelHandle<project::Project> {
     }
 }
 
-impl CollaborationHub for ModelHandle<Project> {
+impl CollaborationHub for ModelHandle<project::Project> {
     fn collaborators<'a>(&self, cx: &'a AppContext) -> &'a HashMap<PeerId, Collaborator> {
         self.read(cx).collaborators()
     }
@@ -258,7 +279,7 @@ impl CollaborationHub for ModelHandle<Project> {
     }
 }
 
-impl Workspace for WeakViewHandle<workspace::Workspace> {
+impl editor::Workspace for WeakViewHandle<workspace::Workspace> {
     fn open_abs_path(
         &self,
         abs_path: PathBuf,
@@ -273,29 +294,49 @@ impl Workspace for WeakViewHandle<workspace::Workspace> {
     fn open_path(
         &self,
         path: ProjectPath,
-        pane: Option<WeakViewHandle<Pane>>,
         focus_item: bool,
         cx: &mut AppContext,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
-        self.update(cx, |this, cx| this.open_path(path, pane, focus_item, cx))
+        self.update(cx, |this, cx| this.open_path(path, None, focus_item, cx))
             .map_or_else(|err| Task::ready(Err(err)), |ok| ok)
     }
 
-    fn active_item(&self, cx: &mut AppContext) -> Option<Box<dyn ItemHandle>> {
-        self.update(cx, |workspace, cx| workspace.active_item(cx))
-            .log_err()
-            .flatten()
+    fn active_editor(&self, cx: &mut AppContext) -> Option<ViewHandle<Editor>> {
+        self.update(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+        })
+        .log_err()
+        .flatten()
     }
 
     fn project(&self, cx: &mut AppContext) -> Arc<dyn Project> {
         self.update(cx, |this, cx| Arc::new(this.project().clone()))
             .unwrap()
     }
-    fn active_pane(&self, cx: &mut AppContext) -> ViewHandle<Pane> {
-        self.update(cx, |this, cx| this.active_pane().clone())
-            .unwrap()
+    fn disable_update_history_for_current_pane(
+        &self,
+        cx: &mut AppContext,
+    ) -> Option<editor::DisableUpdateHistoryGuard> {
+        let pane = self
+            .update(cx, |this, cx| this.active_pane().clone())
+            .log_err()?;
+        pane.update(cx, |pane, cx| {
+            pane.disable_history();
+            pane.enable_history()
+        });
+        let pane = pane.downgrade();
+        struct Guard {
+            pane: WeakViewHandle<workspace::Pane>,
+        }
+        impl editor::DisableUpdateHistory for Guard {
+            fn release(self, cx: &mut AppContext) {
+                self.pane.update(cx, |this, _| this.enable_history());
+            }
+        }
+        Some(Guard { pane })
     }
-
     fn split_buffer(&self, buffer: ModelHandle<Buffer>, cx: &mut AppContext) -> ViewHandle<Editor> {
         self.update(cx, |this, cx| this.split_project_item(buffer, cx))
             .unwrap()
@@ -343,7 +384,7 @@ pub fn new_file(
 
 pub fn new_file_in_direction(
     workspace: &mut Workspace,
-    action: &workspace_types::NewFileInDirection,
+    action: &workspace::NewFileInDirection,
     cx: &mut ViewContext<Workspace>,
 ) {
     let project = workspace.project().clone();
@@ -367,7 +408,7 @@ fn open_excerpts(workspace: &mut Workspace, _: &OpenExcerpts, cx: &mut ViewConte
     let active_item = workspace.active_item(cx);
     let editor_handle = if let Some(editor) = active_item
         .as_ref()
-        .and_then(|item| item.act_as::<Self>(cx))
+        .and_then(|item| item.act_as::<Editor>(cx))
     {
         editor
     } else {
@@ -408,7 +449,7 @@ fn open_excerpts(workspace: &mut Workspace, _: &OpenExcerpts, cx: &mut ViewConte
     // which panics if we're on the stack.
     cx.defer(move |workspace, cx| {
         for (buffer, ranges) in new_selections_by_buffer.into_iter() {
-            let editor = workspace.open_project_item::<Self>(buffer, cx);
+            let editor = workspace.open_project_item::<Editor>(buffer, cx);
             editor.update(cx, |editor, cx| {
                 editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
                     s.select_ranges(ranges);
@@ -429,7 +470,7 @@ pub fn confirm_rename(
 
     let (buffer, range, old_name, new_name) = editor.update(cx, |editor, cx| {
         let rename = editor.take_rename(false, cx)?;
-        let buffer = editor.buffer.read(cx);
+        let buffer = editor.buffer().read(cx);
         let (start_buffer, start) =
             buffer.text_anchor_for_position(rename.range.start.clone(), cx)?;
         let (end_buffer, end) = buffer.text_anchor_for_position(rename.range.end.clone(), cx)?;

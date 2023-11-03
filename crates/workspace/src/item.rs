@@ -14,7 +14,8 @@ use gpui::{
     fonts::HighlightStyle, AnyElement, AnyViewHandle, AppContext, ModelHandle, Task, View,
     ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
-use project::{Project, ProjectEntryId, ProjectPath};
+use project::{Project, ProjectEntryId};
+use project_types::ProjectPath;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::Setting;

@@ -17,6 +17,7 @@ use std::{
     borrow::Cow,
     sync::{Arc, Weak},
 };
+use workspace_types::NavigationHistorySink;
 
 pub enum Event {
     Close,
@@ -100,7 +101,7 @@ impl Item for SharedScreen {
     }
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(nav_history) = self.nav_history.as_mut() {
-            nav_history.push::<()>(None, cx);
+            nav_history.push_any(None, cx);
         }
     }
 

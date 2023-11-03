@@ -7,7 +7,7 @@ mod inlay_hint_cache;
 mod git;
 mod highlight_matching_bracket;
 mod hover_popover;
-mod link_go_to_definition;
+pub mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
 pub mod scroll;
@@ -20,7 +20,7 @@ pub mod test;
 mod types;
 
 use crate::git::diff_hunk_to_display;
-use crate::types::Project;
+pub use crate::types::Project;
 use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
@@ -81,9 +81,8 @@ use parking_lot::RwLock;
 use project_types::{FormatTrigger, Location, ProjectPath, ProjectTransaction};
 use rand::{seq::SliceRandom, thread_rng};
 use rpc::proto::{self, PeerId};
-use scroll::{
-    autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
-};
+pub use scroll::autoscroll::Autoscroll;
+use scroll::{OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
@@ -104,7 +103,10 @@ pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::Rope;
 use theme::{DiagnosticStyle, Theme, ThemeSettings};
-use types::Workspace;
+pub use types::CollaborationHub;
+pub use types::DisableUpdateHistory;
+pub use types::DisableUpdateHistoryGuard;
+pub use types::Workspace;
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 //use workspace::{item::ItemHandle, ItemNavHistory, Pane};
 use workspace_types::*;
@@ -608,7 +610,7 @@ pub struct EditorStyle {
     pub theme: theme::Editor,
     pub theme_id: usize,
 }
-pub(crate) enum BufferSearchHighlights {}
+pub enum BufferSearchHighlights {}
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
 
@@ -651,7 +653,7 @@ pub struct Editor {
     highlighted_rows: Option<Range<u32>>,
     background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
     inlay_background_highlights: TreeMap<Option<TypeId>, InlayBackgroundHighlight>,
-    nav_history: Option<Box<dyn NavigationHistorySink>>,
+    pub nav_history: Option<Box<dyn NavigationHistorySink>>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
@@ -672,7 +674,7 @@ pub struct Editor {
     remote_id: Option<ViewId>,
     hover_state: HoverState,
     gutter_hovered: bool,
-    link_go_to_definition_state: LinkGoToDefinitionState,
+    pub link_go_to_definition_state: LinkGoToDefinitionState,
     copilot_state: CopilotState,
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
@@ -1750,7 +1752,7 @@ enum GotoDefinitionKind {
 }
 
 #[derive(Debug, Clone)]
-enum InlayHintRefreshReason {
+pub enum InlayHintRefreshReason {
     Toggle(bool),
     SettingsChange(InlayHintSettings),
     NewLinesShown,
@@ -3279,7 +3281,11 @@ impl Editor {
         self.inlay_hint_cache.enabled
     }
 
-    fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut ViewContext<Self>) {
+    pub fn refresh_inlay_hints(
+        &mut self,
+        reason: InlayHintRefreshReason,
+        cx: &mut ViewContext<Self>,
+    ) {
         if self.project.is_none() || self.mode != EditorMode::Full {
             return;
         }
@@ -6208,7 +6214,7 @@ impl Editor {
         self.nav_history = nav_history;
     }
 
-    fn push_to_nav_history(
+    pub fn push_to_nav_history(
         &mut self,
         cursor_anchor: Anchor,
         new_position: Option<Point>,
@@ -7732,7 +7738,7 @@ impl Editor {
         }))
     }
 
-    fn take_rename(
+    pub fn take_rename(
         &mut self,
         moving_cursor: bool,
         cx: &mut ViewContext<Self>,
@@ -7786,7 +7792,7 @@ impl Editor {
         Some(self.perform_format(project, FormatTrigger::Manual, cx))
     }
 
-    fn perform_format(
+    pub fn perform_format(
         &mut self,
         project: Arc<dyn Project>,
         trigger: FormatTrigger,
@@ -8767,7 +8773,7 @@ impl Editor {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    fn report_editor_event(
+    pub fn report_editor_event(
         &self,
         _operation: &'static str,
         _file_extension: Option<String>,
@@ -8776,7 +8782,7 @@ impl Editor {
     }
 
     #[cfg(not(any(test, feature = "test-support")))]
-    fn report_editor_event(
+    pub fn report_editor_event(
         &self,
         operation: &'static str,
         file_extension: Option<String>,
@@ -8950,14 +8956,6 @@ impl Editor {
         });
         supports
     }
-}
-
-pub trait CollaborationHub {
-    fn collaborators<'a>(&self, cx: &'a AppContext) -> &'a HashMap<PeerId, Collaborator>;
-    fn user_participant_indices<'a>(
-        &self,
-        cx: &'a AppContext,
-    ) -> &'a HashMap<u64, ParticipantIndex>;
 }
 
 fn inlay_hint_settings(

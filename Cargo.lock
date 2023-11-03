@@ -2629,9 +2629,24 @@ dependencies = [
 name = "editor_extensions"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "db",
  "editor",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "lsp",
  "project",
+ "project_types",
+ "rpc",
+ "smallvec",
+ "text",
+ "theme",
+ "util",
  "workspace",
+ "workspace_types",
 ]
 
 [[package]]
@@ -10852,6 +10867,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "project",
+ "project_types",
  "schemars",
  "serde",
  "serde_derive",
@@ -10863,19 +10879,6 @@ dependencies = [
  "util",
  "uuid 1.4.1",
  "workspace_types",
-]
-
-[[package]]
-name = "workspace_types"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "language",
- "lsp",
- "project_types",
- "rpc",
- "serde",
- "text",
 ]
 
 [[package]]
@@ -10914,6 +10917,20 @@ dependencies = [
  "ui2",
  "util",
  "uuid 1.4.1",
+]
+
+[[package]]
+name = "workspace_types"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "language",
+ "lsp",
+ "project_types",
+ "rpc",
+ "serde",
+ "text",
 ]
 
 [[package]]

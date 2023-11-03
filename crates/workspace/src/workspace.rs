@@ -39,6 +39,7 @@ use gpui::{
     WeakViewHandle, WindowContext, WindowHandle,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
+use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
 use node_runtime::NodeRuntime;
 use std::{
@@ -4029,24 +4030,6 @@ impl WorkspaceStore {
 
 impl Entity for WorkspaceStore {
     type Event = ();
-}
-
-impl ViewId {
-    pub(crate) fn from_proto(message: proto::ViewId) -> Result<Self> {
-        Ok(Self {
-            creator: message
-                .creator
-                .ok_or_else(|| anyhow!("creator is missing"))?,
-            id: message.id,
-        })
-    }
-
-    pub(crate) fn to_proto(&self) -> proto::ViewId {
-        proto::ViewId {
-            creator: Some(self.creator),
-            id: self.id,
-        }
-    }
 }
 
 pub trait WorkspaceHandle {
