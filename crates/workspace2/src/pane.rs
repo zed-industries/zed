@@ -1399,6 +1399,10 @@ impl Pane {
             .group("")
             .id(item.id())
             .cursor_pointer()
+            .on_hover(|_, hovered, _| {
+                dbg!(hovered);
+            })
+            // .tooltip(|pane, cx| cx.create_view( tooltip.child("Hovering the tab"))
             // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
             // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
             // .on_drop(|_view, state: View<DraggedTab>, cx| {
