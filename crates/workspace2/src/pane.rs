@@ -1359,7 +1359,16 @@ impl Pane {
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl Component<Self> {
         let label = item.tab_content(Some(detail), cx);
-        let close_icon = || IconElement::new(Icon::Close).color(IconColor::Muted);
+        let close_icon = || {
+            let id = item.id();
+            div()
+                .id(item.id())
+                .child(IconElement::new(Icon::Close).color(IconColor::Muted))
+                .on_click(move |pane: &mut Self, _, cx| {
+                    pane.close_item_by_id(id, SaveIntent::Close, cx)
+                        .detach_and_log_err(cx);
+                })
+        };
 
         let (text_color, tab_bg, tab_hover_bg, tab_active_bg) = match ix == self.active_item_index {
             false => (
