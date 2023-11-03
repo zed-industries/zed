@@ -1963,30 +1963,26 @@ impl View for Pane {
     }
 }
 
-trait NavigationHistory {
-    fn push_any(&mut self, data: Option<Box<dyn Any>>, cx: &mut WindowContext);
+impl workspace_types::NavigationHistorySink for ItemNavHistory {
+    fn push_any(&mut self, data: Option<Box<dyn Any>>, cx: &mut WindowContext) {
+        self.history.push(data, self.item.clone(), cx);
+    }
+}
+
+trait NavigationHistorySource {
     fn pop_forward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry>;
     fn pop_backward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry>;
 }
-impl dyn NavigationHistory {
-    fn push<D: 'static + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
-        self.push_any(data.map(|data| Box::new(data) as _), cx)
-    }
-}
-impl NavigationHistory for ItemNavHistory {
-    fn push_any(&mut self, data: Option<Box<dyn Any>>, cx: &mut WindowContext) {
-        self.history.push(data, self.item.clone(), cx);
+
+impl NavigationHistorySource for ItemNavHistory {
+    fn pop_forward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
+        self.history.pop(NavigationMode::GoingForward, cx)
     }
 
     fn pop_backward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
         self.history.pop(NavigationMode::GoingBack, cx)
     }
-
-    fn pop_forward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
-        self.history.pop(NavigationMode::GoingForward, cx)
-    }
 }
-
 impl NavHistory {
     pub fn for_each_entry(
         &self,

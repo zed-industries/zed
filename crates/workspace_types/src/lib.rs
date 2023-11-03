@@ -99,13 +99,12 @@ pub struct ViewId {
     pub creator: rpc::proto::PeerId,
     pub id: u64,
 }
-pub trait NavigationHistory {
+pub trait NavigationHistorySink: Any {
     fn push_any(&mut self, data: Option<Box<dyn Any>>, cx: &mut WindowContext);
-    fn pop_forward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry>;
-    fn pop_backward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry>;
 }
-impl dyn NavigationHistory {
-    fn push<D: 'static + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
+
+impl dyn NavigationHistorySink {
+    pub fn push<D: 'static + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
         self.push_any(data.map(|data| Box::new(data) as _), cx)
     }
 }

@@ -41,7 +41,6 @@ use language::{
 };
 use project_types::{
     project_settings::{GitGutterSetting, ProjectSettings},
-    ProjectPath,
 };
 use smallvec::SmallVec;
 use std::{

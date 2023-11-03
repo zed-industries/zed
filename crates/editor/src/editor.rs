@@ -49,8 +49,8 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
     serde_json, AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem,
-    CursorRegion, Element, Entity, Handle, ModelHandle, MouseRegion, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    CursorRegion, Element, Entity, ModelHandle, MouseRegion, Subscription, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -651,7 +651,7 @@ pub struct Editor {
     highlighted_rows: Option<Range<u32>>,
     background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
     inlay_background_highlights: TreeMap<Option<TypeId>, InlayBackgroundHighlight>,
-    nav_history: Option<ItemNavHistory>,
+    nav_history: Option<Box<dyn NavigationHistorySink>>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
@@ -6204,7 +6204,7 @@ impl Editor {
         });
     }
 
-    pub fn set_nav_history(&mut self, nav_history: Option<ItemNavHistory>) {
+    pub fn set_nav_history(&mut self, nav_history: Option<Box<dyn NavigationHistorySink>>) {
         self.nav_history = nav_history;
     }
 
@@ -8671,11 +8671,7 @@ impl Editor {
     ) {
         let editor = workspace.open_path(path, true, cx);
         cx.spawn(|mut cx| async move {
-            let editor = editor
-                .await?
-                .downcast::<Editor>()
-                .ok_or_else(|| anyhow!("opened item was not an editor"))?
-                .downgrade();
+            let editor = editor.await?.downgrade();
             editor.update(&mut cx, |editor, cx| {
                 let buffer = editor
                     .buffer()
