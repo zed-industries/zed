@@ -36,8 +36,9 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, AppContext, BackgroundExecutor, Context, Element, EventEmitter, Hsla, Model,
-    Pixels, Render, Subscription, Task, TextStyle, View, ViewContext, WeakView, WindowContext,
+    AnyElement, AppContext, BackgroundExecutor, Context, Element, EventEmitter, FocusHandle, Hsla,
+    Model, Pixels, Render, Subscription, Task, TextStyle, View, ViewContext, WeakView,
+    WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -606,6 +607,7 @@ type InlayBackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<InlayHighlight>);
 
 pub struct Editor {
     handle: WeakView<Self>,
+    focus_handle: FocusHandle,
     buffer: Model<MultiBuffer>,
     display_map: Model<DisplayMap>,
     pub selections: SelectionsCollection,
@@ -1912,6 +1914,7 @@ impl Editor {
 
         let mut this = Self {
             handle: cx.view().downgrade(),
+            focus_handle: cx.focus_handle(),
             buffer: buffer.clone(),
             display_map: display_map.clone(),
             selections,
@@ -2066,19 +2069,15 @@ impl Editor {
     //     }
 
     pub fn snapshot(&mut self, cx: &mut WindowContext) -> EditorSnapshot {
-        todo!()
-        // EditorSnapshot {
-        //     mode: self.mode,
-        //     show_gutter: self.show_gutter,
-        //     display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
-        //     scroll_anchor: self.scroll_manager.anchor(),
-        //     ongoing_scroll: self.scroll_manager.ongoing_scroll(),
-        //     placeholder_text: self.placeholder_text.clone(),
-        //     is_focused: self
-        //         .handle
-        //         .upgrade(cx)
-        //         .map_or(false, |handle| handle.is_focused(cx)),
-        // }
+        EditorSnapshot {
+            mode: self.mode,
+            show_gutter: self.show_gutter,
+            display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
+            scroll_anchor: self.scroll_manager.anchor(),
+            ongoing_scroll: self.scroll_manager.ongoing_scroll(),
+            placeholder_text: self.placeholder_text.clone(),
+            is_focused: self.focus_handle.is_focused(cx),
+        }
     }
 
     //     pub fn language_at<'a, T: ToOffset>(
