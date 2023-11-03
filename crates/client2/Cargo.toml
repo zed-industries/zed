@@ -17,7 +17,7 @@ db = { package = "db2", path = "../db2" }
 gpui = { package = "gpui2", path = "../gpui2" }
 util = { path = "../util" }
 rpc = { package = "rpc2", path = "../rpc2" }
-text = { path = "../text" }
+text = { package = "text2",  path = "../text2" }
 settings = { package = "settings2", path = "../settings2" }
 feature_flags = { package = "feature_flags2", path = "../feature_flags2" }
 sum_tree = { path = "../sum_tree" }

@@ -1546,7 +1546,7 @@ dependencies = [
  "sum_tree",
  "sysinfo",
  "tempfile",
- "text",
+ "text2",
  "thiserror",
  "time",
  "tiny_http",
@@ -3079,7 +3079,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempfile",
- "text",
+ "text2",
  "time",
  "util",
 ]
@@ -3369,6 +3369,26 @@ dependencies = [
  "libgit2-sys",
  "log",
  "url",
+]
+
+[[package]]
+name = "git3"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clock",
+ "collections",
+ "futures 0.3.28",
+ "git2",
+ "lazy_static",
+ "log",
+ "parking_lot 0.11.2",
+ "smol",
+ "sum_tree",
+ "text2",
+ "unindent",
+ "util",
 ]
 
 [[package]]
@@ -4345,7 +4365,7 @@ dependencies = [
  "env_logger 0.9.3",
  "futures 0.3.28",
  "fuzzy2",
- "git",
+ "git3",
  "globset",
  "gpui2",
  "indoc",
@@ -4366,7 +4386,7 @@ dependencies = [
  "smallvec",
  "smol",
  "sum_tree",
- "text",
+ "text2",
  "theme2",
  "tree-sitter",
  "tree-sitter-elixir",
@@ -5081,7 +5101,7 @@ dependencies = [
  "ctor",
  "env_logger 0.9.3",
  "futures 0.3.28",
- "git",
+ "git3",
  "gpui2",
  "indoc",
  "itertools 0.10.5",
@@ -5095,7 +5115,7 @@ dependencies = [
  "project2",
  "pulldown-cmark",
  "rand 0.8.5",
- "rich_text",
+ "rich_text2",
  "schemars",
  "serde",
  "serde_derive",
@@ -5104,7 +5124,7 @@ dependencies = [
  "smol",
  "snippet",
  "sum_tree",
- "text",
+ "text2",
  "theme2",
  "tree-sitter",
  "tree-sitter-html",
@@ -6284,8 +6304,8 @@ dependencies = [
  "fsevent",
  "futures 0.3.28",
  "fuzzy2",
- "git",
  "git2",
+ "git3",
  "globset",
  "gpui2",
  "ignore",
@@ -6313,7 +6333,7 @@ dependencies = [
  "sum_tree",
  "tempdir",
  "terminal2",
- "text",
+ "text2",
  "thiserror",
  "toml 0.5.11",
  "unindent",
@@ -6924,6 +6944,24 @@ dependencies = [
  "smol",
  "sum_tree",
  "theme",
+ "util",
+]
+
+[[package]]
+name = "rich_text2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "lazy_static",
+ "pulldown-cmark",
+ "smallvec",
+ "smol",
+ "sum_tree",
+ "theme2",
  "util",
 ]
 
@@ -8856,7 +8894,7 @@ name = "theme2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "fs",
+ "fs2",
  "gpui2",
  "indexmap 1.9.3",
  "parking_lot 0.11.2",
