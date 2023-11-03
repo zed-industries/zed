@@ -167,6 +167,15 @@ impl TextStyle {
         Ok(self)
     }
 
+    pub fn font(&self) -> Font {
+        Font {
+            family: self.font_family.clone(),
+            features: self.font_features.clone(),
+            weight: self.font_weight,
+            style: self.font_style,
+        }
+    }
+
     pub fn to_run(&self, len: usize) -> TextRun {
         TextRun {
             len,

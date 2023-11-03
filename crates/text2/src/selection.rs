@@ -5,7 +5,7 @@ use std::ops::Range;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SelectionGoal {
     None,
-    HorizontalPosition(f32),
+    HorizontalPosition(f32), // todo!("Can we use pixels here without adding a runtime gpui dependency?")
     HorizontalRange { start: f32, end: f32 },
     WrappedHorizontalPosition((u32, f32)),
 }

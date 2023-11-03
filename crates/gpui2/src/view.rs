@@ -1,7 +1,7 @@
 use crate::{
     private::Sealed, AnyBox, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace,
-    BorrowWindow, Bounds, Component, Element, ElementId, Entity, EntityId, Flatten, LayoutId,
-    Model, Pixels, Size, ViewContext, VisualContext, WeakModel, WindowContext,
+    Bounds, Component, Element, ElementId, Entity, EntityId, Flatten, LayoutId, Model, Pixels,
+    Size, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -196,31 +196,9 @@ impl<V: Render> From<View<V>> for AnyView {
     fn from(value: View<V>) -> Self {
         AnyView {
             model: value.model.into_any(),
-            initialize: |view, cx| {
-                cx.with_element_id(view.model.entity_id, |_, cx| {
-                    let view = view.clone().downcast::<V>().unwrap();
-                    let element = view.update(cx, |view, cx| {
-                        let mut element = AnyElement::new(view.render(cx));
-                        element.initialize(view, cx);
-                        element
-                    });
-                    Box::new(element)
-                })
-            },
-            layout: |view, element, cx| {
-                cx.with_element_id(view.model.entity_id, |_, cx| {
-                    let view = view.clone().downcast::<V>().unwrap();
-                    let element = element.downcast_mut::<AnyElement<V>>().unwrap();
-                    view.update(cx, |view, cx| element.layout(view, cx))
-                })
-            },
-            paint: |view, element, cx| {
-                cx.with_element_id(view.model.entity_id, |_, cx| {
-                    let view = view.clone().downcast::<V>().unwrap();
-                    let element = element.downcast_mut::<AnyElement<V>>().unwrap();
-                    view.update(cx, |view, cx| element.paint(view, cx))
-                })
-            },
+            initialize: any_view::initialize::<V>,
+            layout: any_view::layout::<V>,
+            paint: any_view::paint::<V>,
         }
     }
 }
@@ -280,6 +258,17 @@ impl AnyWeakView {
     }
 }
 
+impl<V: Render> From<WeakView<V>> for AnyWeakView {
+    fn from(view: WeakView<V>) -> Self {
+        Self {
+            model: view.model.into(),
+            initialize: any_view::initialize::<V>,
+            layout: any_view::layout::<V>,
+            paint: any_view::paint::<V>,
+        }
+    }
+}
+
 impl<T, E> Render for T
 where
     T: 'static + FnMut(&mut WindowContext) -> E,
@@ -289,5 +278,46 @@ where
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         (self)(cx)
+    }
+}
+
+mod any_view {
+    use crate::{AnyElement, AnyView, BorrowWindow, LayoutId, Render, WindowContext};
+    use std::any::Any;
+
+    pub(crate) fn initialize<V: Render>(view: &AnyView, cx: &mut WindowContext) -> Box<dyn Any> {
+        cx.with_element_id(view.model.entity_id, |_, cx| {
+            let view = view.clone().downcast::<V>().unwrap();
+            let element = view.update(cx, |view, cx| {
+                let mut element = AnyElement::new(view.render(cx));
+                element.initialize(view, cx);
+                element
+            });
+            Box::new(element)
+        })
+    }
+
+    pub(crate) fn layout<V: Render>(
+        view: &AnyView,
+        element: &mut Box<dyn Any>,
+        cx: &mut WindowContext,
+    ) -> LayoutId {
+        cx.with_element_id(view.model.entity_id, |_, cx| {
+            let view = view.clone().downcast::<V>().unwrap();
+            let element = element.downcast_mut::<AnyElement<V>>().unwrap();
+            view.update(cx, |view, cx| element.layout(view, cx))
+        })
+    }
+
+    pub(crate) fn paint<V: Render>(
+        view: &AnyView,
+        element: &mut Box<dyn Any>,
+        cx: &mut WindowContext,
+    ) {
+        cx.with_element_id(view.model.entity_id, |_, cx| {
+            let view = view.clone().downcast::<V>().unwrap();
+            let element = element.downcast_mut::<AnyElement<V>>().unwrap();
+            view.update(cx, |view, cx| element.paint(view, cx))
+        })
     }
 }

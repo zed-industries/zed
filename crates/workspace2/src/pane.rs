@@ -9,8 +9,8 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    AppContext, AsyncWindowContext, Component, Div, EntityId, EventEmitter, Model, PromptLevel,
-    Render, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    AppContext, AsyncWindowContext, Component, Div, EntityId, EventEmitter, FocusHandle, Model,
+    PromptLevel, Render, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -171,6 +171,7 @@ impl fmt::Debug for Event {
 }
 
 pub struct Pane {
+    focus_handle: FocusHandle,
     items: Vec<Box<dyn ItemHandle>>,
     activation_history: Vec<EntityId>,
     zoomed: bool,
@@ -183,7 +184,6 @@ pub struct Pane {
     //     tab_context_menu: ViewHandle<ContextMenu>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
-    has_focus: bool,
     //     can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
     //     can_split: bool,
     //     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>>,
@@ -330,6 +330,7 @@ impl Pane {
 
         let handle = cx.view().downgrade();
         Self {
+            focus_handle: cx.focus_handle(),
             items: Vec::new(),
             activation_history: Vec::new(),
             zoomed: false,
@@ -353,7 +354,6 @@ impl Pane {
             // tab_context_menu: cx.add_view(|cx| ContextMenu::new(pane_view_id, cx)),
             workspace,
             project,
-            has_focus: false,
             // can_drop: Rc::new(|_, _| true),
             // can_split: true,
             // render_tab_bar_buttons: Rc::new(move |pane, cx| {
@@ -420,8 +420,8 @@ impl Pane {
         &self.workspace
     }
 
-    pub fn has_focus(&self) -> bool {
-        self.has_focus
+    pub fn has_focus(&self, cx: &WindowContext) -> bool {
+        self.focus_handle.contains_focused(cx)
     }
 
     pub fn active_item_index(&self) -> usize {
@@ -639,19 +639,19 @@ impl Pane {
     //             .pixel_position_of_cursor(cx)
     //     }
 
-    //     pub fn item_for_entry(
-    //         &self,
-    //         entry_id: ProjectEntryId,
-    //         cx: &AppContext,
-    //     ) -> Option<Box<dyn ItemHandle>> {
-    //         self.items.iter().find_map(|item| {
-    //             if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
-    //                 Some(item.boxed_clone())
-    //             } else {
-    //                 None
-    //             }
-    //         })
-    //     }
+    pub fn item_for_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        cx: &AppContext,
+    ) -> Option<Box<dyn ItemHandle>> {
+        self.items.iter().find_map(|item| {
+            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
+                Some(item.boxed_clone())
+            } else {
+                None
+            }
+        })
+    }
 
     pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
         self.items.iter().position(|i| i.id() == item.id())
@@ -1020,7 +1020,7 @@ impl Pane {
                 // to activating the item to the left
                 .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1));
 
-            let should_activate = activate_pane || self.has_focus;
+            let should_activate = activate_pane || self.has_focus(cx);
             self.activate_item(index_to_activate, should_activate, should_activate, cx);
         }
 
@@ -1184,11 +1184,15 @@ impl Pane {
         }
     }
 
+    pub fn focus(&mut self, cx: &mut ViewContext<Pane>) {
+        cx.focus(&self.focus_handle);
+    }
+
     pub fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
-        todo!();
-        // if let Some(active_item) = self.active_item() {
-        //     cx.focus(active_item.as_any());
-        // }
+        if let Some(active_item) = self.active_item() {
+            let focus_handle = active_item.focus_handle(cx);
+            cx.focus(&focus_handle);
+        }
     }
 
     //     pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {

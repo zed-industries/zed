@@ -755,6 +755,10 @@ impl Pixels {
     pub fn pow(&self, exponent: f32) -> Self {
         Self(self.0.powf(exponent))
     }
+
+    pub fn abs(&self) -> Self {
+        Self(self.0.abs())
+    }
 }
 
 impl Mul<Pixels> for Pixels {
@@ -812,6 +816,18 @@ impl From<&Pixels> for f32 {
 impl From<Pixels> for f64 {
     fn from(pixels: Pixels) -> Self {
         pixels.0 as f64
+    }
+}
+
+impl From<Pixels> for u32 {
+    fn from(pixels: Pixels) -> Self {
+        pixels.0 as u32
+    }
+}
+
+impl From<Pixels> for usize {
+    fn from(pixels: Pixels) -> Self {
+        pixels.0 as usize
     }
 }
 

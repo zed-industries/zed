@@ -12,10 +12,9 @@ use client2::{
     Client,
 };
 use gpui::{
-    AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, HighlightStyle, Model, Pixels,
-    Point, Render, SharedString, Task, View, ViewContext, WeakView, WindowContext,
+    AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, HighlightStyle,
+    Model, Pixels, Point, Render, SharedString, Task, View, ViewContext, WeakView, WindowContext,
 };
-use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -23,8 +22,10 @@ use settings2::Settings;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
+    cell::RefCell,
     ops::Range,
     path::PathBuf,
+    rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -90,7 +91,8 @@ pub struct BreadcrumbText {
     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
 }
 
-pub trait Item: Render + EventEmitter + Send {
+pub trait Item: Render + EventEmitter {
+    fn focus_handle(&self) -> FocusHandle;
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
@@ -104,7 +106,11 @@ pub trait Item: Render + EventEmitter + Send {
     }
     fn tab_content<V: 'static>(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<V>;
 
-    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project2::Item)) {
+    fn for_each_project_item(
+        &self,
+        _: &AppContext,
+        _: &mut dyn FnMut(EntityId, &dyn project2::Item),
+    ) {
     } // (model id, Item)
     fn is_singleton(&self, _cx: &AppContext) -> bool {
         false
@@ -208,6 +214,7 @@ pub trait Item: Render + EventEmitter + Send {
 }
 
 pub trait ItemHandle: 'static + Send {
+    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
     fn subscribe_to_item_events(
         &self,
         cx: &mut WindowContext,
@@ -219,8 +226,12 @@ pub trait ItemHandle: 'static + Send {
     fn dragged_tab_content(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<Workspace>;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
-    fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[usize; 3]>;
-    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project2::Item));
+    fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]>;
+    fn for_each_project_item(
+        &self,
+        _: &AppContext,
+        _: &mut dyn FnMut(EntityId, &dyn project2::Item),
+    );
     fn is_singleton(&self, cx: &AppContext) -> bool;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn clone_on_split(
@@ -253,7 +264,7 @@ pub trait ItemHandle: 'static + Send {
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyView>;
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
     fn on_release(
-        &mut self,
+        &self,
         cx: &mut AppContext,
         callback: Box<dyn FnOnce(&mut AppContext) + Send>,
     ) -> gpui::Subscription;
@@ -282,6 +293,10 @@ impl dyn ItemHandle {
 }
 
 impl<T: Item> ItemHandle for View<T> {
+    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
+        self.read(cx).focus_handle()
+    }
+
     fn subscribe_to_item_events(
         &self,
         cx: &mut WindowContext,
@@ -331,7 +346,7 @@ impl<T: Item> ItemHandle for View<T> {
         result
     }
 
-    fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[usize; 3]> {
+    fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]> {
         let mut result = SmallVec::new();
         self.read(cx).for_each_project_item(cx, &mut |id, _| {
             result.push(id);
@@ -342,7 +357,7 @@ impl<T: Item> ItemHandle for View<T> {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(usize, &dyn project2::Item),
+        f: &mut dyn FnMut(EntityId, &dyn project2::Item),
     ) {
         self.read(cx).for_each_project_item(cx, f)
     }
@@ -398,91 +413,94 @@ impl<T: Item> ItemHandle for View<T> {
             .is_none()
         {
             let mut pending_autosave = DelayedDebouncedEditAction::new();
-            let pending_update = Arc::new(Mutex::new(None));
+            let pending_update = Rc::new(RefCell::new(None));
             let pending_update_scheduled = Arc::new(AtomicBool::new(false));
 
-            let event_subscription = Some(cx.subscribe(self, move |workspace, item, event, cx| {
-                let pane = if let Some(pane) = workspace
-                    .panes_by_item
-                    .get(&item.id())
-                    .and_then(|pane| pane.upgrade())
-                {
-                    pane
-                } else {
-                    log::error!("unexpected item event after pane was dropped");
-                    return;
-                };
-
-                if let Some(item) = item.to_followable_item_handle(cx) {
-                    let _is_project_item = item.is_project_item(cx);
-                    let leader_id = workspace.leader_for_pane(&pane);
-
-                    if leader_id.is_some() && item.should_unfollow_on_event(event, cx) {
-                        workspace.unfollow(&pane, cx);
-                    }
-
-                    if item.add_event_to_update_proto(event, &mut *pending_update.lock(), cx)
-                        && !pending_update_scheduled.load(Ordering::SeqCst)
+            let mut event_subscription =
+                Some(cx.subscribe(self, move |workspace, item, event, cx| {
+                    let pane = if let Some(pane) = workspace
+                        .panes_by_item
+                        .get(&item.id())
+                        .and_then(|pane| pane.upgrade())
                     {
-                        pending_update_scheduled.store(true, Ordering::SeqCst);
-                        todo!("replace with on_next_frame?");
-                        // cx.after_window_update({
-                        //     let pending_update = pending_update.clone();
-                        //     let pending_update_scheduled = pending_update_scheduled.clone();
-                        //     move |this, cx| {
-                        //         pending_update_scheduled.store(false, Ordering::SeqCst);
-                        //         this.update_followers(
-                        //             is_project_item,
-                        //             proto::update_followers::Variant::UpdateView(
-                        //                 proto::UpdateView {
-                        //                     id: item
-                        //                         .remote_id(&this.app_state.client, cx)
-                        //                         .map(|id| id.to_proto()),
-                        //                     variant: pending_update.borrow_mut().take(),
-                        //                     leader_id,
-                        //                 },
-                        //             ),
-                        //             cx,
-                        //         );
-                        //     }
-                        // });
-                    }
-                }
+                        pane
+                    } else {
+                        log::error!("unexpected item event after pane was dropped");
+                        return;
+                    };
 
-                for item_event in T::to_item_events(event).into_iter() {
-                    match item_event {
-                        ItemEvent::CloseItem => {
-                            pane.update(cx, |pane, cx| {
-                                pane.close_item_by_id(item.id(), crate::SaveIntent::Close, cx)
-                            })
-                            .detach_and_log_err(cx);
-                            return;
+                    if let Some(item) = item.to_followable_item_handle(cx) {
+                        let is_project_item = item.is_project_item(cx);
+                        let leader_id = workspace.leader_for_pane(&pane);
+
+                        if leader_id.is_some() && item.should_unfollow_on_event(event, cx) {
+                            workspace.unfollow(&pane, cx);
                         }
 
-                        ItemEvent::UpdateTab => {
-                            pane.update(cx, |_, cx| {
-                                cx.emit(pane::Event::ChangeItemTitle);
-                                cx.notify();
+                        if item.add_event_to_update_proto(
+                            event,
+                            &mut *pending_update.borrow_mut(),
+                            cx,
+                        ) && !pending_update_scheduled.load(Ordering::SeqCst)
+                        {
+                            pending_update_scheduled.store(true, Ordering::SeqCst);
+                            cx.on_next_frame({
+                                let pending_update = pending_update.clone();
+                                let pending_update_scheduled = pending_update_scheduled.clone();
+                                move |this, cx| {
+                                    pending_update_scheduled.store(false, Ordering::SeqCst);
+                                    this.update_followers(
+                                        is_project_item,
+                                        proto::update_followers::Variant::UpdateView(
+                                            proto::UpdateView {
+                                                id: item
+                                                    .remote_id(&this.app_state.client, cx)
+                                                    .map(|id| id.to_proto()),
+                                                variant: pending_update.borrow_mut().take(),
+                                                leader_id,
+                                            },
+                                        ),
+                                        cx,
+                                    );
+                                }
                             });
                         }
+                    }
 
-                        ItemEvent::Edit => {
-                            let autosave = WorkspaceSettings::get_global(cx).autosave;
-                            if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
-                                let delay = Duration::from_millis(milliseconds);
-                                let item = item.clone();
-                                pending_autosave.fire_new(delay, cx, move |workspace, cx| {
-                                    Pane::autosave_item(&item, workspace.project().clone(), cx)
+                    for item_event in T::to_item_events(event).into_iter() {
+                        match item_event {
+                            ItemEvent::CloseItem => {
+                                pane.update(cx, |pane, cx| {
+                                    pane.close_item_by_id(item.id(), crate::SaveIntent::Close, cx)
+                                })
+                                .detach_and_log_err(cx);
+                                return;
+                            }
+
+                            ItemEvent::UpdateTab => {
+                                pane.update(cx, |_, cx| {
+                                    cx.emit(pane::Event::ChangeItemTitle);
+                                    cx.notify();
                                 });
                             }
+
+                            ItemEvent::Edit => {
+                                let autosave = WorkspaceSettings::get_global(cx).autosave;
+                                if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
+                                    let delay = Duration::from_millis(milliseconds);
+                                    let item = item.clone();
+                                    pending_autosave.fire_new(delay, cx, move |workspace, cx| {
+                                        Pane::autosave_item(&item, workspace.project().clone(), cx)
+                                    });
+                                }
+                            }
+
+                            _ => {}
                         }
-
-                        _ => {}
                     }
-                }
-            }));
+                }));
 
-            todo!("observe focus");
+            // todo!()
             // cx.observe_focus(self, move |workspace, item, focused, cx| {
             //     if !focused
             //         && WorkspaceSettings::get_global(cx).autosave == AutosaveSetting::OnFocusChange
@@ -493,12 +511,12 @@ impl<T: Item> ItemHandle for View<T> {
             // })
             // .detach();
 
-            // let item_id = self.id();
-            // cx.observe_release(self, move |workspace, _, _| {
-            //     workspace.panes_by_item.remove(&item_id);
-            //     event_subscription.take();
-            // })
-            // .detach();
+            let item_id = self.id();
+            cx.observe_release(self, move |workspace, _, _| {
+                workspace.panes_by_item.remove(&item_id);
+                event_subscription.take();
+            })
+            .detach();
         }
 
         cx.defer(|workspace, cx| {
@@ -570,7 +588,7 @@ impl<T: Item> ItemHandle for View<T> {
     }
 
     fn on_release(
-        &mut self,
+        &self,
         cx: &mut AppContext,
         callback: Box<dyn FnOnce(&mut AppContext) + Send>,
     ) -> gpui::Subscription {
