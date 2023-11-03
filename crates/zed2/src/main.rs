@@ -12,6 +12,7 @@ use cli::{
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
 use client::UserStore;
+use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use fs::RealFs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
@@ -42,11 +43,13 @@ use std::{
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
+use text::Point;
 use util::{
     async_maybe,
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     http::{self, HttpClient},
-    paths, ResultExt,
+    paths::{self, PathLikeWithPosition},
+    ResultExt,
 };
 use uuid::Uuid;
 use workspace2::{AppState, WorkspaceStore};
@@ -228,10 +231,8 @@ fn main() {
         let mut _triggered_authentication = false;
 
         match open_rx.try_next() {
-            Ok(Some(OpenRequest::Paths { paths: _ })) => {
-                // todo!("workspace")
-                // cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
-                //     .detach();
+            Ok(Some(OpenRequest::Paths { paths })) => {
+                workspace2::open_paths(&paths, &app_state, None, cx).detach();
             }
             Ok(Some(OpenRequest::CliConnection { connection })) => {
                 let app_state = app_state.clone();
@@ -263,10 +264,10 @@ fn main() {
             async move {
                 while let Some(request) = open_rx.next().await {
                     match request {
-                        OpenRequest::Paths { paths: _ } => {
-                            // todo!("workspace")
-                            // cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
-                            //     .detach();
+                        OpenRequest::Paths { paths } => {
+                            cx.update(|cx| workspace2::open_paths(&paths, &app_state, None, cx))
+                                .ok()
+                                .map(|t| t.detach());
                         }
                         OpenRequest::CliConnection { connection } => {
                             let app_state = app_state.clone();
@@ -781,45 +782,45 @@ async fn handle_cli_connection(
 ) {
     if let Some(request) = requests.next().await {
         match request {
-            CliRequest::Open { paths: _, wait: _ } => {
-                // let mut caret_positions = HashMap::new();
+            CliRequest::Open { paths, wait } => {
+                let mut caret_positions = HashMap::default();
 
-                // todo!("workspace")
-                // let paths = if paths.is_empty() {
-                // workspace::last_opened_workspace_paths()
-                //     .await
-                //     .map(|location| location.paths().to_vec())
-                //     .unwrap_or_default()
-                // } else {
-                //     paths
-                //         .into_iter()
-                //         .filter_map(|path_with_position_string| {
-                //             let path_with_position = PathLikeWithPosition::parse_str(
-                //                 &path_with_position_string,
-                //                 |path_str| {
-                //                     Ok::<_, std::convert::Infallible>(
-                //                         Path::new(path_str).to_path_buf(),
-                //                     )
-                //                 },
-                //             )
-                //             .expect("Infallible");
-                //             let path = path_with_position.path_like;
-                //             if let Some(row) = path_with_position.row {
-                //                 if path.is_file() {
-                //                     let row = row.saturating_sub(1);
-                //                     let col =
-                //                         path_with_position.column.unwrap_or(0).saturating_sub(1);
-                //                     caret_positions.insert(path.clone(), Point::new(row, col));
-                //                 }
-                //             }
-                //             Some(path)
-                //         })
-                //         .collect()
-                // };
+                let paths = if paths.is_empty() {
+                    workspace2::last_opened_workspace_paths()
+                        .await
+                        .map(|location| location.paths().to_vec())
+                        .unwrap_or_default()
+                } else {
+                    paths
+                        .into_iter()
+                        .filter_map(|path_with_position_string| {
+                            let path_with_position = PathLikeWithPosition::parse_str(
+                                &path_with_position_string,
+                                |path_str| {
+                                    Ok::<_, std::convert::Infallible>(
+                                        Path::new(path_str).to_path_buf(),
+                                    )
+                                },
+                            )
+                            .expect("Infallible");
+                            let path = path_with_position.path_like;
+                            if let Some(row) = path_with_position.row {
+                                if path.is_file() {
+                                    let row = row.saturating_sub(1);
+                                    let col =
+                                        path_with_position.column.unwrap_or(0).saturating_sub(1);
+                                    caret_positions.insert(path.clone(), Point::new(row, col));
+                                }
+                            }
+                            Some(path)
+                        })
+                        .collect()
+                };
 
+                // todo!("editor")
                 // let mut errored = false;
                 // match cx
-                //     .update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
+                //     .update(|cx| workspace2::open_paths(&paths, &app_state, None, cx))
                 //     .await
                 // {
                 //     Ok((workspace, items)) => {
