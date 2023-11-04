@@ -1,11 +1,11 @@
-use gpui2::{div, px, relative, Div};
+use gpui2::div;
 
 use crate::settings::user_settings;
 use crate::{
-    h_stack, v_stack, Avatar, ClickHandler, Icon, IconColor, IconElement, IconSize, Label,
-    LabelColor,
+    disclosure_control, h_stack, v_stack, Avatar, Icon, IconColor, IconElement, IconSize, Label,
+    LabelColor, Toggle,
 };
-use crate::{prelude::*, Button};
+use crate::{prelude::*, GraphicSlot};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub enum ListItemVariant {
@@ -29,7 +29,7 @@ pub struct ListHeader {
     left_icon: Option<Icon>,
     meta: Option<ListHeaderMeta>,
     variant: ListItemVariant,
-    toggleable: Toggleable,
+    toggle: Toggle,
 }
 
 impl ListHeader {
@@ -39,17 +39,12 @@ impl ListHeader {
             left_icon: None,
             meta: None,
             variant: ListItemVariant::default(),
-            toggleable: Toggleable::NotToggleable,
+            toggle: Toggle::NotToggleable,
         }
     }
 
-    pub fn toggle(mut self, toggle: ToggleState) -> Self {
-        self.toggleable = toggle.into();
-        self
-    }
-
-    pub fn toggleable(mut self, toggleable: Toggleable) -> Self {
-        self.toggleable = toggleable;
+    pub fn toggle(mut self, toggle: Toggle) -> Self {
+        self.toggle = toggle;
         self
     }
 
@@ -63,30 +58,8 @@ impl ListHeader {
         self
     }
 
-    fn disclosure_control<V: 'static>(&self) -> Div<V> {
-        let is_toggleable = self.toggleable != Toggleable::NotToggleable;
-        let is_toggled = Toggleable::is_toggled(&self.toggleable);
-
-        match (is_toggleable, is_toggled) {
-            (false, _) => div(),
-            (_, true) => div().child(
-                IconElement::new(Icon::ChevronDown)
-                    .color(IconColor::Muted)
-                    .size(IconSize::Small),
-            ),
-            (_, false) => div().child(
-                IconElement::new(Icon::ChevronRight)
-                    .color(IconColor::Muted)
-                    .size(IconSize::Small),
-            ),
-        }
-    }
-
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let is_toggleable = self.toggleable != Toggleable::NotToggleable;
-        let is_toggled = self.toggleable.is_toggled();
-
-        let disclosure_control = self.disclosure_control();
+        let disclosure_control = disclosure_control(self.toggle);
 
         let meta = match self.meta {
             Some(ListHeaderMeta::Tools(icons)) => div().child(
@@ -193,12 +166,6 @@ impl ListSubHeader {
     }
 }
 
-#[derive(Clone)]
-pub enum LeftContent {
-    Icon(Icon),
-    Avatar(SharedString),
-}
-
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum ListEntrySize {
     #[default]
@@ -207,44 +174,36 @@ pub enum ListEntrySize {
 }
 
 #[derive(Component)]
-pub enum ListItem<V: 'static> {
+pub enum ListItem {
     Entry(ListEntry),
-    Details(ListDetailsEntry<V>),
     Separator(ListSeparator),
     Header(ListSubHeader),
 }
 
-impl<V: 'static> From<ListEntry> for ListItem<V> {
+impl From<ListEntry> for ListItem {
     fn from(entry: ListEntry) -> Self {
         Self::Entry(entry)
     }
 }
 
-impl<V: 'static> From<ListDetailsEntry<V>> for ListItem<V> {
-    fn from(entry: ListDetailsEntry<V>) -> Self {
-        Self::Details(entry)
-    }
-}
-
-impl<V: 'static> From<ListSeparator> for ListItem<V> {
+impl From<ListSeparator> for ListItem {
     fn from(entry: ListSeparator) -> Self {
         Self::Separator(entry)
     }
 }
 
-impl<V: 'static> From<ListSubHeader> for ListItem<V> {
+impl From<ListSubHeader> for ListItem {
     fn from(entry: ListSubHeader) -> Self {
         Self::Header(entry)
     }
 }
 
-impl<V: 'static> ListItem<V> {
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+impl ListItem {
+    fn render<V: 'static>(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         match self {
             ListItem::Entry(entry) => div().child(entry.render(view, cx)),
             ListItem::Separator(separator) => div().child(separator.render(view, cx)),
             ListItem::Header(header) => div().child(header.render(view, cx)),
-            ListItem::Details(details) => div().child(details.render(view, cx)),
         }
     }
 
@@ -263,31 +222,29 @@ impl<V: 'static> ListItem<V> {
 
 #[derive(Component)]
 pub struct ListEntry {
-    disclosure_control_style: DisclosureControlVisibility,
+    disabled: bool,
+    // TODO: Reintroduce this
+    // disclosure_control_style: DisclosureControlVisibility,
     indent_level: u32,
     label: Label,
-    left_content: Option<LeftContent>,
-    variant: ListItemVariant,
-    size: ListEntrySize,
-    state: InteractionState,
-    toggle: Option<ToggleState>,
+    left_slot: Option<GraphicSlot>,
     overflow: OverflowStyle,
+    size: ListEntrySize,
+    toggle: Toggle,
+    variant: ListItemVariant,
 }
 
 impl ListEntry {
     pub fn new(label: Label) -> Self {
         Self {
-            disclosure_control_style: DisclosureControlVisibility::default(),
+            disabled: false,
             indent_level: 0,
             label,
-            variant: ListItemVariant::default(),
-            left_content: None,
-            size: ListEntrySize::default(),
-            state: InteractionState::default(),
-            // TODO: Should use Toggleable::NotToggleable
-            // or remove Toggleable::NotToggleable from the system
-            toggle: None,
+            left_slot: None,
             overflow: OverflowStyle::Hidden,
+            size: ListEntrySize::default(),
+            toggle: Toggle::NotToggleable,
+            variant: ListItemVariant::default(),
         }
     }
 
@@ -301,28 +258,23 @@ impl ListEntry {
         self
     }
 
-    pub fn toggle(mut self, toggle: ToggleState) -> Self {
-        self.toggle = Some(toggle);
+    pub fn toggle(mut self, toggle: Toggle) -> Self {
+        self.toggle = toggle;
         self
     }
 
-    pub fn left_content(mut self, left_content: LeftContent) -> Self {
-        self.left_content = Some(left_content);
+    pub fn left_content(mut self, left_content: GraphicSlot) -> Self {
+        self.left_slot = Some(left_content);
         self
     }
 
     pub fn left_icon(mut self, left_icon: Icon) -> Self {
-        self.left_content = Some(LeftContent::Icon(left_icon));
+        self.left_slot = Some(GraphicSlot::Icon(left_icon));
         self
     }
 
     pub fn left_avatar(mut self, left_avatar: impl Into<SharedString>) -> Self {
-        self.left_content = Some(LeftContent::Avatar(left_avatar.into()));
-        self
-    }
-
-    pub fn state(mut self, state: InteractionState) -> Self {
-        self.state = state;
+        self.left_slot = Some(GraphicSlot::Avatar(left_avatar.into()));
         self
     }
 
@@ -331,63 +283,19 @@ impl ListEntry {
         self
     }
 
-    pub fn disclosure_control_style(
-        mut self,
-        disclosure_control_style: DisclosureControlVisibility,
-    ) -> Self {
-        self.disclosure_control_style = disclosure_control_style;
-        self
-    }
-
-    fn label_color(&self) -> LabelColor {
-        match self.state {
-            InteractionState::Disabled => LabelColor::Disabled,
-            _ => Default::default(),
-        }
-    }
-
-    fn icon_color(&self) -> IconColor {
-        match self.state {
-            InteractionState::Disabled => IconColor::Disabled,
-            _ => Default::default(),
-        }
-    }
-
-    fn disclosure_control<V: 'static>(
-        &mut self,
-        cx: &mut ViewContext<V>,
-    ) -> Option<impl Component<V>> {
-        let disclosure_control_icon = if let Some(ToggleState::Toggled) = self.toggle {
-            IconElement::new(Icon::ChevronDown)
-        } else {
-            IconElement::new(Icon::ChevronRight)
-        }
-        .color(IconColor::Muted)
-        .size(IconSize::Small);
-
-        match (self.toggle, self.disclosure_control_style) {
-            (Some(_), DisclosureControlVisibility::OnHover) => {
-                Some(div().absolute().neg_left_5().child(disclosure_control_icon))
-            }
-            (Some(_), DisclosureControlVisibility::Always) => {
-                Some(div().child(disclosure_control_icon))
-            }
-            (None, _) => None,
-        }
-    }
-
-    fn render<V: 'static>(mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let settings = user_settings(cx);
 
-        let left_content = match self.left_content.clone() {
-            Some(LeftContent::Icon(i)) => Some(
+        let left_content = match self.left_slot.clone() {
+            Some(GraphicSlot::Icon(i)) => Some(
                 h_stack().child(
                     IconElement::new(i)
                         .size(IconSize::Small)
                         .color(IconColor::Muted),
                 ),
             ),
-            Some(LeftContent::Avatar(src)) => Some(h_stack().child(Avatar::new(src))),
+            Some(GraphicSlot::Avatar(src)) => Some(h_stack().child(Avatar::new(src))),
+            Some(GraphicSlot::PublicActor(src)) => Some(h_stack().child(Avatar::new(src))),
             None => None,
         };
 
@@ -400,10 +308,7 @@ impl ListEntry {
             .relative()
             .group("")
             .bg(cx.theme().colors().surface)
-            .when(self.state == InteractionState::Focused, |this| {
-                this.border()
-                    .border_color(cx.theme().colors().border_focused)
-            })
+            // TODO: Add focus state
             .child(
                 sized_item
                     .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
@@ -425,127 +330,9 @@ impl ListEntry {
                     .gap_1()
                     .items_center()
                     .relative()
-                    .children(self.disclosure_control(cx))
+                    .child(disclosure_control(self.toggle))
                     .children(left_content)
                     .child(self.label),
-            )
-    }
-}
-
-struct ListDetailsEntryHandlers<V: 'static> {
-    click: Option<ClickHandler<V>>,
-}
-
-impl<V: 'static> Default for ListDetailsEntryHandlers<V> {
-    fn default() -> Self {
-        Self { click: None }
-    }
-}
-
-#[derive(Component)]
-pub struct ListDetailsEntry<V: 'static> {
-    label: SharedString,
-    meta: Option<SharedString>,
-    left_content: Option<LeftContent>,
-    handlers: ListDetailsEntryHandlers<V>,
-    actions: Option<Vec<Button<V>>>,
-    // TODO: make this more generic instead of
-    // specifically for notifications
-    seen: bool,
-}
-
-impl<V: 'static> ListDetailsEntry<V> {
-    pub fn new(label: impl Into<SharedString>) -> Self {
-        Self {
-            label: label.into(),
-            meta: None,
-            left_content: None,
-            handlers: ListDetailsEntryHandlers::default(),
-            actions: None,
-            seen: false,
-        }
-    }
-
-    pub fn meta(mut self, meta: impl Into<SharedString>) -> Self {
-        self.meta = Some(meta.into());
-        self
-    }
-
-    pub fn seen(mut self, seen: bool) -> Self {
-        self.seen = seen;
-        self
-    }
-
-    pub fn on_click(mut self, handler: ClickHandler<V>) -> Self {
-        self.handlers.click = Some(handler);
-        self
-    }
-
-    pub fn actions(mut self, actions: Vec<Button<V>>) -> Self {
-        self.actions = Some(actions);
-        self
-    }
-
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let settings = user_settings(cx);
-
-        let (item_bg, item_bg_hover, item_bg_active) = (
-            cx.theme().colors().ghost_element,
-            cx.theme().colors().ghost_element_hover,
-            cx.theme().colors().ghost_element_active,
-        );
-
-        let label_color = match self.seen {
-            true => LabelColor::Muted,
-            false => LabelColor::Default,
-        };
-
-        div()
-            .relative()
-            .group("")
-            .bg(item_bg)
-            .px_2()
-            .py_1p5()
-            .w_full()
-            .z_index(1)
-            .when(!self.seen, |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .left(px(3.0))
-                        .top_3()
-                        .rounded_full()
-                        .border_2()
-                        .border_color(cx.theme().colors().surface)
-                        .w(px(9.0))
-                        .h(px(9.0))
-                        .z_index(2)
-                        .bg(cx.theme().status().info),
-                )
-            })
-            .child(
-                v_stack()
-                    .w_full()
-                    .line_height(relative(1.2))
-                    .gap_1()
-                    .child(
-                        div()
-                            .w_5()
-                            .h_5()
-                            .rounded_full()
-                            .bg(cx.theme().colors().icon_accent),
-                    )
-                    .child(Label::new(self.label.clone()).color(label_color))
-                    .children(
-                        self.meta
-                            .map(|meta| Label::new(meta).color(LabelColor::Muted)),
-                    )
-                    .child(
-                        h_stack()
-                            .gap_1()
-                            .justify_end()
-                            .children(self.actions.unwrap_or_default()),
-                    ),
             )
     }
 }
@@ -564,20 +351,22 @@ impl ListSeparator {
 }
 
 #[derive(Component)]
-pub struct List<V: 'static> {
-    items: Vec<ListItem<V>>,
+pub struct List {
+    items: Vec<ListItem>,
+    /// Message to display when the list is empty
+    /// Defaults to "No items"
     empty_message: SharedString,
     header: Option<ListHeader>,
-    toggleable: Toggleable,
+    toggle: Toggle,
 }
 
-impl<V: 'static> List<V> {
-    pub fn new(items: Vec<ListItem<V>>) -> Self {
+impl List {
+    pub fn new(items: Vec<ListItem>) -> Self {
         Self {
             items,
             empty_message: "No items".into(),
             header: None,
-            toggleable: Toggleable::default(),
+            toggle: Toggle::NotToggleable,
         }
     }
 
@@ -591,19 +380,16 @@ impl<V: 'static> List<V> {
         self
     }
 
-    pub fn toggle(mut self, toggle: ToggleState) -> Self {
-        self.toggleable = toggle.into();
+    pub fn toggle(mut self, toggle: Toggle) -> Self {
+        self.toggle = toggle;
         self
     }
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let is_toggleable = self.toggleable != Toggleable::NotToggleable;
-        let is_toggled = Toggleable::is_toggled(&self.toggleable);
-
-        let list_content = match (self.items.is_empty(), is_toggled) {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        let list_content = match (self.items.is_empty(), self.toggle) {
             (false, _) => div().children(self.items),
-            (true, false) => div(),
-            (true, true) => {
+            (true, Toggle::Toggled(false)) => div(),
+            (true, _) => {
                 div().child(Label::new(self.empty_message.clone()).color(LabelColor::Muted))
             }
         };
@@ -611,7 +397,7 @@ impl<V: 'static> List<V> {
         v_stack()
             .w_full()
             .py_1()
-            .children(self.header.map(|header| header.toggleable(self.toggleable)))
+            .children(self.header.map(|header| header))
             .child(list_content)
     }
 }
