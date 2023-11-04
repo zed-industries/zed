@@ -2,6 +2,24 @@ use gpui2::{Hsla, ViewContext};
 
 use crate::prelude::*;
 
+/// Represents a person with a Zed account's public profile.
+/// All data in this struct should be considered public.
+pub struct PublicPlayer {
+    pub username: SharedString,
+    pub avatar: SharedString,
+    pub is_contact: bool,
+}
+
+impl PublicPlayer {
+    pub fn new(username: impl Into<SharedString>, avatar: impl Into<SharedString>) -> Self {
+        Self {
+            username: username.into(),
+            avatar: avatar.into(),
+            is_contact: false,
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub enum PlayerStatus {
     #[default]

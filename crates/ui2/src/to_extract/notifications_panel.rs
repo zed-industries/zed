@@ -1,8 +1,8 @@
 use crate::utils::naive_format_distance_from_now;
 use crate::{
-    h_stack, prelude::*, static_new_notification_items_2, v_stack, Avatar, Button, Icon,
-    IconButton, IconElement, Label, LabelColor, LineHeightStyle, ListHeaderMeta, ListSeparator,
-    UnreadIndicator,
+    h_stack, prelude::*, static_new_notification_items_2, v_stack, Avatar, ButtonOrIconButton,
+    Icon, IconElement, Label, LabelColor, LineHeightStyle, ListHeaderMeta, ListSeparator,
+    PublicPlayer, UnreadIndicator,
 };
 use crate::{ClickHandler, ListHeader};
 
@@ -57,23 +57,6 @@ impl NotificationsPanel {
     }
 }
 
-pub enum ButtonOrIconButton<V: 'static> {
-    Button(Button<V>),
-    IconButton(IconButton<V>),
-}
-
-impl<V: 'static> From<Button<V>> for ButtonOrIconButton<V> {
-    fn from(value: Button<V>) -> Self {
-        Self::Button(value)
-    }
-}
-
-impl<V: 'static> From<IconButton<V>> for ButtonOrIconButton<V> {
-    fn from(value: IconButton<V>) -> Self {
-        Self::IconButton(value)
-    }
-}
-
 pub struct NotificationAction<V: 'static> {
     button: ButtonOrIconButton<V>,
     tooltip: SharedString,
@@ -102,7 +85,7 @@ impl<V: 'static> NotificationAction<V> {
 }
 
 pub enum ActorOrIcon {
-    Actor(PublicActor),
+    Actor(PublicPlayer),
     Icon(Icon),
 }
 
@@ -171,7 +154,7 @@ impl<V> Notification<V> {
         id: impl Into<ElementId>,
         message: impl Into<SharedString>,
         date_received: NaiveDateTime,
-        actor: PublicActor,
+        actor: PublicPlayer,
         click_action: ClickHandler<V>,
     ) -> Self {
         Self::new(
@@ -210,7 +193,7 @@ impl<V> Notification<V> {
         id: impl Into<ElementId>,
         message: impl Into<SharedString>,
         date_received: NaiveDateTime,
-        actor: PublicActor,
+        actor: PublicPlayer,
         actions: [NotificationAction<V>; 2],
     ) -> Self {
         Self::new(

@@ -8,7 +8,7 @@ pub enum ContextMenuItem {
 }
 
 impl ContextMenuItem {
-    fn to_list_item<V: 'static>(self) -> ListItem<V> {
+    fn to_list_item<V: 'static>(self) -> ListItem {
         match self {
             ContextMenuItem::Header(label) => ListSubHeader::new(label).into(),
             ContextMenuItem::Entry(label) => {
@@ -49,15 +49,12 @@ impl ContextMenu {
             .bg(cx.theme().colors().elevated_surface)
             .border()
             .border_color(cx.theme().colors().border)
-            .child(
-                List::new(
-                    self.items
-                        .into_iter()
-                        .map(ContextMenuItem::to_list_item)
-                        .collect(),
-                )
-                .toggle(ToggleState::Toggled),
-            )
+            .child(List::new(
+                self.items
+                    .into_iter()
+                    .map(ContextMenuItem::to_list_item::<V>)
+                    .collect(),
+            ))
     }
 }
 
