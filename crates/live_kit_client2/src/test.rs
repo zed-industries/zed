@@ -16,7 +16,7 @@ pub struct TestServer {
     pub api_key: String,
     pub secret_key: String,
     rooms: Mutex<HashMap<String, TestServerRoom>>,
-    executor: Arc<BackgroundExecutor>,
+    executor: BackgroundExecutor,
 }
 
 impl TestServer {
@@ -24,7 +24,7 @@ impl TestServer {
         url: String,
         api_key: String,
         secret_key: String,
-        executor: Arc<BackgroundExecutor>,
+        executor: BackgroundExecutor,
     ) -> Result<Arc<TestServer>> {
         let mut servers = SERVERS.lock();
         if servers.contains_key(&url) {

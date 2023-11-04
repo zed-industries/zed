@@ -16,6 +16,7 @@ members = [
     "crates/client2",
     "crates/clock",
     "crates/collab",
+    "crates/collab2",
     "crates/collab_ui",
     "crates/collections",
     "crates/command_palette",

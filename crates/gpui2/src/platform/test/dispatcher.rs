@@ -127,6 +127,14 @@ impl TestDispatcher {
             b
         })
     }
+
+    pub fn record_backtrace(&self) {
+        todo!("record_backtrace")
+    }
+
+    pub fn rng(&self) -> StdRng {
+        todo!("rng")
+    }
 }
 
 impl Clone for TestDispatcher {

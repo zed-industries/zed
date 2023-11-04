@@ -49,19 +49,14 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         E: Entity<W>,
     {
         let this = self.weak_model();
-        let entity_id = entity.entity_id();
-        let handle = entity.downgrade();
-        self.app.observers.insert(
-            entity_id,
-            Box::new(move |cx| {
-                if let Some((this, handle)) = this.upgrade().zip(E::upgrade_from(&handle)) {
-                    this.update(cx, |this, cx| on_notify(this, handle, cx));
-                    true
-                } else {
-                    false
-                }
-            }),
-        )
+        self.app.observe_internal(entity, move |e, cx| {
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, cx| on_notify(this, e, cx));
+                true
+            } else {
+                false
+            }
+        })
     }
 
     pub fn subscribe<T2, E>(
@@ -75,20 +70,14 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         E: Entity<T2>,
     {
         let this = self.weak_model();
-        let entity_id = entity.entity_id();
-        let entity = entity.downgrade();
-        self.app.event_listeners.insert(
-            entity_id,
-            Box::new(move |event, cx| {
-                let event: &T2::Event = event.downcast_ref().expect("invalid event type");
-                if let Some((this, handle)) = this.upgrade().zip(E::upgrade_from(&entity)) {
-                    this.update(cx, |this, cx| on_event(this, handle, event, cx));
-                    true
-                } else {
-                    false
-                }
-            }),
-        )
+        self.app.subscribe_internal(entity, move |e, event, cx| {
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, cx| on_event(this, e, event, cx));
+                true
+            } else {
+                false
+            }
+        })
     }
 
     pub fn on_release(
@@ -235,6 +224,17 @@ impl<'a, T> Context for ModelContext<'a, T> {
         F: FnOnce(AnyView, &mut WindowContext<'_>) -> R,
     {
         self.app.update_window(window, update)
+    }
+
+    fn read_model<U, R>(
+        &self,
+        handle: &Model<U>,
+        read: impl FnOnce(&U, &AppContext) -> R,
+    ) -> Self::Result<R>
+    where
+        U: 'static,
+    {
+        self.app.read_model(handle, read)
     }
 }
 

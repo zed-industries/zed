@@ -17,6 +17,9 @@ use std::{
 use util::TryFutureExt;
 use waker_fn::waker_fn;
 
+#[cfg(any(test, feature = "test-support"))]
+use rand::rngs::StdRng;
+
 #[derive(Clone)]
 pub struct BackgroundExecutor {
     dispatcher: Arc<dyn PlatformDispatcher>,
@@ -217,6 +220,16 @@ impl BackgroundExecutor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn allow_parking(&self) {
         self.dispatcher.as_test().unwrap().allow_parking();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn record_backtrace(&self) {
+        self.dispatcher.as_test().unwrap().record_backtrace();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn rng(&self) -> StdRng {
+        self.dispatcher.as_test().unwrap().rng()
     }
 
     pub fn num_cpus(&self) -> usize {

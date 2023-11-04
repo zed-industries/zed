@@ -75,6 +75,7 @@ impl ChannelView {
         let workspace = workspace.read(cx);
         let project = workspace.project().to_owned();
         let channel_store = ChannelStore::global(cx);
+        let language_registry = workspace.app_state().languages.clone();
         let markdown = workspace
             .app_state()
             .languages
@@ -89,6 +90,7 @@ impl ChannelView {
                 channel_buffer.update(&mut cx, |buffer, cx| {
                     buffer.buffer().update(cx, |buffer, cx| {
                         buffer.set_language(Some(markdown), cx);
+                        buffer.set_language_registry(language_registry);
                     })
                 });
             }
