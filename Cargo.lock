@@ -2533,6 +2533,7 @@ dependencies = [
  "editor",
  "gpui",
  "language",
+ "log",
  "lsp",
  "postage",
  "project",

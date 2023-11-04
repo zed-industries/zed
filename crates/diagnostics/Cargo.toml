@@ -20,6 +20,7 @@ theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
 
+log.workspace = true
 anyhow.workspace = true
 schemars.workspace = true
 serde.workspace = true

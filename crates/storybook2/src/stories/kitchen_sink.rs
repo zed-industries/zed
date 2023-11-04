@@ -1,7 +1,4 @@
-use crate::{
-    story::Story,
-    story_selector::{ComponentStory, ElementStory},
-};
+use crate::{story::Story, story_selector::ComponentStory};
 use gpui2::{Div, Render, StatefulInteraction, View, VisualContext};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
@@ -18,9 +15,6 @@ impl Render for KitchenSinkStory {
     type Element = Div<Self, StatefulInteraction<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let element_stories = ElementStory::iter()
-            .map(|selector| selector.story(cx))
-            .collect::<Vec<_>>();
         let component_stories = ComponentStory::iter()
             .map(|selector| selector.story(cx))
             .collect::<Vec<_>>();
@@ -29,8 +23,6 @@ impl Render for KitchenSinkStory {
             .id("kitchen-sink")
             .overflow_y_scroll()
             .child(Story::title(cx, "Kitchen Sink"))
-            .child(Story::label(cx, "Elements"))
-            .child(div().flex().flex_col().children(element_stories))
             .child(Story::label(cx, "Components"))
             .child(div().flex().flex_col().children(component_stories))
             // Add a bit of space at the bottom of the kitchen sink so elements

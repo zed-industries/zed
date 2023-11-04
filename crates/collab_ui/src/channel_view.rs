@@ -76,24 +76,22 @@ impl ChannelView {
         let project = workspace.project().to_owned();
         let channel_store = ChannelStore::global(cx);
         let language_registry = workspace.app_state().languages.clone();
-        let markdown = workspace
-            .app_state()
-            .languages
-            .language_for_name("Markdown");
+        let markdown = language_registry.language_for_name("Markdown");
         let channel_buffer =
             channel_store.update(cx, |store, cx| store.open_channel_buffer(channel_id, cx));
 
         cx.spawn(|mut cx| async move {
             let channel_buffer = channel_buffer.await?;
+            let markdown = markdown.await.log_err();
 
-            if let Some(markdown) = markdown.await.log_err() {
-                channel_buffer.update(&mut cx, |buffer, cx| {
-                    buffer.buffer().update(cx, |buffer, cx| {
+            channel_buffer.update(&mut cx, |buffer, cx| {
+                buffer.buffer().update(cx, |buffer, cx| {
+                    buffer.set_language_registry(language_registry);
+                    if let Some(markdown) = markdown {
                         buffer.set_language(Some(markdown), cx);
-                        buffer.set_language_registry(language_registry);
-                    })
-                });
-            }
+                    }
+                })
+            });
 
             pane.update(&mut cx, |pane, cx| {
                 let buffer_id = channel_buffer.read(cx).remote_id(cx);
