@@ -170,6 +170,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     #max_retries,
                     #detect_nondeterminism,
                     &mut |cx, foreground_platform, deterministic, seed| {
+                        // some of the macro contents do not use all variables, silence the warnings
+                        let _ = (&cx, &foreground_platform, &deterministic, &seed);
                         #cx_vars
                         cx.foreground().run(#inner_fn_name(#inner_fn_args));
                         #cx_teardowns
@@ -247,6 +249,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     #max_retries,
                     #detect_nondeterminism,
                     &mut |cx, foreground_platform, deterministic, seed| {
+                        // some of the macro contents do not use all variables, silence the warnings
+                        let _ = (&cx, &foreground_platform, &deterministic, &seed);
                         #cx_vars
                         #inner_fn_name(#inner_fn_args);
                         #cx_teardowns
