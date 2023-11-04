@@ -1471,20 +1471,18 @@ impl EditorElement {
                         .get(&(ix as u32 + rows.start))
                         .unwrap_or(&default_number);
                     write!(&mut line_number, "{}", number).unwrap();
+                    let run = TextRun {
+                        len: line_number.len(),
+                        font: self.style.text.font(),
+                        color,
+                        underline: None,
+                    };
                     let layout = cx
                         .text_system()
-                        .layout_text(
-                            &line_number,
-                            font_size,
-                            &[TextRun {
-                                len: line_number.len(),
-                                font: self.style.text.font(),
-                                color,
-                                underline: None,
-                            }],
-                            None,
-                        )
-                        .unwrap()[0];
+                        .layout_text(&line_number, font_size, &[run], None)
+                        .unwrap()
+                        .pop()
+                        .unwrap();
                     line_number_layouts.push(Some(layout));
                     fold_statuses.push(
                         is_singleton
@@ -1518,6 +1516,7 @@ impl EditorElement {
 
         // When the editor is empty and unfocused, then show the placeholder.
         if snapshot.is_empty() {
+            let font_size = self.style.text.font_size * cx.rem_size();
             let placeholder_color = cx.theme().styles.colors.text_placeholder;
             let placeholder_text = snapshot.placeholder_text();
             let placeholder_lines = placeholder_text
@@ -1529,19 +1528,17 @@ impl EditorElement {
                 .take(rows.len());
             placeholder_lines
                 .map(|line| {
+                    let run = TextRun {
+                        len: line.len(),
+                        font: self.style.text.font(),
+                        color: placeholder_color,
+                        underline: Default::default(),
+                    };
                     cx.text_system()
-                        .layout_text(
-                            line,
-                            self.style.text.font_size * cx.rem_size(),
-                            &[TextRun {
-                                len: line.len(),
-                                font: self.style.text.font(),
-                                color: placeholder_color,
-                                underline: Default::default(),
-                            }],
-                            None,
-                        )
-                        .unwrap()[0]
+                        .layout_text(line, font_size, &[run], None)
+                        .unwrap()
+                        .pop()
+                        .unwrap()
                 })
                 .map(|line| LineWithInvisibles {
                     line,
@@ -1559,7 +1556,7 @@ impl EditorElement {
                 rows.len() as usize,
                 line_number_layouts,
                 snapshot.mode,
-                cx.window_context(),
+                cx,
             )
         }
     }
@@ -1800,7 +1797,7 @@ impl LineWithInvisibles {
         max_line_count: usize,
         line_number_layouts: &[Option<Line>],
         editor_mode: EditorMode,
-        cx: &mut WindowContext,
+        cx: &WindowContext,
     ) -> Vec<Self> {
         let mut layouts = Vec::with_capacity(max_line_count);
         let mut line = String::new();
@@ -1809,6 +1806,8 @@ impl LineWithInvisibles {
         let mut non_whitespace_added = false;
         let mut row = 0;
         let mut line_exceeded_max_len = false;
+        let font_size = text_style.font_size * cx.rem_size();
+
         for highlighted_chunk in chunks.chain([HighlightedChunk {
             chunk: "\n",
             style: None,
@@ -1816,11 +1815,11 @@ impl LineWithInvisibles {
         }]) {
             for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
                 if ix > 0 {
+                    let layout = cx
+                        .text_system()
+                        .layout_text(&line, font_size, &styles, None);
                     layouts.push(Self {
-                        line: cx
-                            .text_system()
-                            .layout_text(&line, text_style.font_size * cx.rem_size(), &styles, None)
-                            .unwrap()[0],
+                        line: layout.unwrap().pop().unwrap(),
                         invisibles: invisibles.drain(..).collect(),
                     });
 
@@ -2060,11 +2059,11 @@ impl Element<Editor> for EditorElement {
         };
 
         let text_width = bounds.size.width - gutter_width;
-        let overscroll = point(em_width, px(0.));
+        let overscroll = size(em_width, px(0.));
         let snapshot = {
             editor.set_visible_line_count((bounds.size.height / line_height).into(), cx);
 
-            let editor_width = text_width - gutter_margin - overscroll.x - em_width;
+            let editor_width = text_width - gutter_margin - overscroll.width - em_width;
             let wrap_width = match editor.soft_wrap_mode(cx) {
                 SoftWrap::None => (MAX_LINE_LEN / 2) as f32 * em_advance,
                 SoftWrap::EditorWidth => editor_width,
@@ -2320,16 +2319,11 @@ impl Element<Editor> for EditorElement {
             }
         }
 
-        // let style = self.style.clone();
-        // let longest_line_width = layout_line(
-        //     snapshot.longest_row(),
-        //     &snapshot,
-        //     &style,
-        //     cx.text_layout_cache(),
-        // )
-        // .width();
-        // let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.x();
-        // let em_width = style.text.em_width(cx.font_cache());
+        let longest_line_width = layout_line(snapshot.longest_row(), &snapshot, &style, cx)
+            .unwrap()
+            .width();
+        let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.width;
+        // todo!("blocks")
         // let (scroll_width, blocks) = self.layout_blocks(
         //     start_row..end_row,
         //     &snapshot,
@@ -2346,32 +2340,31 @@ impl Element<Editor> for EditorElement {
         //     cx,
         // );
 
-        // let scroll_max = vec2f(
-        //     ((scroll_width - text_size.x()) / em_width).max(0.0),
-        //     max_row as f32,
-        // );
+        let scroll_max = point(
+            f32::from((scroll_width - text_size.width) / em_width).max(0.0),
+            max_row as f32,
+        );
 
-        // let clamped = editor.scroll_manager.clamp_scroll_left(scroll_max.x());
+        let clamped = editor.scroll_manager.clamp_scroll_left(scroll_max.x);
 
-        // let autoscrolled = if autoscroll_horizontally {
-        //     editor.autoscroll_horizontally(
-        //         start_row,
-        //         text_size.x(),
-        //         scroll_width,
-        //         em_width,
-        //         &line_layouts,
-        //         cx,
-        //     )
-        // } else {
-        //     false
-        // };
+        let autoscrolled = if autoscroll_horizontally {
+            editor.autoscroll_horizontally(
+                start_row,
+                text_size.width,
+                scroll_width,
+                em_width,
+                &line_layouts,
+                cx,
+            )
+        } else {
+            false
+        };
 
-        // if clamped || autoscrolled {
-        //     snapshot = editor.snapshot(cx);
-        // }
+        if clamped || autoscrolled {
+            snapshot = editor.snapshot(cx);
+        }
 
-        // let style = editor.style(cx);
-
+        // todo!("context menu")
         // let mut context_menu = None;
         // let mut code_actions_indicator = None;
         // if let Some(newest_selection_head) = newest_selection_head {
@@ -2392,7 +2385,8 @@ impl Element<Editor> for EditorElement {
         //     }
         // }
 
-        // let visible_rows = start_row..start_row + line_layouts.len() as u32;
+        let visible_rows = start_row..start_row + line_layouts.len() as u32;
+        // todo!("hover")
         // let mut hover = editor.hover_state.render(
         //     &snapshot,
         //     &style,
@@ -2402,6 +2396,7 @@ impl Element<Editor> for EditorElement {
         // );
         // let mode = editor.mode;
 
+        // todo!("fold_indicators")
         // let mut fold_indicators = editor.render_fold_indicators(
         //     fold_statuses,
         //     &style,
@@ -2411,6 +2406,7 @@ impl Element<Editor> for EditorElement {
         //     cx,
         // );
 
+        // todo!("context_menu")
         // if let Some((_, context_menu)) = context_menu.as_mut() {
         //     context_menu.layout(
         //         SizeConstraint {
@@ -2425,6 +2421,7 @@ impl Element<Editor> for EditorElement {
         //     );
         // }
 
+        // todo!("code actions")
         // if let Some((_, indicator)) = code_actions_indicator.as_mut() {
         //     indicator.layout(
         //         SizeConstraint::strict_along(
@@ -2436,6 +2433,7 @@ impl Element<Editor> for EditorElement {
         //     );
         // }
 
+        // todo!("fold indicators")
         // for fold_indicator in fold_indicators.iter_mut() {
         //     if let Some(indicator) = fold_indicator.as_mut() {
         //         indicator.layout(
@@ -2449,6 +2447,7 @@ impl Element<Editor> for EditorElement {
         //     }
         // }
 
+        // todo!("hover popovers")
         // if let Some((_, hover_popovers)) = hover.as_mut() {
         //     for hover_popover in hover_popovers.iter_mut() {
         //         hover_popover.layout(
@@ -2475,6 +2474,7 @@ impl Element<Editor> for EditorElement {
         //     font_id: self.style.text.font_id,
         //     underline: Default::default(),
         // };
+        //
     }
 }
 
@@ -3196,9 +3196,8 @@ fn layout_line(
     row: u32,
     snapshot: &EditorSnapshot,
     style: &EditorStyle,
-    rem_size: Pixels,
-    text_system: &TextSystem,
-) -> Result<SmallVec<[Line; 1]>> {
+    cx: &WindowContext,
+) -> Result<Line> {
     let mut line = snapshot.line(row);
 
     if line.len() > MAX_LINE_LEN {
@@ -3210,17 +3209,21 @@ fn layout_line(
         line.truncate(len);
     }
 
-    text_system.layout_text(
-        &line,
-        style.text.font_size * rem_size,
-        &[TextRun {
-            len: snapshot.line_len(row) as usize,
-            font: style.text.font(),
-            color: black(),
-            underline: Default::default(),
-        }],
-        None,
-    )
+    Ok(cx
+        .text_system()
+        .layout_text(
+            &line,
+            style.text.font_size * cx.rem_size(),
+            &[TextRun {
+                len: snapshot.line_len(row) as usize,
+                font: style.text.font(),
+                color: Hsla::default(),
+                underline: None,
+            }],
+            None,
+        )?
+        .pop()
+        .unwrap())
 }
 
 #[derive(Debug)]
