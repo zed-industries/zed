@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use gpui2::{div, px, Div, ParentElement, Render, SharedString, Styled, ViewContext};
 use theme2::ActiveTheme;
 

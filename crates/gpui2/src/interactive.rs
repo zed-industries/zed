@@ -2,7 +2,7 @@ use crate::{
     div, point, px, Action, AnyDrag, AnyTooltip, AnyView, AppContext, BorrowWindow, Bounds,
     Component, DispatchContext, DispatchPhase, Div, Element, ElementId, FocusHandle, KeyMatch,
     Keystroke, Modifiers, Overflow, Pixels, Point, Render, SharedString, Size, Style,
-    StyleRefinement, View, ViewContext,
+    StyleRefinement, Task, View, ViewContext,
 };
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -627,50 +627,48 @@ pub trait ElementInteraction<V: 'static>: 'static {
                 let active_tooltip = element_state.active_tooltip.clone();
                 let pending_mouse_down = element_state.pending_mouse_down.clone();
 
-                cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
+                cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
 
                     let is_hovered = bounds.contains_point(&event.position)
                         && pending_mouse_down.lock().is_none();
-                    let mut tooltip_lock = active_tooltip.lock();
+                    if !is_hovered {
+                        active_tooltip.lock().take();
+                        return;
+                    }
 
-                    if is_hovered {
-                        if tooltip_lock.is_none() {
-                            *tooltip_lock = Some(ActiveTooltip {
-                                view: tooltip_builder(view_state, cx),
-                                visible: false,
-                                coordinates: event.position,
-                            });
-
+                    if active_tooltip.lock().is_none() {
+                        let task = cx.spawn({
                             let active_tooltip = active_tooltip.clone();
-                            cx.spawn(move |view, mut cx| async move {
-                                cx.background_executor().timer(TOOLTIP_DELAY).await;
+                            let tooltip_builder = tooltip_builder.clone();
 
-                                view.update(&mut cx, |_, cx| {
-                                    if let Some(active_tooltip) = active_tooltip.lock().as_mut() {
-                                        active_tooltip.visible = true;
-                                        active_tooltip.coordinates =
-                                            cx.mouse_position() + TOOLTIP_OFFSET;
-                                    }
+                            move |view, mut cx| async move {
+                                cx.background_executor().timer(TOOLTIP_DELAY).await;
+                                view.update(&mut cx, move |view_state, cx| {
+                                    active_tooltip.lock().replace(ActiveTooltip {
+                                        waiting: None,
+                                        tooltip: Some(AnyTooltip {
+                                            view: tooltip_builder(view_state, cx),
+                                            cursor_offset: cx.mouse_position() + TOOLTIP_OFFSET,
+                                        }),
+                                    });
                                     cx.notify();
                                 })
-                                .ok()
-                            })
-                            .detach();
-                        }
-                    } else {
-                        tooltip_lock.take();
+                                .ok();
+                            }
+                        });
+                        active_tooltip.lock().replace(ActiveTooltip {
+                            waiting: Some(task),
+                            tooltip: None,
+                        });
                     }
                 });
 
                 if let Some(active_tooltip) = element_state.active_tooltip.lock().as_ref() {
-                    if active_tooltip.visible {
-                        cx.active_tooltip = Some(AnyTooltip {
-                            view: active_tooltip.view.clone(),
-                            cursor_offset: active_tooltip.coordinates,
-                        });
+                    if active_tooltip.tooltip.is_some() {
+                        cx.active_tooltip = active_tooltip.tooltip.clone()
                     }
                 }
             }
@@ -866,9 +864,9 @@ pub struct InteractiveElementState {
 }
 
 struct ActiveTooltip {
-    view: AnyView,
-    visible: bool,
-    coordinates: Point<Pixels>,
+    #[allow(unused)] // used to drop the task
+    waiting: Option<Task<()>>,
+    tooltip: Option<AnyTooltip>,
 }
 
 impl InteractiveElementState {

@@ -899,6 +899,7 @@ pub(crate) struct AnyDrag {
     pub cursor_offset: Point<Pixels>,
 }
 
+#[derive(Clone)]
 pub(crate) struct AnyTooltip {
     pub view: AnyView,
     pub cursor_offset: Point<Pixels>,
