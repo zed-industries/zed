@@ -1,5 +1,6 @@
 mod avatar;
 mod button;
+mod checkbox;
 mod context_menu;
 mod details;
 mod facepile;
@@ -25,6 +26,7 @@ mod tool_divider;
 
 pub use avatar::*;
 pub use button::*;
+pub use checkbox::*;
 pub use context_menu::*;
 pub use details::*;
 pub use facepile::*;
