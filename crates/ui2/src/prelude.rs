@@ -154,10 +154,10 @@ impl InteractionState {
     }
 }
 
-#[derive(Default, PartialEq)]
-pub enum SelectedState {
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum Selected {
     #[default]
     Unselected,
-    PartiallySelected,
+    Indeterminate,
     Selected,
 }

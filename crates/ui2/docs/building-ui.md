@@ -2,6 +2,16 @@
 
 ## Common patterns
 
+### Method ordering
+
+- id
+- Flex properties
+- Position properties
+- Size properties
+- Style properties
+- Handlers
+- State properties
+
 ### Using the Label Component to Create UI Text
 
 The `Label` component helps in displaying text on user interfaces. It creates an interface where specific parameters such as label color, line height style, and strikethrough can be set.
