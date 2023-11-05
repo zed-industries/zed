@@ -2,7 +2,7 @@ pub mod items;
 mod project_diagnostics_settings;
 mod toolbar_controls;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use collections::{HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
@@ -11,6 +11,7 @@ use editor::{
     scroll::autoscroll::Autoscroll,
     Editor, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
+use futures::future::try_join_all;
 use gpui::{
     actions, elements::*, fonts::TextStyle, serde_json, AnyViewHandle, AppContext, Entity,
     ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -277,25 +278,40 @@ impl ProjectDiagnosticsEditor {
         }
         paths_to_recheck.extend(old_diagnostics.into_iter().flat_map(|(_, paths)| paths));
 
+        if paths_to_recheck.is_empty() {
+            log::debug!("No paths to recheck for language server {language_server_id:?}");
+            return;
+        }
+
+        log::debug!(
+            "Rechecking {} paths for language server {:?}",
+            paths_to_recheck.len(),
+            language_server_id
+        );
         let project = self.project.clone();
         cx.spawn(|this, mut cx| {
             async move {
-                let mut changed = false;
-                for path in paths_to_recheck {
-                    let buffer = project
-                        .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))
-                        .await?;
-                    this.update(&mut cx, |this, cx| {
-                        this.populate_excerpts(path, language_server_id, buffer, cx);
-                        changed = true;
-                    })?;
-                }
-                if changed {
-                    this.update(&mut cx, |this, cx| {
-                        this.summary = this.project.read(cx).diagnostic_summary(cx);
-                        cx.emit(Event::TitleChanged);
-                    })?;
-                }
+                let _ = try_join_all(paths_to_recheck.into_iter().map(|path| {
+                    let mut cx = cx.clone();
+                    let project = project.clone();
+                    async move {
+                        let buffer = project
+                            .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))
+                            .await
+                            .with_context(|| format!("opening buffer for path {path:?}"))?;
+                        this.update(&mut cx, |this, cx| {
+                            this.populate_excerpts(path, language_server_id, buffer, cx);
+                        })
+                        .context("missing project")?;
+                        anyhow::Ok(())
+                    }
+                }))
+                .await?;
+
+                this.update(&mut cx, |this, cx| {
+                    this.summary = this.project.read(cx).diagnostic_summary(cx);
+                    cx.emit(Event::TitleChanged);
+                })?;
                 anyhow::Ok(())
             }
             .log_err()

@@ -2459,6 +2459,7 @@ dependencies = [
  "client",
  "collections",
  "editor",
+ "futures 0.3.28",
  "gpui",
  "language",
  "log",
