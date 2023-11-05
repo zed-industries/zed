@@ -3,7 +3,7 @@ mod project_diagnostics_settings;
 mod toolbar_controls;
 
 use anyhow::Result;
-use collections::{BTreeSet, HashMap, HashSet};
+use collections::{HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
@@ -61,7 +61,7 @@ struct ProjectDiagnosticsEditor {
     summary: DiagnosticSummary,
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<PathState>,
-    paths_to_update: BTreeSet<(ProjectPath, LanguageServerId)>,
+    paths_to_update: HashMap<LanguageServerId, HashSet<ProjectPath>>,
     current_diagnostics: HashMap<LanguageServerId, HashSet<ProjectPath>>,
     include_warnings: bool,
     _subscriptions: Vec<Subscription>,
@@ -128,9 +128,12 @@ impl View for ProjectDiagnosticsEditor {
                 "summary": project.diagnostic_summary(cx),
             }),
             "summary": self.summary,
-            "paths_to_update": self.paths_to_update.iter().map(|(path, server_id)|
-                (path.path.to_string_lossy(), server_id.0)
-            ).collect::<Vec<_>>(),
+            "paths_to_update": self.paths_to_update.iter().map(|(server_id, paths)|
+                (server_id.0, paths.into_iter().map(|path| path.path.to_string_lossy()).collect::<Vec<_>>())
+            ).collect::<HashMap<_, _>>(),
+            "current_diagnostics": self.current_diagnostics.iter().map(|(server_id, paths)|
+                (server_id.0, paths.into_iter().map(|path| path.path.to_string_lossy()).collect::<Vec<_>>())
+            ).collect::<HashMap<_, _>>(),
             "paths_states": self.path_states.iter().map(|state|
                 json!({
                     "path": state.path.path.to_string_lossy(),
@@ -164,7 +167,9 @@ impl ProjectDiagnosticsEditor {
                 } => {
                     log::debug!("Adding path {path:?} to update for server {language_server_id}");
                     this.paths_to_update
-                        .insert((path.clone(), *language_server_id));
+                        .entry(*language_server_id)
+                        .or_default()
+                        .insert(path.clone());
                     let no_multiselections = this.editor.update(cx, |editor, cx| {
                         editor.selections.all::<usize>(cx).len() <= 1
                     });
@@ -198,7 +203,7 @@ impl ProjectDiagnosticsEditor {
             excerpts,
             editor,
             path_states: Default::default(),
-            paths_to_update: BTreeSet::new(),
+            paths_to_update: HashMap::default(),
             include_warnings: settings::get::<ProjectDiagnosticsSettings>(cx).include_warnings,
             current_diagnostics: HashMap::default(),
             _subscriptions: vec![project_event_subscription, editor_event_subscription],
@@ -245,20 +250,16 @@ impl ProjectDiagnosticsEditor {
         if let Some(language_server_id) = language_server_id {
             new_summaries.retain(|server_id, _| server_id == &language_server_id);
             old_diagnostics.retain(|server_id, _| server_id == &language_server_id);
-            self.paths_to_update.retain(|(path, server_id)| {
+            self.paths_to_update.retain(|server_id, paths| {
                 if server_id == &language_server_id {
-                    paths_to_recheck.insert(path.clone());
+                    paths_to_recheck.extend(paths.drain());
                     false
                 } else {
                     true
                 }
             });
         } else {
-            paths_to_recheck.extend(
-                mem::replace(&mut self.paths_to_update, BTreeSet::new())
-                    .into_iter()
-                    .map(|(path, _)| path),
-            );
+            paths_to_recheck.extend(self.paths_to_update.drain().flat_map(|(_, paths)| paths));
         }
 
         for (server_id, new_paths) in new_summaries {
