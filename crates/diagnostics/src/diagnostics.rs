@@ -3,7 +3,7 @@ mod project_diagnostics_settings;
 mod toolbar_controls;
 
 use anyhow::Result;
-use collections::{BTreeSet, HashSet};
+use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
@@ -13,7 +13,7 @@ use editor::{
 };
 use gpui::{
     actions, elements::*, fonts::TextStyle, serde_json, AnyViewHandle, AppContext, Entity,
-    ModelHandle, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -28,6 +28,7 @@ use std::{
     any::{Any, TypeId},
     borrow::Cow,
     cmp::Ordering,
+    mem,
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -61,7 +62,9 @@ struct ProjectDiagnosticsEditor {
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<PathState>,
     paths_to_update: BTreeSet<(ProjectPath, LanguageServerId)>,
+    current_diagnostics: HashMap<LanguageServerId, HashSet<ProjectPath>>,
     include_warnings: bool,
+    _subscriptions: Vec<Subscription>,
 }
 
 struct PathState {
@@ -149,25 +152,22 @@ impl ProjectDiagnosticsEditor {
         workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        cx.subscribe(&project_handle, |this, _, event, cx| match event {
-            project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
-                log::debug!("Disk based diagnostics finished for server {language_server_id}");
-                this.update_excerpts(Some(*language_server_id), cx);
-                this.update_title(cx);
-            }
-            project::Event::DiagnosticsUpdated {
-                language_server_id,
-                path,
-            } => {
-                log::debug!("Adding path {path:?} to update for server {language_server_id}");
-                this.paths_to_update
-                    .insert((path.clone(), *language_server_id));
-                this.update_excerpts(Some(*language_server_id), cx);
-                this.update_title(cx);
-            }
-            _ => {}
-        })
-        .detach();
+        let project_event_subscription =
+            cx.subscribe(&project_handle, |this, _, event, cx| match event {
+                project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
+                    log::debug!("Disk based diagnostics finished for server {language_server_id}");
+                    this.update_excerpts(Some(*language_server_id), cx);
+                }
+                project::Event::DiagnosticsUpdated {
+                    language_server_id,
+                    path,
+                } => {
+                    log::debug!("Adding path {path:?} to update for server {language_server_id}");
+                    this.paths_to_update
+                        .insert((path.clone(), *language_server_id));
+                }
+                _ => {}
+            });
 
         let excerpts = cx.add_model(|cx| MultiBuffer::new(project_handle.read(cx).replica_id()));
         let editor = cx.add_view(|cx| {
@@ -176,19 +176,14 @@ impl ProjectDiagnosticsEditor {
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
-        cx.subscribe(&editor, |this, _, event, cx| {
+        let editor_event_subscription = cx.subscribe(&editor, |this, _, event, cx| {
             cx.emit(event.clone());
             if event == &editor::Event::Focused && this.path_states.is_empty() {
                 cx.focus_self()
             }
-        })
-        .detach();
+        });
 
         let project = project_handle.read(cx);
-        let paths_to_update = project
-            .diagnostic_summaries(cx)
-            .map(|(path, server_id, _)| (path, server_id))
-            .collect();
         let summary = project.diagnostic_summary(cx);
         let mut this = Self {
             project: project_handle,
@@ -197,8 +192,10 @@ impl ProjectDiagnosticsEditor {
             excerpts,
             editor,
             path_states: Default::default(),
-            paths_to_update,
+            paths_to_update: BTreeSet::new(),
             include_warnings: settings::get::<ProjectDiagnosticsSettings>(cx).include_warnings,
+            current_diagnostics: HashMap::default(),
+            _subscriptions: vec![project_event_subscription, editor_event_subscription],
         };
         this.update_excerpts(None, cx);
         this
@@ -218,12 +215,6 @@ impl ProjectDiagnosticsEditor {
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
         self.include_warnings = !self.include_warnings;
-        self.paths_to_update = self
-            .project
-            .read(cx)
-            .diagnostic_summaries(cx)
-            .map(|(path, server_id, _)| (path, server_id))
-            .collect();
         self.update_excerpts(None, cx);
         cx.notify();
     }
@@ -234,29 +225,71 @@ impl ProjectDiagnosticsEditor {
         cx: &mut ViewContext<Self>,
     ) {
         log::debug!("Updating excerpts for server {language_server_id:?}");
-        let mut paths = Vec::new();
-        self.paths_to_update.retain(|(path, server_id)| {
-            if language_server_id
-                .map_or(true, |language_server_id| language_server_id == *server_id)
-            {
-                paths.push(path.clone());
-                false
-            } else {
-                true
+        let mut paths_to_recheck = HashSet::default();
+        let mut new_summaries: HashMap<LanguageServerId, HashSet<ProjectPath>> = self
+            .project
+            .read(cx)
+            .diagnostic_summaries(cx)
+            .fold(HashMap::default(), |mut summaries, (path, server_id, _)| {
+                summaries.entry(server_id).or_default().insert(path);
+                summaries
+            });
+        let mut old_diagnostics =
+            mem::replace(&mut self.current_diagnostics, new_summaries.clone());
+        if let Some(language_server_id) = language_server_id {
+            new_summaries.retain(|server_id, _| server_id == &language_server_id);
+            old_diagnostics.retain(|server_id, _| server_id == &language_server_id);
+            self.paths_to_update.retain(|(path, server_id)| {
+                if server_id == &language_server_id {
+                    paths_to_recheck.insert(path.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+        } else {
+            paths_to_recheck.extend(
+                mem::replace(&mut self.paths_to_update, BTreeSet::new())
+                    .into_iter()
+                    .map(|(path, _)| path),
+            );
+        }
+
+        for (server_id, new_paths) in new_summaries {
+            match old_diagnostics.remove(&server_id) {
+                Some(mut old_paths) => {
+                    paths_to_recheck.extend(
+                        new_paths
+                            .into_iter()
+                            .filter(|new_path| !old_paths.remove(new_path)),
+                    );
+                    paths_to_recheck.extend(old_paths);
+                }
+                None => paths_to_recheck.extend(new_paths),
             }
-        });
+        }
+        paths_to_recheck.extend(old_diagnostics.into_iter().flat_map(|(_, paths)| paths));
+
         let project = self.project.clone();
         cx.spawn(|this, mut cx| {
             async move {
-                for path in paths {
+                let mut changed = false;
+                for path in paths_to_recheck {
                     let buffer = project
                         .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))
                         .await?;
                     this.update(&mut cx, |this, cx| {
-                        this.populate_excerpts(path, language_server_id, buffer, cx)
+                        this.populate_excerpts(path, language_server_id, buffer, cx);
+                        changed = true;
                     })?;
                 }
-                Result::<_, anyhow::Error>::Ok(())
+                if changed {
+                    this.update(&mut cx, |this, cx| {
+                        this.summary = this.project.read(cx).diagnostic_summary(cx);
+                        cx.emit(Event::TitleChanged);
+                    })?;
+                }
+                anyhow::Ok(())
             }
             .log_err()
         })
@@ -558,11 +591,6 @@ impl ProjectDiagnosticsEditor {
             cx.focus(&self.editor);
         }
         cx.notify();
-    }
-
-    fn update_title(&mut self, cx: &mut ViewContext<Self>) {
-        self.summary = self.project.read(cx).diagnostic_summary(cx);
-        cx.emit(Event::TitleChanged);
     }
 }
 
