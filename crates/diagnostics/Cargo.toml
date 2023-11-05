@@ -22,6 +22,7 @@ workspace = { path = "../workspace" }
 
 log.workspace = true
 anyhow.workspace = true
+futures.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
