@@ -165,6 +165,12 @@ impl ProjectDiagnosticsEditor {
                     log::debug!("Adding path {path:?} to update for server {language_server_id}");
                     this.paths_to_update
                         .insert((path.clone(), *language_server_id));
+                    let no_multiselections = this.editor.update(cx, |editor, cx| {
+                        editor.selections.all::<usize>(cx).len() <= 1
+                    });
+                    if no_multiselections && !this.is_dirty(cx) {
+                        this.update_excerpts(Some(*language_server_id), cx);
+                    }
                 }
                 _ => {}
             });
