@@ -246,11 +246,8 @@ impl ProjectDiagnosticsEditor {
                 summaries.entry(server_id).or_default().insert(path);
                 summaries
             });
-        let mut old_diagnostics =
-            mem::replace(&mut self.current_diagnostics, new_summaries.clone());
-        if let Some(language_server_id) = language_server_id {
+        let mut old_diagnostics = if let Some(language_server_id) = language_server_id {
             new_summaries.retain(|server_id, _| server_id == &language_server_id);
-            old_diagnostics.retain(|server_id, _| server_id == &language_server_id);
             self.paths_to_update.retain(|server_id, paths| {
                 if server_id == &language_server_id {
                     paths_to_recheck.extend(paths.drain());
@@ -259,10 +256,24 @@ impl ProjectDiagnosticsEditor {
                     true
                 }
             });
+            let mut old_diagnostics = HashMap::default();
+            if let Some(new_paths) = new_summaries.get(&language_server_id) {
+                if let Some(old_paths) = self
+                    .current_diagnostics
+                    .insert(language_server_id, new_paths.clone())
+                {
+                    old_diagnostics.insert(language_server_id, old_paths);
+                }
+            } else {
+                if let Some(old_paths) = self.current_diagnostics.remove(&language_server_id) {
+                    old_diagnostics.insert(language_server_id, old_paths);
+                }
+            }
+            old_diagnostics
         } else {
             paths_to_recheck.extend(self.paths_to_update.drain().flat_map(|(_, paths)| paths));
-        }
-
+            mem::replace(&mut self.current_diagnostics, new_summaries.clone())
+        };
         for (server_id, new_paths) in new_summaries {
             match old_diagnostics.remove(&server_id) {
                 Some(mut old_paths) => {
@@ -282,7 +293,6 @@ impl ProjectDiagnosticsEditor {
             log::debug!("No paths to recheck for language server {language_server_id:?}");
             return;
         }
-
         log::debug!(
             "Rechecking {} paths for language server {:?}",
             paths_to_recheck.len(),
@@ -291,7 +301,7 @@ impl ProjectDiagnosticsEditor {
         let project = self.project.clone();
         cx.spawn(|this, mut cx| {
             async move {
-                let _ = try_join_all(paths_to_recheck.into_iter().map(|path| {
+                let _: Vec<()> = try_join_all(paths_to_recheck.into_iter().map(|path| {
                     let mut cx = cx.clone();
                     let project = project.clone();
                     async move {
@@ -306,7 +316,8 @@ impl ProjectDiagnosticsEditor {
                         anyhow::Ok(())
                     }
                 }))
-                .await?;
+                .await
+                .context("rechecking diagnostics for paths")?;
 
                 this.update(&mut cx, |this, cx| {
                     this.summary = this.project.read(cx).diagnostic_summary(cx);
