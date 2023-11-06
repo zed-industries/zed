@@ -54,7 +54,7 @@ impl<V: 'static> Toast<V> {
             .rounded_lg()
             .shadow_md()
             .overflow_hidden()
-            .bg(cx.theme().colors().elevated_surface)
+            .bg(cx.theme().colors().elevated_surface_background)
             .children(self.children)
     }
 }

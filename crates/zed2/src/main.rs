@@ -4,18 +4,13 @@
 // Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
 
-use crate::open_listener::{OpenListener, OpenRequest};
 use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
-use cli::{
-    ipc::{self, IpcSender},
-    CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
-};
+use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::UserStore;
-use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use fs::RealFs;
-use futures::{channel::mpsc, SinkExt, StreamExt};
+use futures::StreamExt;
 use gpui::{Action, App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
 use language::LanguageRegistry;
@@ -35,7 +30,7 @@ use std::{
     fs::OpenOptions,
     io::{IsTerminal, Write},
     panic,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -43,18 +38,18 @@ use std::{
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
-use text::Point;
 use util::{
     async_maybe,
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     http::{self, HttpClient},
-    paths::{self, PathLikeWithPosition},
-    ResultExt,
+    paths, ResultExt,
 };
 use uuid::Uuid;
-use workspace2::{AppState, WorkspaceStore};
-use zed2::{build_window_options, initialize_workspace, languages};
-use zed2::{ensure_only_instance, Assets, IsOnlyInstance};
+use workspace::{AppState, WorkspaceStore};
+use zed2::{
+    build_window_options, ensure_only_instance, handle_cli_connection, initialize_workspace,
+    languages, Assets, IsOnlyInstance, OpenListener, OpenRequest,
+};
 
 mod open_listener;
 
@@ -143,7 +138,7 @@ fn main() {
         client::init(&client, cx);
         // command_palette::init(cx);
         language::init(cx);
-        // editor::init(cx);
+        editor::init(cx);
         // go_to_line::init(cx);
         // file_finder::init(cx);
         // outline::init(cx);
@@ -194,7 +189,7 @@ fn main() {
         // audio::init(Assets, cx);
         // auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
-        workspace2::init(app_state.clone(), cx);
+        workspace::init(app_state.clone(), cx);
         // recent_projects::init(cx);
 
         // journal2::init(app_state.clone(), cx);
@@ -213,6 +208,7 @@ fn main() {
         if stdout_is_a_pty() {
             cx.activate(true);
             let urls = collect_url_args();
+            dbg!(&urls);
             if !urls.is_empty() {
                 listener.open_urls(urls)
             }
@@ -230,9 +226,27 @@ fn main() {
 
         let mut _triggered_authentication = false;
 
+        fn open_paths_and_log_errs(
+            paths: &[PathBuf],
+            app_state: &Arc<AppState>,
+            cx: &mut AppContext,
+        ) {
+            let task = workspace::open_paths(&paths, &app_state, None, cx);
+            cx.spawn(|cx| async move {
+                if let Some((_window, results)) = task.await.log_err() {
+                    for result in results {
+                        if let Some(Err(e)) = result {
+                            log::error!("Error opening path: {}", e);
+                        }
+                    }
+                }
+            })
+            .detach();
+        }
+
         match open_rx.try_next() {
             Ok(Some(OpenRequest::Paths { paths })) => {
-                workspace2::open_paths(&paths, &app_state, None, cx).detach();
+                open_paths_and_log_errs(&paths, &app_state, cx)
             }
             Ok(Some(OpenRequest::CliConnection { connection })) => {
                 let app_state = app_state.clone();
@@ -240,6 +254,7 @@ fn main() {
                     .detach();
             }
             Ok(Some(OpenRequest::JoinChannel { channel_id: _ })) => {
+                todo!()
                 // triggered_authentication = true;
                 // let app_state = app_state.clone();
                 // let client = client.clone();
@@ -251,6 +266,9 @@ fn main() {
                 // })
                 // .detach_and_log_err(cx)
             }
+            Ok(Some(OpenRequest::OpenChannelNotes { channel_id: _ })) => {
+                todo!()
+            }
             Ok(None) | Err(_) => cx
                 .spawn({
                     let app_state = app_state.clone();
@@ -260,29 +278,25 @@ fn main() {
         }
 
         let app_state = app_state.clone();
-        cx.spawn(|cx| {
-            async move {
-                while let Some(request) = open_rx.next().await {
-                    match request {
-                        OpenRequest::Paths { paths } => {
-                            cx.update(|cx| workspace2::open_paths(&paths, &app_state, None, cx))
-                                .ok()
-                                .map(|t| t.detach());
-                        }
-                        OpenRequest::CliConnection { connection } => {
-                            let app_state = app_state.clone();
-                            cx.spawn(move |cx| {
-                                handle_cli_connection(connection, app_state.clone(), cx)
-                            })
-                            .detach();
-                        }
-                        OpenRequest::JoinChannel { channel_id: _ } => {
-                            // cx
-                            // .update(|cx| {
-                            //     workspace::join_channel(channel_id, app_state.clone(), None, cx)
-                            // })
-                            // .detach()
-                        }
+        cx.spawn(|cx| async move {
+            while let Some(request) = open_rx.next().await {
+                match request {
+                    OpenRequest::Paths { paths } => {
+                        cx.update(|cx| open_paths_and_log_errs(&paths, &app_state, cx))
+                            .ok();
+                    }
+                    OpenRequest::CliConnection { connection } => {
+                        let app_state = app_state.clone();
+                        cx.spawn(move |cx| {
+                            handle_cli_connection(connection, app_state.clone(), cx)
+                        })
+                        .detach();
+                    }
+                    OpenRequest::JoinChannel { channel_id: _ } => {
+                        todo!()
+                    }
+                    OpenRequest::OpenChannelNotes { channel_id: _ } => {
+                        todo!()
                     }
                 }
             }
@@ -325,8 +339,8 @@ async fn installation_id() -> Result<String> {
 
 async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
     async_maybe!({
-        if let Some(location) = workspace2::last_opened_workspace_paths().await {
-            cx.update(|cx| workspace2::open_paths(location.paths().as_ref(), app_state, None, cx))?
+        if let Some(location) = workspace::last_opened_workspace_paths().await {
+            cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))?
                 .await
                 .log_err();
         } else if matches!(KEY_VALUE_STORE.read_kvp("******* THIS IS A BAD KEY PLEASE UNCOMMENT BELOW TO FIX THIS VERY LONG LINE *******"), Ok(None)) {
@@ -336,7 +350,7 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
             // cx.update(|cx| show_welcome_experience(app_state, cx));
         } else {
             cx.update(|cx| {
-                workspace2::open_new(app_state, cx, |workspace, cx| {
+                workspace::open_new(app_state, cx, |workspace, cx| {
                     // todo!(editor)
                     // Editor::new_file(workspace, &Default::default(), cx)
                 })
@@ -745,190 +759,6 @@ fn load_embedded_fonts(cx: &AppContext) {
 
 // #[cfg(not(debug_assertions))]
 // fn watch_file_types(_fs: Arc<dyn Fs>, _cx: &mut AppContext) {}
-
-fn connect_to_cli(
-    server_name: &str,
-) -> Result<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)> {
-    let handshake_tx = cli::ipc::IpcSender::<IpcHandshake>::connect(server_name.to_string())
-        .context("error connecting to cli")?;
-    let (request_tx, request_rx) = ipc::channel::<CliRequest>()?;
-    let (response_tx, response_rx) = ipc::channel::<CliResponse>()?;
-
-    handshake_tx
-        .send(IpcHandshake {
-            requests: request_tx,
-            responses: response_rx,
-        })
-        .context("error sending ipc handshake")?;
-
-    let (mut async_request_tx, async_request_rx) =
-        futures::channel::mpsc::channel::<CliRequest>(16);
-    thread::spawn(move || {
-        while let Ok(cli_request) = request_rx.recv() {
-            if smol::block_on(async_request_tx.send(cli_request)).is_err() {
-                break;
-            }
-        }
-        Ok::<_, anyhow::Error>(())
-    });
-
-    Ok((async_request_rx, response_tx))
-}
-
-async fn handle_cli_connection(
-    (mut requests, _responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
-    _app_state: Arc<AppState>,
-    mut _cx: AsyncAppContext,
-) {
-    if let Some(request) = requests.next().await {
-        match request {
-            CliRequest::Open { paths, wait } => {
-                let mut caret_positions = HashMap::default();
-
-                let paths = if paths.is_empty() {
-                    workspace2::last_opened_workspace_paths()
-                        .await
-                        .map(|location| location.paths().to_vec())
-                        .unwrap_or_default()
-                } else {
-                    paths
-                        .into_iter()
-                        .filter_map(|path_with_position_string| {
-                            let path_with_position = PathLikeWithPosition::parse_str(
-                                &path_with_position_string,
-                                |path_str| {
-                                    Ok::<_, std::convert::Infallible>(
-                                        Path::new(path_str).to_path_buf(),
-                                    )
-                                },
-                            )
-                            .expect("Infallible");
-                            let path = path_with_position.path_like;
-                            if let Some(row) = path_with_position.row {
-                                if path.is_file() {
-                                    let row = row.saturating_sub(1);
-                                    let col =
-                                        path_with_position.column.unwrap_or(0).saturating_sub(1);
-                                    caret_positions.insert(path.clone(), Point::new(row, col));
-                                }
-                            }
-                            Some(path)
-                        })
-                        .collect()
-                };
-
-                // todo!("editor")
-                // let mut errored = false;
-                // match cx
-                //     .update(|cx| workspace2::open_paths(&paths, &app_state, None, cx))
-                //     .await
-                // {
-                //     Ok((workspace, items)) => {
-                //         let mut item_release_futures = Vec::new();
-
-                //         for (item, path) in items.into_iter().zip(&paths) {
-                //             match item {
-                //                 Some(Ok(item)) => {
-                //                     if let Some(point) = caret_positions.remove(path) {
-                //                         if let Some(active_editor) = item.downcast::<Editor>() {
-                //                             active_editor
-                //                                 .downgrade()
-                //                                 .update(&mut cx, |editor, cx| {
-                //                                     let snapshot =
-                //                                         editor.snapshot(cx).display_snapshot;
-                //                                     let point = snapshot
-                //                                         .buffer_snapshot
-                //                                         .clip_point(point, Bias::Left);
-                //                                     editor.change_selections(
-                //                                         Some(Autoscroll::center()),
-                //                                         cx,
-                //                                         |s| s.select_ranges([point..point]),
-                //                                     );
-                //                                 })
-                //                                 .log_err();
-                //                         }
-                //                     }
-
-                //                     let released = oneshot::channel();
-                //                     cx.update(|cx| {
-                //                         item.on_release(
-                //                             cx,
-                //                             Box::new(move |_| {
-                //                                 let _ = released.0.send(());
-                //                             }),
-                //                         )
-                //                         .detach();
-                //                     });
-                //                     item_release_futures.push(released.1);
-                //                 }
-                //                 Some(Err(err)) => {
-                //                     responses
-                //                         .send(CliResponse::Stderr {
-                //                             message: format!("error opening {:?}: {}", path, err),
-                //                         })
-                //                         .log_err();
-                //                     errored = true;
-                //                 }
-                //                 None => {}
-                //             }
-                //         }
-
-                //         if wait {
-                //             let background = cx.background();
-                //             let wait = async move {
-                //                 if paths.is_empty() {
-                //                     let (done_tx, done_rx) = oneshot::channel();
-                //                     if let Some(workspace) = workspace.upgrade(&cx) {
-                //                         let _subscription = cx.update(|cx| {
-                //                             cx.observe_release(&workspace, move |_, _| {
-                //                                 let _ = done_tx.send(());
-                //                             })
-                //                         });
-                //                         drop(workspace);
-                //                         let _ = done_rx.await;
-                //                     }
-                //                 } else {
-                //                     let _ =
-                //                         futures::future::try_join_all(item_release_futures).await;
-                //                 };
-                //             }
-                //             .fuse();
-                //             futures::pin_mut!(wait);
-
-                //             loop {
-                //                 // Repeatedly check if CLI is still open to avoid wasting resources
-                //                 // waiting for files or workspaces to close.
-                //                 let mut timer = background.timer(Duration::from_secs(1)).fuse();
-                //                 futures::select_biased! {
-                //                     _ = wait => break,
-                //                     _ = timer => {
-                //                         if responses.send(CliResponse::Ping).is_err() {
-                //                             break;
-                //                         }
-                //                     }
-                //                 }
-                //             }
-                //         }
-                //     }
-                //     Err(error) => {
-                //         errored = true;
-                //         responses
-                //             .send(CliResponse::Stderr {
-                //                 message: format!("error opening {:?}: {}", paths, error),
-                //             })
-                //             .log_err();
-                //     }
-                // }
-
-                // responses
-                //     .send(CliResponse::Exit {
-                //         status: i32::from(errored),
-                //     })
-                //     .log_err();
-            }
-        }
-    }
-}
 
 pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
     // &[

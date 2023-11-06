@@ -1655,12 +1655,18 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         }
     }
 
+    // todo!("change this to return a reference");
     pub fn view(&self) -> View<V> {
         self.view.clone()
     }
 
     pub fn model(&self) -> Model<V> {
         self.view.model.clone()
+    }
+
+    /// Access the underlying window context.
+    pub fn window_context(&mut self) -> &mut WindowContext<'a> {
+        &mut self.window_cx
     }
 
     pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {

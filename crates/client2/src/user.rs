@@ -292,22 +292,18 @@ impl UserStore {
                         .upgrade()
                         .ok_or_else(|| anyhow!("can't upgrade user store handle"))?;
                     for contact in message.contacts {
-                        let should_notify = contact.should_notify;
-                        updated_contacts.push((
-                            Arc::new(Contact::from_proto(contact, &this, &mut cx).await?),
-                            should_notify,
+                        updated_contacts.push(Arc::new(
+                            Contact::from_proto(contact, &this, &mut cx).await?,
                         ));
                     }
 
                     let mut incoming_requests = Vec::new();
                     for request in message.incoming_requests {
                         incoming_requests.push({
-                            let user = this
-                                .update(&mut cx, |this, cx| {
-                                    this.get_user(request.requester_id, cx)
-                                })?
-                                .await?;
-                            (user, request.should_notify)
+                            this.update(&mut cx, |this, cx| {
+                                this.get_user(request.requester_id, cx)
+                            })?
+                            .await?
                         });
                     }
 
@@ -331,13 +327,7 @@ impl UserStore {
                         this.contacts
                             .retain(|contact| !removed_contacts.contains(&contact.user.id));
                         // Update existing contacts and insert new ones
-                        for (updated_contact, should_notify) in updated_contacts {
-                            if should_notify {
-                                cx.emit(Event::Contact {
-                                    user: updated_contact.user.clone(),
-                                    kind: ContactEventKind::Accepted,
-                                });
-                            }
+                        for updated_contact in updated_contacts {
                             match this.contacts.binary_search_by_key(
                                 &&updated_contact.user.github_login,
                                 |contact| &contact.user.github_login,
@@ -360,14 +350,7 @@ impl UserStore {
                             }
                         });
                         // Update existing incoming requests and insert new ones
-                        for (user, should_notify) in incoming_requests {
-                            if should_notify {
-                                cx.emit(Event::Contact {
-                                    user: user.clone(),
-                                    kind: ContactEventKind::Requested,
-                                });
-                            }
-
+                        for user in incoming_requests {
                             match this
                                 .incoming_contact_requests
                                 .binary_search_by_key(&&user.github_login, |contact| {

@@ -8,6 +8,7 @@ mod syntax_map;
 
 #[cfg(test)]
 mod buffer_tests;
+pub mod markdown;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;

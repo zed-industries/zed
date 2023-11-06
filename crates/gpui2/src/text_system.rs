@@ -7,7 +7,7 @@ use anyhow::anyhow;
 pub use font_features::*;
 pub use line::*;
 pub use line_layout::*;
-use line_wrapper::*;
+pub use line_wrapper::*;
 use smallvec::SmallVec;
 
 use crate::{
@@ -151,7 +151,7 @@ impl TextSystem {
 
     pub fn layout_text(
         &self,
-        text: &SharedString,
+        text: &str,
         font_size: Pixels,
         runs: &[TextRun],
         wrap_width: Option<Pixels>,

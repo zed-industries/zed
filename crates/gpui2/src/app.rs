@@ -46,13 +46,17 @@ pub struct AppCell {
 }
 
 impl AppCell {
+    #[track_caller]
     pub fn borrow(&self) -> AppRef {
+        let thread_id = std::thread::current().id();
+        eprintln!("borrowed {thread_id:?}");
         AppRef(self.app.borrow())
     }
 
+    #[track_caller]
     pub fn borrow_mut(&self) -> AppRefMut {
-        // let thread_id = std::thread::current().id();
-        // dbg!("borrowed {thread_id:?}");
+        let thread_id = std::thread::current().id();
+        eprintln!("borrowed {thread_id:?}");
         AppRefMut(self.app.borrow_mut())
     }
 }
@@ -371,6 +375,10 @@ impl AppContext {
 
     pub fn reveal_path(&self, path: &Path) {
         self.platform.reveal_path(path)
+    }
+
+    pub fn should_auto_hide_scrollbars(&self) -> bool {
+        self.platform.should_auto_hide_scrollbars()
     }
 
     pub(crate) fn push_effect(&mut self, effect: Effect) {

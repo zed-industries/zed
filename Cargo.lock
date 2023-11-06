@@ -1348,6 +1348,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "channel2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "clock",
+ "collections",
+ "db2",
+ "feature_flags2",
+ "futures 0.3.28",
+ "gpui2",
+ "image",
+ "language2",
+ "lazy_static",
+ "log",
+ "parking_lot 0.11.2",
+ "postage",
+ "rand 0.8.5",
+ "rpc2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "settings2",
+ "smallvec",
+ "smol",
+ "sum_tree",
+ "tempfile",
+ "text",
+ "thiserror",
+ "time",
+ "tiny_http",
+ "url",
+ "util",
+ "uuid 1.4.1",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1866,7 +1903,6 @@ dependencies = [
  "async-tar",
  "clock",
  "collections",
- "context_menu",
  "fs",
  "futures 0.3.28",
  "gpui2",
@@ -2423,8 +2459,10 @@ dependencies = [
  "client",
  "collections",
  "editor",
+ "futures 0.3.28",
  "gpui",
  "language",
+ "log",
  "lsp",
  "postage",
  "project",
@@ -2648,6 +2686,60 @@ dependencies = [
  "util",
  "workspace",
  "workspace_types",
+]
+
+[[package]]
+name = "editor2"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "anyhow",
+ "client2",
+ "clock",
+ "collections",
+ "convert_case 0.6.0",
+ "copilot2",
+ "ctor",
+ "db2",
+ "drag_and_drop",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "fuzzy2",
+ "git",
+ "gpui2",
+ "indoc",
+ "itertools 0.10.5",
+ "language2",
+ "lazy_static",
+ "log",
+ "lsp2",
+ "multi_buffer2",
+ "ordered-float 2.10.0",
+ "parking_lot 0.11.2",
+ "postage",
+ "project2",
+ "rand 0.8.5",
+ "rich_text2",
+ "rpc2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "smallvec",
+ "smol",
+ "snippet",
+ "sqlez",
+ "sum_tree",
+ "text2",
+ "theme2",
+ "tree-sitter",
+ "tree-sitter-html",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "unindent",
+ "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -3552,7 +3644,6 @@ dependencies = [
  "foreign-types",
  "futures 0.3.28",
  "gpui2_macros",
- "gpui_macros",
  "image",
  "itertools 0.10.5",
  "lazy_static",
@@ -4402,6 +4493,7 @@ dependencies = [
  "lsp2",
  "parking_lot 0.11.2",
  "postage",
+ "pulldown-cmark",
  "rand 0.8.5",
  "regex",
  "rpc2",
@@ -9683,7 +9775,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-vue"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/tree-sitter-vue?rev=95b2890#95b28908d90e928c308866f7631e73ef6e1d4b5f"
+source = "git+https://github.com/zed-industries/tree-sitter-vue?rev=9b6cb221ccb8d0b956fcb17e9a1efac2feefeb58#9b6cb221ccb8d0b956fcb17e9a1efac2feefeb58"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -11171,6 +11263,7 @@ dependencies = [
  "copilot2",
  "ctor",
  "db2",
+ "editor2",
  "env_logger 0.9.3",
  "feature_flags2",
  "fs2",
