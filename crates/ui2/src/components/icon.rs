@@ -22,6 +22,7 @@ pub enum IconColor {
     Warning,
     Success,
     Info,
+    Selected,
 }
 
 impl IconColor {
@@ -36,6 +37,7 @@ impl IconColor {
             IconColor::Warning => cx.theme().status().warning,
             IconColor::Success => cx.theme().status().success,
             IconColor::Info => cx.theme().status().info,
+            IconColor::Selected => cx.theme().colors().icon_accent,
         }
     }
 }
@@ -55,6 +57,7 @@ pub enum Icon {
     ChevronRight,
     ChevronUp,
     Close,
+    Dash,
     Exit,
     ExclamationTriangle,
     File,
@@ -112,6 +115,7 @@ impl Icon {
             Icon::ChevronRight => "icons/chevron_right.svg",
             Icon::ChevronUp => "icons/chevron_up.svg",
             Icon::Close => "icons/x.svg",
+            Icon::Dash => "icons/dash.svg",
             Icon::Exit => "icons/exit.svg",
             Icon::ExclamationTriangle => "icons/warning.svg",
             Icon::File => "icons/file.svg",

@@ -10,6 +10,7 @@ members = [
     "crates/call",
     "crates/call2",
     "crates/channel",
+    "crates/channel2",
     "crates/cli",
     "crates/client",
     "crates/client2",
@@ -175,7 +176,7 @@ tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml",
 tree-sitter-lua = "0.0.14"
 tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
 tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "786689b0562b9799ce53e824cb45a1a2a04dc673"}
-tree-sitter-vue = {git = "https://github.com/zed-industries/tree-sitter-vue", rev = "95b2890"}
+tree-sitter-vue = {git = "https://github.com/zed-industries/tree-sitter-vue", rev = "9b6cb221ccb8d0b956fcb17e9a1efac2feefeb58"}
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "35a6052fbcafc5e5fc0f9415b8652be7dcaf7222" }
 async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }

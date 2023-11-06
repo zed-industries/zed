@@ -93,7 +93,7 @@ impl StatusBar {
             .items_center()
             .justify_between()
             .w_full()
-            .bg(cx.theme().colors().status_bar)
+            .bg(cx.theme().colors().status_bar_background)
             .child(self.left_tools(view, cx))
             .child(self.right_tools(view, cx))
     }

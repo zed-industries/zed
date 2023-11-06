@@ -10,24 +10,6 @@ pub use theme2::ActiveTheme;
 use gpui2::Hsla;
 use strum::EnumIter;
 
-/// Represents a person with a Zed account's public profile.
-/// All data in this struct should be considered public.
-pub struct PublicActor {
-    pub username: SharedString,
-    pub avatar: SharedString,
-    pub is_contact: bool,
-}
-
-impl PublicActor {
-    pub fn new(username: impl Into<SharedString>, avatar: impl Into<SharedString>) -> Self {
-        Self {
-            username: username.into(),
-            avatar: avatar.into(),
-            is_contact: false,
-        }
-    }
-}
-
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum FileSystemStatus {
     #[default]
@@ -172,68 +154,10 @@ impl InteractionState {
     }
 }
 
-#[derive(Default, PartialEq)]
-pub enum SelectedState {
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum Selected {
     #[default]
     Unselected,
-    PartiallySelected,
+    Indeterminate,
     Selected,
-}
-
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Toggleable {
-    Toggleable(ToggleState),
-    #[default]
-    NotToggleable,
-}
-
-impl Toggleable {
-    pub fn is_toggled(&self) -> bool {
-        match self {
-            Self::Toggleable(ToggleState::Toggled) => true,
-            _ => false,
-        }
-    }
-}
-
-impl From<ToggleState> for Toggleable {
-    fn from(state: ToggleState) -> Self {
-        Self::Toggleable(state)
-    }
-}
-
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-pub enum ToggleState {
-    /// The "on" state of a toggleable element.
-    ///
-    /// Example:
-    ///     - A collasable list that is currently expanded
-    ///     - A toggle button that is currently on.
-    Toggled,
-    /// The "off" state of a toggleable element.
-    ///
-    /// Example:
-    ///     - A collasable list that is currently collapsed
-    ///     - A toggle button that is currently off.
-    #[default]
-    NotToggled,
-}
-
-impl From<Toggleable> for ToggleState {
-    fn from(toggleable: Toggleable) -> Self {
-        match toggleable {
-            Toggleable::Toggleable(state) => state,
-            Toggleable::NotToggleable => ToggleState::NotToggled,
-        }
-    }
-}
-
-impl From<bool> for ToggleState {
-    fn from(toggled: bool) -> Self {
-        if toggled {
-            ToggleState::Toggled
-        } else {
-            ToggleState::NotToggled
-        }
-    }
 }

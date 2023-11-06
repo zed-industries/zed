@@ -113,7 +113,7 @@ impl<V: 'static> PaneGroup<V> {
                 .gap_px()
                 .w_full()
                 .h_full()
-                .bg(cx.theme().colors().editor)
+                .bg(cx.theme().colors().editor_background)
                 .children(self.groups.into_iter().map(|group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {

@@ -17,7 +17,7 @@ pub use syntax::*;
 
 use gpui::{AppContext, Hsla, SharedString};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Appearance {
     Light,
     Dark,

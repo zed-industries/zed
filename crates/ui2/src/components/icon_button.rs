@@ -73,12 +73,12 @@ impl<V: 'static> IconButton<V> {
 
         let (bg_color, bg_hover_color, bg_active_color) = match self.variant {
             ButtonVariant::Filled => (
-                cx.theme().colors().element,
+                cx.theme().colors().element_background,
                 cx.theme().colors().element_hover,
                 cx.theme().colors().element_active,
             ),
             ButtonVariant::Ghost => (
-                cx.theme().colors().ghost_element,
+                cx.theme().colors().ghost_element_background,
                 cx.theme().colors().ghost_element_hover,
                 cx.theme().colors().ghost_element_active,
             ),

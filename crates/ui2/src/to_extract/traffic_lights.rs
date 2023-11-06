@@ -28,7 +28,7 @@ impl TrafficLight {
             (true, TrafficLightColor::Red) => system_colors.mac_os_traffic_light_red,
             (true, TrafficLightColor::Yellow) => system_colors.mac_os_traffic_light_yellow,
             (true, TrafficLightColor::Green) => system_colors.mac_os_traffic_light_green,
-            (false, _) => cx.theme().colors().element,
+            (false, _) => cx.theme().colors().element_background,
         };
 
         div().w_3().h_3().rounded_full().bg(fill)

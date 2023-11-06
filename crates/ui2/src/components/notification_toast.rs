@@ -34,7 +34,7 @@ impl NotificationToast {
             .px_1p5()
             .rounded_lg()
             .shadow_md()
-            .bg(cx.theme().colors().elevated_surface)
+            .bg(cx.theme().colors().elevated_surface_background)
             .child(div().size_full().child(self.label.clone()))
     }
 }

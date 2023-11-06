@@ -18,9 +18,8 @@ impl ProjectPanel {
             .id(self.id.clone())
             .flex()
             .flex_col()
-            .w_full()
-            .h_full()
-            .bg(cx.theme().colors().surface)
+            .size_full()
+            .bg(cx.theme().colors().surface_background)
             .child(
                 div()
                     .id("project-panel-contents")
@@ -30,15 +29,13 @@ impl ProjectPanel {
                     .overflow_y_scroll()
                     .child(
                         List::new(static_project_panel_single_items())
-                            .header(ListHeader::new("FILES").toggle(ToggleState::Toggled))
-                            .empty_message("No files in directory")
-                            .toggle(ToggleState::Toggled),
+                            .header(ListHeader::new("FILES"))
+                            .empty_message("No files in directory"),
                     )
                     .child(
                         List::new(static_project_panel_project_items())
-                            .header(ListHeader::new("PROJECT").toggle(ToggleState::Toggled))
-                            .empty_message("No folders in directory")
-                            .toggle(ToggleState::Toggled),
+                            .header(ListHeader::new("PROJECT"))
+                            .empty_message("No folders in directory"),
                     ),
             )
             .child(

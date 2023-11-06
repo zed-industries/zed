@@ -2,8 +2,27 @@ use std::sync::Arc;
 
 use gpui2::{div, rems, DefiniteLength, Hsla, MouseButton, WindowContext};
 
-use crate::prelude::*;
 use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor, LineHeightStyle};
+use crate::{prelude::*, IconButton};
+
+/// Provides the flexibility to use either a standard
+/// button or an icon button in a given context.
+pub enum ButtonOrIconButton<V: 'static> {
+    Button(Button<V>),
+    IconButton(IconButton<V>),
+}
+
+impl<V: 'static> From<Button<V>> for ButtonOrIconButton<V> {
+    fn from(value: Button<V>) -> Self {
+        Self::Button(value)
+    }
+}
+
+impl<V: 'static> From<IconButton<V>> for ButtonOrIconButton<V> {
+    fn from(value: IconButton<V>) -> Self {
+        Self::IconButton(value)
+    }
+}
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum IconPosition {
@@ -22,8 +41,8 @@ pub enum ButtonVariant {
 impl ButtonVariant {
     pub fn bg_color(&self, cx: &mut WindowContext) -> Hsla {
         match self {
-            ButtonVariant::Ghost => cx.theme().colors().ghost_element,
-            ButtonVariant::Filled => cx.theme().colors().element,
+            ButtonVariant::Ghost => cx.theme().colors().ghost_element_background,
+            ButtonVariant::Filled => cx.theme().colors().element_background,
         }
     }
 
