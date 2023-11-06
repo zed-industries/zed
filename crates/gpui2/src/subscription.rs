@@ -38,7 +38,7 @@ where
         lock.subscribers
             .entry(emitter_key.clone())
             .or_default()
-            .insert(Default::default())
+            .get_or_insert_with(|| Default::default())
             .insert(subscriber_id, callback);
         let this = self.0.clone();
         Subscription {
