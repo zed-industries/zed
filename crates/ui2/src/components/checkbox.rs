@@ -120,7 +120,10 @@ impl Checkbox {
                 cx.theme().colors().element_selected,
                 cx.theme().colors().border,
             ),
-            (false, false) => (cx.theme().colors().element, cx.theme().colors().border),
+            (false, false) => (
+                cx.theme().colors().element_background,
+                cx.theme().colors().border,
+            ),
         };
 
         div()

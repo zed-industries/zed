@@ -31,7 +31,7 @@ impl TabBar {
             .id(self.id.clone())
             .w_full()
             .flex()
-            .bg(cx.theme().colors().tab_bar)
+            .bg(cx.theme().colors().tab_bar_background)
             // Left Side
             .child(
                 div()

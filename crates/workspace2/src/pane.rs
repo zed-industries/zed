@@ -1363,12 +1363,12 @@ impl Pane {
 
         let (tab_bg, tab_hover_bg, tab_active_bg) = match ix == self.active_item_index {
             false => (
-                cx.theme().colors().tab_inactive,
+                cx.theme().colors().tab_inactive_background,
                 cx.theme().colors().ghost_element_hover,
                 cx.theme().colors().ghost_element_active,
             ),
             true => (
-                cx.theme().colors().tab_active,
+                cx.theme().colors().tab_active_background,
                 cx.theme().colors().element_hover,
                 cx.theme().colors().element_active,
             ),
@@ -1432,7 +1432,7 @@ impl Pane {
             .id("tab_bar")
             .w_full()
             .flex()
-            .bg(cx.theme().colors().tab_bar)
+            .bg(cx.theme().colors().tab_bar_background)
             // Left Side
             .child(
                 div()

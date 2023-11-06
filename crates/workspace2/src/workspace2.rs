@@ -2697,7 +2697,7 @@ impl Workspace {
 
     fn render_titlebar(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
         div()
-            .bg(cx.theme().colors().title_bar)
+            .bg(cx.theme().colors().title_bar_background)
             .when(
                 !matches!(cx.window_bounds(), WindowBounds::Fullscreen),
                 |s| s.pl_20(),

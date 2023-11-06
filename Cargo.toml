@@ -94,6 +94,7 @@ members = [
     "crates/text",
     "crates/theme",
     "crates/theme2",
+    "crates/theme_importer",
     "crates/theme_selector",
     "crates/ui2",
     "crates/util",

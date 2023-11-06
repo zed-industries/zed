@@ -19,7 +19,7 @@ impl ProjectPanel {
             .flex()
             .flex_col()
             .size_full()
-            .bg(cx.theme().colors().surface)
+            .bg(cx.theme().colors().surface_background)
             .child(
                 div()
                     .id("project-panel-contents")
