@@ -51,6 +51,7 @@ pub enum ComponentStory {
     TrafficLights,
     Workspace,
     ZIndex,
+    Picker,
 }
 
 impl ComponentStory {
@@ -94,6 +95,7 @@ impl ComponentStory {
             Self::TrafficLights => cx.build_view(|_| ui::TrafficLightsStory).into(),
             Self::Workspace => ui::WorkspaceStory::view(cx).into(),
             Self::ZIndex => cx.build_view(|_| ZIndexStory).into(),
+            Self::Picker => PickerStory::new(cx).into(),
         }
     }
 }

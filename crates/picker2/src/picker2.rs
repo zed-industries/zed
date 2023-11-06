@@ -20,24 +20,28 @@
 
 use std::ops::Range;
 
-use gpui::{div, AppContext, Component, Div, Element, ParentElement, Render, ViewContext};
+use gpui::{
+    div, list, AppContext, Component, Div, Element, ElementId, ParentElement, Render, ViewContext,
+};
 
-pub struct Picker<D> {
-    delegate: D,
-    //     query_editor: ViewHandle<Editor>,
-    //     list_state: UniformListState,
-    //     max_size: Vector2F,
-    //     theme: Arc<Mutex<Box<dyn Fn(&theme::Theme) -> theme::Picker>>>,
-    //     confirmed: bool,
-    //     pending_update_matches: Option<Task<Option<()>>>,
-    //     confirm_on_update: Option<bool>,
-    //     has_focus: bool,
-}
+// pub struct Picker<D> {
+//     delegate: D,
+//     query_editor: ViewHandle<Editor>,
+//     list_state: UniformListState,
+//     max_size: Vector2F,
+//     theme: Arc<Mutex<Box<dyn Fn(&theme::Theme) -> theme::Picker>>>,
+//     confirmed: bool,
+//     pending_update_matches: Option<Task<Option<()>>>,
+//     confirm_on_update: Option<bool>,
+//     has_focus: bool,
+// }
 
 pub trait PickerDelegate: Sized + 'static {
-    type ListItem: Element<Picker<Self>>;
+    type ListItem: Component<Self>;
     //     fn placeholder_text(&self) -> Arc<str>;
-    //     fn match_count(&self) -> usize;
+
+    fn match_count(&self, picker_id: ElementId) -> usize;
+
     //     fn selected_index(&self) -> usize;
     //     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
     //     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
@@ -51,7 +55,8 @@ pub trait PickerDelegate: Sized + 'static {
         active: bool,
         hovered: bool,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        picker_id: ElementId,
+        cx: &mut ViewContext<Self>,
     ) -> Self::ListItem;
 
     //     fn center_selection_after_match_updates(&self) -> bool {
@@ -75,27 +80,33 @@ pub trait PickerDelegate: Sized + 'static {
 //     type Event = PickerEvent;
 // }
 
-impl<D: PickerDelegate> Render for Picker<D> {
-    type Element = Div<Self>;
+#[derive(Component)]
+pub struct Picker<V: PickerDelegate> {
+    id: ElementId,
+    phantom: std::marker::PhantomData<V>,
+}
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
-        div().child(list(
-            "candidates",
-            |this: &mut Picker<D>, visible_range, cx| {
-                visible_range
-                    .into_iter()
-                    .map(|ix| this.delegate.render_match(ix, false, false, false, cx))
-            },
-        ))
+impl<V: PickerDelegate> Picker<V> {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self {
+            id: id.into(),
+            phantom: std::marker::PhantomData,
+        }
     }
 }
 
-fn list<'a, D: PickerDelegate, F, I>(id: &'static str, f: F) -> Div<Picker<D>>
-where
-    F: FnOnce(&'a mut Picker<D>, Range<usize>, &'a mut ViewContext<Picker<D>>) -> I,
-    I: 'a + Iterator<Item = D::ListItem>,
-{
-    todo!();
+impl<V: 'static + PickerDelegate> Picker<V> {
+    pub fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        div().id(self.id.clone()).child(list(
+            "candidates",
+            view.match_count(self.id.clone()),
+            move |this: &mut V, visible_range, cx| {
+                visible_range
+                    .map(|ix| this.render_match(ix, false, false, false, self.id.clone(), cx))
+                    .collect()
+            },
+        ))
+    }
 }
 
 // impl<D: PickerDelegate> View for Picker<D> {
@@ -213,7 +224,7 @@ where
 //         cx.add_action(Self::cancel);
 //     }
 
-//     pub fn new(delegate: D, cx: &mut ViewContext<Self>) -> Self {
+// pub fn new(delegate: D, cx: &mut ViewContext<Self>) -> Self {
 //         let theme = Arc::new(Mutex::new(
 //             Box::new(|theme: &theme::Theme| theme.picker.clone())
 //                 as Box<dyn Fn(&theme::Theme) -> theme::Picker>,
@@ -247,7 +258,8 @@ where
 //         };
 //         this.update_matches(String::new(), cx);
 //         this
-//     }
+// Self { delegate }
+// }
 
 //     pub fn with_max_size(mut self, width: f32, height: f32) -> Self {
 //         self.max_size = vec2f(width, height);

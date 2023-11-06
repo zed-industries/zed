@@ -8542,6 +8542,7 @@ dependencies = [
  "gpui2",
  "itertools 0.11.0",
  "log",
+ "picker2",
  "rust-embed",
  "serde",
  "settings2",

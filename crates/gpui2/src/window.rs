@@ -559,6 +559,12 @@ impl<'a> WindowContext<'a> {
             .request_measured_layout(style, rem_size, measure)
     }
 
+    pub fn compute_layout(&mut self, layout_id: LayoutId, available_space: Size<AvailableSpace>) {
+        self.window
+            .layout_engine
+            .compute_layout(layout_id, available_space)
+    }
+
     /// Obtain the bounds computed for the given LayoutId relative to the window. This method should not
     /// be invoked until the paint phase begins, and will usually be invoked by GPUI itself automatically
     /// in order to pass your element its `Bounds` automatically.

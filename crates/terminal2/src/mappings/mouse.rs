@@ -186,9 +186,9 @@ pub fn mouse_side(
 }
 
 pub fn grid_point(pos: Point<Pixels>, cur_size: TerminalSize, display_offset: usize) -> AlacPoint {
-    let col = GridCol((pos.x / cur_size.cell_width).as_usize());
+    let col = GridCol((cur_size.cell_width / pos.x) as usize);
     let col = min(col, cur_size.last_column());
-    let line = (pos.y / cur_size.line_height).as_isize() as i32;
+    let line = (cur_size.line_height / pos.y) as i32;
     let line = min(line, cur_size.bottommost_line().0);
     AlacPoint::new(GridLine(line - display_offset as i32), col)
 }

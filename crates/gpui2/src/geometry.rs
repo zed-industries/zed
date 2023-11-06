@@ -259,6 +259,24 @@ impl From<Size<Pixels>> for Size<GlobalPixels> {
     }
 }
 
+impl From<Size<Pixels>> for Size<DefiniteLength> {
+    fn from(size: Size<Pixels>) -> Self {
+        Size {
+            width: size.width.into(),
+            height: size.height.into(),
+        }
+    }
+}
+
+impl From<Size<Pixels>> for Size<AbsoluteLength> {
+    fn from(size: Size<Pixels>) -> Self {
+        Size {
+            width: size.width.into(),
+            height: size.height.into(),
+        }
+    }
+}
+
 impl Size<Length> {
     pub fn full() -> Self {
         Self {
@@ -541,6 +559,15 @@ impl Edges<DefiniteLength> {
             left: px(0.).into(),
         }
     }
+
+    pub fn to_pixels(&self, parent_size: Size<AbsoluteLength>, rem_size: Pixels) -> Edges<Pixels> {
+        Edges {
+            top: self.top.to_pixels(parent_size.height, rem_size),
+            right: self.right.to_pixels(parent_size.width, rem_size),
+            bottom: self.bottom.to_pixels(parent_size.height, rem_size),
+            left: self.left.to_pixels(parent_size.width, rem_size),
+        }
+    }
 }
 
 impl Edges<AbsoluteLength> {
@@ -672,16 +699,16 @@ impl<T> Copy for Corners<T> where T: Copy + Clone + Default + Debug {}
 pub struct Pixels(pub(crate) f32);
 
 impl std::ops::Div for Pixels {
-    type Output = Self;
+    type Output = f32;
 
     fn div(self, rhs: Self) -> Self::Output {
-        Self(self.0 / rhs.0)
+        self.0 / rhs.0
     }
 }
 
 impl std::ops::DivAssign for Pixels {
     fn div_assign(&mut self, rhs: Self) {
-        self.0 /= rhs.0;
+        *self = Self(self.0 / rhs.0);
     }
 }
 
@@ -731,14 +758,6 @@ impl MulAssign<f32> for Pixels {
 
 impl Pixels {
     pub const MAX: Pixels = Pixels(f32::MAX);
-
-    pub fn as_usize(&self) -> usize {
-        self.0 as usize
-    }
-
-    pub fn as_isize(&self) -> isize {
-        self.0 as isize
-    }
 
     pub fn floor(&self) -> Self {
         Self(self.0.floor())
