@@ -57,7 +57,7 @@ impl Checkbox {
         let icon = match self.checked {
             // When selected, we show a checkmark.
             Selected::Selected => {
-                div().child(
+                Some(
                     IconElement::new(Icon::Check)
                         .size(crate::IconSize::Small)
                         .color(
@@ -72,7 +72,7 @@ impl Checkbox {
             }
             // In an indeterminate state, we show a dash.
             Selected::Indeterminate => {
-                div().child(
+                Some(
                     IconElement::new(Icon::Dash)
                         .size(crate::IconSize::Small)
                         .color(
@@ -86,7 +86,7 @@ impl Checkbox {
                 )
             }
             // When unselected, we show nothing.
-            Selected::Unselected => div(),
+            Selected::Unselected => None,
         };
 
         // A checkbox could be in an indeterminate state,
@@ -158,7 +158,7 @@ impl Checkbox {
                             el.bg(cx.theme().colors().element_hover)
                         })
                     })
-                    .child(icon),
+                    .children(icon),
             )
     }
 }
