@@ -220,7 +220,7 @@ impl Buffer {
             .flex_1()
             .w_full()
             .h_full()
-            .bg(cx.theme().colors().editor)
+            .bg(cx.theme().colors().editor_background)
             .children(rows)
     }
 }

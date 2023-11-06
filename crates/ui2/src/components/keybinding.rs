@@ -66,7 +66,7 @@ impl Key {
             .rounded_md()
             .text_sm()
             .text_color(cx.theme().colors().text)
-            .bg(cx.theme().colors().element)
+            .bg(cx.theme().colors().element_background)
             .child(self.key.clone())
     }
 }
