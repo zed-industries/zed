@@ -9,9 +9,10 @@ use crate::{
 use anyhow::{Context, Result};
 use collections::HashMap;
 use editor::{
-    items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
+     scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
     SelectAll, MAX_TAB_TITLE_LEN,
 };
+use editor_extensions::{active_match_index, FollowableEditor};
 use futures::StreamExt;
 use gpui::{
     actions,
@@ -134,7 +135,7 @@ pub struct ProjectSearchView {
     model: ModelHandle<ProjectSearch>,
     query_editor: ViewHandle<Editor>,
     replacement_editor: ViewHandle<Editor>,
-    results_editor: ViewHandle<Editor>,
+    results_editor: ViewHandle<FollowableEditor>,
     semantic_state: Option<SemanticState>,
     semantic_permissioned: Option<bool>,
     search_options: SearchOptions,
@@ -650,8 +651,8 @@ impl Item for ProjectSearchView {
     }
 
     fn set_nav_history(&mut self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) {
-        self.results_editor.update(cx, |editor, _| {
-            editor.set_nav_history(Some(nav_history));
+        self.results_editor.update(cx, |editor, cx| {
+            editor.set_nav_history(nav_history,cx);
         });
     }
 
@@ -665,7 +666,7 @@ impl Item for ProjectSearchView {
             ViewEvent::UpdateTab => {
                 smallvec::smallvec![ItemEvent::UpdateBreadcrumbs, ItemEvent::UpdateTab]
             }
-            ViewEvent::EditorEvent(editor_event) => Editor::to_item_events(editor_event),
+            ViewEvent::EditorEvent(editor_event) => FollowableEditor::to_item_events(editor_event),
             ViewEvent::Dismiss => smallvec::smallvec![ItemEvent::CloseItem],
             _ => SmallVec::new(),
         }
@@ -965,8 +966,8 @@ impl ProjectSearchView {
             editor
         });
         let results_editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_multibuffer(excerpts, Some(Arc::new(project.clone())), cx);
-            editor.set_searchable(false);
+            let mut editor = FollowableEditor::for_multibuffer(excerpts, project.clone(), cx);
+            editor.0.update(cx, |this, _| this.set_searchable(false));
             editor
         });
         cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
@@ -1100,7 +1101,7 @@ impl ProjectSearchView {
             .or_else(|| workspace.item_of_type::<ProjectSearchView>(cx));
 
         let query = workspace.active_item(cx).and_then(|item| {
-            let editor = item.act_as::<Editor>(cx)?;
+            let editor = item.act_as::<FollowableEditor>(cx)?;
             let query = editor.query_suggestion(cx);
             if query.is_empty() {
                 None
@@ -1246,11 +1247,14 @@ impl ProjectSearchView {
 
             let range_to_select = match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
-                let range_to_select = editor.range_for_match(&range_to_select);
-                editor.unfold_ranges([range_to_select.clone()], false, true, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    s.select_ranges([range_to_select])
-                });
+                editor.0.update(cx, |this, cx| {
+                    let range_to_select = this.range_for_match(&range_to_select);
+                    this.unfold_ranges([range_to_select.clone()], false, true, cx);
+                    this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        s.select_ranges([range_to_select])
+                    });
+                    })
+
             });
         }
     }
@@ -1291,16 +1295,16 @@ impl ProjectSearchView {
                     let range_to_select = match_ranges
                         .first()
                         .clone()
-                        .map(|range| editor.range_for_match(range));
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        .map(|range| editor.0.update(cx, |this, cx| this.range_for_match(range)));
+                    editor.0.update(cx, |this, cx| this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select_ranges(range_to_select)
-                    });
+                    }));
                 }
-                editor.highlight_background::<Self>(
+                editor.0.update(cx, |this, cx| this.highlight_background::<Self>(
                     match_ranges,
                     |theme| theme.search.match_background,
                     cx,
-                );
+                ));
             });
             if is_new_search && self.query_editor.is_focused(cx) {
                 self.focus_results_editor(cx);
@@ -1315,8 +1319,8 @@ impl ProjectSearchView {
         let results_editor = self.results_editor.read(cx);
         let new_index = active_match_index(
             &self.model.read(cx).match_ranges,
-            &results_editor.selections.newest_anchor().head(),
-            &results_editor.buffer().read(cx).snapshot(cx),
+            &results_editor.0.read(cx).selections.newest_anchor().head(),
+            &results_editor.0.read(cx).buffer().read(cx).snapshot(cx),
         );
         if self.active_match_index != new_index {
             self.active_match_index = new_index;

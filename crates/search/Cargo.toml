@@ -12,6 +12,7 @@ doctest = false
 bitflags = "1"
 collections = { path = "../collections" }
 editor = { path = "../editor" }
+editor_extensions = { path = "../editor_extensions" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 menu = { path = "../menu" }

@@ -7726,6 +7726,7 @@ dependencies = [
  "client",
  "collections",
  "editor",
+ "editor_extensions",
  "futures 0.3.28",
  "gpui",
  "language",
