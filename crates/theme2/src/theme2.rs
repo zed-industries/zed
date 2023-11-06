@@ -39,7 +39,8 @@ impl ActiveTheme for AppContext {
 }
 
 pub struct ThemeFamily {
-    pub id: String,
+    #[allow(dead_code)]
+    pub(crate) id: String,
     pub name: SharedString,
     pub author: SharedString,
     pub themes: Vec<ThemeVariant>,
@@ -49,7 +50,8 @@ pub struct ThemeFamily {
 impl ThemeFamily {}
 
 pub struct ThemeVariant {
-    pub id: String,
+    #[allow(dead_code)]
+    pub(crate) id: String,
     pub name: SharedString,
     pub appearance: Appearance,
     pub styles: ThemeStyles,
