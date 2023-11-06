@@ -128,12 +128,8 @@ impl TestDispatcher {
         })
     }
 
-    pub fn record_backtrace(&self) {
-        todo!("record_backtrace")
-    }
-
     pub fn rng(&self) -> StdRng {
-        todo!("rng")
+        self.state.lock().random.clone()
     }
 }
 

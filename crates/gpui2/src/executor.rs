@@ -223,11 +223,6 @@ impl BackgroundExecutor {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn record_backtrace(&self) {
-        self.dispatcher.as_test().unwrap().record_backtrace();
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
     pub fn rng(&self) -> StdRng {
         self.dispatcher.as_test().unwrap().rng()
     }

@@ -36,12 +36,4 @@ impl Executor {
             }
         }
     }
-
-    pub fn record_backtrace(&self) {
-        match self {
-            Executor::Production => {}
-            #[cfg(test)]
-            Executor::Deterministic(background) => background.record_backtrace(),
-        }
-    }
 }
