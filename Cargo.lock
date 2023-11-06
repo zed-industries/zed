@@ -6007,6 +6007,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "picker2"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "editor2",
+ "env_logger 0.9.3",
+ "gpui2",
+ "menu2",
+ "parking_lot 0.11.2",
+ "serde_json",
+ "settings2",
+ "theme2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "pico-args"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

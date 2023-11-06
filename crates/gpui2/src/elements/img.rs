@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     div, AnyElement, BorrowWindow, Bounds, Component, Div, DivState, Element, ElementFocus,
     ElementId, ElementInteraction, FocusDisabled, FocusEnabled, FocusListeners, Focusable,
