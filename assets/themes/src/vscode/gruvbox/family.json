@@ -1,0 +1,36 @@
+{
+    "name": "Andromeda",
+    "author": "morhetz",
+    "themes": [
+        {
+            "name": "Gruvbox Dark Hard",
+            "file_name": "gruvbox-dark-hard.json",
+            "appearance": "dark"
+        },
+        {
+            "name": "Gruvbox Dark Medium",
+            "file_name": "gruvbox-dark-medium.json",
+            "appearance": "dark"
+        },
+        {
+            "name": "Gruvbox Dark Soft",
+            "file_name": "gruvbox-dark-soft.json",
+            "appearance": "dark"
+        },
+        {
+            "name": "Gruvbox Light Hard",
+            "file_name": "gruvbox-light-hard.json",
+            "appearance": "light"
+        },
+        {
+            "name": "Gruvbox Light Medium",
+            "file_name": "gruvbox-light-medium.json",
+            "appearance": "light"
+        },
+        {
+            "name": "Gruvbox Light Soft",
+            "file_name": "gruvbox-light-soft.json",
+            "appearance": "light"
+        }
+    ]
+}
