@@ -122,6 +122,7 @@ impl TestServer {
 
     pub async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
         cx.update(|cx| {
+            println!("PLS SHOW UP");
             if cx.has_global::<SettingsStore>() {
                 panic!("Same cx used to create two test clients")
             }

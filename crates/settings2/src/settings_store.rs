@@ -86,6 +86,7 @@ pub trait Settings: 'static + Send + Sync {
         });
     }
 
+    #[track_caller]
     fn get<'a>(path: Option<(usize, &Path)>, cx: &'a AppContext) -> &'a Self
     where
         Self: Sized,
@@ -93,6 +94,7 @@ pub trait Settings: 'static + Send + Sync {
         cx.global::<SettingsStore>().get(path)
     }
 
+    #[track_caller]
     fn get_global<'a>(cx: &'a AppContext) -> &'a Self
     where
         Self: Sized,
@@ -100,6 +102,7 @@ pub trait Settings: 'static + Send + Sync {
         cx.global::<SettingsStore>().get(None)
     }
 
+    #[track_caller]
     fn override_global<'a>(settings: Self, cx: &'a mut AppContext)
     where
         Self: Sized,

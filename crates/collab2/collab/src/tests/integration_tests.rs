@@ -3223,12 +3223,16 @@ async fn test_local_settings(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
+    dbg!("HERE111");
     let mut server = TestServer::start(&deterministic).await;
+    dbg!("HERE");
     let client_a = server.create_client(cx_a, "user_a").await;
+    dbg!("HERE2");
     let client_b = server.create_client(cx_b, "user_b").await;
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    dbg!("HERE4");
     let active_call_a = cx_a.read(ActiveCall::global);
 
     // As client A, open a project that contains some local settings files
@@ -3259,6 +3263,7 @@ async fn test_local_settings(
         .await
         .unwrap();
 
+    dbg!("HERE6");
     // As client B, join that project and observe the local settings.
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
     let worktree_b = project_b.read_with(cx_b, |project, cx| project.worktrees(cx).next().unwrap());
@@ -3317,11 +3322,11 @@ async fn test_local_settings(
             ]
         )
     });
-
+    dbg!("GOT TO THE DISCONNECT");
     // As client B, disconnect.
     server.forbid_connections();
     server.disconnect_client(client_b.peer_id().unwrap());
-
+    dbg!("GOT PAST DISCONNECT");
     // As client A, change and remove settings files while client B is disconnected.
     client_a
         .fs()
@@ -3344,6 +3349,7 @@ async fn test_local_settings(
             &[(Path::new("a").into(), r#"{"hard_tabs":true}"#.to_string()),]
         )
     });
+    dbg!("GOT TO THE END");
 }
 
 #[gpui::test(iterations = 10)]

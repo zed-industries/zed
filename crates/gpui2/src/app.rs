@@ -706,6 +706,7 @@ impl AppContext {
     }
 
     /// Access the global of the given type. Panics if a global for that type has not been assigned.
+    #[track_caller]
     pub fn global<G: 'static>(&self) -> &G {
         self.globals_by_type
             .get(&TypeId::of::<G>())
@@ -722,6 +723,7 @@ impl AppContext {
     }
 
     /// Access the global of the given type mutably. Panics if a global for that type has not been assigned.
+    #[track_caller]
     pub fn global_mut<G: 'static>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
