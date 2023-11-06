@@ -1,0 +1,16 @@
+{
+    "name": "Andromeda",
+    "author": "Eliver Lara (EliverLara)",
+    "themes": [
+        {
+            "name": "Andromeda",
+            "file_name": "andromeda.json",
+            "appearance": "dark"
+        },
+        {
+            "name": "Andromeda Bordered",
+            "file_name": "andromeda-bordered.json",
+            "appearance": "dark"
+        }
+    ]
+}

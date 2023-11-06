@@ -1,0 +1,11 @@
+{
+    "name": "Synthwave 84",
+    "author": "Robb Owen (robb0wen)",
+    "themes": [
+        {
+            "name": "Synthwave 84",
+            "file_name": "synthwave.json",
+            "appearance": "dark"
+        }
+    ]
+}

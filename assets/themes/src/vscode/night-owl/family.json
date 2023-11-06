@@ -1,0 +1,16 @@
+{
+    "name": "Night Owl",
+    "author": "Sarah Drasner (sdras)",
+    "themes": [
+        {
+            "name": "Night Owl",
+            "file_name": "night-owl.json",
+            "appearance": "dark"
+        },
+        {
+            "name": "Night Owl Light",
+            "file_name": "night-owl-light.json",
+            "appearance": "light"
+        }
+    ]
+}

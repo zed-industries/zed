@@ -1,0 +1,21 @@
+{
+    "name": "Palenight",
+    "author": "Olaolu Olawuyi (whizkydee)",
+    "themes": [
+        {
+            "name": "Palenight",
+            "file_name": "palenight.json",
+            "appearance": "dark"
+        },
+        {
+            "name": "Palenight Operator",
+            "file_name": "palenight-operator.json",
+            "appearance": "dark"
+        },
+        {
+            "name": "Palenight (Mild Contrast)",
+            "file_name": "palenight-mild-contrast.json",
+            "appearance": "dark"
+        }
+    ]
+}
