@@ -42,7 +42,7 @@ pub struct Workspace {
     show_terminal: bool,
     show_debug: bool,
     show_language_selector: bool,
-    test_checkbox_selection: Selected,
+    test_checkbox_selection: Selection,
     debug: Gpui2UiDebug,
 }
 
@@ -59,7 +59,7 @@ impl Workspace {
             show_language_selector: false,
             show_debug: false,
             show_notifications_panel: true,
-            test_checkbox_selection: Selected::Unselected,
+            test_checkbox_selection: Selection::Unselected,
             debug: Gpui2UiDebug::default(),
         }
     }
@@ -228,9 +228,8 @@ impl Render for Workspace {
                     .bg(cx.theme().colors().background)
                     .child(
                         Checkbox::new("test_checkbox", self.test_checkbox_selection).on_click(
-                            |workspace: &mut Workspace, cx| {
-                                workspace.test_checkbox_selection =
-                                    workspace.test_checkbox_selection.inverse();
+                            |selection, workspace: &mut Workspace, cx| {
+                                workspace.test_checkbox_selection = selection;
 
                                 cx.notify();
                             },

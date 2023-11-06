@@ -11,18 +11,20 @@ use gpui2::{
 };
 use theme2::ActiveTheme;
 
-use crate::{ClickHandler, Icon, IconColor, IconElement, Selected};
+use crate::{Icon, IconColor, IconElement, Selection};
+
+pub type CheckHandler<V> = Arc<dyn Fn(Selection, &mut V, &mut ViewContext<V>) + Send + Sync>;
 
 #[derive(Component)]
 pub struct Checkbox<V: 'static> {
     id: ElementId,
-    checked: Selected,
+    checked: Selection,
     disabled: bool,
-    on_click: Option<ClickHandler<V>>,
+    on_click: Option<CheckHandler<V>>,
 }
 
 impl<V: 'static> Checkbox<V> {
-    pub fn new(id: impl Into<ElementId>, checked: Selected) -> Self {
+    pub fn new(id: impl Into<ElementId>, checked: Selection) -> Self {
         Self {
             id: id.into(),
             checked,
@@ -38,7 +40,7 @@ impl<V: 'static> Checkbox<V> {
 
     pub fn on_click(
         mut self,
-        handler: impl 'static + Fn(&mut V, &mut ViewContext<V>) + Send + Sync,
+        handler: impl 'static + Fn(Selection, &mut V, &mut ViewContext<V>) + Send + Sync,
     ) -> Self {
         self.on_click = Some(Arc::new(handler));
         self
@@ -47,15 +49,9 @@ impl<V: 'static> Checkbox<V> {
     pub fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let group_id = format!("checkbox_group_{:?}", self.id);
 
-        // The icon is different depending on the state of the checkbox.
-        //
-        // We need the match to return all the same type,
-        // so we wrap the eatch result in a div.
-        //
-        // We are still exploring the best way to handle this.
         let icon = match self.checked {
             // When selected, we show a checkmark.
-            Selected::Selected => {
+            Selection::Selected => {
                 Some(
                     IconElement::new(Icon::Check)
                         .size(crate::IconSize::Small)
@@ -70,7 +66,7 @@ impl<V: 'static> Checkbox<V> {
                 )
             }
             // In an indeterminate state, we show a dash.
-            Selected::Indeterminate => {
+            Selection::Indeterminate => {
                 Some(
                     IconElement::new(Icon::Dash)
                         .size(crate::IconSize::Small)
@@ -85,7 +81,7 @@ impl<V: 'static> Checkbox<V> {
                 )
             }
             // When unselected, we show nothing.
-            Selected::Unselected => None,
+            Selection::Unselected => None,
         };
 
         // A checkbox could be in an indeterminate state,
@@ -97,7 +93,7 @@ impl<V: 'static> Checkbox<V> {
         // For the sake of styles we treat the indeterminate state as selected,
         // but it's icon will be different.
         let selected =
-            self.checked == Selected::Selected || self.checked == Selected::Indeterminate;
+            self.checked == Selection::Selected || self.checked == Selection::Indeterminate;
 
         // We could use something like this to make the checkbox background when selected:
         //
@@ -162,7 +158,7 @@ impl<V: 'static> Checkbox<V> {
             )
             .map(|this| {
                 if let Some(on_click) = self.on_click {
-                    this.on_click(move |view, _, cx| on_click(view, cx))
+                    this.on_click(move |view, _, cx| on_click(self.checked.inverse(), view, cx))
                 } else {
                     this
                 }
@@ -195,12 +191,12 @@ mod stories {
                         .rounded_md()
                         .border()
                         .border_color(cx.theme().colors().border)
-                        .child(Checkbox::new("checkbox-enabled", Selected::Unselected))
+                        .child(Checkbox::new("checkbox-enabled", Selection::Unselected))
                         .child(Checkbox::new(
                             "checkbox-intermediate",
-                            Selected::Indeterminate,
+                            Selection::Indeterminate,
                         ))
-                        .child(Checkbox::new("checkbox-selected", Selected::Selected)),
+                        .child(Checkbox::new("checkbox-selected", Selection::Selected)),
                 )
                 .child(Story::label(cx, "Disabled"))
                 .child(
@@ -211,17 +207,18 @@ mod stories {
                         .border()
                         .border_color(cx.theme().colors().border)
                         .child(
-                            Checkbox::new("checkbox-disabled", Selected::Unselected).disabled(true),
+                            Checkbox::new("checkbox-disabled", Selection::Unselected)
+                                .disabled(true),
                         )
                         .child(
                             Checkbox::new(
                                 "checkbox-disabled-intermediate",
-                                Selected::Indeterminate,
+                                Selection::Indeterminate,
                             )
                             .disabled(true),
                         )
                         .child(
-                            Checkbox::new("checkbox-disabled-selected", Selected::Selected)
+                            Checkbox::new("checkbox-disabled-selected", Selection::Selected)
                                 .disabled(true),
                         ),
                 )
