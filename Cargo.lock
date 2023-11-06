@@ -9000,21 +9000,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "theme_importer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "convert_case 0.6.0",
- "gpui2",
- "log",
- "rust-embed",
- "serde",
- "simplelog",
- "theme2",
- "uuid 1.4.1",
-]
-
-[[package]]
 name = "theme_selector"
 version = "0.1.0"
 dependencies = [
