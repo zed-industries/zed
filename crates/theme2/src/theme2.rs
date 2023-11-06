@@ -5,6 +5,7 @@ mod registry;
 mod scale;
 mod settings;
 mod syntax;
+mod themes;
 
 use ::settings::Settings;
 pub use colors::*;
@@ -14,6 +15,7 @@ pub use registry::*;
 pub use scale::*;
 pub use settings::*;
 pub use syntax::*;
+pub use themes::*;
 
 use gpui::{AppContext, Hsla, SharedString};
 

@@ -52,11 +52,14 @@ pub struct ThemeMetadata {
 fn main() -> Result<()> {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
+    println!("Creating path: assets/themes/src/vscode/");
     let vscode_themes_path = PathBuf::from_str("assets/themes/src/vscode/")?;
 
     let mut theme_families = Vec::new();
 
     for theme_family_dir in fs::read_dir(&vscode_themes_path)? {
+        println!("Reading directory: {:?}", vscode_themes_path);
+
         let theme_family_dir = theme_family_dir?;
 
         if theme_family_dir.file_name().to_str() == Some(".DS_Store") {
@@ -69,6 +72,10 @@ fn main() -> Result<()> {
             .ok_or(anyhow!("no file stem"))
             .map(|stem| stem.to_string_lossy().to_string())?;
 
+        println!(
+            "Opening file: {:?}",
+            theme_family_dir.path().join("family.json")
+        );
         let family_metadata_file = File::open(theme_family_dir.path().join("family.json"))
             .context(format!("no `family.json` found for '{theme_family_slug}'"))?;
 
@@ -82,7 +89,13 @@ fn main() -> Result<()> {
         for theme_metadata in family_metadata.themes {
             let theme_file_path = theme_family_dir.path().join(&theme_metadata.file_name);
 
-            let theme_file = File::open(&theme_file_path)?;
+            let theme_file = match File::open(&theme_file_path) {
+                Ok(file) => file,
+                Err(_) => {
+                    println!("Failed to open file at path: {:?}", theme_file_path);
+                    continue;
+                }
+            };
 
             let vscode_theme: VsCodeTheme = serde_json::from_reader(theme_file)
                 .context(format!("failed to parse theme {theme_file_path:?}"))?;
@@ -114,6 +127,10 @@ fn main() -> Result<()> {
 
         let mut output_file =
             File::create(themes_output_path.join(format!("{theme_family_slug}.rs")))?;
+        println!(
+            "Creating file: {:?}",
+            themes_output_path.join(format!("{theme_family_slug}.rs"))
+        );
 
         let theme_module = format!(
             r#"
@@ -136,6 +153,10 @@ fn main() -> Result<()> {
         theme_modules.push(theme_family_slug);
     }
 
+    println!(
+        "Creating file: {:?}",
+        themes_output_path.join(format!("mod.rs"))
+    );
     let mut mod_rs_file = File::create(themes_output_path.join(format!("mod.rs")))?;
 
     let mod_rs_contents = format!(
