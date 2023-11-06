@@ -156,12 +156,8 @@ impl<V: 'static> Checkbox<V> {
                     })
                     .children(icon),
             )
-            .map(|this| {
-                if let Some(on_click) = self.on_click {
-                    this.on_click(move |view, _, cx| on_click(self.checked.inverse(), view, cx))
-                } else {
-                    this
-                }
+            .when_some(self.on_click, |this, on_click| {
+                this.on_click(move |view, _, cx| on_click(self.checked.inverse(), view, cx))
             })
     }
 }
