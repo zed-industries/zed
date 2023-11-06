@@ -17,6 +17,7 @@ editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 menu = { path = "../menu" }
 project = { path = "../project" }
+project_types = { path = "../project_types" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }

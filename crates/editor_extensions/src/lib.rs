@@ -441,6 +441,17 @@ impl FollowableEditor {
             Editor::for_multibuffer(buffer, Some(Arc::new(ProjectHandle(project))), cx)
         }))
     }
+    pub fn for_buffer(
+        buffer: ModelHandle<Buffer>,
+        project: ModelHandle<project::Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        Self(
+            cx.add_view(|cx| {
+                Editor::for_buffer(buffer, Some(Arc::new(ProjectHandle(project))), cx)
+            }),
+        )
+    }
 }
 
 impl gpui::View for FollowableEditor {

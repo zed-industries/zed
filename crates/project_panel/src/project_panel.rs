@@ -23,9 +23,10 @@ use gpui::{
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
-    repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
-    Worktree, WorktreeId,
+    repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId,
+    Worktree,
 };
+use project_types::{ProjectPath, WorktreeId};
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;

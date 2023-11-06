@@ -10,10 +10,12 @@ doctest = false
 
 [dependencies]
 editor = { path = "../editor" }
+editor_extensions = { path = "../editor_extensions" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 picker = { path = "../picker" }
 project = { path = "../project" }
+project_types = { path = "../project_types" }
 text = { path = "../text" }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }

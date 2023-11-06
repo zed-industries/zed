@@ -1,5 +1,6 @@
 use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
+use editor_extensions::FollowableEditor;
 use futures::StreamExt;
 use gpui::{
     actions, anyhow,
@@ -104,7 +105,7 @@ impl ActivityIndicator {
                     });
                     workspace.add_item(
                         Box::new(cx.add_view(|cx| {
-                            Editor::for_buffer(buffer, Some(Arc::new(project.clone())), cx)
+                            FollowableEditor::for_buffer(buffer, project.clone(), cx)
                         })),
                         cx,
                     );

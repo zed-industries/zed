@@ -21,7 +21,8 @@ use ordered_float::OrderedFloat;
 use parking_lot::Mutex;
 use parsing::{CodeContextRetriever, Span, SpanDigest, PARSEABLE_ENTIRE_FILE_TYPES};
 use postage::watch;
-use project::{Fs, PathChange, Project, ProjectEntryId, Worktree, WorktreeId};
+use project::{Fs, PathChange, Project, ProjectEntryId, Worktree};
+use project_types::WorktreeId;
 use smol::channel;
 use std::{
     cmp::Reverse,

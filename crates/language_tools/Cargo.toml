@@ -11,6 +11,7 @@ doctest = false
 [dependencies]
 collections = { path = "../collections" }
 editor = { path = "../editor" }
+editor_extensions = { path = "../editor_extensions" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 language = { path = "../language" }

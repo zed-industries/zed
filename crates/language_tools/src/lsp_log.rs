@@ -1,5 +1,6 @@
 use collections::{HashMap, VecDeque};
 use editor::{Editor, MoveToEnd};
+use editor_extensions::FollowableEditor;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     actions,
@@ -49,7 +50,7 @@ struct LanguageServerRpcState {
 }
 
 pub struct LspLogView {
-    pub(crate) editor: ViewHandle<Editor>,
+    pub(crate) editor: ViewHandle<FollowableEditor>,
     editor_subscription: Subscription,
     log_store: ModelHandle<LogStore>,
     current_server_id: Option<LanguageServerId>,
@@ -388,9 +389,11 @@ impl LspLogView {
                         } else {
                             this.current_server_id = None;
                             this.editor.update(cx, |editor, cx| {
-                                editor.set_read_only(false);
-                                editor.clear(cx);
-                                editor.set_read_only(true);
+                                editor.0.update(cx, |this, cx| {
+                                    this.set_read_only(false);
+                                    this.clear(cx);
+                                    this.set_read_only(true);
+                                });
                             });
                             cx.notify();
                         }
@@ -417,10 +420,12 @@ impl LspLogView {
                         || (!*is_rpc && !log_view.is_showing_rpc_trace)
                     {
                         log_view.editor.update(cx, |editor, cx| {
-                            editor.set_read_only(false);
-                            editor.handle_input(entry.trim(), cx);
-                            editor.handle_input("\n", cx);
-                            editor.set_read_only(true);
+                            editor.0.update(cx, |this, cx| {
+                                this.set_read_only(false);
+                                this.handle_input(entry.trim(), cx);
+                                this.handle_input("\n", cx);
+                                this.set_read_only(true);
+                            });
                         });
                     }
                 }
@@ -445,13 +450,15 @@ impl LspLogView {
     fn editor_for_logs(
         log_contents: String,
         cx: &mut ViewContext<Self>,
-    ) -> (ViewHandle<Editor>, Subscription) {
+    ) -> (ViewHandle<FollowableEditor>, Subscription) {
         let editor = cx.add_view(|cx| {
-            let mut editor = Editor::multi_line(None, cx);
-            editor.set_text(log_contents, cx);
-            editor.move_to_end(&MoveToEnd, cx);
-            editor.set_read_only(true);
-            editor
+            FollowableEditor(cx.add_view(|cx| {
+                let mut editor = Editor::multi_line(None, cx);
+                editor.set_text(log_contents, cx);
+                editor.move_to_end(&MoveToEnd, cx);
+                editor.set_read_only(true);
+                editor
+            }))
         });
         let editor_subscription = cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()));
         (editor, editor_subscription)
@@ -534,6 +541,8 @@ impl LspLogView {
             let (editor, editor_subscription) = Self::editor_for_logs(rpc_log, cx);
             let language = self.project.read(cx).languages().language_for_name("JSON");
             editor
+                .read(cx)
+                .0
                 .read(cx)
                 .buffer()
                 .read(cx)
@@ -620,7 +629,7 @@ impl Item for LspLogView {
 }
 
 impl SearchableItem for LspLogView {
-    type Match = <Editor as SearchableItem>::Match;
+    type Match = <FollowableEditor as SearchableItem>::Match;
 
     fn to_search_event(
         &mut self,
@@ -811,9 +820,11 @@ impl View for LspLogToolbarItemView {
                 if let Some(log_view) = this.log_view.as_ref() {
                     log_view.update(cx, |log_view, cx| {
                         log_view.editor.update(cx, |editor, cx| {
-                            editor.set_read_only(false);
-                            editor.clear(cx);
-                            editor.set_read_only(true);
+                            editor.0.update(cx, |this, cx| {
+                                this.set_read_only(false);
+                                this.clear(cx);
+                                this.set_read_only(true);
+                            });
                         });
                     })
                 }
@@ -1015,7 +1026,7 @@ impl Entity for LogStore {
 }
 
 impl Entity for LspLogView {
-    type Event = editor::Event;
+    type Event = <FollowableEditor as Entity>::Event;
 }
 
 impl Entity for LspLogToolbarItemView {

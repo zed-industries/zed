@@ -1,14 +1,16 @@
 use editor::{
     combine_syntax_and_fuzzy_match_highlights, scroll::autoscroll::Autoscroll,
-    styled_runs_for_code_label, Bias, Editor,
+    styled_runs_for_code_label, Bias,
 };
+use editor_extensions::FollowableEditor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext, WeakViewHandle,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate, PickerEvent};
-use project::{Project, Symbol};
+use project::{Project};
+use project_types::Symbol;
 use std::{borrow::Cow, cmp::Reverse, sync::Arc};
 use util::ResultExt;
 use workspace::Workspace;
@@ -123,15 +125,15 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         .clip_point_utf16(symbol.range.start, Bias::Left);
 
                     let editor = if secondary {
-                        workspace.split_project_item::<Editor>(buffer, cx)
+                        workspace.split_project_item::<FollowableEditor>(buffer, cx)
                     } else {
-                        workspace.open_project_item::<Editor>(buffer, cx)
+                        workspace.open_project_item::<FollowableEditor>(buffer, cx)
                     };
 
                     editor.update(cx, |editor, cx| {
-                        editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                        editor.0.update(cx, |this, cx| this.change_selections(Some(Autoscroll::center()), cx, |s| {
                             s.select_ranges([position..position])
-                        });
+                        }));
                     });
                 })?;
                 Ok::<_, anyhow::Error>(())
