@@ -11,6 +11,7 @@ use editor::{
     scroll::autoscroll::Autoscroll,
     Editor, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
+use editor_extensions::FollowableEditor;
 use futures::future::try_join_all;
 use gpui::{
     actions, elements::*, fonts::TextStyle, serde_json, AnyViewHandle, AppContext, Entity,
@@ -21,8 +22,9 @@ use language::{
     SelectionGoal,
 };
 use lsp::LanguageServerId;
-use project::{DiagnosticSummary, Project, ProjectPath};
+use project::{DiagnosticSummary, Project};
 use project_diagnostics_settings::ProjectDiagnosticsSettings;
+use project_types::ProjectPath;
 use serde_json::json;
 use smallvec::SmallVec;
 use std::{
@@ -58,7 +60,7 @@ type Event = editor::Event;
 struct ProjectDiagnosticsEditor {
     project: ModelHandle<Project>,
     workspace: WeakViewHandle<Workspace>,
-    editor: ViewHandle<Editor>,
+    editor: ViewHandle<FollowableEditor>,
     summary: DiagnosticSummary,
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<PathState>,
@@ -172,7 +174,7 @@ impl ProjectDiagnosticsEditor {
                         .or_default()
                         .insert(path.clone());
                     let no_multiselections = this.editor.update(cx, |editor, cx| {
-                        editor.selections.all::<usize>(cx).len() <= 1
+                        editor.0.read(cx).selections.all::<usize>(cx).len() <= 1
                     });
                     if no_multiselections && !this.is_dirty(cx) {
                         this.update_excerpts(Some(*language_server_id), cx);
@@ -183,12 +185,11 @@ impl ProjectDiagnosticsEditor {
 
         let excerpts = cx.add_model(|cx| MultiBuffer::new(project_handle.read(cx).replica_id()));
         let editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_multibuffer(
-                excerpts.clone(),
-                Some(Arc::new(project_handle.clone())),
-                cx,
-            );
-            editor.set_vertical_scroll_margin(5, cx);
+            let mut editor =
+                FollowableEditor::for_multibuffer(excerpts.clone(), project_handle.clone(), cx);
+            editor
+                .0
+                .update(cx, |this, cx| this.set_vertical_scroll_margin(5, cx));
             editor
         });
         let editor_event_subscription = cx.subscribe(&editor, |this, _, event, cx| {
@@ -530,21 +531,25 @@ impl ProjectDiagnosticsEditor {
         });
 
         self.editor.update(cx, |editor, cx| {
-            editor.remove_blocks(blocks_to_remove, None, cx);
-            let block_ids = editor.insert_blocks(
-                blocks_to_add.into_iter().map(|block| {
-                    let (excerpt_id, text_anchor) = block.position;
-                    BlockProperties {
-                        position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor),
-                        height: block.height,
-                        style: block.style,
-                        render: block.render,
-                        disposition: block.disposition,
-                    }
-                }),
-                Some(Autoscroll::fit()),
-                cx,
-            );
+            editor.0.update(cx, |this, cx| {
+                this.remove_blocks(blocks_to_remove, None, cx)
+            });
+            let block_ids = editor.0.update(cx, |this, cx| {
+                this.insert_blocks(
+                    blocks_to_add.into_iter().map(|block| {
+                        let (excerpt_id, text_anchor) = block.position;
+                        BlockProperties {
+                            position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor),
+                            height: block.height,
+                            style: block.style,
+                            render: block.render,
+                            disposition: block.disposition,
+                        }
+                    }),
+                    Some(Autoscroll::fit()),
+                    cx,
+                )
+            });
 
             let mut block_ids = block_ids.into_iter();
             for group_state in &mut groups_to_add {
@@ -585,13 +590,14 @@ impl ProjectDiagnosticsEditor {
                 }];
             } else {
                 groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
-                new_excerpt_ids_by_selection_id =
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.refresh());
-                selections = editor.selections.all::<usize>(cx);
+                new_excerpt_ids_by_selection_id = editor.0.update(cx, |this, cx| {
+                    this.change_selections(Some(Autoscroll::fit()), cx, |s| s.refresh())
+                });
+                selections = editor.0.read(cx).selections.all::<usize>(cx);
             }
 
             // If any selection has lost its position, move it to start of the next primary diagnostic.
-            let snapshot = editor.snapshot(cx);
+            let snapshot = editor.0.update(cx, |this, cx| this.snapshot(cx));
             for selection in &mut selections {
                 if let Some(new_excerpt_id) = new_excerpt_ids_by_selection_id.get(&selection.id) {
                     let group_ix = match groups.binary_search_by(|probe| {
@@ -615,8 +621,10 @@ impl ProjectDiagnosticsEditor {
                     }
                 }
             }
-            editor.change_selections(None, cx, |s| {
-                s.select(selections);
+            editor.0.update(cx, |this, cx| {
+                this.change_selections(None, cx, |s| {
+                    s.select(selections);
+                })
             });
             Some(())
         });
@@ -706,12 +714,12 @@ impl Item for ProjectDiagnosticsEditor {
     }
 
     fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
-        Editor::to_item_events(event)
+        FollowableEditor::to_item_events(event)
     }
 
     fn set_nav_history(&mut self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) {
-        self.editor.update(cx, |editor, _| {
-            editor.set_nav_history(Some(nav_history));
+        self.editor.update(cx, |editor, cx| {
+            editor.set_nav_history(nav_history, cx);
         });
     }
 
@@ -754,7 +762,7 @@ impl Item for ProjectDiagnosticsEditor {
     }
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
+        self.editor.read(cx).breadcrumbs(theme, cx)
     }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {

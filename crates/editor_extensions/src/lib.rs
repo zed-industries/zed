@@ -1,5 +1,6 @@
 mod items;
 mod persistence;
+use editor::MultiBuffer;
 use gpui::elements::ChildView;
 use gpui::elements::ParentElement;
 use gpui::keymap_matcher::KeymapContext;
@@ -430,6 +431,15 @@ impl gpui::Entity for FollowableEditor {
 impl FollowableEditor {
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
         Self(cx.add_view(|cx| self.0.update(cx, |this, cx| this.clone(cx))))
+    }
+    pub fn for_multibuffer(
+        buffer: ModelHandle<MultiBuffer>,
+        project: ModelHandle<project::Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        Self(cx.add_view(|cx| {
+            Editor::for_multibuffer(buffer, Some(Arc::new(ProjectHandle(project))), cx)
+        }))
     }
 }
 

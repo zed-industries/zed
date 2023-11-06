@@ -11,10 +11,12 @@ doctest = false
 [dependencies]
 collections = { path = "../collections" }
 editor = { path = "../editor" }
+editor_extensions = { path = "../editor_extensions" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
 project = { path = "../project" }
+project_types = { path = "../project_types" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }

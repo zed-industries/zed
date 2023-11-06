@@ -1,11 +1,13 @@
 use collections::HashMap;
-use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
+use editor::{scroll::autoscroll::Autoscroll, Bias};
+use editor_extensions::FollowableEditor;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
     actions, elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext, WeakViewHandle,
 };
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
+use project::{PathMatchCandidateSet, Project};
+use project_types::{ProjectPath, WorktreeId};
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -636,16 +638,22 @@ impl PickerDelegate for FileFinderDelegate {
                 cx.spawn(|_, mut cx| async move {
                     let item = open_task.await.log_err()?;
                     if let Some(row) = row {
-                        if let Some(active_editor) = item.downcast::<Editor>() {
+                        if let Some(active_editor) = item.downcast::<FollowableEditor>() {
                             active_editor
                                 .downgrade()
                                 .update(&mut cx, |editor, cx| {
-                                    let snapshot = editor.snapshot(cx).display_snapshot;
+                                    let snapshot = editor
+                                        .0
+                                        .update(cx, |this, cx| this.snapshot(cx).display_snapshot);
                                     let point = snapshot
                                         .buffer_snapshot
                                         .clip_point(Point::new(row, col), Bias::Left);
-                                    editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                                        s.select_ranges([point..point])
+                                    editor.0.update(cx, |this, cx| {
+                                        this.change_selections(
+                                            Some(Autoscroll::center()),
+                                            cx,
+                                            |s| s.select_ranges([point..point]),
+                                        )
                                     });
                                 })
                                 .log_err();
