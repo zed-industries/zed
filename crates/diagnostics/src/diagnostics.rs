@@ -227,6 +227,7 @@ impl ProjectDiagnosticsEditor {
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
         self.include_warnings = !self.include_warnings;
+        self.paths_to_update = self.current_diagnostics.clone();
         self.update_excerpts(None, cx);
         cx.notify();
     }
