@@ -24,3 +24,5 @@ DerivedData/
 .netrc
 .swiftpm
 **/*.db
+**/src/themes/*.rs
+!**/src/themes/.gitkeep
