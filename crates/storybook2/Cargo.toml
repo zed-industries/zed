@@ -14,7 +14,7 @@ anyhow.workspace = true
 backtrace-on-stack-overflow = "0.3.0"
 clap = { version = "4.4", features = ["derive", "string"] }
 chrono = "0.4"
-gpui2 = { path = "../gpui2" }
+gpui = { package = "gpui2", path = "../gpui2" }
 itertools = "0.11.0"
 log.workspace = true
 rust-embed.workspace = true
@@ -29,4 +29,4 @@ ui = { package = "ui2", path = "../ui2", features = ["stories"] }
 util = { path = "../util" }
 
 [dev-dependencies]
-gpui2 = { path = "../gpui2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }

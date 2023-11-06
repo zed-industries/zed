@@ -1,4 +1,4 @@
-use gpui2::{div, px, Div, ParentElement, Render, SharedString, Styled, ViewContext};
+use gpui::{div, px, Div, ParentElement, Render, SharedString, Styled, ViewContext};
 use theme2::ActiveTheme;
 
 #[derive(Clone, Debug)]

@@ -153,13 +153,13 @@ impl PaletteItem {
     }
 }
 
-use gpui2::ElementId;
+use gpui::ElementId;
 #[cfg(feature = "stories")]
 pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     use crate::{ModifierKeys, Story};
 

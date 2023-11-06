@@ -1,4 +1,4 @@
-pub use gpui2::{
+pub use gpui::{
     div, Component, Element, ElementId, ParentElement, SharedString, StatefulInteractive,
     StatelessInteractive, Styled, ViewContext, WindowContext,
 };
@@ -7,7 +7,7 @@ pub use crate::elevation::*;
 pub use crate::ButtonVariant;
 pub use theme2::ActiveTheme;
 
-use gpui2::Hsla;
+use gpui::Hsla;
 use strum::EnumIter;
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]

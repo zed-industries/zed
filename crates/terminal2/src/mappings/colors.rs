@@ -1,6 +1,6 @@
 // todo!()
 use alacritty_terminal::term::color::Rgb as AlacRgb;
-// use gpui2::color::Color;
+// use gpui::color::Color;
 // use theme2::TerminalStyle;
 
 ///Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent

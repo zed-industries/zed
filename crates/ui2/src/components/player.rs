@@ -1,4 +1,4 @@
-use gpui2::{Hsla, ViewContext};
+use gpui::{Hsla, ViewContext};
 
 use crate::prelude::*;
 

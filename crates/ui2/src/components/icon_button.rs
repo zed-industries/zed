@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui2::{rems, MouseButton};
+use gpui::{rems, MouseButton};
 
 use crate::{h_stack, prelude::*};
 use crate::{ClickHandler, Icon, IconColor, IconElement};

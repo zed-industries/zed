@@ -1,4 +1,4 @@
-use gpui2::SharedString;
+use gpui::SharedString;
 
 use crate::Icon;
 

@@ -1,4 +1,4 @@
-use gpui2::rems;
+use gpui::rems;
 
 use crate::prelude::*;
 use crate::{h_stack, Icon};

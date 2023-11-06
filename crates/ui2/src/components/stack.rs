@@ -1,4 +1,4 @@
-use gpui2::{div, Div};
+use gpui::{div, Div};
 
 use crate::prelude::*;
 

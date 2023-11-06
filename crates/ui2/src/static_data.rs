@@ -3,7 +3,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::DateTime;
-use gpui2::{AppContext, ViewContext};
+use gpui::{AppContext, ViewContext};
 use rand::Rng;
 use theme2::ActiveTheme;
 

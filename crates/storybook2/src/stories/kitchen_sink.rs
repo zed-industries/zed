@@ -1,5 +1,5 @@
 use crate::{story::Story, story_selector::ComponentStory};
-use gpui2::{Div, Render, StatefulInteraction, View, VisualContext};
+use gpui::{Div, Render, StatefulInteraction, View, VisualContext};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 

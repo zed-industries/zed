@@ -410,7 +410,7 @@ mod components {
         themes::rose_pine,
     };
     use gpui::{platform::MouseButton, ViewContext};
-    use gpui2_macros::Element;
+    use gpui_macros::Element;
     use std::{marker::PhantomData, rc::Rc};
     struct ButtonHandlers<V, D> {
         click: Option<Rc<dyn Fn(&mut V, &D, &mut ViewContext<V>)>>,
@@ -535,7 +535,7 @@ mod element {
         platform::{MouseButton, MouseButtonEvent},
         EngineLayout, EventContext, RenderContext, ViewContext,
     };
-    use gpui2_macros::tailwind_lengths;
+    use gpui_macros::tailwind_lengths;
     use std::{
         any::{Any, TypeId},
         cell::Cell,
@@ -4572,7 +4572,7 @@ mod frame {
     };
     use anyhow::{anyhow, Result};
     use gpui::LayoutNodeId;
-    use gpui2_macros::IntoElement;
+    use gpui_macros::IntoElement;
     #[element_crate = "crate"]
     pub struct Frame<V: 'static> {
         style: OptionalStyle,

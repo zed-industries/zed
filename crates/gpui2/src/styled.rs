@@ -1,5 +1,5 @@
 use crate::{
-    self as gpui2, hsla, point, px, relative, rems, AlignItems, CursorStyle, DefiniteLength,
+    self as gpui, hsla, point, px, relative, rems, AlignItems, CursorStyle, DefiniteLength,
     Display, Fill, FlexDirection, Hsla, JustifyContent, Length, Position, Rems, SharedString,
     StyleRefinement, Visibility,
 };

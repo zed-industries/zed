@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui2::{div, rems, DefiniteLength, Hsla, MouseButton, WindowContext};
+use gpui::{div, rems, DefiniteLength, Hsla, MouseButton, WindowContext};
 
 use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor, LineHeightStyle};
 use crate::{prelude::*, IconButton};
@@ -234,7 +234,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{h_stack, v_stack, LabelColor, Story};
-    use gpui2::{rems, Div, Render};
+    use gpui::{rems, Div, Render};
     use strum::IntoEnumIterator;
 
     pub struct ButtonStory;

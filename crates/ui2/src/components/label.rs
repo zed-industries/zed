@@ -1,4 +1,4 @@
-use gpui2::{relative, rems, Hsla, WindowContext};
+use gpui::{relative, rems, Hsla, WindowContext};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -194,7 +194,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     pub struct LabelStory;
 
