@@ -157,7 +157,7 @@ pub struct AppContext {
     flushing_effects: bool,
     pending_updates: usize,
     pub(crate) active_drag: Option<AnyDrag>,
-    pub(crate) active_tooltip: Option<AnyView>,
+    pub(crate) active_tooltip: Option<AnyTooltip>,
     pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
     pub(crate) frame_consumers: HashMap<DisplayId, Task<()>>,
     pub(crate) background_executor: BackgroundExecutor,
@@ -895,6 +895,12 @@ impl<G: 'static> DerefMut for GlobalLease<G> {
 /// Contains state associated with an active drag operation, started by dragging an element
 /// within the window or by dragging into the app from the underlying platform.
 pub(crate) struct AnyDrag {
+    pub view: AnyView,
+    pub cursor_offset: Point<Pixels>,
+}
+
+#[derive(Clone)]
+pub(crate) struct AnyTooltip {
     pub view: AnyView,
     pub cursor_offset: Point<Pixels>,
 }

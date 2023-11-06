@@ -1,6 +1,4 @@
-use gpui2::{
-    div, px, Div, ParentElement, Render, SharedString, Styled, View, ViewContext, VisualContext,
-};
+use gpui2::{div, px, Div, ParentElement, Render, SharedString, Styled, ViewContext};
 use theme2::ActiveTheme;
 
 #[derive(Clone, Debug)]
@@ -11,10 +9,6 @@ pub struct TextTooltip {
 impl TextTooltip {
     pub fn new(str: SharedString) -> Self {
         Self { title: str }
-    }
-
-    pub fn build_view<C: VisualContext>(str: SharedString, cx: &mut C) -> C::Result<View<Self>> {
-        cx.build_view(|cx| TextTooltip::new(str))
     }
 }
 
@@ -27,6 +21,7 @@ impl Render for TextTooltip {
             .bg(theme.colors().background)
             .rounded(px(8.))
             .border()
+            .font("Zed Sans")
             .border_color(theme.colors().border)
             .text_color(theme.colors().text)
             .pl_2()

@@ -1,8 +1,8 @@
 use crate::{
-    div, point, px, Action, AnyDrag, AnyView, AppContext, BorrowWindow, Bounds, Component,
-    DispatchContext, DispatchPhase, Div, Element, ElementId, FocusHandle, KeyMatch, Keystroke,
-    Modifiers, Overflow, Pixels, Point, Render, SharedString, Size, Style, StyleRefinement, View,
-    ViewContext,
+    div, point, px, Action, AnyDrag, AnyTooltip, AnyView, AppContext, BorrowWindow, Bounds,
+    Component, DispatchContext, DispatchPhase, Div, Element, ElementId, FocusHandle, KeyMatch,
+    Keystroke, Modifiers, Overflow, Pixels, Point, Render, SharedString, Size, Style,
+    StyleRefinement, Task, View, ViewContext,
 };
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -17,9 +17,12 @@ use std::{
     ops::Deref,
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 const DRAG_THRESHOLD: f64 = 2.;
+const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
+const TOOLTIP_OFFSET: Point<Pixels> = Point::new(px(10.0), px(8.0));
 
 pub trait StatelessInteractive<V: 'static>: Element<V> {
     fn stateless_interaction(&mut self) -> &mut StatelessInteraction<V>;
@@ -601,38 +604,72 @@ pub trait ElementInteraction<V: 'static>: 'static {
 
             if let Some(hover_listener) = stateful.hover_listener.take() {
                 let was_hovered = element_state.hover_state.clone();
-                let has_mouse_down = element_state.pending_mouse_down.lock().is_some();
-
-                let active_tooltip = element_state.active_tooltip.clone();
-                let tooltip_builder = stateful.tooltip_builder.clone();
+                let has_mouse_down = element_state.pending_mouse_down.clone();
 
                 cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
-                    let is_hovered = bounds.contains_point(&event.position) && !has_mouse_down;
+                    let is_hovered =
+                        bounds.contains_point(&event.position) && has_mouse_down.lock().is_none();
                     let mut was_hovered = was_hovered.lock();
 
                     if is_hovered != was_hovered.clone() {
                         *was_hovered = is_hovered;
                         drop(was_hovered);
-                        if let Some(tooltip_builder) = &tooltip_builder {
-                            let mut active_tooltip = active_tooltip.lock();
-                            if is_hovered && active_tooltip.is_none() {
-                                *active_tooltip = Some(tooltip_builder(view_state, cx));
-                            } else if !is_hovered {
-                                active_tooltip.take();
-                            }
-                        }
 
                         hover_listener(view_state, is_hovered, cx);
                     }
                 });
             }
 
-            if let Some(active_tooltip) = element_state.active_tooltip.lock().as_ref() {
-                if *element_state.hover_state.lock() {
-                    cx.active_tooltip = Some(active_tooltip.clone());
+            if let Some(tooltip_builder) = stateful.tooltip_builder.take() {
+                let active_tooltip = element_state.active_tooltip.clone();
+                let pending_mouse_down = element_state.pending_mouse_down.clone();
+
+                cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
+                    if phase != DispatchPhase::Bubble {
+                        return;
+                    }
+
+                    let is_hovered = bounds.contains_point(&event.position)
+                        && pending_mouse_down.lock().is_none();
+                    if !is_hovered {
+                        active_tooltip.lock().take();
+                        return;
+                    }
+
+                    if active_tooltip.lock().is_none() {
+                        let task = cx.spawn({
+                            let active_tooltip = active_tooltip.clone();
+                            let tooltip_builder = tooltip_builder.clone();
+
+                            move |view, mut cx| async move {
+                                cx.background_executor().timer(TOOLTIP_DELAY).await;
+                                view.update(&mut cx, move |view_state, cx| {
+                                    active_tooltip.lock().replace(ActiveTooltip {
+                                        waiting: None,
+                                        tooltip: Some(AnyTooltip {
+                                            view: tooltip_builder(view_state, cx),
+                                            cursor_offset: cx.mouse_position() + TOOLTIP_OFFSET,
+                                        }),
+                                    });
+                                    cx.notify();
+                                })
+                                .ok();
+                            }
+                        });
+                        active_tooltip.lock().replace(ActiveTooltip {
+                            waiting: Some(task),
+                            tooltip: None,
+                        });
+                    }
+                });
+
+                if let Some(active_tooltip) = element_state.active_tooltip.lock().as_ref() {
+                    if active_tooltip.tooltip.is_some() {
+                        cx.active_tooltip = active_tooltip.tooltip.clone()
+                    }
                 }
             }
 
@@ -823,7 +860,13 @@ pub struct InteractiveElementState {
     hover_state: Arc<Mutex<bool>>,
     pending_mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
     scroll_offset: Option<Arc<Mutex<Point<Pixels>>>>,
-    active_tooltip: Arc<Mutex<Option<AnyView>>>,
+    active_tooltip: Arc<Mutex<Option<ActiveTooltip>>>,
+}
+
+struct ActiveTooltip {
+    #[allow(unused)] // used to drop the task
+    waiting: Option<Task<()>>,
+    tooltip: Option<AnyTooltip>,
 }
 
 impl InteractiveElementState {

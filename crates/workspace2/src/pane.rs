@@ -1395,13 +1395,9 @@ impl Pane {
             .group("")
             .id(item.id())
             .cursor_pointer()
-            .on_hover(|_, hovered, _| {
-                dbg!(hovered);
-            })
             .when_some(item.tab_tooltip_text(cx), |div, text| {
-                div.tooltip(move |_, cx| TextTooltip::build_view(text.clone(), cx))
+                div.tooltip(move |_, cx| cx.build_view(|cx| TextTooltip::new(text.clone())))
             })
-            // .tooltip(|pane, cx| cx.build_view(|cx| div().child(title)))
             // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
             // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
             // .on_drop(|_view, state: View<DraggedTab>, cx| {

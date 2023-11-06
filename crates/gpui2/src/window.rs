@@ -989,10 +989,10 @@ impl<'a> WindowContext<'a> {
             });
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
             self.stack(1, |cx| {
-                cx.with_element_offset(Some(cx.mouse_position()), |cx| {
+                cx.with_element_offset(Some(active_tooltip.cursor_offset), |cx| {
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_tooltip.draw(available_space, cx);
+                    active_tooltip.view.draw(available_space, cx);
                 });
             });
         }
