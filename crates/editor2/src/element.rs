@@ -8,15 +8,23 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
-    black, point, px, relative, size, AnyElement, Bounds, Element, Hsla, Line, Pixels, Size, Style,
-    TextRun, TextStyle, TextSystem, ViewContext, WindowContext,
+    black, hsla, point, px, relative, size, transparent_black, AnyElement, BorrowWindow, Bounds,
+    ContentMask, Corners, Edges, Element, Hsla, Line, Pixels, Size, Style, TextRun, TextStyle,
+    TextSystem, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
 use multi_buffer::Anchor;
 use settings::Settings;
 use smallvec::SmallVec;
-use std::{borrow::Cow, cmp, fmt::Write, iter, ops::Range, sync::Arc};
+use std::{
+    borrow::Cow,
+    cmp::{self, Ordering},
+    fmt::Write,
+    iter,
+    ops::Range,
+    sync::Arc,
+};
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
 use workspace::item::Item;
@@ -368,7 +376,7 @@ impl EditorElement {
     //         let mut scroll_delta = gpui::Point<Pixels>::zero();
 
     //         let vertical_margin = position_map.line_height.min(text_bounds.height() / 3.0);
-    //         let top = text_bounds.origin_y() + vertical_margin;
+    //         let top = text_bounds.origin.y + vertical_margin;
     //         let bottom = text_bounds.lower_left().y() - vertical_margin;
     //         if position.y() < top {
     //             scroll_delta.set_y(-scale_vertical_mouse_autoscroll_delta(top - position.y()))
@@ -378,7 +386,7 @@ impl EditorElement {
     //         }
 
     //         let horizontal_margin = position_map.line_height.min(text_bounds.width() / 3.0);
-    //         let left = text_bounds.origin_x() + horizontal_margin;
+    //         let left = text_bounds.origin.x + horizontal_margin;
     //         let right = text_bounds.upper_right().x() - horizontal_margin;
     //         if position.x() < left {
     //             scroll_delta.set_x(-scale_horizontal_mouse_autoscroll_delta(
@@ -476,122 +484,129 @@ impl EditorElement {
     //         position_map.snapshot.ongoing_scroll.filter(&mut delta)
     //     } else {
     //         //Not trackpad
-    //         delta *= vec2f(max_glyph_width, line_height);
+    //         delta *= point(max_glyph_width, line_height);
     //         None //Resets ongoing scroll
     //     };
 
     //     let scroll_position = position_map.snapshot.scroll_position();
     //     let x = (scroll_position.x() * max_glyph_width - delta.x()) / max_glyph_width;
     //     let y = (scroll_position.y() * line_height - delta.y()) / line_height;
-    //     let scroll_position = vec2f(x, y).clamp(gpui::Point<Pixels>::zero(), position_map.scroll_max);
+    //     let scroll_position = point(x, y).clamp(gpui::Point<Pixels>::zero(), position_map.scroll_max);
     //     editor.scroll(scroll_position, axis, cx);
 
     //     true
     // }
 
-    // fn paint_background(
-    //     &self,
-    //     gutter_bounds: Bounds<Pixels>,
-    //     text_bounds: Bounds<Pixels>,
-    //     layout: &LayoutState,
-    //     cx: &mut ViewContext<Editor>,
-    // ) {
-    //     let bounds = gutter_bounds.union_rect(text_bounds);
-    //     let scroll_top =
-    //         layout.position_map.snapshot.scroll_position().y() * layout.position_map.line_height;
-    //     cx.scene().push_quad(Quad {
-    //         bounds: gutter_bounds,
-    //         background: Some(self.style.gutter_background),
-    //         border: Border::new(0., Color::transparent_black()).into(),
-    //         corner_radii: Default::default(),
-    //     });
-    //     cx.scene().push_quad(Quad {
-    //         bounds: text_bounds,
-    //         background: Some(self.style.background),
-    //         border: Border::new(0., Color::transparent_black()).into(),
-    //         corner_radii: Default::default(),
-    //     });
+    fn paint_background(
+        &self,
+        gutter_bounds: Bounds<Pixels>,
+        text_bounds: Bounds<Pixels>,
+        layout: &LayoutState,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let bounds = gutter_bounds.union(&text_bounds);
+        let scroll_top =
+            layout.position_map.snapshot.scroll_position().y * layout.position_map.line_height;
+        let gutter_bg = cx.theme().colors().editor_gutter;
+        cx.paint_quad(
+            gutter_bounds,
+            Corners::default(),
+            gutter_bg,
+            Edges::default(),
+            transparent_black(),
+        );
+        cx.paint_quad(
+            text_bounds,
+            Corners::default(),
+            self.style.background,
+            Edges::default(),
+            transparent_black(),
+        );
 
-    //     if let EditorMode::Full = layout.mode {
-    //         let mut active_rows = layout.active_rows.iter().peekable();
-    //         while let Some((start_row, contains_non_empty_selection)) = active_rows.next() {
-    //             let mut end_row = *start_row;
-    //             while active_rows.peek().map_or(false, |r| {
-    //                 *r.0 == end_row + 1 && r.1 == contains_non_empty_selection
-    //             }) {
-    //                 active_rows.next().unwrap();
-    //                 end_row += 1;
-    //             }
+        if let EditorMode::Full = layout.mode {
+            let mut active_rows = layout.active_rows.iter().peekable();
+            while let Some((start_row, contains_non_empty_selection)) = active_rows.next() {
+                let mut end_row = *start_row;
+                while active_rows.peek().map_or(false, |r| {
+                    *r.0 == end_row + 1 && r.1 == contains_non_empty_selection
+                }) {
+                    active_rows.next().unwrap();
+                    end_row += 1;
+                }
 
-    //             if !contains_non_empty_selection {
-    //                 let origin = vec2f(
-    //                     bounds.origin_x(),
-    //                     bounds.origin_y() + (layout.position_map.line_height * *start_row as f32)
-    //                         - scroll_top,
-    //                 );
-    //                 let size = vec2f(
-    //                     bounds.width(),
-    //                     layout.position_map.line_height * (end_row - start_row + 1) as f32,
-    //                 );
-    //                 cx.scene().push_quad(Quad {
-    //                     bounds: Bounds<Pixels>::new(origin, size),
-    //                     background: Some(self.style.active_line_background),
-    //                     border: Border::default().into(),
-    //                     corner_radii: Default::default(),
-    //                 });
-    //             }
-    //         }
+                if !contains_non_empty_selection {
+                    let origin = point(
+                        bounds.origin.x,
+                        bounds.origin.y + (layout.position_map.line_height * *start_row as f32)
+                            - scroll_top,
+                    );
+                    let size = size(
+                        bounds.size.width,
+                        layout.position_map.line_height * (end_row - start_row + 1) as f32,
+                    );
+                    let active_line_bg = cx.theme().colors().editor_active_line;
+                    cx.paint_quad(
+                        Bounds { origin, size },
+                        Corners::default(),
+                        active_line_bg,
+                        Edges::default(),
+                        transparent_black(),
+                    );
+                }
+            }
 
-    //         if let Some(highlighted_rows) = &layout.highlighted_rows {
-    //             let origin = vec2f(
-    //                 bounds.origin_x(),
-    //                 bounds.origin_y()
-    //                     + (layout.position_map.line_height * highlighted_rows.start as f32)
-    //                     - scroll_top,
-    //             );
-    //             let size = vec2f(
-    //                 bounds.width(),
-    //                 layout.position_map.line_height * highlighted_rows.len() as f32,
-    //             );
-    //             cx.scene().push_quad(Quad {
-    //                 bounds: Bounds<Pixels>::new(origin, size),
-    //                 background: Some(self.style.highlighted_line_background),
-    //                 border: Border::default().into(),
-    //                 corner_radii: Default::default(),
-    //             });
-    //         }
+            if let Some(highlighted_rows) = &layout.highlighted_rows {
+                let origin = point(
+                    bounds.origin.x,
+                    bounds.origin.y
+                        + (layout.position_map.line_height * highlighted_rows.start as f32)
+                        - scroll_top,
+                );
+                let size = size(
+                    bounds.size.width,
+                    layout.position_map.line_height * highlighted_rows.len() as f32,
+                );
+                let highlighted_line_bg = cx.theme().colors().editor_highlighted_line;
+                cx.paint_quad(
+                    Bounds { origin, size },
+                    Corners::default(),
+                    highlighted_line_bg,
+                    Edges::default(),
+                    transparent_black(),
+                );
+            }
 
-    //         let scroll_left =
-    //             layout.position_map.snapshot.scroll_position().x() * layout.position_map.em_width;
+            let scroll_left =
+                layout.position_map.snapshot.scroll_position().x * layout.position_map.em_width;
 
-    //         for (wrap_position, active) in layout.wrap_guides.iter() {
-    //             let x =
-    //                 (text_bounds.origin_x() + wrap_position + layout.position_map.em_width / 2.)
-    //                     - scroll_left;
+            for (wrap_position, active) in layout.wrap_guides.iter() {
+                let x = (text_bounds.origin.x + *wrap_position + layout.position_map.em_width / 2.)
+                    - scroll_left;
 
-    //             if x < text_bounds.origin_x()
-    //                 || (layout.show_scrollbars && x > self.scrollbar_left(&bounds))
-    //             {
-    //                 continue;
-    //             }
+                if x < text_bounds.origin.x
+                    || (layout.show_scrollbars && x > self.scrollbar_left(&bounds))
+                {
+                    continue;
+                }
 
-    //             let color = if *active {
-    //                 self.style.active_wrap_guide
-    //             } else {
-    //                 self.style.wrap_guide
-    //             };
-    //             cx.scene().push_quad(Quad {
-    //                 bounds: Bounds<Pixels>::new(
-    //                     vec2f(x, text_bounds.origin_y()),
-    //                     vec2f(1., text_bounds.height()),
-    //                 ),
-    //                 background: Some(color),
-    //                 border: Border::new(0., Color::transparent_black()).into(),
-    //                 corner_radii: Default::default(),
-    //             });
-    //         }
-    //     }
-    // }
+                let color = if *active {
+                    cx.theme().colors().editor_active_wrap_guide
+                } else {
+                    cx.theme().colors().editor_wrap_guide
+                };
+                cx.paint_quad(
+                    Bounds {
+                        origin: point(x, text_bounds.origin.y),
+                        size: size(px(1.), text_bounds.size.height),
+                    },
+                    Corners::default(),
+                    color,
+                    Edges::default(),
+                    transparent_black(),
+                );
+            }
+        }
+    }
 
     // fn paint_gutter(
     //     &mut self,
@@ -618,7 +633,7 @@ impl EditorElement {
     //     for (ix, line) in layout.line_number_layouts.iter().enumerate() {
     //         if let Some(line) = line {
     //             let line_origin = bounds.origin()
-    //                 + vec2f(
+    //                 + point(
     //                     bounds.width() - line.width() - layout.gutter_padding,
     //                     ix as f32 * line_height - (scroll_top % line_height),
     //                 );
@@ -629,11 +644,11 @@ impl EditorElement {
 
     //     for (ix, fold_indicator) in layout.fold_indicators.iter_mut().enumerate() {
     //         if let Some(indicator) = fold_indicator.as_mut() {
-    //             let position = vec2f(
+    //             let position = point(
     //                 bounds.width() - layout.gutter_padding,
     //                 ix as f32 * line_height - (scroll_top % line_height),
     //             );
-    //             let centering_offset = vec2f(
+    //             let centering_offset = point(
     //                 (layout.gutter_padding + layout.gutter_margin - indicator.size().x()) / 2.,
     //                 (line_height - indicator.size().y()) / 2.,
     //             );
@@ -649,7 +664,7 @@ impl EditorElement {
     //         let mut y = *row as f32 * line_height - scroll_top;
     //         x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
     //         y += (line_height - indicator.size().y()) / 2.;
-    //         indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, editor, cx);
+    //         indicator.paint(bounds.origin() + point(x, y), visible_bounds, editor, cx);
     //     }
     // }
 
@@ -668,11 +683,11 @@ impl EditorElement {
     //                 let end_y = start_y + line_height;
 
     //                 let width = diff_style.removed_width_em * line_height;
-    //                 let highlight_origin = bounds.origin() + vec2f(-width, start_y);
-    //                 let highlight_size = vec2f(width * 2., end_y - start_y);
+    //                 let highlight_origin = bounds.origin() + point(-width, start_y);
+    //                 let highlight_size = point(width * 2., end_y - start_y);
     //                 let highlight_bounds = Bounds<Pixels>::new(highlight_origin, highlight_size);
 
-    //                 cx.scene().push_quad(Quad {
+    //                 cx.paint_quad(Quad {
     //                     bounds: highlight_bounds,
     //                     background: Some(diff_style.modified),
     //                     border: Border::new(0., Color::transparent_black()).into(),
@@ -701,11 +716,11 @@ impl EditorElement {
     //                 let end_y = start_y + line_height;
 
     //                 let width = diff_style.removed_width_em * line_height;
-    //                 let highlight_origin = bounds.origin() + vec2f(-width, start_y);
-    //                 let highlight_size = vec2f(width * 2., end_y - start_y);
+    //                 let highlight_origin = bounds.origin() + point(-width, start_y);
+    //                 let highlight_size = point(width * 2., end_y - start_y);
     //                 let highlight_bounds = Bounds<Pixels>::new(highlight_origin, highlight_size);
 
-    //                 cx.scene().push_quad(Quad {
+    //                 cx.paint_quad(Quad {
     //                     bounds: highlight_bounds,
     //                     background: Some(diff_style.deleted),
     //                     border: Border::new(0., Color::transparent_black()).into(),
@@ -723,11 +738,11 @@ impl EditorElement {
     //         let end_y = end_row as f32 * line_height - scroll_top;
 
     //         let width = diff_style.width_em * line_height;
-    //         let highlight_origin = bounds.origin() + vec2f(-width, start_y);
-    //         let highlight_size = vec2f(width * 2., end_y - start_y);
+    //         let highlight_origin = bounds.origin() + point(-width, start_y);
+    //         let highlight_size = point(width * 2., end_y - start_y);
     //         let highlight_bounds = Bounds<Pixels>::new(highlight_origin, highlight_size);
 
-    //         cx.scene().push_quad(Quad {
+    //         cx.paint_quad(Quad {
     //             bounds: highlight_bounds,
     //             background: Some(color),
     //             border: Border::new(0., Color::transparent_black()).into(),
@@ -750,7 +765,7 @@ impl EditorElement {
     //     let scroll_top = scroll_position.y() * layout.position_map.line_height;
     //     let max_glyph_width = layout.position_map.em_width;
     //     let scroll_left = scroll_position.x() * max_glyph_width;
-    //     let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
+    //     let content_origin = bounds.origin() + point(layout.gutter_margin, 0.);
     //     let line_end_overshoot = 0.15 * layout.position_map.line_height;
     //     let whitespace_setting = editor.buffer.read(cx).settings_at(0, cx).show_whitespaces;
 
@@ -899,15 +914,15 @@ impl EditorElement {
     //                     let y = cursor_position.row() as f32 * layout.position_map.line_height
     //                         - scroll_top;
     //                     if selection.is_newest {
-    //                         editor.pixel_position_of_newest_cursor = Some(vec2f(
-    //                             bounds.origin_x() + x + block_width / 2.,
-    //                             bounds.origin_y() + y + layout.position_map.line_height / 2.,
+    //                         editor.pixel_position_of_newest_cursor = Some(point(
+    //                             bounds.origin.x + x + block_width / 2.,
+    //                             bounds.origin.y + y + layout.position_map.line_height / 2.,
     //                         ));
     //                     }
     //                     cursors.push(Cursor {
     //                         color: selection_style.cursor,
     //                         block_width,
-    //                         origin: vec2f(x, y),
+    //                         origin: point(x, y),
     //                         line_height: layout.position_map.line_height,
     //                         shape: selection.cursor_shape,
     //                         block_text,
@@ -947,7 +962,7 @@ impl EditorElement {
     //             &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
     //         let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
     //         let y = (position.row() + 1) as f32 * layout.position_map.line_height - scroll_top;
-    //         let mut list_origin = content_origin + vec2f(x, y);
+    //         let mut list_origin = content_origin + point(x, y);
     //         let list_width = context_menu.size().x();
     //         let list_height = context_menu.size().y();
 
@@ -963,7 +978,7 @@ impl EditorElement {
 
     //         context_menu.paint(
     //             list_origin,
-    //             Bounds<Pixels>::from_points(gpui::Point<Pixels>::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
+    //             Bounds<Pixels>::from_points(gpui::Point<Pixels>::zero(), point(f32::MAX, f32::MAX)), // Let content bleed outside of editor
     //             editor,
     //             cx,
     //         );
@@ -988,14 +1003,14 @@ impl EditorElement {
     //         // Compute Hovered Point
     //         let x = hovered_row_layout.x_for_index(position.column() as usize) - scroll_left;
     //         let y = position.row() as f32 * layout.position_map.line_height - scroll_top;
-    //         let hovered_point = content_origin + vec2f(x, y);
+    //         let hovered_point = content_origin + point(x, y);
 
     //         if hovered_point.y() - height_to_reserve > 0.0 {
     //             // There is enough space above. Render popovers above the hovered point
     //             let mut current_y = hovered_point.y();
     //             for hover_popover in hover_popovers {
     //                 let size = hover_popover.size();
-    //                 let mut popover_origin = vec2f(hovered_point.x(), current_y - size.y());
+    //                 let mut popover_origin = point(hovered_point.x(), current_y - size.y());
 
     //                 let x_out_of_bounds = bounds.max_x() - (popover_origin.x() + size.x());
     //                 if x_out_of_bounds < 0.0 {
@@ -1004,7 +1019,7 @@ impl EditorElement {
 
     //                 hover_popover.paint(
     //                     popover_origin,
-    //                     Bounds<Pixels>::from_points(gpui::Point<Pixels>::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
+    //                     Bounds<Pixels>::from_points(gpui::Point<Pixels>::zero(), point(f32::MAX, f32::MAX)), // Let content bleed outside of editor
     //                     editor,
     //                     cx,
     //                 );
@@ -1016,7 +1031,7 @@ impl EditorElement {
     //             let mut current_y = hovered_point.y() + layout.position_map.line_height;
     //             for hover_popover in hover_popovers {
     //                 let size = hover_popover.size();
-    //                 let mut popover_origin = vec2f(hovered_point.x(), current_y);
+    //                 let mut popover_origin = point(hovered_point.x(), current_y);
 
     //                 let x_out_of_bounds = bounds.max_x() - (popover_origin.x() + size.x());
     //                 if x_out_of_bounds < 0.0 {
@@ -1025,7 +1040,7 @@ impl EditorElement {
 
     //                 hover_popover.paint(
     //                     popover_origin,
-    //                     Bounds<Pixels>::from_points(gpui::Point<Pixels>::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
+    //                     Bounds<Pixels>::from_points(gpui::Point<Pixels>::zero(), point(f32::MAX, f32::MAX)), // Let content bleed outside of editor
     //                     editor,
     //                     cx,
     //                 );
@@ -1040,9 +1055,9 @@ impl EditorElement {
     //     cx.scene().pop_layer();
     // }
 
-    // fn scrollbar_left(&self, bounds: &Bounds<Pixels>) -> f32 {
-    //     bounds.max_x() - self.style.theme.scrollbar.width
-    // }
+    fn scrollbar_left(&self, bounds: &Bounds<Pixels>) -> Pixels {
+        bounds.upper_right().x - self.style.scrollbar_width
+    }
 
     // fn paint_scrollbar(
     //     &mut self,
@@ -1082,11 +1097,11 @@ impl EditorElement {
 
     //     let thumb_top = y_for_row(row_range.start) - first_row_y_offset;
     //     let thumb_bottom = y_for_row(row_range.end) + first_row_y_offset;
-    //     let track_bounds = Bounds<Pixels>::from_points(vec2f(left, top), vec2f(right, bottom));
-    //     let thumb_bounds = Bounds<Pixels>::from_points(vec2f(left, thumb_top), vec2f(right, thumb_bottom));
+    //     let track_bounds = Bounds<Pixels>::from_points(point(left, top), point(right, bottom));
+    //     let thumb_bounds = Bounds<Pixels>::from_points(point(left, thumb_top), point(right, thumb_bottom));
 
     //     if layout.show_scrollbars {
-    //         cx.scene().push_quad(Quad {
+    //         cx.paint_quad(Quad {
     //             bounds: track_bounds,
     //             border: style.track.border.into(),
     //             background: style.track.background_color,
@@ -1114,9 +1129,9 @@ impl EditorElement {
     //                 if end_y - start_y < 1. {
     //                     end_y = start_y + 1.;
     //                 }
-    //                 let bounds = Bounds<Pixels>::from_points(vec2f(left, start_y), vec2f(right, end_y));
+    //                 let bounds = Bounds<Pixels>::from_points(point(left, start_y), point(right, end_y));
 
-    //                 cx.scene().push_quad(Quad {
+    //                 cx.paint_quad(Quad {
     //                     bounds,
     //                     background: Some(color),
     //                     border: border.into(),
@@ -1158,7 +1173,7 @@ impl EditorElement {
     //                 if end_y - start_y < 1. {
     //                     end_y = start_y + 1.;
     //                 }
-    //                 let bounds = Bounds<Pixels>::from_points(vec2f(left, start_y), vec2f(right, end_y));
+    //                 let bounds = Bounds<Pixels>::from_points(point(left, start_y), point(right, end_y));
 
     //                 let color = match hunk.status() {
     //                     DiffHunkStatus::Added => diff_style.inserted,
@@ -1176,7 +1191,7 @@ impl EditorElement {
     //                     left: true,
     //                 };
 
-    //                 cx.scene().push_quad(Quad {
+    //                 cx.paint_quad(Quad {
     //                     bounds,
     //                     background: Some(color),
     //                     border: border.into(),
@@ -1185,7 +1200,7 @@ impl EditorElement {
     //             }
     //         }
 
-    //         cx.scene().push_quad(Quad {
+    //         cx.paint_quad(Quad {
     //             bounds: thumb_bounds,
     //             border: style.thumb.border.into(),
     //             background: style.thumb.background_color,
@@ -1316,12 +1331,12 @@ impl EditorElement {
 
     //     for block in &mut layout.blocks {
     //         let mut origin = bounds.origin()
-    //             + vec2f(
+    //             + point(
     //                 0.,
     //                 block.row as f32 * layout.position_map.line_height - scroll_top,
     //             );
     //         if !matches!(block.style, BlockStyle::Sticky) {
-    //             origin += vec2f(-scroll_left, 0.);
+    //             origin += point(-scroll_left, 0.);
     //         }
     //         block.element.paint(origin, visible_bounds, editor, cx);
     //     }
@@ -1561,465 +1576,12 @@ impl EditorElement {
         }
     }
 
-    // #[allow(clippy::too_many_arguments)]
-    // fn layout_blocks(
-    //     &mut self,
-    //     rows: Range<u32>,
-    //     snapshot: &EditorSnapshot,
-    //     editor_width: f32,
-    //     scroll_width: f32,
-    //     gutter_padding: f32,
-    //     gutter_width: f32,
-    //     em_width: f32,
-    //     text_x: f32,
-    //     line_height: f32,
-    //     style: &EditorStyle,
-    //     line_layouts: &[LineWithInvisibles],
-    //     editor: &mut Editor,
-    //     cx: &mut ViewContext<Editor>,
-    // ) -> (f32, Vec<BlockLayout>) {
-    //     let mut block_id = 0;
-    //     let scroll_x = snapshot.scroll_anchor.offset.x();
-    //     let (fixed_blocks, non_fixed_blocks) = snapshot
-    //         .blocks_in_range(rows.clone())
-    //         .partition::<Vec<_>, _>(|(_, block)| match block {
-    //             TransformBlock::ExcerptHeader { .. } => false,
-    //             TransformBlock::Custom(block) => block.style() == BlockStyle::Fixed,
-    //         });
-    //     let mut render_block = |block: &TransformBlock, width: f32, block_id: usize| {
-    //         let mut element = match block {
-    //             TransformBlock::Custom(block) => {
-    //                 let align_to = block
-    //                     .position()
-    //                     .to_point(&snapshot.buffer_snapshot)
-    //                     .to_display_point(snapshot);
-    //                 let anchor_x = text_x
-    //                     + if rows.contains(&align_to.row()) {
-    //                         line_layouts[(align_to.row() - rows.start) as usize]
-    //                             .line
-    //                             .x_for_index(align_to.column() as usize)
-    //                     } else {
-    //                         layout_line(align_to.row(), snapshot, style, cx.text_layout_cache())
-    //                             .x_for_index(align_to.column() as usize)
-    //                     };
-
-    //                 block.render(&mut BlockContext {
-    //                     view_context: cx,
-    //                     anchor_x,
-    //                     gutter_padding,
-    //                     line_height,
-    //                     scroll_x,
-    //                     gutter_width,
-    //                     em_width,
-    //                     block_id,
-    //                 })
-    //             }
-    //             TransformBlock::ExcerptHeader {
-    //                 id,
-    //                 buffer,
-    //                 range,
-    //                 starts_new_buffer,
-    //                 ..
-    //             } => {
-    //                 let tooltip_style = theme::current(cx).tooltip.clone();
-    //                 let include_root = editor
-    //                     .project
-    //                     .as_ref()
-    //                     .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-    //                     .unwrap_or_default();
-    //                 let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
-    //                     let jump_path = ProjectPath {
-    //                         worktree_id: file.worktree_id(cx),
-    //                         path: file.path.clone(),
-    //                     };
-    //                     let jump_anchor = range
-    //                         .primary
-    //                         .as_ref()
-    //                         .map_or(range.context.start, |primary| primary.start);
-    //                     let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
-
-    //                     enum JumpIcon {}
-    //                     MouseEventHandler::new::<JumpIcon, _>((*id).into(), cx, |state, _| {
-    //                         let style = style.jump_icon.style_for(state);
-    //                         Svg::new("icons/arrow_up_right.svg")
-    //                             .with_color(style.color)
-    //                             .constrained()
-    //                             .with_width(style.icon_width)
-    //                             .aligned()
-    //                             .contained()
-    //                             .with_style(style.container)
-    //                             .constrained()
-    //                             .with_width(style.button_width)
-    //                             .with_height(style.button_width)
-    //                     })
-    //                     .with_cursor_style(CursorStyle::PointingHand)
-    //                     .on_click(MouseButton::Left, move |_, editor, cx| {
-    //                         if let Some(workspace) = editor
-    //                             .workspace
-    //                             .as_ref()
-    //                             .and_then(|(workspace, _)| workspace.upgrade(cx))
-    //                         {
-    //                             workspace.update(cx, |workspace, cx| {
-    //                                 Editor::jump(
-    //                                     workspace,
-    //                                     jump_path.clone(),
-    //                                     jump_position,
-    //                                     jump_anchor,
-    //                                     cx,
-    //                                 );
-    //                             });
-    //                         }
-    //                     })
-    //                     .with_tooltip::<JumpIcon>(
-    //                         (*id).into(),
-    //                         "Jump to Buffer".to_string(),
-    //                         Some(Box::new(crate::OpenExcerpts)),
-    //                         tooltip_style.clone(),
-    //                         cx,
-    //                     )
-    //                     .aligned()
-    //                     .flex_float()
-    //                 });
-
-    //                 if *starts_new_buffer {
-    //                     let editor_font_size = style.text.font_size;
-    //                     let style = &style.diagnostic_path_header;
-    //                     let font_size = (style.text_scale_factor * editor_font_size).round();
-
-    //                     let path = buffer.resolve_file_path(cx, include_root);
-    //                     let mut filename = None;
-    //                     let mut parent_path = None;
-    //                     // Can't use .and_then() because `.file_name()` and `.parent()` return references :(
-    //                     if let Some(path) = path {
-    //                         filename = path.file_name().map(|f| f.to_string_lossy().to_string());
-    //                         parent_path =
-    //                             path.parent().map(|p| p.to_string_lossy().to_string() + "/");
-    //                     }
-
-    //                     Flex::row()
-    //                         .with_child(
-    //                             Label::new(
-    //                                 filename.unwrap_or_else(|| "untitled".to_string()),
-    //                                 style.filename.text.clone().with_font_size(font_size),
-    //                             )
-    //                             .contained()
-    //                             .with_style(style.filename.container)
-    //                             .aligned(),
-    //                         )
-    //                         .with_children(parent_path.map(|path| {
-    //                             Label::new(path, style.path.text.clone().with_font_size(font_size))
-    //                                 .contained()
-    //                                 .with_style(style.path.container)
-    //                                 .aligned()
-    //                         }))
-    //                         .with_children(jump_icon)
-    //                         .contained()
-    //                         .with_style(style.container)
-    //                         .with_padding_left(gutter_padding)
-    //                         .with_padding_right(gutter_padding)
-    //                         .expanded()
-    //                         .into_any_named("path header block")
-    //                 } else {
-    //                     let text_style = style.text.clone();
-    //                     Flex::row()
-    //                         .with_child(Label::new("⋯", text_style))
-    //                         .with_children(jump_icon)
-    //                         .contained()
-    //                         .with_padding_left(gutter_padding)
-    //                         .with_padding_right(gutter_padding)
-    //                         .expanded()
-    //                         .into_any_named("collapsed context")
-    //                 }
-    //             }
-    //         };
-
-    //         element.layout(
-    //             SizeConstraint {
-    //                 min: gpui::Point<Pixels>::zero(),
-    //                 max: vec2f(width, block.height() as f32 * line_height),
-    //             },
-    //             editor,
-    //             cx,
-    //         );
-    //         element
-    //     };
-
-    //     let mut fixed_block_max_width = 0f32;
-    //     let mut blocks = Vec::new();
-    //     for (row, block) in fixed_blocks {
-    //         let element = render_block(block, f32::INFINITY, block_id);
-    //         block_id += 1;
-    //         fixed_block_max_width = fixed_block_max_width.max(element.size().x() + em_width);
-    //         blocks.push(BlockLayout {
-    //             row,
-    //             element,
-    //             style: BlockStyle::Fixed,
-    //         });
-    //     }
-    //     for (row, block) in non_fixed_blocks {
-    //         let style = match block {
-    //             TransformBlock::Custom(block) => block.style(),
-    //             TransformBlock::ExcerptHeader { .. } => BlockStyle::Sticky,
-    //         };
-    //         let width = match style {
-    //             BlockStyle::Sticky => editor_width,
-    //             BlockStyle::Flex => editor_width
-    //                 .max(fixed_block_max_width)
-    //                 .max(gutter_width + scroll_width),
-    //             BlockStyle::Fixed => unreachable!(),
-    //         };
-    //         let element = render_block(block, width, block_id);
-    //         block_id += 1;
-    //         blocks.push(BlockLayout {
-    //             row,
-    //             element,
-    //             style,
-    //         });
-    //     }
-    //     (
-    //         scroll_width.max(fixed_block_max_width - gutter_width),
-    //         blocks,
-    //     )
-    // }
-}
-
-#[derive(Debug)]
-pub struct LineWithInvisibles {
-    pub line: Line,
-    invisibles: Vec<Invisible>,
-}
-
-impl LineWithInvisibles {
-    fn from_chunks<'a>(
-        chunks: impl Iterator<Item = HighlightedChunk<'a>>,
-        text_style: &TextStyle,
-        max_line_len: usize,
-        max_line_count: usize,
-        line_number_layouts: &[Option<Line>],
-        editor_mode: EditorMode,
-        cx: &WindowContext,
-    ) -> Vec<Self> {
-        let mut layouts = Vec::with_capacity(max_line_count);
-        let mut line = String::new();
-        let mut invisibles = Vec::new();
-        let mut styles = Vec::new();
-        let mut non_whitespace_added = false;
-        let mut row = 0;
-        let mut line_exceeded_max_len = false;
-        let font_size = text_style.font_size * cx.rem_size();
-
-        for highlighted_chunk in chunks.chain([HighlightedChunk {
-            chunk: "\n",
-            style: None,
-            is_tab: false,
-        }]) {
-            for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
-                if ix > 0 {
-                    let layout = cx
-                        .text_system()
-                        .layout_text(&line, font_size, &styles, None);
-                    layouts.push(Self {
-                        line: layout.unwrap().pop().unwrap(),
-                        invisibles: invisibles.drain(..).collect(),
-                    });
-
-                    line.clear();
-                    styles.clear();
-                    row += 1;
-                    line_exceeded_max_len = false;
-                    non_whitespace_added = false;
-                    if row == max_line_count {
-                        return layouts;
-                    }
-                }
-
-                if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let text_style = if let Some(style) = highlighted_chunk.style {
-                        text_style
-                            .clone()
-                            .highlight(style)
-                            .map(Cow::Owned)
-                            .unwrap_or_else(|_| Cow::Borrowed(text_style))
-                    } else {
-                        Cow::Borrowed(text_style)
-                    };
-
-                    if line.len() + line_chunk.len() > max_line_len {
-                        let mut chunk_len = max_line_len - line.len();
-                        while !line_chunk.is_char_boundary(chunk_len) {
-                            chunk_len -= 1;
-                        }
-                        line_chunk = &line_chunk[..chunk_len];
-                        line_exceeded_max_len = true;
-                    }
-
-                    styles.push(TextRun {
-                        len: line_chunk.len(),
-                        font: text_style.font(),
-                        color: text_style.color,
-                        underline: text_style.underline,
-                    });
-
-                    if editor_mode == EditorMode::Full {
-                        // Line wrap pads its contents with fake whitespaces,
-                        // avoid printing them
-                        let inside_wrapped_string = line_number_layouts
-                            .get(row)
-                            .and_then(|layout| layout.as_ref())
-                            .is_none();
-                        if highlighted_chunk.is_tab {
-                            if non_whitespace_added || !inside_wrapped_string {
-                                invisibles.push(Invisible::Tab {
-                                    line_start_offset: line.len(),
-                                });
-                            }
-                        } else {
-                            invisibles.extend(
-                                line_chunk
-                                    .chars()
-                                    .enumerate()
-                                    .filter(|(_, line_char)| {
-                                        let is_whitespace = line_char.is_whitespace();
-                                        non_whitespace_added |= !is_whitespace;
-                                        is_whitespace
-                                            && (non_whitespace_added || !inside_wrapped_string)
-                                    })
-                                    .map(|(whitespace_index, _)| Invisible::Whitespace {
-                                        line_offset: line.len() + whitespace_index,
-                                    }),
-                            )
-                        }
-                    }
-
-                    line.push_str(line_chunk);
-                }
-            }
-        }
-
-        layouts
-    }
-
-    fn draw(
-        &self,
-        layout: &LayoutState,
-        row: u32,
-        scroll_top: Pixels,
-        content_origin: gpui::Point<Pixels>,
-        scroll_left: Pixels,
-        visible_text_bounds: Bounds<Pixels>,
-        whitespace_setting: ShowWhitespaceSetting,
-        selection_ranges: &[Range<DisplayPoint>],
-        cx: &mut ViewContext<Editor>,
-    ) {
-        let line_height = layout.position_map.line_height;
-        let line_y = line_height * row as f32 - scroll_top;
-
-        self.line.paint(
-            content_origin + gpui::point(-scroll_left, line_y),
-            line_height,
-            cx,
-        );
-
-        self.draw_invisibles(
-            &selection_ranges,
-            layout,
-            content_origin,
-            scroll_left,
-            line_y,
-            row,
-            line_height,
-            whitespace_setting,
-            cx,
-        );
-    }
-
-    fn draw_invisibles(
-        &self,
-        selection_ranges: &[Range<DisplayPoint>],
-        layout: &LayoutState,
-        content_origin: gpui::Point<Pixels>,
-        scroll_left: Pixels,
-        line_y: Pixels,
-        row: u32,
-        line_height: Pixels,
-        whitespace_setting: ShowWhitespaceSetting,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        let allowed_invisibles_regions = match whitespace_setting {
-            ShowWhitespaceSetting::None => return,
-            ShowWhitespaceSetting::Selection => Some(selection_ranges),
-            ShowWhitespaceSetting::All => None,
-        };
-
-        for invisible in &self.invisibles {
-            let (&token_offset, invisible_symbol) = match invisible {
-                Invisible::Tab { line_start_offset } => (line_start_offset, &layout.tab_invisible),
-                Invisible::Whitespace { line_offset } => (line_offset, &layout.space_invisible),
-            };
-
-            let x_offset = self.line.x_for_index(token_offset);
-            let invisible_offset = (layout.position_map.em_width - invisible_symbol.width())
-                .max(Pixels::from(0.0))
-                / 2.0;
-            let origin =
-                content_origin + gpui::point(-scroll_left + x_offset + invisible_offset, line_y);
-
-            if let Some(allowed_regions) = allowed_invisibles_regions {
-                let invisible_point = DisplayPoint::new(row, token_offset as u32);
-                if !allowed_regions
-                    .iter()
-                    .any(|region| region.start <= invisible_point && invisible_point < region.end)
-                {
-                    continue;
-                }
-            }
-            invisible_symbol.paint(origin, line_height, cx);
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Invisible {
-    Tab { line_start_offset: usize },
-    Whitespace { line_offset: usize },
-}
-
-impl Element<Editor> for EditorElement {
-    type ElementState = ();
-
-    fn id(&self) -> Option<gpui::ElementId> {
-        None
-    }
-
-    fn initialize(
+    fn compute_layout(
         &mut self,
-        view_state: &mut Editor,
-        element_state: Option<Self::ElementState>,
-        cx: &mut gpui::ViewContext<Editor>,
-    ) -> Self::ElementState {
-        ()
-    }
-
-    fn layout(
-        &mut self,
-        view_state: &mut Editor,
-        element_state: &mut Self::ElementState,
-        cx: &mut gpui::ViewContext<Editor>,
-    ) -> gpui::LayoutId {
-        let rem_size = cx.rem_size();
-        let mut style = Style::default();
-        style.size.width = relative(1.).into();
-        style.size.height = relative(1.).into();
-        cx.request_layout(&style, None)
-    }
-
-    fn paint(
-        &mut self,
-        bounds: Bounds<gpui::Pixels>,
         editor: &mut Editor,
-        element_state: &mut Self::ElementState,
-        cx: &mut gpui::ViewContext<Editor>,
-    ) {
+        cx: &mut ViewContext<'_, Editor>,
+        bounds: Bounds<Pixels>,
+    ) -> LayoutState {
         // let mut size = constraint.max;
         // if size.x().is_infinite() {
         //     unimplemented!("we don't yet handle an infinite width constraint on buffer elements");
@@ -2085,7 +1647,8 @@ impl Element<Editor> for EditorElement {
 
         let scroll_height = Pixels::from(snapshot.max_point().row() + 1) * line_height;
         // todo!("this should happen during layout")
-        if let EditorMode::AutoHeight { max_lines } = snapshot.mode {
+        let editor_mode = snapshot.mode;
+        if let EditorMode::AutoHeight { max_lines } = editor_mode {
             todo!()
             //     size.set_y(
             //         scroll_height
@@ -2094,7 +1657,7 @@ impl Element<Editor> for EditorElement {
             //             .max(line_height)
             //             .min(line_height * max_lines as f32),
             //     )
-        } else if let EditorMode::SingleLine = snapshot.mode {
+        } else if let EditorMode::SingleLine = editor_mode {
             todo!()
             //     size.set_y(line_height.max(constraint.min_along(Axis::Vertical)))
         }
@@ -2411,7 +1974,7 @@ impl Element<Editor> for EditorElement {
         //     context_menu.layout(
         //         SizeConstraint {
         //             min: gpui::Point<Pixels>::zero(),
-        //             max: vec2f(
+        //             max: point(
         //                 cx.window_size().x() * 0.7,
         //                 (12. * line_height).min((size.y() - line_height) / 2.),
         //             ),
@@ -2453,7 +2016,7 @@ impl Element<Editor> for EditorElement {
         //         hover_popover.layout(
         //             SizeConstraint {
         //                 min: gpui::Point<Pixels>::zero(),
-        //                 max: vec2f(
+        //                 max: point(
         //                     (120. * em_width) // Default size
         //                         .min(size.x() / 2.) // Shrink to half of the editor width
         //                         .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
@@ -2468,13 +2031,550 @@ impl Element<Editor> for EditorElement {
         //     }
         // }
 
-        // let invisible_symbol_font_size = self.style.text.font_size / 2.0;
-        // let invisible_symbol_style = RunStyle {
-        //     color: self.style.whitespace,
-        //     font_id: self.style.text.font_id,
-        //     underline: Default::default(),
-        // };
-        //
+        let invisible_symbol_font_size = font_size / 2.;
+        let tab_invisible = cx
+            .text_system()
+            .layout_text(
+                "→",
+                invisible_symbol_font_size,
+                &[TextRun {
+                    len: "→".len(),
+                    font: self.style.text.font(),
+                    color: cx.theme().colors().editor_invisible,
+                    underline: None,
+                }],
+                None,
+            )
+            .unwrap()
+            .pop()
+            .unwrap();
+        let space_invisible = cx
+            .text_system()
+            .layout_text(
+                "•",
+                invisible_symbol_font_size,
+                &[TextRun {
+                    len: "•".len(),
+                    font: self.style.text.font(),
+                    color: cx.theme().colors().editor_invisible,
+                    underline: None,
+                }],
+                None,
+            )
+            .unwrap()
+            .pop()
+            .unwrap();
+
+        LayoutState {
+            mode: editor_mode,
+            position_map: Arc::new(PositionMap {
+                size: bounds.size,
+                scroll_max,
+                line_layouts,
+                line_height,
+                em_width,
+                em_advance,
+                snapshot,
+            }),
+            visible_display_row_range: start_row..end_row,
+            wrap_guides,
+            gutter_size,
+            gutter_padding,
+            text_size,
+            scrollbar_row_range,
+            show_scrollbars,
+            is_singleton,
+            max_row,
+            gutter_margin,
+            active_rows,
+            highlighted_rows,
+            highlighted_ranges,
+            fold_ranges,
+            line_number_layouts,
+            display_hunks,
+            // blocks,
+            selections,
+            // context_menu,
+            // code_actions_indicator,
+            // fold_indicators,
+            tab_invisible,
+            space_invisible,
+            // hover_popovers: hover,
+        }
+    }
+
+    // #[allow(clippy::too_many_arguments)]
+    // fn layout_blocks(
+    //     &mut self,
+    //     rows: Range<u32>,
+    //     snapshot: &EditorSnapshot,
+    //     editor_width: f32,
+    //     scroll_width: f32,
+    //     gutter_padding: f32,
+    //     gutter_width: f32,
+    //     em_width: f32,
+    //     text_x: f32,
+    //     line_height: f32,
+    //     style: &EditorStyle,
+    //     line_layouts: &[LineWithInvisibles],
+    //     editor: &mut Editor,
+    //     cx: &mut ViewContext<Editor>,
+    // ) -> (f32, Vec<BlockLayout>) {
+    //     let mut block_id = 0;
+    //     let scroll_x = snapshot.scroll_anchor.offset.x();
+    //     let (fixed_blocks, non_fixed_blocks) = snapshot
+    //         .blocks_in_range(rows.clone())
+    //         .partition::<Vec<_>, _>(|(_, block)| match block {
+    //             TransformBlock::ExcerptHeader { .. } => false,
+    //             TransformBlock::Custom(block) => block.style() == BlockStyle::Fixed,
+    //         });
+    //     let mut render_block = |block: &TransformBlock, width: f32, block_id: usize| {
+    //         let mut element = match block {
+    //             TransformBlock::Custom(block) => {
+    //                 let align_to = block
+    //                     .position()
+    //                     .to_point(&snapshot.buffer_snapshot)
+    //                     .to_display_point(snapshot);
+    //                 let anchor_x = text_x
+    //                     + if rows.contains(&align_to.row()) {
+    //                         line_layouts[(align_to.row() - rows.start) as usize]
+    //                             .line
+    //                             .x_for_index(align_to.column() as usize)
+    //                     } else {
+    //                         layout_line(align_to.row(), snapshot, style, cx.text_layout_cache())
+    //                             .x_for_index(align_to.column() as usize)
+    //                     };
+
+    //                 block.render(&mut BlockContext {
+    //                     view_context: cx,
+    //                     anchor_x,
+    //                     gutter_padding,
+    //                     line_height,
+    //                     scroll_x,
+    //                     gutter_width,
+    //                     em_width,
+    //                     block_id,
+    //                 })
+    //             }
+    //             TransformBlock::ExcerptHeader {
+    //                 id,
+    //                 buffer,
+    //                 range,
+    //                 starts_new_buffer,
+    //                 ..
+    //             } => {
+    //                 let tooltip_style = theme::current(cx).tooltip.clone();
+    //                 let include_root = editor
+    //                     .project
+    //                     .as_ref()
+    //                     .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+    //                     .unwrap_or_default();
+    //                 let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
+    //                     let jump_path = ProjectPath {
+    //                         worktree_id: file.worktree_id(cx),
+    //                         path: file.path.clone(),
+    //                     };
+    //                     let jump_anchor = range
+    //                         .primary
+    //                         .as_ref()
+    //                         .map_or(range.context.start, |primary| primary.start);
+    //                     let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
+
+    //                     enum JumpIcon {}
+    //                     MouseEventHandler::new::<JumpIcon, _>((*id).into(), cx, |state, _| {
+    //                         let style = style.jump_icon.style_for(state);
+    //                         Svg::new("icons/arrow_up_right.svg")
+    //                             .with_color(style.color)
+    //                             .constrained()
+    //                             .with_width(style.icon_width)
+    //                             .aligned()
+    //                             .contained()
+    //                             .with_style(style.container)
+    //                             .constrained()
+    //                             .with_width(style.button_width)
+    //                             .with_height(style.button_width)
+    //                     })
+    //                     .with_cursor_style(CursorStyle::PointingHand)
+    //                     .on_click(MouseButton::Left, move |_, editor, cx| {
+    //                         if let Some(workspace) = editor
+    //                             .workspace
+    //                             .as_ref()
+    //                             .and_then(|(workspace, _)| workspace.upgrade(cx))
+    //                         {
+    //                             workspace.update(cx, |workspace, cx| {
+    //                                 Editor::jump(
+    //                                     workspace,
+    //                                     jump_path.clone(),
+    //                                     jump_position,
+    //                                     jump_anchor,
+    //                                     cx,
+    //                                 );
+    //                             });
+    //                         }
+    //                     })
+    //                     .with_tooltip::<JumpIcon>(
+    //                         (*id).into(),
+    //                         "Jump to Buffer".to_string(),
+    //                         Some(Box::new(crate::OpenExcerpts)),
+    //                         tooltip_style.clone(),
+    //                         cx,
+    //                     )
+    //                     .aligned()
+    //                     .flex_float()
+    //                 });
+
+    //                 if *starts_new_buffer {
+    //                     let editor_font_size = style.text.font_size;
+    //                     let style = &style.diagnostic_path_header;
+    //                     let font_size = (style.text_scale_factor * editor_font_size).round();
+
+    //                     let path = buffer.resolve_file_path(cx, include_root);
+    //                     let mut filename = None;
+    //                     let mut parent_path = None;
+    //                     // Can't use .and_then() because `.file_name()` and `.parent()` return references :(
+    //                     if let Some(path) = path {
+    //                         filename = path.file_name().map(|f| f.to_string_lossy().to_string());
+    //                         parent_path =
+    //                             path.parent().map(|p| p.to_string_lossy().to_string() + "/");
+    //                     }
+
+    //                     Flex::row()
+    //                         .with_child(
+    //                             Label::new(
+    //                                 filename.unwrap_or_else(|| "untitled".to_string()),
+    //                                 style.filename.text.clone().with_font_size(font_size),
+    //                             )
+    //                             .contained()
+    //                             .with_style(style.filename.container)
+    //                             .aligned(),
+    //                         )
+    //                         .with_children(parent_path.map(|path| {
+    //                             Label::new(path, style.path.text.clone().with_font_size(font_size))
+    //                                 .contained()
+    //                                 .with_style(style.path.container)
+    //                                 .aligned()
+    //                         }))
+    //                         .with_children(jump_icon)
+    //                         .contained()
+    //                         .with_style(style.container)
+    //                         .with_padding_left(gutter_padding)
+    //                         .with_padding_right(gutter_padding)
+    //                         .expanded()
+    //                         .into_any_named("path header block")
+    //                 } else {
+    //                     let text_style = style.text.clone();
+    //                     Flex::row()
+    //                         .with_child(Label::new("⋯", text_style))
+    //                         .with_children(jump_icon)
+    //                         .contained()
+    //                         .with_padding_left(gutter_padding)
+    //                         .with_padding_right(gutter_padding)
+    //                         .expanded()
+    //                         .into_any_named("collapsed context")
+    //                 }
+    //             }
+    //         };
+
+    //         element.layout(
+    //             SizeConstraint {
+    //                 min: gpui::Point<Pixels>::zero(),
+    //                 max: point(width, block.height() as f32 * line_height),
+    //             },
+    //             editor,
+    //             cx,
+    //         );
+    //         element
+    //     };
+
+    //     let mut fixed_block_max_width = 0f32;
+    //     let mut blocks = Vec::new();
+    //     for (row, block) in fixed_blocks {
+    //         let element = render_block(block, f32::INFINITY, block_id);
+    //         block_id += 1;
+    //         fixed_block_max_width = fixed_block_max_width.max(element.size().x() + em_width);
+    //         blocks.push(BlockLayout {
+    //             row,
+    //             element,
+    //             style: BlockStyle::Fixed,
+    //         });
+    //     }
+    //     for (row, block) in non_fixed_blocks {
+    //         let style = match block {
+    //             TransformBlock::Custom(block) => block.style(),
+    //             TransformBlock::ExcerptHeader { .. } => BlockStyle::Sticky,
+    //         };
+    //         let width = match style {
+    //             BlockStyle::Sticky => editor_width,
+    //             BlockStyle::Flex => editor_width
+    //                 .max(fixed_block_max_width)
+    //                 .max(gutter_width + scroll_width),
+    //             BlockStyle::Fixed => unreachable!(),
+    //         };
+    //         let element = render_block(block, width, block_id);
+    //         block_id += 1;
+    //         blocks.push(BlockLayout {
+    //             row,
+    //             element,
+    //             style,
+    //         });
+    //     }
+    //     (
+    //         scroll_width.max(fixed_block_max_width - gutter_width),
+    //         blocks,
+    //     )
+    // }
+}
+
+#[derive(Debug)]
+pub struct LineWithInvisibles {
+    pub line: Line,
+    invisibles: Vec<Invisible>,
+}
+
+impl LineWithInvisibles {
+    fn from_chunks<'a>(
+        chunks: impl Iterator<Item = HighlightedChunk<'a>>,
+        text_style: &TextStyle,
+        max_line_len: usize,
+        max_line_count: usize,
+        line_number_layouts: &[Option<Line>],
+        editor_mode: EditorMode,
+        cx: &WindowContext,
+    ) -> Vec<Self> {
+        let mut layouts = Vec::with_capacity(max_line_count);
+        let mut line = String::new();
+        let mut invisibles = Vec::new();
+        let mut styles = Vec::new();
+        let mut non_whitespace_added = false;
+        let mut row = 0;
+        let mut line_exceeded_max_len = false;
+        let font_size = text_style.font_size * cx.rem_size();
+
+        for highlighted_chunk in chunks.chain([HighlightedChunk {
+            chunk: "\n",
+            style: None,
+            is_tab: false,
+        }]) {
+            for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
+                if ix > 0 {
+                    let layout = cx
+                        .text_system()
+                        .layout_text(&line, font_size, &styles, None);
+                    layouts.push(Self {
+                        line: layout.unwrap().pop().unwrap(),
+                        invisibles: invisibles.drain(..).collect(),
+                    });
+
+                    line.clear();
+                    styles.clear();
+                    row += 1;
+                    line_exceeded_max_len = false;
+                    non_whitespace_added = false;
+                    if row == max_line_count {
+                        return layouts;
+                    }
+                }
+
+                if !line_chunk.is_empty() && !line_exceeded_max_len {
+                    let text_style = if let Some(style) = highlighted_chunk.style {
+                        text_style
+                            .clone()
+                            .highlight(style)
+                            .map(Cow::Owned)
+                            .unwrap_or_else(|_| Cow::Borrowed(text_style))
+                    } else {
+                        Cow::Borrowed(text_style)
+                    };
+
+                    if line.len() + line_chunk.len() > max_line_len {
+                        let mut chunk_len = max_line_len - line.len();
+                        while !line_chunk.is_char_boundary(chunk_len) {
+                            chunk_len -= 1;
+                        }
+                        line_chunk = &line_chunk[..chunk_len];
+                        line_exceeded_max_len = true;
+                    }
+
+                    styles.push(TextRun {
+                        len: line_chunk.len(),
+                        font: text_style.font(),
+                        color: text_style.color,
+                        underline: text_style.underline,
+                    });
+
+                    if editor_mode == EditorMode::Full {
+                        // Line wrap pads its contents with fake whitespaces,
+                        // avoid printing them
+                        let inside_wrapped_string = line_number_layouts
+                            .get(row)
+                            .and_then(|layout| layout.as_ref())
+                            .is_none();
+                        if highlighted_chunk.is_tab {
+                            if non_whitespace_added || !inside_wrapped_string {
+                                invisibles.push(Invisible::Tab {
+                                    line_start_offset: line.len(),
+                                });
+                            }
+                        } else {
+                            invisibles.extend(
+                                line_chunk
+                                    .chars()
+                                    .enumerate()
+                                    .filter(|(_, line_char)| {
+                                        let is_whitespace = line_char.is_whitespace();
+                                        non_whitespace_added |= !is_whitespace;
+                                        is_whitespace
+                                            && (non_whitespace_added || !inside_wrapped_string)
+                                    })
+                                    .map(|(whitespace_index, _)| Invisible::Whitespace {
+                                        line_offset: line.len() + whitespace_index,
+                                    }),
+                            )
+                        }
+                    }
+
+                    line.push_str(line_chunk);
+                }
+            }
+        }
+
+        layouts
+    }
+
+    fn draw(
+        &self,
+        layout: &LayoutState,
+        row: u32,
+        scroll_top: Pixels,
+        content_origin: gpui::Point<Pixels>,
+        scroll_left: Pixels,
+        visible_text_bounds: Bounds<Pixels>,
+        whitespace_setting: ShowWhitespaceSetting,
+        selection_ranges: &[Range<DisplayPoint>],
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let line_height = layout.position_map.line_height;
+        let line_y = line_height * row as f32 - scroll_top;
+
+        self.line.paint(
+            content_origin + gpui::point(-scroll_left, line_y),
+            line_height,
+            cx,
+        );
+
+        self.draw_invisibles(
+            &selection_ranges,
+            layout,
+            content_origin,
+            scroll_left,
+            line_y,
+            row,
+            line_height,
+            whitespace_setting,
+            cx,
+        );
+    }
+
+    fn draw_invisibles(
+        &self,
+        selection_ranges: &[Range<DisplayPoint>],
+        layout: &LayoutState,
+        content_origin: gpui::Point<Pixels>,
+        scroll_left: Pixels,
+        line_y: Pixels,
+        row: u32,
+        line_height: Pixels,
+        whitespace_setting: ShowWhitespaceSetting,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let allowed_invisibles_regions = match whitespace_setting {
+            ShowWhitespaceSetting::None => return,
+            ShowWhitespaceSetting::Selection => Some(selection_ranges),
+            ShowWhitespaceSetting::All => None,
+        };
+
+        for invisible in &self.invisibles {
+            let (&token_offset, invisible_symbol) = match invisible {
+                Invisible::Tab { line_start_offset } => (line_start_offset, &layout.tab_invisible),
+                Invisible::Whitespace { line_offset } => (line_offset, &layout.space_invisible),
+            };
+
+            let x_offset = self.line.x_for_index(token_offset);
+            let invisible_offset = (layout.position_map.em_width - invisible_symbol.width())
+                .max(Pixels::from(0.0))
+                / 2.0;
+            let origin =
+                content_origin + gpui::point(-scroll_left + x_offset + invisible_offset, line_y);
+
+            if let Some(allowed_regions) = allowed_invisibles_regions {
+                let invisible_point = DisplayPoint::new(row, token_offset as u32);
+                if !allowed_regions
+                    .iter()
+                    .any(|region| region.start <= invisible_point && invisible_point < region.end)
+                {
+                    continue;
+                }
+            }
+            invisible_symbol.paint(origin, line_height, cx);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Invisible {
+    Tab { line_start_offset: usize },
+    Whitespace { line_offset: usize },
+}
+
+impl Element<Editor> for EditorElement {
+    type ElementState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+
+    fn initialize(
+        &mut self,
+        view_state: &mut Editor,
+        element_state: Option<Self::ElementState>,
+        cx: &mut gpui::ViewContext<Editor>,
+    ) -> Self::ElementState {
+        ()
+    }
+
+    fn layout(
+        &mut self,
+        view_state: &mut Editor,
+        element_state: &mut Self::ElementState,
+        cx: &mut gpui::ViewContext<Editor>,
+    ) -> gpui::LayoutId {
+        let rem_size = cx.rem_size();
+        let mut style = Style::default();
+        style.size.width = relative(1.).into();
+        style.size.height = relative(1.).into();
+        cx.request_layout(&style, None)
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<gpui::Pixels>,
+        editor: &mut Editor,
+        element_state: &mut Self::ElementState,
+        cx: &mut gpui::ViewContext<Editor>,
+    ) {
+        let layout = self.compute_layout(editor, cx, bounds);
+        cx.with_content_mask(ContentMask { bounds }, |cx| {
+            let gutter_bounds = Bounds {
+                origin: bounds.origin,
+                size: layout.gutter_size,
+            };
+            let text_bounds = Bounds {
+                origin: gutter_bounds.upper_right(),
+                size: layout.text_size,
+            };
+
+            self.paint_background(gutter_bounds, text_bounds, &layout, cx);
+        });
     }
 }
 
@@ -2515,7 +2615,7 @@ impl Element<Editor> for EditorElement {
 //         let text_width = size.x() - gutter_width;
 //         let em_width = style.text.em_width(cx.font_cache());
 //         let em_advance = style.text.em_advance(cx.font_cache());
-//         let overscroll = vec2f(em_width, 0.);
+//         let overscroll = point(em_width, 0.);
 //         let snapshot = {
 //             editor.set_visible_line_count(size.y() / line_height, cx);
 
@@ -2553,8 +2653,8 @@ impl Element<Editor> for EditorElement {
 //         } else if size.y().is_infinite() {
 //             size.set_y(scroll_height);
 //         }
-//         let gutter_size = vec2f(gutter_width, size.y());
-//         let text_size = vec2f(text_width, size.y());
+//         let gutter_size = point(gutter_width, size.y());
+//         let text_size = point(text_width, size.y());
 
 //         let autoscroll_horizontally = editor.autoscroll_vertically(size.y(), line_height, cx);
 //         let mut snapshot = editor.snapshot(cx);
@@ -2793,7 +2893,7 @@ impl Element<Editor> for EditorElement {
 //             cx,
 //         );
 
-//         let scroll_max = vec2f(
+//         let scroll_max = point(
 //             ((scroll_width - text_size.x()) / em_width).max(0.0),
 //             max_row as f32,
 //         );
@@ -2862,7 +2962,7 @@ impl Element<Editor> for EditorElement {
 //             context_menu.layout(
 //                 SizeConstraint {
 //                     min: gpui::Point<Pixels>::zero(),
-//                     max: vec2f(
+//                     max: point(
 //                         cx.window_size().x() * 0.7,
 //                         (12. * line_height).min((size.y() - line_height) / 2.),
 //                     ),
@@ -2901,7 +3001,7 @@ impl Element<Editor> for EditorElement {
 //                 hover_popover.layout(
 //                     SizeConstraint {
 //                         min: gpui::Point<Pixels>::zero(),
-//                         max: vec2f(
+//                         max: point(
 //                             (120. * em_width) // Default size
 //                                 .min(size.x() / 2.) // Shrink to half of the editor width
 //                                 .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
@@ -2985,7 +3085,7 @@ impl Element<Editor> for EditorElement {
 
 //         let gutter_bounds = Bounds<Pixels>::new(bounds.origin(), layout.gutter_size);
 //         let text_bounds = Bounds<Pixels>::new(
-//             bounds.origin() + vec2f(layout.gutter_size.x(), 0.0),
+//             bounds.origin() + point(layout.gutter_size.x(), 0.0),
 //             layout.text_size,
 //         );
 
@@ -3025,10 +3125,10 @@ impl Element<Editor> for EditorElement {
 //         _: &ViewContext<Editor>,
 //     ) -> Option<Bounds<Pixels>> {
 //         let text_bounds = Bounds<Pixels>::new(
-//             bounds.origin() + vec2f(layout.gutter_size.x(), 0.0),
+//             bounds.origin() + point(layout.gutter_size.x(), 0.0),
 //             layout.text_size,
 //         );
-//         let content_origin = text_bounds.origin() + vec2f(layout.gutter_margin, 0.);
+//         let content_origin = text_bounds.origin() + point(layout.gutter_margin, 0.);
 //         let scroll_position = layout.position_map.snapshot.scroll_position();
 //         let start_row = scroll_position.y() as u32;
 //         let scroll_top = scroll_position.y() * layout.position_map.line_height;
@@ -3049,12 +3149,12 @@ impl Element<Editor> for EditorElement {
 //         let range_start_y = range_start.row() as f32 * layout.position_map.line_height;
 //         Some(Bounds<Pixels>::new(
 //             content_origin
-//                 + vec2f(
+//                 + point(
 //                     range_start_x,
 //                     range_start_y + layout.position_map.line_height,
 //                 )
-//                 - vec2f(scroll_left, scroll_top),
-//             vec2f(
+//                 - point(scroll_left, scroll_top),
+//             point(
 //                 layout.position_map.em_width,
 //                 layout.position_map.line_height,
 //             ),
@@ -3080,18 +3180,18 @@ type BufferRow = u32;
 
 pub struct LayoutState {
     position_map: Arc<PositionMap>,
-    gutter_size: gpui::Point<Pixels>,
-    gutter_padding: f32,
-    gutter_margin: f32,
-    text_size: gpui::Point<Pixels>,
+    gutter_size: Size<Pixels>,
+    gutter_padding: Pixels,
+    gutter_margin: Pixels,
+    text_size: gpui::Size<Pixels>,
     mode: EditorMode,
-    wrap_guides: SmallVec<[(f32, bool); 2]>,
+    wrap_guides: SmallVec<[(Pixels, bool); 2]>,
     visible_display_row_range: Range<u32>,
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: Option<Range<u32>>,
     line_number_layouts: Vec<Option<gpui::Line>>,
     display_hunks: Vec<DisplayDiffHunk>,
-    blocks: Vec<BlockLayout>,
+    // blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Hsla)>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
@@ -3099,10 +3199,10 @@ pub struct LayoutState {
     show_scrollbars: bool,
     is_singleton: bool,
     max_row: u32,
-    context_menu: Option<(DisplayPoint, AnyElement<Editor>)>,
-    code_actions_indicator: Option<(u32, AnyElement<Editor>)>,
-    hover_popovers: Option<(DisplayPoint, Vec<AnyElement<Editor>>)>,
-    fold_indicators: Vec<Option<AnyElement<Editor>>>,
+    // context_menu: Option<(DisplayPoint, AnyElement<Editor>)>,
+    // code_actions_indicator: Option<(u32, AnyElement<Editor>)>,
+    // hover_popovers: Option<(DisplayPoint, Vec<AnyElement<Editor>>)>,
+    // fold_indicators: Vec<Option<AnyElement<Editor>>>,
     tab_invisible: Line,
     space_invisible: Line,
 }
@@ -3110,7 +3210,7 @@ pub struct LayoutState {
 struct PositionMap {
     size: Size<Pixels>,
     line_height: Pixels,
-    scroll_max: Size<Pixels>,
+    scroll_max: gpui::Point<f32>,
     em_width: Pixels,
     em_advance: Pixels,
     line_layouts: Vec<LineWithInvisibles>,
@@ -3237,69 +3337,76 @@ pub struct Cursor {
 }
 
 impl Cursor {
-    // pub fn new(
-    //     origin: gpui::Point<Pixels>,
-    //     block_width: f32,
-    //     line_height: f32,
-    //     color: Color,
-    //     shape: CursorShape,
-    //     block_text: Option<Line>,
-    // ) -> Cursor {
-    //     Cursor {
-    //         origin,
-    //         block_width,
-    //         line_height,
-    //         color,
-    //         shape,
-    //         block_text,
-    //     }
-    // }
+    pub fn new(
+        origin: gpui::Point<Pixels>,
+        block_width: Pixels,
+        line_height: Pixels,
+        color: Hsla,
+        shape: CursorShape,
+        block_text: Option<Line>,
+    ) -> Cursor {
+        Cursor {
+            origin,
+            block_width,
+            line_height,
+            color,
+            shape,
+            block_text,
+        }
+    }
 
-    // pub fn bounding_rect(&self, origin: gpui::Point<Pixels>) -> Bounds<Pixels> {
-    //     Bounds<Pixels>::new(
-    //         self.origin + origin,
-    //         vec2f(self.block_width, self.line_height),
-    //     )
-    // }
+    pub fn bounding_rect(&self, origin: gpui::Point<Pixels>) -> Bounds<Pixels> {
+        Bounds {
+            origin: self.origin + origin,
+            size: size(self.block_width, self.line_height),
+        }
+    }
 
-    // pub fn paint(&self, origin: gpui::Point<Pixels>, cx: &mut WindowContext) {
-    //     let bounds = match self.shape {
-    //         CursorShape::Bar => Bounds<Pixels>::new(self.origin + origin, vec2f(2.0, self.line_height)),
-    //         CursorShape::Block | CursorShape::Hollow => Bounds<Pixels>::new(
-    //             self.origin + origin,
-    //             vec2f(self.block_width, self.line_height),
-    //         ),
-    //         CursorShape::Underscore => Bounds<Pixels>::new(
-    //             self.origin + origin + gpui::Point<Pixels>::new(0.0, self.line_height - 2.0),
-    //             vec2f(self.block_width, 2.0),
-    //         ),
-    //     };
+    pub fn paint(&self, origin: gpui::Point<Pixels>, cx: &mut WindowContext) {
+        let bounds = match self.shape {
+            CursorShape::Bar => Bounds {
+                origin: self.origin + origin,
+                size: size(px(2.0), self.line_height),
+            },
+            CursorShape::Block | CursorShape::Hollow => Bounds {
+                origin: self.origin + origin,
+                size: size(self.block_width, self.line_height),
+            },
+            CursorShape::Underscore => Bounds {
+                origin: self.origin
+                    + origin
+                    + gpui::Point::new(px(0.0), self.line_height - px(2.0)),
+                size: size(self.block_width, px(2.0)),
+            },
+        };
 
-    //     //Draw background or border quad
-    //     if matches!(self.shape, CursorShape::Hollow) {
-    //         cx.scene().push_quad(Quad {
-    //             bounds,
-    //             background: None,
-    //             border: Border::all(1., self.color).into(),
-    //             corner_radii: Default::default(),
-    //         });
-    //     } else {
-    //         cx.scene().push_quad(Quad {
-    //             bounds,
-    //             background: Some(self.color),
-    //             border: Default::default(),
-    //             corner_radii: Default::default(),
-    //         });
-    //     }
+        //Draw background or border quad
+        if matches!(self.shape, CursorShape::Hollow) {
+            cx.paint_quad(
+                bounds,
+                Corners::default(),
+                transparent_black(),
+                Edges::all(px(1.)),
+                self.color,
+            );
+        } else {
+            cx.paint_quad(
+                bounds,
+                Corners::default(),
+                self.color,
+                Edges::default(),
+                transparent_black(),
+            );
+        }
 
-    //     if let Some(block_text) = &self.block_text {
-    //         block_text.paint(self.origin + origin, bounds, self.line_height, cx);
-    //     }
-    // }
+        if let Some(block_text) = &self.block_text {
+            block_text.paint(self.origin + origin, self.line_height, cx);
+        }
+    }
 
-    // pub fn shape(&self) -> CursorShape {
-    //     self.shape
-    // }
+    pub fn shape(&self) -> CursorShape {
+        self.shape
+    }
 }
 
 #[derive(Debug)]
@@ -3313,130 +3420,129 @@ pub struct HighlightedRange {
 
 #[derive(Debug)]
 pub struct HighlightedRangeLine {
-    pub start_x: f32,
-    pub end_x: f32,
+    pub start_x: Pixels,
+    pub end_x: Pixels,
 }
 
 impl HighlightedRange {
-    // pub fn paint(&self, bounds: Bounds<Pixels>, cx: &mut WindowContext) {
-    //     if self.lines.len() >= 2 && self.lines[0].start_x > self.lines[1].end_x {
-    //         self.paint_lines(self.start_y, &self.lines[0..1], bounds, cx);
-    //         self.paint_lines(
-    //             self.start_y + self.line_height,
-    //             &self.lines[1..],
-    //             bounds,
-    //             cx,
-    //         );
-    //     } else {
-    //         self.paint_lines(self.start_y, &self.lines, bounds, cx);
-    //     }
-    // }
+    pub fn paint(&self, bounds: Bounds<Pixels>, cx: &mut WindowContext) {
+        if self.lines.len() >= 2 && self.lines[0].start_x > self.lines[1].end_x {
+            self.paint_lines(self.start_y, &self.lines[0..1], bounds, cx);
+            self.paint_lines(
+                self.start_y + self.line_height,
+                &self.lines[1..],
+                bounds,
+                cx,
+            );
+        } else {
+            self.paint_lines(self.start_y, &self.lines, bounds, cx);
+        }
+    }
 
-    // fn paint_lines(
-    //     &self,
-    //     start_y: f32,
-    //     lines: &[HighlightedRangeLine],
-    //     bounds: Bounds<Pixels>,
-    //     cx: &mut WindowContext,
-    // ) {
-    //     if lines.is_empty() {
-    //         return;
-    //     }
+    fn paint_lines(
+        &self,
+        start_y: Pixels,
+        lines: &[HighlightedRangeLine],
+        bounds: Bounds<Pixels>,
+        cx: &mut WindowContext,
+    ) {
+        if lines.is_empty() {
+            return;
+        }
 
-    //     let mut path = PathBuilder::new();
-    //     let first_line = lines.first().unwrap();
-    //     let last_line = lines.last().unwrap();
+        let first_line = lines.first().unwrap();
+        let last_line = lines.last().unwrap();
 
-    //     let first_top_left = vec2f(first_line.start_x, start_y);
-    //     let first_top_right = vec2f(first_line.end_x, start_y);
+        let first_top_left = point(first_line.start_x, start_y);
+        let first_top_right = point(first_line.end_x, start_y);
 
-    //     let curve_height = vec2f(0., self.corner_radius);
-    //     let curve_width = |start_x: f32, end_x: f32| {
-    //         let max = (end_x - start_x) / 2.;
-    //         let width = if max < self.corner_radius {
-    //             max
-    //         } else {
-    //             self.corner_radius
-    //         };
+        let curve_height = point(Pixels::ZERO, self.corner_radius);
+        let curve_width = |start_x: Pixels, end_x: Pixels| {
+            let max = (end_x - start_x) / 2.;
+            let width = if max < self.corner_radius {
+                max
+            } else {
+                self.corner_radius
+            };
 
-    //         vec2f(width, 0.)
-    //     };
+            point(width, Pixels::ZERO)
+        };
 
-    //     let top_curve_width = curve_width(first_line.start_x, first_line.end_x);
-    //     path.reset(first_top_right - top_curve_width);
-    //     path.curve_to(first_top_right + curve_height, first_top_right);
+        let top_curve_width = curve_width(first_line.start_x, first_line.end_x);
+        let mut path = gpui::Path::new(first_top_right - top_curve_width);
+        path.curve_to(first_top_right + curve_height, first_top_right);
 
-    //     let mut iter = lines.iter().enumerate().peekable();
-    //     while let Some((ix, line)) = iter.next() {
-    //         let bottom_right = vec2f(line.end_x, start_y + (ix + 1) as f32 * self.line_height);
+        let mut iter = lines.iter().enumerate().peekable();
+        while let Some((ix, line)) = iter.next() {
+            let bottom_right = point(line.end_x, start_y + (ix + 1) as f32 * self.line_height);
 
-    //         if let Some((_, next_line)) = iter.peek() {
-    //             let next_top_right = vec2f(next_line.end_x, bottom_right.y());
+            if let Some((_, next_line)) = iter.peek() {
+                let next_top_right = point(next_line.end_x, bottom_right.y);
 
-    //             match next_top_right.x().partial_cmp(&bottom_right.x()).unwrap() {
-    //                 Ordering::Equal => {
-    //                     path.line_to(bottom_right);
-    //                 }
-    //                 Ordering::Less => {
-    //                     let curve_width = curve_width(next_top_right.x(), bottom_right.x());
-    //                     path.line_to(bottom_right - curve_height);
-    //                     if self.corner_radius > 0. {
-    //                         path.curve_to(bottom_right - curve_width, bottom_right);
-    //                     }
-    //                     path.line_to(next_top_right + curve_width);
-    //                     if self.corner_radius > 0. {
-    //                         path.curve_to(next_top_right + curve_height, next_top_right);
-    //                     }
-    //                 }
-    //                 Ordering::Greater => {
-    //                     let curve_width = curve_width(bottom_right.x(), next_top_right.x());
-    //                     path.line_to(bottom_right - curve_height);
-    //                     if self.corner_radius > 0. {
-    //                         path.curve_to(bottom_right + curve_width, bottom_right);
-    //                     }
-    //                     path.line_to(next_top_right - curve_width);
-    //                     if self.corner_radius > 0. {
-    //                         path.curve_to(next_top_right + curve_height, next_top_right);
-    //                     }
-    //                 }
-    //             }
-    //         } else {
-    //             let curve_width = curve_width(line.start_x, line.end_x);
-    //             path.line_to(bottom_right - curve_height);
-    //             if self.corner_radius > 0. {
-    //                 path.curve_to(bottom_right - curve_width, bottom_right);
-    //             }
+                match next_top_right.x.partial_cmp(&bottom_right.x).unwrap() {
+                    Ordering::Equal => {
+                        path.line_to(bottom_right);
+                    }
+                    Ordering::Less => {
+                        let curve_width = curve_width(next_top_right.x, bottom_right.x);
+                        path.line_to(bottom_right - curve_height);
+                        if self.corner_radius > Pixels::ZERO {
+                            path.curve_to(bottom_right - curve_width, bottom_right);
+                        }
+                        path.line_to(next_top_right + curve_width);
+                        if self.corner_radius > Pixels::ZERO {
+                            path.curve_to(next_top_right + curve_height, next_top_right);
+                        }
+                    }
+                    Ordering::Greater => {
+                        let curve_width = curve_width(bottom_right.x, next_top_right.x);
+                        path.line_to(bottom_right - curve_height);
+                        if self.corner_radius > Pixels::ZERO {
+                            path.curve_to(bottom_right + curve_width, bottom_right);
+                        }
+                        path.line_to(next_top_right - curve_width);
+                        if self.corner_radius > Pixels::ZERO {
+                            path.curve_to(next_top_right + curve_height, next_top_right);
+                        }
+                    }
+                }
+            } else {
+                let curve_width = curve_width(line.start_x, line.end_x);
+                path.line_to(bottom_right - curve_height);
+                if self.corner_radius > Pixels::ZERO {
+                    path.curve_to(bottom_right - curve_width, bottom_right);
+                }
 
-    //             let bottom_left = vec2f(line.start_x, bottom_right.y());
-    //             path.line_to(bottom_left + curve_width);
-    //             if self.corner_radius > 0. {
-    //                 path.curve_to(bottom_left - curve_height, bottom_left);
-    //             }
-    //         }
-    //     }
+                let bottom_left = point(line.start_x, bottom_right.y);
+                path.line_to(bottom_left + curve_width);
+                if self.corner_radius > Pixels::ZERO {
+                    path.curve_to(bottom_left - curve_height, bottom_left);
+                }
+            }
+        }
 
-    //     if first_line.start_x > last_line.start_x {
-    //         let curve_width = curve_width(last_line.start_x, first_line.start_x);
-    //         let second_top_left = vec2f(last_line.start_x, start_y + self.line_height);
-    //         path.line_to(second_top_left + curve_height);
-    //         if self.corner_radius > 0. {
-    //             path.curve_to(second_top_left + curve_width, second_top_left);
-    //         }
-    //         let first_bottom_left = vec2f(first_line.start_x, second_top_left.y());
-    //         path.line_to(first_bottom_left - curve_width);
-    //         if self.corner_radius > 0. {
-    //             path.curve_to(first_bottom_left - curve_height, first_bottom_left);
-    //         }
-    //     }
+        if first_line.start_x > last_line.start_x {
+            let curve_width = curve_width(last_line.start_x, first_line.start_x);
+            let second_top_left = point(last_line.start_x, start_y + self.line_height);
+            path.line_to(second_top_left + curve_height);
+            if self.corner_radius > Pixels::ZERO {
+                path.curve_to(second_top_left + curve_width, second_top_left);
+            }
+            let first_bottom_left = point(first_line.start_x, second_top_left.y);
+            path.line_to(first_bottom_left - curve_width);
+            if self.corner_radius > Pixels::ZERO {
+                path.curve_to(first_bottom_left - curve_height, first_bottom_left);
+            }
+        }
 
-    //     path.line_to(first_top_left + curve_height);
-    //     if self.corner_radius > 0. {
-    //         path.curve_to(first_top_left + top_curve_width, first_top_left);
-    //     }
-    //     path.line_to(first_top_right - top_curve_width);
+        path.line_to(first_top_left + curve_height);
+        if self.corner_radius > Pixels::ZERO {
+            path.curve_to(first_top_left + top_curve_width, first_top_left);
+        }
+        path.line_to(first_top_right - top_curve_width);
 
-    //     cx.scene().push_path(path.build(self.color, Some(bounds)));
-    // }
+        cx.paint_path(path, self.color);
+    }
 }
 
 // fn range_to_bounds(
@@ -3483,8 +3589,8 @@ impl HighlightedRange {
 //         };
 
 //         bounds.push(Bounds<Pixels>::from_points(
-//             vec2f(start_x, first_y + position_map.line_height * idx as f32),
-//             vec2f(end_x, first_y + position_map.line_height * (idx + 1) as f32),
+//             point(start_x, first_y + position_map.line_height * idx as f32),
+//             point(end_x, first_y + position_map.line_height * (idx + 1) as f32),
 //         ))
 //     }
 
@@ -3594,7 +3700,7 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 //                 ]);
 //             });
 //             element.layout(
-//                 SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
+//                 SizeConstraint::new(point(500., 500.), point(500., 500.)),
 //                 editor,
 //                 cx,
 //             )
@@ -3678,7 +3784,7 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 //                 ]);
 //             });
 //             element.layout(
-//                 SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
+//                 SizeConstraint::new(point(500., 500.), point(500., 500.)),
 //                 editor,
 //                 cx,
 //             )
@@ -3737,7 +3843,7 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 //         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
 //         let (size, mut state) = editor.update(cx, |editor, cx| {
 //             element.layout(
-//                 SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
+//                 SizeConstraint::new(point(500., 500.), point(500., 500.)),
 //                 editor,
 //                 cx,
 //             )
@@ -3925,7 +4031,7 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 //             editor.set_wrap_width(Some(editor_width), cx);
 
 //             element.layout(
-//                 SizeConstraint::new(vec2f(editor_width, 500.), vec2f(editor_width, 500.)),
+//                 SizeConstraint::new(point(editor_width, 500.), point(editor_width, 500.)),
 //                 editor,
 //                 cx,
 //             )

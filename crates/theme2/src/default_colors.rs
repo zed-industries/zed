@@ -238,10 +238,15 @@ impl ThemeColors {
             tab_active: neutral().light().step_1(),
             tab_inactive: neutral().light().step_2(),
             editor: neutral().light().step_1(),
+            editor_gutter: neutral().light().step_1(), // todo!("pick the right colors")
             editor_subheader: neutral().light().step_2(),
             editor_active_line: neutral().light_alpha().step_3(),
             editor_line_number: neutral().light_alpha().step_3(), // todo!("pick the right colors")
             editor_active_line_number: neutral().light_alpha().step_3(), // todo!("pick the right colors")
+            editor_highlighted_line: neutral().light_alpha().step_4(), // todo!("pick the right colors")
+            editor_invisible: neutral().light_alpha().step_4(), // todo!("pick the right colors")
+            editor_wrap_guide: neutral().light_alpha().step_4(), // todo!("pick the right colors")
+            editor_active_wrap_guide: neutral().light_alpha().step_4(), // todo!("pick the right colors")
         }
     }
 
@@ -285,10 +290,15 @@ impl ThemeColors {
             tab_active: neutral().dark().step_1(),
             tab_inactive: neutral().dark().step_2(),
             editor: neutral().dark().step_1(),
+            editor_gutter: neutral().dark().step_1(), // todo!("pick the right colors")
             editor_subheader: neutral().dark().step_2(),
             editor_active_line: neutral().dark_alpha().step_3(),
             editor_line_number: neutral().dark_alpha().step_3(), // todo!("pick the right colors")
             editor_active_line_number: neutral().dark_alpha().step_3(), // todo!("pick the right colors")
+            editor_highlighted_line: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
+            editor_invisible: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
+            editor_wrap_guide: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
+            editor_active_wrap_guide: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
         }
     }
 }

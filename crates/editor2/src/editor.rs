@@ -36,7 +36,7 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    div, AnyElement, AppContext, BackgroundExecutor, Context, Div, Element, EventEmitter,
+    div, px, AnyElement, AppContext, BackgroundExecutor, Context, Div, Element, EventEmitter,
     FocusHandle, Hsla, Model, Pixels, Render, Styled, Subscription, Task, TextStyle, View,
     ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -597,12 +597,11 @@ pub enum SoftWrap {
 
 #[derive(Clone)]
 pub struct EditorStyle {
+    pub background: Hsla,
     pub local_player: PlayerColor,
     pub text: TextStyle,
     pub line_height_scalar: f32,
-    // pub placeholder_text: Option<TextStyle>,
-    //  pub theme: theme::Editor,
-    pub theme_id: usize,
+    pub scrollbar_width: Pixels,
 }
 
 type CompletionId = usize;
@@ -9327,10 +9326,11 @@ impl Render for Editor {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         EditorElement::new(EditorStyle {
+            background: cx.theme().colors().editor,
             local_player: cx.theme().players().local(),
             text: cx.text_style(),
             line_height_scalar: 1.,
-            theme_id: 0,
+            scrollbar_width: px(12.),
         })
     }
 }

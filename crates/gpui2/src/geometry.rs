@@ -492,6 +492,15 @@ where
 impl<T: Clone + Default + Debug + Copy> Copy for Edges<T> {}
 
 impl<T: Clone + Default + Debug> Edges<T> {
+    pub fn all(value: T) -> Self {
+        Self {
+            top: value.clone(),
+            right: value.clone(),
+            bottom: value.clone(),
+            left: value,
+        }
+    }
+
     pub fn map<U>(&self, f: impl Fn(&T) -> U) -> Edges<U>
     where
         U: Clone + Default + Debug,

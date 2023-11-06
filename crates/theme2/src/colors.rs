@@ -103,10 +103,15 @@ pub struct ThemeColors {
     pub tab_inactive: Hsla,
     pub tab_active: Hsla,
     pub editor: Hsla,
+    pub editor_gutter: Hsla,
     pub editor_subheader: Hsla,
     pub editor_active_line: Hsla,
+    pub editor_highlighted_line: Hsla,
     pub editor_line_number: Hsla,
     pub editor_active_line_number: Hsla,
+    pub editor_invisible: Hsla,
+    pub editor_wrap_guide: Hsla,
+    pub editor_active_wrap_guide: Hsla,
 }
 
 #[derive(Refineable, Clone)]
