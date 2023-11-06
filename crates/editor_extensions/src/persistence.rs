@@ -1,3 +1,5 @@
+use anyhow::Result;
+use async_trait::async_trait;
 use std::path::PathBuf;
 
 use db::sqlez_macros::sql;
@@ -80,5 +82,34 @@ impl EditorDb {
                 scroll_vertical_offset = ?5
             WHERE item_id = ?1 AND workspace_id = ?2
         }
+    }
+}
+
+#[async_trait]
+impl editor::Db for DB {
+    async fn save_scroll_position(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        top_row: u32,
+        vertical_offset: f32,
+        horizontal_offset: f32,
+    ) -> Result<()> {
+        todo!();
+    }
+    fn get_scroll_position(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+    ) -> Result<Option<(u32, f32, f32)>> {
+        todo!();
+    }
+    async fn save_path(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        path: PathBuf,
+    ) -> Result<()> {
+        todo!();
     }
 }

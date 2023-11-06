@@ -24,3 +24,4 @@ theme = {path = "../theme"}
 smallvec.workspace = true
 rpc = {path = "../rpc"}
 futures.workspace = true
+async-trait.workspace = true

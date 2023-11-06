@@ -1,4 +1,5 @@
 use crate::persistence::DB;
+use crate::FollowableEditor;
 use anyhow::{Context, Result};
 use collections::HashSet;
 use editor::{
@@ -44,9 +45,10 @@ use workspace::{
 };
 use workspace_types::*;
 
-impl FollowableItem for Editor {
+impl FollowableItem for FollowableEditor {
     fn remote_id(&self) -> Option<ViewId> {
-        self.remote_id
+        todo!();
+        //self.0.remote_id
     }
 
     fn from_state_proto(
@@ -93,7 +95,7 @@ impl FollowableItem for Editor {
             })?;
 
             let editor = if let Some(editor) = editor {
-                editor
+                editor.update(&mut cx, |this, _| this.0.clone())
             } else {
                 pane.update(&mut cx, |_, cx| {
                     let multibuffer = cx.add_model(|cx| {
@@ -161,29 +163,31 @@ impl FollowableItem for Editor {
     }
 
     fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>) {
-        self.leader_peer_id = leader_peer_id;
-        if self.leader_peer_id.is_some() {
-            self.buffer().update(cx, |buffer, cx| {
-                buffer.remove_active_selections(cx);
-            });
-        } else {
-            self.buffer().update(cx, |buffer, cx| {
-                if self.focused {
-                    buffer.set_active_selections(
-                        &self.selections.disjoint_anchors(),
-                        self.selections.line_mode,
-                        self.cursor_shape,
-                        cx,
-                    );
-                }
-            });
-        }
-        cx.notify();
+        self.0.update(cx, |this, cx| {
+            this.leader_peer_id = leader_peer_id;
+            if this.leader_peer_id.is_some() {
+                this.buffer().update(cx, |buffer, cx| {
+                    buffer.remove_active_selections(cx);
+                });
+            } else {
+                self.0.buffer().update(cx, |buffer, cx| {
+                    if self.0.focused {
+                        buffer.set_active_selections(
+                            &self.0.selections.disjoint_anchors(),
+                            self.0.selections.line_mode,
+                            self.0.cursor_shape,
+                            cx,
+                        );
+                    }
+                });
+            }
+            cx.notify();
+        });
     }
 
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
-        let buffer = self.buffer().read(cx);
-        let scroll_anchor = self.scroll_manager.anchor();
+        let buffer = self.0.buffer().read(cx);
+        let scroll_anchor = self.0.scroll_manager.anchor();
         let excerpts = buffer
             .read(cx)
             .excerpts()
@@ -263,7 +267,7 @@ impl FollowableItem for Editor {
                     true
                 }
                 Event::ScrollPositionChanged { .. } => {
-                    let scroll_anchor = self.scroll_manager.anchor();
+                    let scroll_anchor = self.0.scroll_manager.anchor();
                     update.scroll_top_anchor = Some(serialize_anchor(&scroll_anchor.anchor));
                     update.scroll_x = scroll_anchor.offset.x();
                     update.scroll_y = scroll_anchor.offset.y();
@@ -519,11 +523,11 @@ fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor)
     })
 }
 
-impl Item for Editor {
+impl Item for FollowableEditor {
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
         if let Ok(data) = data.downcast::<NavigationData>() {
-            let newest_selection = self.selections.newest::<Point>(cx);
-            let buffer = self.buffer().read(cx).read(cx);
+            let newest_selection = self.0.selections.newest::<Point>(cx);
+            let buffer = self.0.buffer().read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
                 data.cursor_anchor.to_point(&buffer)
             } else {
@@ -542,12 +546,12 @@ impl Item for Editor {
             if newest_selection.head() == offset {
                 false
             } else {
-                let nav_history = self.nav_history.take();
-                self.set_scroll_anchor(scroll_anchor, cx);
-                self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                let nav_history = self.0.nav_history.take();
+                self.0.set_scroll_anchor(scroll_anchor, cx);
+                self.0.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([offset..offset])
                 });
-                self.nav_history = nav_history;
+                self.0.nav_history = nav_history;
                 true
             }
         } else {
@@ -571,7 +575,7 @@ impl Item for Editor {
     }
 
     fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<Cow<str>> {
-        match path_for_buffer(&self.buffer(), detail, true, cx)? {
+        match path_for_buffer(&self.0.buffer(), detail, true, cx)? {
             Cow::Borrowed(path) => Some(path.to_string_lossy()),
             Cow::Owned(path) => Some(path.to_string_lossy().to_string().into()),
         }
@@ -584,9 +588,9 @@ impl Item for Editor {
         cx: &AppContext,
     ) -> AnyElement<T> {
         Flex::row()
-            .with_child(Label::new(self.title(cx).to_string(), style.label.clone()).into_any())
+            .with_child(Label::new(self.0.title(cx).to_string(), style.label.clone()).into_any())
             .with_children(detail.and_then(|detail| {
-                let path = path_for_buffer(&self.buffer(), detail, false, cx)?;
+                let path = path_for_buffer(&self.0.buffer(), detail, false, cx)?;
                 let description = path.to_string_lossy();
                 Some(
                     Label::new(
@@ -603,46 +607,49 @@ impl Item for Editor {
     }
 
     fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
-        self.buffer()
+        self.0
+            .buffer()
             .read(cx)
             .for_each_buffer(|buffer| f(buffer.id(), buffer.read(cx)));
     }
 
     fn is_singleton(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).is_singleton()
+        self.0.buffer().read(cx).is_singleton()
     }
 
     fn clone_on_split(&self, _workspace_id: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
     {
-        Some(self.clone(cx))
+        Some(self.0.clone(cx))
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
-        self.set_nav_history(Some(Box::new(history)));
+        self.0.set_nav_history(Some(Box::new(history)));
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        let selection = self.selections.newest_anchor();
-        self.push_to_nav_history(selection.head(), None, cx);
+        let selection = self.0.selections.newest_anchor();
+        self.0.push_to_nav_history(selection.head(), None, cx);
     }
 
     fn workspace_deactivated(&mut self, cx: &mut ViewContext<Self>) {
         hide_link_definition(self, cx);
-        self.link_go_to_definition_state.last_trigger_point = None;
+        self.0.update(cx, |this, _| {
+            this.link_go_to_definition_state.last_trigger_point = None
+        });
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).read(cx).is_dirty()
+        self.0.buffer().read(cx).read(cx).is_dirty()
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).read(cx).has_conflict()
+        self.0.buffer().read(cx).read(cx).has_conflict()
     }
 
     fn can_save(&self, cx: &AppContext) -> bool {
-        let buffer = &self.buffer().read(cx);
+        let buffer = &self.0.buffer().read(cx);
         if let Some(buffer) = buffer.as_singleton() {
             buffer.read(cx).project_path(cx).is_some()
         } else {
@@ -655,9 +662,11 @@ impl Item for Editor {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.report_editor_event("save", None, cx);
-        let format = self.perform_format(Arc::new(project.clone()), FormatTrigger::Save, cx);
-        let buffers = self.buffer().clone().read(cx).all_buffers();
+        self.0.report_editor_event("save", None, cx);
+        let format = self
+            .0
+            .perform_format(Arc::new(project.clone()), FormatTrigger::Save, cx);
+        let buffers = self.0.buffer().clone().read(cx).all_buffers();
         cx.spawn(|_, mut cx| async move {
             format.await?;
 
@@ -698,19 +707,21 @@ impl Item for Editor {
         abs_path: PathBuf,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        let buffer = self
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .expect("cannot call save_as on an excerpt list");
+        self.0.update(cx, |this, cx| {
+            let buffer = this
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("cannot call save_as on an excerpt list");
 
-        let file_extension = abs_path
-            .extension()
-            .map(|a| a.to_string_lossy().to_string());
-        self.report_editor_event("save", file_extension, cx);
+            let file_extension = abs_path
+                .extension()
+                .map(|a| a.to_string_lossy().to_string());
+            this.report_editor_event("save", file_extension, cx);
 
-        project.update(cx, |project, cx| {
-            project.save_buffer_as(buffer, abs_path, cx)
+            project.update(cx, |project, cx| {
+                project.save_buffer_as(buffer, abs_path, cx)
+            })
         })
     }
 
@@ -719,8 +730,8 @@ impl Item for Editor {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        let buffer = self.buffer().clone();
-        let buffers = self.buffer().read(cx).all_buffers();
+        let buffer = self.0.buffer().clone();
+        let buffers = self.0.buffer().read(cx).all_buffers();
         let reload_buffers =
             project.update(cx, |project, cx| project.reload_buffers(buffers, true, cx));
         cx.spawn(|this, mut cx| async move {
@@ -770,7 +781,7 @@ impl Item for Editor {
     }
 
     fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Vector2F> {
-        self.pixel_position_of_newest_cursor
+        self.0.pixel_position_of_newest_cursor
     }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
@@ -778,40 +789,44 @@ impl Item for Editor {
     }
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
-        let cursor = self.selections.newest_anchor().head();
-        let multibuffer = &self.buffer().read(cx);
-        let (buffer_id, symbols) =
-            multibuffer.symbols_containing(cursor, Some(&theme.editor.syntax), cx)?;
-        let buffer = multibuffer.buffer(buffer_id)?;
+        self.0
+            .read_with(cx, |this, cx| {
+                let cursor = this.selections.newest_anchor().head();
+                let multibuffer = &this.buffer().read(cx);
+                let (buffer_id, symbols) =
+                    multibuffer.symbols_containing(cursor, Some(&theme.editor.syntax), cx)?;
+                let buffer = multibuffer.buffer(buffer_id)?;
 
-        let buffer = buffer.read(cx);
-        let filename = buffer
-            .snapshot()
-            .resolve_file_path(
-                cx,
-                self.project
-                    .as_ref()
-                    .map(|project| project.visible_worktrees_count(cx) > 1)
-                    .unwrap_or_default(),
-            )
-            .map(|path| path.to_string_lossy().to_string())
-            .unwrap_or_else(|| "untitled".to_string());
+                let buffer = buffer.read(cx);
+                let filename = buffer
+                    .snapshot()
+                    .resolve_file_path(
+                        cx,
+                        this.project
+                            .as_ref()
+                            .map(|project| project.visible_worktrees_count(cx) > 1)
+                            .unwrap_or_default(),
+                    )
+                    .map(|path| path.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "untitled".to_string());
 
-        let mut breadcrumbs = vec![BreadcrumbText {
-            text: filename,
-            highlights: None,
-        }];
-        breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
-            text: symbol.text,
-            highlights: Some(symbol.highlight_ranges),
-        }));
-        Some(breadcrumbs)
+                let mut breadcrumbs = vec![BreadcrumbText {
+                    text: filename,
+                    highlights: None,
+                }];
+                breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
+                    text: symbol.text,
+                    highlights: Some(symbol.highlight_ranges),
+                }));
+                Some(breadcrumbs)
+            })
+            .flatten()
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         let workspace_id = workspace.database_id();
         let item_id = cx.view_id();
-        self.workspace = Some((Arc::new(workspace.weak_handle()), workspace.database_id()));
+        self.0.workspace = Some((Arc::new(workspace.weak_handle()), workspace.database_id()));
 
         fn serialize(
             buffer: ModelHandle<Buffer>,
@@ -832,7 +847,7 @@ impl Item for Editor {
             }
         }
 
-        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+        if let Some(buffer) = self.0.buffer().read(cx).as_singleton() {
             serialize(buffer.clone(), workspace_id, item_id, cx);
 
             cx.subscribe(&buffer, |this, buffer, event, cx| {
@@ -895,7 +910,7 @@ impl Item for Editor {
     }
 }
 
-impl ProjectItem for Editor {
+impl ProjectItem for FollowableEditor {
     type Item = Buffer;
 
     fn for_project_item(
@@ -907,7 +922,7 @@ impl ProjectItem for Editor {
     }
 }
 
-impl SearchableItem for Editor {
+impl SearchableItem for FollowableEditor {
     type Match = Range<Anchor>;
 
     fn to_search_event(
@@ -918,7 +933,7 @@ impl SearchableItem for Editor {
         match event {
             Event::BufferEdited => Some(SearchEvent::MatchesInvalidated),
             Event::SelectionsChanged { .. } => {
-                if self.selections.disjoint_anchors().len() == 1 {
+                if self.0.selections.disjoint_anchors().len() == 1 {
                     Some(SearchEvent::ActiveMatchChanged)
                 } else {
                     None
@@ -929,20 +944,24 @@ impl SearchableItem for Editor {
     }
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-        self.clear_background_highlights::<BufferSearchHighlights>(cx);
+        self.0.update(cx, |this, cx| {
+            this.clear_background_highlights::<BufferSearchHighlights>(cx)
+        });
     }
 
     fn update_matches(&mut self, matches: Vec<Range<Anchor>>, cx: &mut ViewContext<Self>) {
-        self.highlight_background::<BufferSearchHighlights>(
-            matches,
-            |theme| theme.search.match_background,
-            cx,
-        );
+        self.0.update(cx, |this, cx| {
+            this.highlight_background::<BufferSearchHighlights>(
+                matches,
+                |theme| theme.search.match_background,
+                cx,
+            )
+        });
     }
 
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
-        let display_map = self.snapshot(cx).display_snapshot;
-        let selection = self.selections.newest::<usize>(cx);
+        let display_map = self.0.snapshot(cx).display_snapshot;
+        let selection = self.0.selections.newest::<usize>(cx);
         if selection.start == selection.end {
             let point = selection.start.to_display_point(&display_map);
             let range = surrounding_word(&display_map, point);
@@ -968,20 +987,24 @@ impl SearchableItem for Editor {
         matches: Vec<Range<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.unfold_ranges([matches[index].clone()], false, true, cx);
-        let range = self.range_for_match(&matches[index]);
-        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            s.select_ranges([range]);
-        })
+        self.0.update(cx, |this, cx| {
+            this.unfold_ranges([matches[index].clone()], false, true, cx);
+            let range = this.range_for_match(&matches[index]);
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select_ranges([range]);
+            })
+        });
     }
 
     fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
-        self.unfold_ranges(matches.clone(), false, false, cx);
-        let mut ranges = Vec::new();
-        for m in &matches {
-            ranges.push(self.range_for_match(&m))
-        }
-        self.change_selections(None, cx, |s| s.select_ranges(ranges));
+        self.0.update(cx, |this, cx| {
+            this.unfold_ranges(matches.clone(), false, false, cx);
+            let mut ranges = Vec::new();
+            for m in &matches {
+                ranges.push(this.range_for_match(&m))
+            }
+            this.change_selections(None, cx, |s| s.select_ranges(ranges));
+        });
     }
     fn replace(
         &mut self,
@@ -989,7 +1012,7 @@ impl SearchableItem for Editor {
         query: &SearchQuery,
         cx: &mut ViewContext<Self>,
     ) {
-        let text = self.buffer().read(cx);
+        let text = self.0.read(cx).buffer().read(cx);
         let text = text.snapshot(cx);
         let text = text.text_for_range(identifier.clone()).collect::<Vec<_>>();
         let text: Cow<_> = if text.len() == 1 {
@@ -1000,7 +1023,7 @@ impl SearchableItem for Editor {
         };
 
         if let Some(replacement) = query.replacement_for(&text) {
-            self.transact(cx, |this, cx| {
+            self.0.transact(cx, |this, cx| {
                 this.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
             });
         }
@@ -1013,9 +1036,9 @@ impl SearchableItem for Editor {
         count: usize,
         cx: &mut ViewContext<Self>,
     ) -> usize {
-        let buffer = self.buffer().read(cx).snapshot(cx);
-        let current_index_position = if self.selections.disjoint_anchors().len() == 1 {
-            self.selections.newest_anchor().head()
+        let buffer = self.0.buffer().read(cx).snapshot(cx);
+        let current_index_position = if self.0.selections.disjoint_anchors().len() == 1 {
+            self.0.selections.newest_anchor().head()
         } else {
             matches[current_index].start
         };
@@ -1059,7 +1082,7 @@ impl SearchableItem for Editor {
         query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Range<Anchor>>> {
-        let buffer = self.buffer().read(cx).snapshot(cx);
+        let buffer = self.0.read(cx).buffer().read(cx).snapshot(cx);
         cx.background().spawn(async move {
             let mut ranges = Vec::new();
             if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
@@ -1102,10 +1125,11 @@ impl SearchableItem for Editor {
         matches: Vec<Range<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) -> Option<usize> {
+        let this = self.0.read(cx);
         active_match_index(
             &matches,
-            &self.selections.newest_anchor().head(),
-            &self.buffer().read(cx).snapshot(cx),
+            &this.selections.newest_anchor().head(),
+            &this.buffer().read(cx).snapshot(cx),
         )
     }
 }
@@ -1293,11 +1317,11 @@ mod tests {
 
     impl language::File for TestFile {
         fn path(&self) -> &Arc<Path> {
-            &self.path
+            &self.0.path
         }
 
         fn full_path(&self, _: &gpui::AppContext) -> PathBuf {
-            self.full_path.clone()
+            self.0.full_path.clone()
         }
 
         fn as_local(&self) -> Option<&dyn language::LocalFile> {

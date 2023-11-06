@@ -104,6 +104,7 @@ use sum_tree::TreeMap;
 use text::Rope;
 use theme::{DiagnosticStyle, Theme, ThemeSettings};
 pub use types::CollaborationHub;
+pub use types::Db;
 pub use types::DisableUpdateHistory;
 pub use types::DisableUpdateHistoryGuard;
 pub use types::Workspace;
@@ -670,8 +671,8 @@ pub struct Editor {
     keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
     read_only: bool,
-    leader_peer_id: Option<PeerId>,
-    remote_id: Option<ViewId>,
+    pub leader_peer_id: Option<PeerId>,
+    pub remote_id: Option<ViewId>,
     hover_state: HoverState,
     gutter_hovered: bool,
     pub link_go_to_definition_state: LinkGoToDefinitionState,
@@ -1738,10 +1739,10 @@ pub struct ClipboardSelection {
 
 #[derive(Debug)]
 pub struct NavigationData {
-    cursor_anchor: Anchor,
-    cursor_position: Point,
-    scroll_anchor: ScrollAnchor,
-    scroll_top_row: u32,
+    pub cursor_anchor: Anchor,
+    pub cursor_position: Point,
+    pub scroll_anchor: ScrollAnchor,
+    pub scroll_top_row: u32,
 }
 
 pub struct EditorCreated(pub ViewHandle<Editor>);
@@ -3776,7 +3777,7 @@ impl Editor {
         }))
     }
 
-    async fn open_project_transaction(
+    pub async fn open_project_transaction(
         this: &WeakViewHandle<Editor>,
         workspace: &dyn Workspace,
         transaction: ProjectTransaction,

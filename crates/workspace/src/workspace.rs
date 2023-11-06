@@ -53,7 +53,6 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
-use workspace_types::WorkspaceId;
 
 use crate::{
     notifications::{simple_message_notification::MessageNotification, NotificationTracker},
@@ -79,7 +78,7 @@ use theme::{Theme, ThemeSettings};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
 pub use workspace_settings::{AutosaveSetting, GitGutterSetting, WorkspaceSettings};
-use workspace_types::*;
+pub use workspace_types::*;
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
