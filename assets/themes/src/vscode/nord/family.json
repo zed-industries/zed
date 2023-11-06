@@ -1,0 +1,11 @@
+{
+    "name": "Nord",
+    "author": "Sven Greb (svengreb)",
+    "themes": [
+        {
+            "name": "Nord",
+            "file_name": "nord.json",
+            "appearance": "dark"
+        }
+    ]
+}
