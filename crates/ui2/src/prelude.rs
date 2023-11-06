@@ -155,9 +155,18 @@ impl InteractionState {
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
-pub enum Selected {
+pub enum Selection {
     #[default]
     Unselected,
     Indeterminate,
     Selected,
+}
+
+impl Selection {
+    pub fn inverse(&self) -> Self {
+        match self {
+            Self::Unselected | Self::Indeterminate => Self::Selected,
+            Self::Selected => Self::Unselected,
+        }
+    }
 }
