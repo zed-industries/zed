@@ -2,6 +2,7 @@ use crate::system_specs::SystemSpecs;
 use anyhow::bail;
 use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use editor::{Anchor, Editor};
+use editor_extensions::FollowableEditor;
 use futures::AsyncReadExt;
 use gpui::{
     actions,
@@ -58,7 +59,7 @@ struct FeedbackRequestBody<'a> {
 #[derive(Clone)]
 pub(crate) struct FeedbackEditor {
     system_specs: SystemSpecs,
-    editor: ViewHandle<Editor>,
+    editor: ViewHandle<FollowableEditor>,
     project: ModelHandle<Project>,
     pub allow_submission: bool,
 }
@@ -71,8 +72,8 @@ impl FeedbackEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(buffer, Some(Arc::new(project.clone())), cx);
-            editor.set_vertical_scroll_margin(5, cx);
+            let mut editor = FollowableEditor::for_buffer(buffer, project.clone(), cx);
+            editor.0.update(cx, |this, cx| this.set_vertical_scroll_margin(5, cx));
             editor
         });
 
@@ -92,7 +93,7 @@ impl FeedbackEditor {
             return Task::ready(Ok(()));
         }
 
-        let feedback_text = self.editor.read(cx).text(cx);
+        let feedback_text = self.editor.read(cx).0.read(cx).text(cx);
         let feedback_char_count = feedback_text.chars().count();
         let feedback_text = feedback_text.trim().to_string();
 
@@ -339,7 +340,7 @@ impl Item for FeedbackEditor {
     {
         let buffer = self
             .editor
-            .read(cx)
+            .read(cx).0.read(cx)
             .buffer()
             .read(cx)
             .as_singleton()
@@ -373,7 +374,7 @@ impl Item for FeedbackEditor {
     }
 
     fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
-        Editor::to_item_events(event)
+        FollowableEditor::to_item_events(event)
     }
 }
 

@@ -7,6 +7,7 @@ use client::{
 };
 use collections::HashMap;
 use editor::{CollaborationHub, Editor};
+use editor_extensions::FollowableEditor;
 use gpui::{
     actions,
     elements::{ChildView, Label},
@@ -35,7 +36,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct ChannelView {
-    pub editor: ViewHandle<Editor>,
+    pub editor: ViewHandle<FollowableEditor>,
     project: ModelHandle<Project>,
     channel_store: ModelHandle<ChannelStore>,
     channel_buffer: ModelHandle<ChannelBuffer>,
@@ -137,16 +138,18 @@ impl ChannelView {
     ) -> Self {
         let buffer = channel_buffer.read(cx).buffer();
         let editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(buffer, None, cx);
-            editor.set_collaboration_hub(Box::new(ChannelBufferCollaborationHub(
+            let mut editor = FollowableEditor::for_raw_buffer(buffer,  cx);
+            editor.0.update(cx, |this, cx| {
+            this.set_collaboration_hub(Box::new(ChannelBufferCollaborationHub(
                 channel_buffer.clone(),
             )));
-            editor.set_read_only(
+            this.set_read_only(
                 !channel_buffer
                     .read(cx)
                     .channel(cx)
                     .is_some_and(|c| c.can_edit_notes()),
-            );
+        );
+            });
             editor
         });
         let _editor_event_subscription = cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()));
@@ -176,12 +179,12 @@ impl ChannelView {
     ) {
         match event {
             ChannelBufferEvent::Disconnected => self.editor.update(cx, |editor, cx| {
-                editor.set_read_only(true);
+                editor.0.update(cx, |this, cx| this.set_read_only(true));
                 cx.notify();
             }),
             ChannelBufferEvent::ChannelChanged => {
                 self.editor.update(cx, |editor, cx| {
-                    editor.set_read_only(!self.channel(cx).is_some_and(|c| c.can_edit_notes()));
+                    editor.0.update(cx, |this, cx| this.set_read_only(!self.channel(cx).is_some_and(|c| c.can_edit_notes())));
                     cx.emit(editor::Event::TitleChanged);
                     cx.notify()
                 });
@@ -320,7 +323,7 @@ impl Item for ChannelView {
     }
 
     fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
-        editor::Editor::to_item_events(event)
+        FollowableEditor::to_item_events(event)
     }
 }
 
@@ -430,7 +433,7 @@ impl FollowableItem for ChannelView {
     }
 
     fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool {
-        Editor::should_unfollow_on_event(event, cx)
+        FollowableEditor::should_unfollow_on_event(event, cx)
     }
 
     fn is_project_item(&self, _cx: &AppContext) -> bool {

@@ -20,6 +20,7 @@ use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use drag_and_drop::{DragAndDrop, Draggable};
 use editor::{Cancel, Editor};
+use editor_extensions::FollowableEditor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use futures::StreamExt;
 use fuzzy::{match_strings, StringMatchCandidate};
@@ -274,7 +275,7 @@ pub struct CollabPanel {
     pending_serialization: Task<Option<()>>,
     context_menu: ViewHandle<ContextMenu>,
     filter_editor: ViewHandle<Editor>,
-    channel_name_editor: ViewHandle<Editor>,
+    channel_name_editor: ViewHandle<FollowableEditor>,
     channel_editing_state: Option<ChannelEditingState>,
     entries: Vec<ListEntry>,
     selection: Option<usize>,
@@ -409,7 +410,7 @@ impl CollabPanel {
             .detach();
 
             let channel_name_editor = cx.add_view(|cx| {
-                Editor::single_line(
+                FollowableEditor::single_line(
                     Some(Arc::new(|theme| {
                         theme.collab_panel.user_query_editor.clone()
                     })),
@@ -1433,7 +1434,7 @@ impl CollabPanel {
     fn take_editing_state(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if let Some(_) = self.channel_editing_state.take() {
             self.channel_name_editor.update(cx, |editor, cx| {
-                editor.set_text("", cx);
+                editor.0.update(cx, |this, cx| this.set_text("", cx));
             });
             true
         } else {
@@ -2822,7 +2823,7 @@ impl CollabPanel {
     fn insert_space(&mut self, _: &InsertSpace, cx: &mut ViewContext<Self>) {
         if self.channel_editing_state.is_some() {
             self.channel_name_editor.update(cx, |editor, cx| {
-                editor.insert(" ", cx);
+                editor.0.update(cx, |this, cx| this.insert(" ", cx));
             });
         }
     }
@@ -2838,7 +2839,7 @@ impl CollabPanel {
                     if pending_name.is_some() {
                         return false;
                     }
-                    let channel_name = self.channel_name_editor.read(cx).text(cx);
+                    let channel_name = self.channel_name_editor.read(cx).0.read(cx).text(cx);
 
                     *pending_name = Some(channel_name.clone());
 
@@ -2856,7 +2857,7 @@ impl CollabPanel {
                     if pending_name.is_some() {
                         return false;
                     }
-                    let channel_name = self.channel_name_editor.read(cx).text(cx);
+                    let channel_name = self.channel_name_editor.read(cx).0.read(cx).text(cx);
                     *pending_name = Some(channel_name.clone());
 
                     self.channel_store
@@ -3025,8 +3026,11 @@ impl CollabPanel {
                 pending_name: None,
             });
             self.channel_name_editor.update(cx, |editor, cx| {
-                editor.set_text(channel.name.clone(), cx);
-                editor.select_all(&Default::default(), cx);
+                editor.0.update(cx, |this, cx| {
+                    this.set_text(channel.name.clone(), cx);
+                    this.select_all(&Default::default(), cx);
+                })
+
             });
             cx.focus(self.channel_name_editor.as_any());
             self.update_entries(false, cx);

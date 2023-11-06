@@ -617,7 +617,7 @@ pub const MAX_TAB_TITLE_LEN: usize = 24;
 
 type CompletionId = usize;
 
-type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
+pub type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
 type BackgroundHighlight = (fn(&Theme) -> Color, Vec<Range<Anchor>>);

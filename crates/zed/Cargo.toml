@@ -38,6 +38,7 @@ copilot_button = { path = "../copilot_button" }
 diagnostics = { path = "../diagnostics" }
 db = { path = "../db" }
 editor = { path = "../editor" }
+editor_extensions = { path = "../editor_extensions" }
 feedback = { path = "../feedback" }
 file_finder = { path = "../file_finder" }
 search = { path = "../search" }

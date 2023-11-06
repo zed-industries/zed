@@ -24,6 +24,7 @@ use editor::{
     scroll::autoscroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, MoveDown, MoveUp, MultiBufferSnapshot, ToOffset, ToPoint,
 };
+use editor_extensions::FollowableEditor;
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
@@ -2196,7 +2197,7 @@ struct ConversationEditor {
     conversation: ModelHandle<Conversation>,
     fs: Arc<dyn Fs>,
     workspace: WeakViewHandle<Workspace>,
-    editor: ViewHandle<Editor>,
+    editor: ViewHandle<FollowableEditor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
     _subscriptions: Vec<Subscription>,
@@ -2222,10 +2223,11 @@ impl ConversationEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(conversation.read(cx).buffer.clone(), None, cx);
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-            editor.set_show_gutter(false, cx);
-            editor.set_show_wrap_guides(false, cx);
+            let mut editor = FollowableEditor::for_raw_buffer(conversation.read(cx).buffer.clone(),  cx);
+            editor.0.update(cx, |this, cx| {this.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+            this.set_show_gutter(false, cx);
+            this.set_show_wrap_guides(false, cx);
+            });
             editor
         });
 
@@ -2277,11 +2279,11 @@ impl ConversationEditor {
             .collect::<Vec<_>>();
         if !new_selections.is_empty() {
             self.editor.update(cx, |editor, cx| {
-                editor.change_selections(
+                editor.0.update(cx, |this, cx| this.change_selections(
                     Some(Autoscroll::Strategy(AutoscrollStrategy::Fit)),
                     cx,
                     |selections| selections.select_ranges(new_selections),
-                );
+                ));
             });
             // Avoid scrolling to the new cursor position so the assistant's output is stable.
             cx.defer(|this, _| this.scroll_position = None);
@@ -2310,7 +2312,7 @@ impl ConversationEditor {
     }
 
     fn cursors(&self, cx: &AppContext) -> Vec<usize> {
-        let selections = self.editor.read(cx).selections.all::<usize>(cx);
+        let selections = self.editor.read(cx).0.read(cx).selections.all::<usize>(cx);
         selections
             .into_iter()
             .map(|selection| selection.head())
@@ -2339,14 +2341,14 @@ impl ConversationEditor {
             ConversationEvent::StreamedCompletion => {
                 self.editor.update(cx, |editor, cx| {
                     if let Some(scroll_position) = self.scroll_position {
-                        let snapshot = editor.snapshot(cx);
+                        let snapshot = editor.0.update(cx, |this, cx| this.snapshot(cx));
                         let cursor_point = scroll_position.cursor.to_display_point(&snapshot);
                         let scroll_top =
                             cursor_point.row() as f32 - scroll_position.offset_before_cursor.y();
-                        editor.set_scroll_position(
+                        editor.0.update(cx, |this, cx| this.set_scroll_position(
                             vec2f(scroll_position.offset_before_cursor.x(), scroll_top),
                             cx,
-                        );
+                        ));
                     }
                 });
             }
@@ -2355,7 +2357,7 @@ impl ConversationEditor {
 
     fn handle_editor_event(
         &mut self,
-        _: ViewHandle<Editor>,
+        _: ViewHandle<FollowableEditor>,
         event: &editor::Event,
         cx: &mut ViewContext<Self>,
     ) {
@@ -2377,15 +2379,15 @@ impl ConversationEditor {
 
     fn cursor_scroll_position(&self, cx: &mut ViewContext<Self>) -> Option<ScrollPosition> {
         self.editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            let cursor = editor.selections.newest_anchor().head();
+            let snapshot = editor.0.update(cx, |this, cx| this.snapshot(cx));
+            let cursor = editor.0.read(cx).selections.newest_anchor().head();
             let cursor_row = cursor.to_display_point(&snapshot.display_snapshot).row() as f32;
-            let scroll_position = editor
+            let scroll_position = editor.0.read(cx)
                 .scroll_manager
                 .anchor()
                 .scroll_position(&snapshot.display_snapshot);
 
-            let scroll_bottom = scroll_position.y() + editor.visible_line_count().unwrap_or(0.);
+            let scroll_bottom = scroll_position.y() + editor.0.read(cx).visible_line_count().unwrap_or(0.);
             if (scroll_position.y()..scroll_bottom).contains(&cursor_row) {
                 Some(ScrollPosition {
                     cursor,
@@ -2402,7 +2404,7 @@ impl ConversationEditor {
 
     fn update_message_headers(&mut self, cx: &mut ViewContext<Self>) {
         self.editor.update(cx, |editor, cx| {
-            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let buffer = editor.0.read(cx).buffer().read(cx).snapshot(cx);
             let excerpt_id = *buffer.as_singleton().unwrap().0;
             let old_blocks = std::mem::take(&mut self.blocks);
             let new_blocks = self
@@ -2505,8 +2507,10 @@ impl ConversationEditor {
                 })
                 .collect::<Vec<_>>();
 
-            editor.remove_blocks(old_blocks, None, cx);
-            let ids = editor.insert_blocks(new_blocks, None, cx);
+            let ids = editor.0.update(cx, |this, cx| {
+                this.remove_blocks(old_blocks, None, cx);
+                this.insert_blocks(new_blocks, None, cx)
+            });
             self.blocks = HashSet::from_iter(ids);
         });
     }
@@ -2568,14 +2572,14 @@ impl ConversationEditor {
                 conversation.update(cx, |conversation, cx| {
                     conversation
                         .editor
-                        .update(cx, |editor, cx| editor.insert(&text, cx))
+                        .update(cx, |editor, cx| editor.0.update(cx, |this, cx| this.insert(&text, cx)))
                 });
             });
         }
     }
 
     fn copy(&mut self, _: &editor::Copy, cx: &mut ViewContext<Self>) {
-        let editor = self.editor.read(cx);
+        let editor = self.editor.read(cx).0.read(cx);
         let conversation = self.conversation.read(cx);
         if editor.selections.count() == 1 {
             let selection = editor.selections.newest::<usize>(cx);
@@ -2610,9 +2614,9 @@ impl ConversationEditor {
 
     fn split(&mut self, _: &Split, cx: &mut ViewContext<Self>) {
         self.conversation.update(cx, |conversation, cx| {
-            let selections = self.editor.read(cx).selections.disjoint_anchors();
+            let selections = self.editor.read(cx).0.read(cx).selections.disjoint_anchors();
             for selection in selections.into_iter() {
-                let buffer = self.editor.read(cx).buffer().read(cx).snapshot(cx);
+                let buffer = self.editor.read(cx).0.read(cx).buffer().read(cx).snapshot(cx);
                 let range = selection
                     .map(|endpoint| endpoint.to_offset(&buffer))
                     .range();

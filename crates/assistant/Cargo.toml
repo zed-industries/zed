@@ -13,6 +13,7 @@ ai = { path = "../ai" }
 client = { path = "../client" }
 collections = { path = "../collections"}
 editor = { path = "../editor" }
+editor_extensions = { path = "../editor_extensions" }
 fs = { path = "../fs" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }

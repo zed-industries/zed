@@ -15,6 +15,7 @@ use collab_ui::CollabTitlebarItem; // TODO: Add back toggle collab ui shortcut
 use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
+use editor_extensions::FollowableEditor;
 
 use anyhow::anyhow;
 use feedback::{
@@ -195,9 +196,9 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
                             });
                             workspace.add_item(
                                 Box::new(cx.add_view(|cx| {
-                                    Editor::for_multibuffer(
+                                    FollowableEditor::for_multibuffer(
                                         buffer,
-                                        Some(Arc::new(project.clone())),
+                                        project.clone(),
                                         cx,
                                     )
                                 })),
@@ -250,7 +251,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         move |_: &NewWindow, cx: &mut AppContext| {
             if let Some(app_state) = app_state.upgrade() {
                 open_new(&app_state, cx, |workspace, cx| {
-                    Editor::new_file(workspace, &Default::default(), cx)
+                    editor_extensions::new_file(workspace, &Default::default(), cx)
                 })
                 .detach();
             }
@@ -261,7 +262,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         move |_: &NewFile, cx: &mut AppContext| {
             if let Some(app_state) = app_state.upgrade() {
                 open_new(&app_state, cx, |workspace, cx| {
-                    Editor::new_file(workspace, &Default::default(), cx)
+                    editor_extensions::new_file(workspace, &Default::default(), cx)
                 })
                 .detach();
             }
@@ -336,7 +337,7 @@ pub fn initialize_workspace(
             let feedback_button = cx.add_view(|_| {
                 feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace)
             });
-            let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
+            let cursor_position = cx.add_view(|_| editor_extensions::CursorPosition::new());
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_left_item(diagnostic_summary, cx);
                 status_bar.add_left_item(activity_indicator, cx);
@@ -540,7 +541,7 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                         });
                         workspace.add_item(
                             Box::new(cx.add_view(|cx| {
-                                Editor::for_multibuffer(buffer, Some(Arc::new(project)), cx)
+                                FollowableEditor::for_multibuffer(buffer, project, cx)
                             })),
                             cx,
                         );
@@ -708,7 +709,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
                 workspace.add_item(
-                    Box::new(cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(Arc::new(project)), cx))),
+                    Box::new(cx.add_view(|cx| FollowableEditor::for_multibuffer(buffer, project, cx))),
                     cx,
                 );
             }).log_err()?;
@@ -743,7 +744,7 @@ fn open_bundled_file(
                     });
                     workspace.add_item(
                         Box::new(cx.add_view(|cx| {
-                            Editor::for_multibuffer(buffer, Some(Arc::new(project.clone())), cx)
+                            FollowableEditor::for_multibuffer(buffer, project.clone(), cx)
                         })),
                         cx,
                     );

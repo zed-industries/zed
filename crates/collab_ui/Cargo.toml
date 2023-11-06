@@ -32,6 +32,7 @@ collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
 drag_and_drop = { path = "../drag_and_drop" }
 editor = { path = "../editor" }
+editor_extensions = { path = "../editor_extensions" }
 feedback = { path = "../feedback" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }

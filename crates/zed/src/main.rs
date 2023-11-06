@@ -93,7 +93,7 @@ fn main() {
             if cx.has_global::<Weak<AppState>>() {
                 if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
                     workspace::open_new(&app_state, cx, |workspace, cx| {
-                        Editor::new_file(workspace, &Default::default(), cx)
+                        editor_extensions::new_file(workspace, &Default::default(), cx)
                     })
                     .detach();
                 }
@@ -343,7 +343,7 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
     } else {
         cx.update(|cx| {
             workspace::open_new(app_state, cx, |workspace, cx| {
-                Editor::new_file(workspace, &Default::default(), cx)
+                editor_extensions::new_file(workspace, &Default::default(), cx)
             })
             .detach();
         });

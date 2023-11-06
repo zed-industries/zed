@@ -453,6 +453,27 @@ impl FollowableEditor {
             }),
         )
     }
+    pub fn for_raw_buffer(
+        buffer: ModelHandle<Buffer>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        Self(
+            cx.add_view(|cx| {
+                Editor::for_buffer(buffer, None, cx)
+            }),
+        )
+    }
+    pub fn single_line(
+        field_editor_style: Option<Arc<editor::GetFieldEditorTheme>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        Self(
+            cx.add_view(|cx| {
+                Editor::single_line(field_editor_style, cx)
+            }),
+        )
+    }
+
 }
 
 impl gpui::View for FollowableEditor {
