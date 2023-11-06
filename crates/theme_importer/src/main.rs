@@ -49,12 +49,6 @@ pub struct ThemeMetadata {
     pub appearance: ThemeAppearanceJson,
 }
 
-// Load a vscode theme from json
-// Load it's LICENSE from the same folder
-// Create a ThemeFamily for the theme
-// Create a ThemeVariant or Variants for the theme
-// Output a rust file with the ThemeFamily and ThemeVariant(s) in it
-
 fn main() -> Result<()> {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
@@ -64,6 +58,10 @@ fn main() -> Result<()> {
 
     for theme_family_dir in fs::read_dir(&vscode_themes_path)? {
         let theme_family_dir = theme_family_dir?;
+
+        if theme_family_dir.file_name().to_str() == Some(".DS_Store") {
+            continue;
+        }
 
         let theme_family_slug = theme_family_dir
             .path()
