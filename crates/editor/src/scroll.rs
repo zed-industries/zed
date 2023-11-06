@@ -354,7 +354,7 @@ impl Editor {
             .set_anchor(scroll_anchor, top_row, true, false, workspace_id, cx);
     }
 
-    pub(crate) fn set_scroll_anchor_remote(
+    pub fn set_scroll_anchor_remote(
         &mut self,
         scroll_anchor: ScrollAnchor,
         cx: &mut ViewContext<Self>,

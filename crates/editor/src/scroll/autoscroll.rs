@@ -247,7 +247,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub(crate) fn request_autoscroll_remotely(
+    pub fn request_autoscroll_remotely(
         &mut self,
         autoscroll: Autoscroll,
         cx: &mut ViewContext<Self>,

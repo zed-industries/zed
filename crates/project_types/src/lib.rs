@@ -8,7 +8,6 @@ use language::{
     LanguageServerName, PointUtf16, Unclipped,
 };
 use lsp::DocumentHighlightKind;
-pub use rpc::proto::FormatTrigger;
 use std::{ops::Range, path::Path, sync::Arc};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
@@ -169,3 +168,18 @@ impl Hover {
 
 #[derive(Default)]
 pub struct ProjectTransaction(pub HashMap<ModelHandle<Buffer>, language::Transaction>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormatTrigger {
+    Save,
+    Manual,
+}
+impl FormatTrigger {
+    pub fn from_proto(value: i32) -> FormatTrigger {
+        match value {
+            0 => FormatTrigger::Save,
+            1 => FormatTrigger::Manual,
+            _ => FormatTrigger::Save,
+        }
+    }
+}

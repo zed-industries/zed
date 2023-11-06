@@ -342,9 +342,6 @@ pub struct DiagnosticSummary {
     pub warning_count: usize,
 }
 
-#[derive(Default)]
-pub struct ProjectTransaction(pub HashMap<ModelHandle<Buffer>, language::Transaction>);
-
 impl DiagnosticSummary {
     fn new<'a, T: 'a>(diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<T>>) -> Self {
         let mut this = Self {
@@ -406,26 +403,11 @@ impl ProjectEntryId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FormatTrigger {
-    Save,
-    Manual,
-}
-
 struct ProjectLspAdapterDelegate {
     project: ModelHandle<Project>,
     http_client: Arc<dyn HttpClient>,
 }
 
-impl FormatTrigger {
-    fn from_proto(value: i32) -> FormatTrigger {
-        match value {
-            0 => FormatTrigger::Save,
-            1 => FormatTrigger::Manual,
-            _ => FormatTrigger::Save,
-        }
-    }
-}
 #[derive(Clone, Debug, PartialEq)]
 enum SearchMatchCandidate {
     OpenBuffer {

@@ -164,7 +164,7 @@ pub fn render_parsed_markdown<Tag: 'static>(
                                 markdown::Link::Web { url } => cx.platform().open_url(url),
                                 markdown::Link::Path { path } => {
                                     if let Some(ref workspace) = workspace {
-                                        workspace.open_abs_path(path.clone(), false, cx).detach();
+                                        workspace.open_abs_path(path.clone(), false, cx);
                                     }
                                 }
                             }
@@ -642,9 +642,9 @@ pub struct Editor {
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
     override_text_style: Option<Box<OverrideTextStyle>>,
-    project: Option<Arc<dyn Project>>,
+    pub project: Option<Arc<dyn Project>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
-    focused: bool,
+    pub focused: bool,
     blink_manager: ModelHandle<BlinkManager>,
     pub show_local_selections: bool,
     mode: EditorMode,
@@ -664,10 +664,10 @@ pub struct Editor {
     document_highlights_task: Option<Task<()>>,
     pending_rename: Option<RenameState>,
     searchable: bool,
-    cursor_shape: CursorShape,
+    pub cursor_shape: CursorShape,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
-    workspace: Option<(Arc<dyn Workspace>, i64)>,
+    pub workspace: Option<(Arc<dyn Workspace>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
     read_only: bool,
@@ -680,7 +680,7 @@ pub struct Editor {
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
-    pixel_position_of_newest_cursor: Option<Vector2F>,
+    pub pixel_position_of_newest_cursor: Option<Vector2F>,
 }
 
 pub struct EditorSnapshot {

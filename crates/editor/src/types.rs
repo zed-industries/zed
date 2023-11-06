@@ -13,8 +13,7 @@ use language::{
 };
 use lsp::{LanguageServer, LanguageServerId};
 use project_types::ProjectPath;
-use project_types::ProjectTransaction;
-use rpc::proto::FormatTrigger;
+use project_types::{FormatTrigger, ProjectTransaction};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -59,12 +58,7 @@ pub trait CollaborationHub {
 
 pub trait Workspace: 'static {
     fn db(&self) -> Arc<dyn Db>;
-    fn open_abs_path(
-        &self,
-        abs_path: PathBuf,
-        visible: bool,
-        cx: &mut AppContext,
-    ) -> Task<anyhow::Result<ViewHandle<Editor>>>;
+    fn open_abs_path(&self, abs_path: PathBuf, visible: bool, cx: &mut AppContext);
     fn open_path(
         &self,
         path: ProjectPath,

@@ -306,27 +306,30 @@ impl CollaborationHub for ProjectHandle {
 }
 
 impl editor::Workspace for WeakWorkspaceHandle {
-    fn open_abs_path(
-        &self,
-        abs_path: PathBuf,
-        visible: bool,
-        cx: &mut AppContext,
-    ) -> Task<anyhow::Result<ViewHandle<Editor>>> {
+    fn open_abs_path(&self, abs_path: PathBuf, visible: bool, cx: &mut AppContext) {
         self.0
             .update(cx, |workspace, cx| {
                 workspace.open_abs_path(abs_path, visible, cx)
             })
             .map_or_else(|err| Task::ready(Err(err)), |ok| ok)
+            .detach_and_log_err(cx)
     }
     fn open_path(
         &self,
         path: ProjectPath,
         focus_item: bool,
         cx: &mut AppContext,
-    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
-        self.0
-            .update(cx, |this, cx| this.open_path(path, None, focus_item, cx))
-            .map_or_else(|err| Task::ready(Err(err)), |ok| ok)
+    ) -> Task<Result<ViewHandle<Editor>>> {
+        cx.spawn(|mut cx| async move {
+            Ok(self
+                .0
+                .update(&mut cx, |this, cx| {
+                    this.open_path(path, None, focus_item, cx)
+                })?
+                .await?
+                .downcast::<Editor>()
+                .ok_or_else(|| anyhow!("opened item was not an editor"))?)
+        })
     }
 
     fn active_editor(&self, cx: &mut AppContext) -> Option<ViewHandle<Editor>> {
@@ -392,18 +395,29 @@ impl editor::Workspace for WeakWorkspaceHandle {
             .clone()
     }
 
-    fn add_item(&self, item: Box<dyn ItemHandle>, cx: &mut AppContext) {
-        self.0.update(cx, |this, cx| this.add_item(item, cx));
+    fn add_item(&self, item: Box<ViewHandle<Editor>>, cx: &mut AppContext) {
+        self.0.update(cx, |this, cx| {
+            this.add_item(Box::new(cx.add_view(|_| FollowableEditor(*item))), cx)
+        });
     }
 
     fn split_item(
         &self,
         split_direction: SplitDirection,
-        item: Box<dyn ItemHandle>,
+        item: Box<ViewHandle<Editor>>,
         cx: &mut AppContext,
     ) {
-        self.0
-            .update(cx, |this, cx| this.split_item(split_direction, item, cx));
+        self.0.update(cx, |this, cx| {
+            this.split_item(
+                split_direction,
+                Box::new(cx.add_view(|_| FollowableEditor(*item))),
+                cx,
+            )
+        });
+    }
+
+    fn db(&self) -> Arc<dyn editor::Db> {
+        Arc::new(persistence::DB)
     }
 }
 
@@ -414,14 +428,14 @@ impl gpui::Entity for FollowableEditor {
 }
 
 impl FollowableEditor {
-    pub fn clone(&self, cx: &AppContext) -> Self {
-        Self(self.0.read(cx).clone(cx))
+    pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
+        Self(cx.add_view(|cx| self.0.read(cx).clone(cx)))
     }
 }
 
 impl gpui::View for FollowableEditor {
     fn render(&mut self, cx: &mut ViewContext<'_, '_, Self>) -> gpui::AnyElement<Self> {
-        ChildView::new(&self.0, cx)
+        ChildView::new(&self.0, cx).into_any()
     }
     fn ui_name() -> &'static str {
         Editor::ui_name()
@@ -508,9 +522,11 @@ pub fn new_file(
         .log_err()
     {
         workspace.add_item(
-            Box::new(
-                cx.add_view(|cx| Editor::for_buffer(buffer, Some(Arc::new(project.clone())), cx)),
-            ),
+            Box::new(cx.add_view(|cx| {
+                FollowableEditor(cx.add_view(|cx| {
+                    Editor::for_buffer(buffer, Some(Arc::new(ProjectHandle(project.clone()))), cx)
+                }))
+            })),
             cx,
         );
     }
@@ -530,9 +546,11 @@ pub fn new_file_in_direction(
     {
         workspace.split_item(
             action.0,
-            Box::new(
-                cx.add_view(|cx| Editor::for_buffer(buffer, Some(Arc::new(project.clone())), cx)),
-            ),
+            Box::new(cx.add_view(|cx| {
+                FollowableEditor(cx.add_view(|cx| {
+                    Editor::for_buffer(buffer, Some(Arc::new(ProjectHandle(project.clone()))), cx)
+                }))
+            })),
             cx,
         );
     }
@@ -625,7 +643,7 @@ pub fn confirm_rename(
         let project_transaction = rename.await?;
         Editor::open_project_transaction(
             &editor,
-            &workspace,
+            &WeakWorkspaceHandle(workspace),
             project_transaction,
             format!("Rename: {old_name} → {new_name}"),
             cx.clone(),
