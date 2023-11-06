@@ -5,10 +5,10 @@ use gpui2::{px, relative, Div, Render, Size, View, VisualContext};
 use settings2::Settings;
 use theme2::ThemeSettings;
 
-use crate::{prelude::*, Checkbox};
+use crate::prelude::*;
 use crate::{
-    static_livestream, v_stack, AssistantPanel, Button, ChatMessage, ChatPanel, CollabPanel,
-    EditorPane, Label, LanguageSelector, NotificationsPanel, Pane, PaneGroup, Panel,
+    static_livestream, v_stack, AssistantPanel, Button, ChatMessage, ChatPanel, Checkbox,
+    CollabPanel, EditorPane, Label, LanguageSelector, NotificationsPanel, Pane, PaneGroup, Panel,
     PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar,
     Toast, ToastOrigin,
 };
