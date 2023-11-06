@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui2::{
+use gpui::{
     div, Component, ElementId, ParentElement, StatefulInteractive, StatelessInteractive, Styled,
     ViewContext,
 };
@@ -175,7 +175,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{h_stack, Story};
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     pub struct CheckboxStory;
 

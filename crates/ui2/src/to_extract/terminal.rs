@@ -1,4 +1,4 @@
-use gpui2::{relative, rems, Size};
+use gpui::{relative, rems, Size};
 
 use crate::prelude::*;
 use crate::{Icon, IconButton, Pane, Tab};
@@ -83,7 +83,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
     pub struct TerminalStory;
 
     impl Render for TerminalStory {

@@ -1,4 +1,4 @@
-use gpui2::{div, white, Div, ParentElement, Render, Styled, View, VisualContext, WindowContext};
+use gpui::{div, white, Div, ParentElement, Render, Styled, View, VisualContext, WindowContext};
 
 pub struct TextStory;
 
@@ -11,7 +11,7 @@ impl TextStory {
 impl Render for TextStory {
     type Element = Div<Self>;
 
-    fn render(&mut self, cx: &mut gpui2::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         div().size_full().bg(white()).child(concat!(
             "The quick brown fox jumps over the lazy dog. ",
             "Meanwhile, the lazy dog decided it was time for a change. ",

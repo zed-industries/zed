@@ -1,4 +1,4 @@
-use gpui2::{AbsoluteLength, AnyElement};
+use gpui::{AbsoluteLength, AnyElement};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -126,7 +126,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{Label, Story};
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     pub struct PanelStory;
 

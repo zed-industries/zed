@@ -8,7 +8,7 @@ mod story_selector;
 use std::sync::Arc;
 
 use clap::Parser;
-use gpui2::{
+use gpui::{
     div, px, size, AnyView, AppContext, Bounds, Div, Render, ViewContext, VisualContext,
     WindowBounds, WindowOptions,
 };
@@ -22,7 +22,7 @@ use ui::prelude::*;
 use crate::assets::Assets;
 use crate::story_selector::StorySelector;
 
-// gpui2::actions! {
+// gpui::actions! {
 //     storybook,
 //     [ToggleInspector]
 // }
@@ -51,7 +51,7 @@ fn main() {
     let theme_name = args.theme.unwrap_or("Zed Pro Moonlight".to_string());
 
     let asset_source = Arc::new(Assets);
-    gpui2::App::production(asset_source).run(move |cx| {
+    gpui::App::production(asset_source).run(move |cx| {
         load_embedded_fonts(cx).unwrap();
 
         let mut store = SettingsStore::default();
@@ -116,7 +116,7 @@ impl Render for StoryWrapper {
     }
 }
 
-fn load_embedded_fonts(cx: &AppContext) -> gpui2::Result<()> {
+fn load_embedded_fonts(cx: &AppContext) -> gpui::Result<()> {
     let font_paths = cx.asset_source().list("fonts")?;
     let mut embedded_fonts = Vec::new();
     for font_path in font_paths {

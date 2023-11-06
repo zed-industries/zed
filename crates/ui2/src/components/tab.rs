@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::{Icon, IconColor, IconElement, Label, LabelColor};
-use gpui2::{red, Div, ElementId, Render, View, VisualContext};
+use gpui::{red, Div, ElementId, Render, View, VisualContext};
 
 #[derive(Component, Clone)]
 pub struct Tab {

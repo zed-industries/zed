@@ -1,4 +1,4 @@
-use gpui2::img;
+use gpui::img;
 
 use crate::prelude::*;
 
@@ -33,7 +33,7 @@ impl Avatar {
         img.uri(self.src.clone())
             .size_4()
             // todo!(Pull the avatar fallback background from the theme.)
-            .bg(gpui2::red())
+            .bg(gpui::red())
     }
 }
 
@@ -44,7 +44,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     pub struct AvatarStory;
 

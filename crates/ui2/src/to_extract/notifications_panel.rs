@@ -345,7 +345,7 @@ impl<V> Notification<V> {
 }
 
 use chrono::NaiveDateTime;
-use gpui2::{px, Styled};
+use gpui::{px, Styled};
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -353,7 +353,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{Panel, Story};
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     pub struct NotificationsPanelStory;
 

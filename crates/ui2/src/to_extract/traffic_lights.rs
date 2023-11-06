@@ -77,7 +77,7 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     use crate::Story;
 

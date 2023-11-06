@@ -92,7 +92,7 @@ impl TabBar {
     }
 }
 
-use gpui2::ElementId;
+use gpui::ElementId;
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -100,7 +100,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     pub struct TabBarStory;
 

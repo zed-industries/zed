@@ -1,4 +1,4 @@
-use gpui2::{rems, svg, Hsla};
+use gpui::{rems, svg, Hsla};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -204,7 +204,7 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
     use strum::IntoEnumIterator;
 
     use crate::Story;

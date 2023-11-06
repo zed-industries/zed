@@ -1,4 +1,4 @@
-use gpui2::AnyElement;
+use gpui::AnyElement;
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -73,7 +73,7 @@ mod stories {
     use std::path::PathBuf;
     use std::str::FromStr;
 
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     use crate::{Breadcrumb, HighlightedText, Icon, IconButton, Story, Symbol};
 

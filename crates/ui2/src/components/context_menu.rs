@@ -65,7 +65,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::story::Story;
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     pub struct ContextMenuStory;
 

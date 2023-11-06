@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::DateTime;
-use gpui2::{px, relative, Div, Render, Size, View, VisualContext};
+use gpui::{px, relative, Div, Render, Size, View, VisualContext};
 use settings2::Settings;
 use theme2::ThemeSettings;
 
@@ -373,7 +373,7 @@ pub use stories::*;
 #[cfg(feature = "stories")]
 mod stories {
     use super::*;
-    use gpui2::VisualContext;
+    use gpui::VisualContext;
 
     pub struct WorkspaceStory {
         workspace: View<Workspace>,

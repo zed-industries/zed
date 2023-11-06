@@ -1,4 +1,4 @@
-use gpui2::{hsla, red, AnyElement, ElementId, ExternalPaths, Hsla, Length, Size, View};
+use gpui::{hsla, red, AnyElement, ElementId, ExternalPaths, Hsla, Length, Size, View};
 use smallvec::SmallVec;
 
 use crate::prelude::*;

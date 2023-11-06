@@ -1,4 +1,4 @@
-use gpui2::{
+use gpui::{
     div, Div, FocusEnabled, Focusable, KeyBinding, ParentElement, Render, StatefulInteraction,
     StatelessInteractive, Styled, View, VisualContext, WindowContext,
 };
@@ -33,7 +33,7 @@ impl FocusStory {
 impl Render for FocusStory {
     type Element = Div<Self, StatefulInteraction<Self>, FocusEnabled<Self>>;
 
-    fn render(&mut self, cx: &mut gpui2::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let theme = cx.theme();
         let color_1 = theme.styles.git.created;
         let color_2 = theme.styles.git.modified;

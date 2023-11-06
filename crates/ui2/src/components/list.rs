@@ -1,4 +1,4 @@
-use gpui2::div;
+use gpui::div;
 
 use crate::settings::user_settings;
 use crate::{

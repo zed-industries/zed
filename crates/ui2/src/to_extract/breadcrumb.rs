@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::prelude::*;
 use crate::{h_stack, HighlightedText};
-use gpui2::Div;
+use gpui::Div;
 
 #[derive(Clone)]
 pub struct Symbol(pub Vec<HighlightedText>);
@@ -73,7 +73,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui2::Render;
+    use gpui::Render;
     use std::str::FromStr;
 
     pub struct BreadcrumbStory;

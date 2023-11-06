@@ -40,12 +40,12 @@ impl<V: 'static> TodoList<V> {
 
 All of this is relatively straightforward.
 
-We use [gpui2::SharedString] in components instead of [std::string::String]. This allows us to [TODO: someone who actually knows please explain why we use SharedString].
+We use [gpui::SharedString] in components instead of [std::string::String]. This allows us to [TODO: someone who actually knows please explain why we use SharedString].
 
 When we want to pass an action we pass a `ClickHandler`. Whenever we want to add an action, the struct it belongs to needs to be generic over the view type `V`.
 
 ~~~rust
-use gpui2::hsla
+use gpui::hsla
 
 impl<V: 'static> TodoList<V> {
     // ...
@@ -74,7 +74,7 @@ As you start using the Tailwind-style conventions you will be surprised how quic
 
 **Why `50.0/360.0` in `hsla()`?**
 
-gpui [gpui2::Hsla] use `0.0-1.0` for all it's values, but it is common for tools to use `0-360` for hue.
+gpui [gpui::Hsla] use `0.0-1.0` for all it's values, but it is common for tools to use `0-360` for hue.
 
 This may change in the future, but this is a little trick that let's you use familiar looking values.
 
@@ -98,7 +98,7 @@ impl<V: 'static> TodoList<V> {
 Now we have access to the complete set of colors defined in the theme.
 
 ~~~rust
-use gpui2::hsla
+use gpui::hsla
 
 impl<V: 'static> TodoList<V> {
     // ...
@@ -113,7 +113,7 @@ impl<V: 'static> TodoList<V> {
 Let's finish up some basic styles for the container then move on to adding the other elements.
 
 ~~~rust
-use gpui2::hsla
+use gpui::hsla
 
 impl<V: 'static> TodoList<V> {
     // ...

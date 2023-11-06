@@ -1,5 +1,5 @@
 use crate::story::Story;
-use gpui2::{px, Div, Render};
+use gpui::{px, Div, Render};
 use theme2::{default_color_scales, ColorScaleStep};
 use ui::prelude::*;
 
@@ -20,7 +20,7 @@ impl Render for ColorsStory {
                     .flex_col()
                     .gap_1()
                     .overflow_y_scroll()
-                    .text_color(gpui2::white())
+                    .text_color(gpui::white())
                     .children(color_scales.into_iter().map(|scale| {
                         div()
                             .flex()

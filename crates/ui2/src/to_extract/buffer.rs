@@ -1,4 +1,4 @@
-use gpui2::{Hsla, WindowContext};
+use gpui::{Hsla, WindowContext};
 
 use crate::prelude::*;
 use crate::{h_stack, v_stack, Icon, IconElement};
@@ -235,7 +235,7 @@ mod stories {
         empty_buffer_example, hello_world_rust_buffer_example,
         hello_world_rust_buffer_with_status_example, Story,
     };
-    use gpui2::{rems, Div, Render};
+    use gpui::{rems, Div, Render};
 
     pub struct BufferStory;
 

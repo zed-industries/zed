@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use gpui2::{rems, AbsoluteLength, AppContext, WindowContext};
+use gpui::{rems, AbsoluteLength, AppContext, WindowContext};
 
 use crate::prelude::*;
 

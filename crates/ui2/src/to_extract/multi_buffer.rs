@@ -40,7 +40,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{hello_world_rust_buffer_example, Story};
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     pub struct MultiBufferStory;
 
