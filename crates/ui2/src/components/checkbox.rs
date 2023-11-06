@@ -1,8 +1,3 @@
-///! # Checkbox
-///!
-///! Checkboxes are used for multiple choices, not for mutually exclusive choices.
-///! Each checkbox works independently from other checkboxes in the list,
-///! therefore checking an additional box does not affect any other selections.
 use std::sync::Arc;
 
 use gpui2::{
@@ -15,6 +10,11 @@ use crate::{Icon, IconColor, IconElement, Selection};
 
 pub type CheckHandler<V> = Arc<dyn Fn(Selection, &mut V, &mut ViewContext<V>) + Send + Sync>;
 
+/// # Checkbox
+///
+/// Checkboxes are used for multiple choices, not for mutually exclusive choices.
+/// Each checkbox works independently from other checkboxes in the list,
+/// therefore checking an additional box does not affect any other selections.
 #[derive(Component)]
 pub struct Checkbox<V: 'static> {
     id: ElementId,
