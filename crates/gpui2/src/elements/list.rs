@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{cmp, ops::Range};
 
 use smallvec::SmallVec;
 
@@ -113,14 +113,24 @@ impl<V: 'static> Element<V> for List<V> {
 
         if self.item_count > 0 {
             let item_height = self.measure_item_height(view_state, padded_bounds, cx);
-            let visible_item_count = (padded_bounds.size.height / item_height) as usize;
-            let visible_range = 0..visible_item_count;
+            let visible_item_count = (padded_bounds.size.height / item_height).ceil() as usize;
+            let visible_range = 0..cmp::min(visible_item_count, self.item_count);
 
             let mut items = (self.render_items)(view_state, visible_range, cx);
 
+            dbg!(items.len(), self.item_count, visible_item_count);
+
             for (ix, item) in items.iter_mut().enumerate() {
                 item.initialize(view_state, cx);
-                item.layout(view_state, cx);
+
+                let layout_id = item.layout(view_state, cx);
+                cx.compute_layout(
+                    layout_id,
+                    Size {
+                        width: AvailableSpace::Definite(bounds.size.width),
+                        height: AvailableSpace::Definite(item_height),
+                    },
+                );
                 let offset = padded_bounds.origin + point(px(0.), item_height * ix);
                 cx.with_element_offset(Some(offset), |cx| item.paint(view_state, cx))
             }

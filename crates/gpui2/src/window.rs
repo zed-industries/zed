@@ -792,6 +792,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Paint a monochrome (non-emoji) glyph into the scene for the current frame at the current z-index.
+    /// The y component of the origin is the baseline of the glyph.
     pub fn paint_glyph(
         &mut self,
         origin: Point<Pixels>,
@@ -845,6 +846,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Paint an emoji glyph into the scene for the current frame at the current z-index.
+    /// The y component of the origin is the baseline of the glyph.
     pub fn paint_emoji(
         &mut self,
         origin: Point<Pixels>,

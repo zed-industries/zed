@@ -21,7 +21,8 @@
 use std::ops::Range;
 
 use gpui::{
-    div, list, AppContext, Component, Div, Element, ElementId, ParentElement, Render, ViewContext,
+    div, list, red, AppContext, Component, Div, Element, ElementId, ParentElement, Render, Styled,
+    ViewContext,
 };
 
 // pub struct Picker<D> {
@@ -97,15 +98,18 @@ impl<V: PickerDelegate> Picker<V> {
 
 impl<V: 'static + PickerDelegate> Picker<V> {
     pub fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        div().id(self.id.clone()).child(list(
-            "candidates",
-            view.match_count(self.id.clone()),
-            move |this: &mut V, visible_range, cx| {
-                visible_range
-                    .map(|ix| this.render_match(ix, false, false, false, self.id.clone(), cx))
-                    .collect()
-            },
-        ))
+        div().size_full().id(self.id.clone()).child(
+            list(
+                "candidates",
+                view.match_count(self.id.clone()),
+                move |this: &mut V, visible_range, cx| {
+                    visible_range
+                        .map(|ix| this.render_match(ix, false, false, false, self.id.clone(), cx))
+                        .collect()
+                },
+            )
+            .size_full(),
+        )
     }
 }
 

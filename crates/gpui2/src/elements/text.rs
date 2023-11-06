@@ -127,6 +127,7 @@ impl<V: 'static> Element<V> for Text<V> {
         let element_state = element_state
             .as_ref()
             .expect("measurement has not been performed");
+
         let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
         for line in &element_state.lines {
