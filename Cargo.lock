@@ -2664,31 +2664,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "editor_extensions"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "client",
- "collections",
- "db",
- "editor",
- "futures 0.3.28",
- "gpui",
- "language",
- "lsp",
- "project",
- "project_types",
- "rpc",
- "smallvec",
- "text",
- "theme",
- "util",
- "workspace",
- "workspace_types",
-]
-
-[[package]]
 name = "editor2"
 version = "0.1.0"
 dependencies = [
@@ -2740,6 +2715,31 @@ dependencies = [
  "unindent",
  "util",
  "workspace2",
+]
+
+[[package]]
+name = "editor_extensions"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "client",
+ "collections",
+ "db",
+ "editor",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "lsp",
+ "project",
+ "project_types",
+ "rpc",
+ "smallvec",
+ "text",
+ "theme",
+ "util",
+ "workspace",
+ "workspace_types",
 ]
 
 [[package]]
