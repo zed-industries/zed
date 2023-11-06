@@ -21,7 +21,7 @@ pub fn point<T: Clone + Debug + Default>(x: T, y: T) -> Point<T> {
 }
 
 impl<T: Clone + Debug + Default> Point<T> {
-    pub fn new(x: T, y: T) -> Self {
+    pub const fn new(x: T, y: T) -> Self {
         Self { x, y }
     }
 
@@ -822,6 +822,12 @@ impl From<Pixels> for f64 {
 impl From<Pixels> for u32 {
     fn from(pixels: Pixels) -> Self {
         pixels.0 as u32
+    }
+}
+
+impl From<u32> for Pixels {
+    fn from(pixels: u32) -> Self {
+        Pixels(pixels as f32)
     }
 }
 

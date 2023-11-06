@@ -201,7 +201,7 @@ impl Member {
                 //     Some(pane)
                 // };
 
-                div().child(pane.clone()).render()
+                div().size_full().child(pane.clone()).render()
 
                 //         Stack::new()
                 //             .with_child(pane_element.contained().with_border(leader_border))

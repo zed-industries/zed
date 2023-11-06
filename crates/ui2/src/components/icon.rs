@@ -186,7 +186,6 @@ impl IconElement {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let fill = self.color.color(cx);
         let svg_size = match self.size {
             IconSize::Small => rems(0.75),
             IconSize::Medium => rems(0.9375),
@@ -196,7 +195,7 @@ impl IconElement {
             .size(svg_size)
             .flex_none()
             .path(self.icon.path())
-            .text_color(fill)
+            .text_color(self.color.color(cx))
     }
 }
 

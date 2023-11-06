@@ -23,6 +23,7 @@ mod tab;
 mod toast;
 mod toggle;
 mod tool_divider;
+mod tooltip;
 
 pub use avatar::*;
 pub use button::*;
@@ -49,3 +50,4 @@ pub use tab::*;
 pub use toast::*;
 pub use toggle::*;
 pub use tool_divider::*;
+pub use tooltip::*;

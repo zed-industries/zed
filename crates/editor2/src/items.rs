@@ -578,18 +578,24 @@ impl Item for Editor {
 
     fn tab_content<T: 'static>(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<T> {
         let theme = cx.theme();
+
         AnyElement::new(
             div()
                 .flex()
                 .flex_row()
                 .items_center()
-                .bg(gpui::white())
-                .text_color(gpui::white())
+                .gap_2()
                 .child(self.title(cx).to_string())
                 .children(detail.and_then(|detail| {
                     let path = path_for_buffer(&self.buffer, detail, false, cx)?;
                     let description = path.to_string_lossy();
-                    Some(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN))
+
+                    Some(
+                        div()
+                            .text_color(theme.colors().text_muted)
+                            .text_xs()
+                            .child(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN)),
+                    )
                 })),
         )
     }
@@ -625,8 +631,7 @@ impl Item for Editor {
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         let selection = self.selections.newest_anchor();
-        todo!()
-        // self.push_to_nav_history(selection.head(), None, cx);
+        self.push_to_nav_history(selection.head(), None, cx);
     }
 
     fn workspace_deactivated(&mut self, cx: &mut ViewContext<Self>) {
