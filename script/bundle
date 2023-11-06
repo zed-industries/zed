@@ -83,14 +83,8 @@ if [ "$local_arch" = true ]; then
     cargo build ${build_flag} --package zed
     cargo build ${build_flag} --package cli
 else
-    echo "Compiling zed binary for aarch64-apple-darwin"
-    cargo build ${build_flag} --package zed --target aarch64-apple-darwin
-    echo "Compiling zed binary for x86_64-apple-darwin"
-    cargo build ${build_flag} --package zed --target x86_64-apple-darwin
-    echo "Compiling cli binary for aarch64-apple-darwin"
-    cargo build ${build_flag} --package cli --target aarch64-apple-darwin
-    echo "Compiling cli binary for x86_64-apple-darwin"
-    cargo build ${build_flag} --package cli --target x86_64-apple-darwin
+    echo "Compiling zed binaries"
+    cargo build ${build_flag} --package zed --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin
 fi
 
 echo "Creating application bundle"
