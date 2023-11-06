@@ -1,52 +1,51 @@
+use std::sync::Arc;
+
 ///! # Checkbox
 ///!
 ///! Checkboxes are used for multiple choices, not for mutually exclusive choices.
 ///! Each checkbox works independently from other checkboxes in the list,
 ///! therefore checking an additional box does not affect any other selections.
 use gpui2::{
-    div, Component, ParentElement, SharedString, StatelessInteractive, Styled, ViewContext,
+    div, Component, ElementId, ParentElement, StatefulInteractive, StatelessInteractive, Styled,
+    ViewContext,
 };
 use theme2::ActiveTheme;
 
-use crate::{Icon, IconColor, IconElement, Selected};
+use crate::{ClickHandler, Icon, IconColor, IconElement, Selected};
 
 #[derive(Component)]
-pub struct Checkbox {
-    id: SharedString,
+pub struct Checkbox<V: 'static> {
+    id: ElementId,
     checked: Selected,
     disabled: bool,
+    on_click: Option<ClickHandler<V>>,
 }
 
-impl Checkbox {
-    pub fn new(id: impl Into<SharedString>) -> Self {
+impl<V: 'static> Checkbox<V> {
+    pub fn new(id: impl Into<ElementId>, checked: Selected) -> Self {
         Self {
             id: id.into(),
-            checked: Selected::Unselected,
+            checked,
             disabled: false,
+            on_click: None,
         }
     }
 
-    pub fn toggle(mut self) -> Self {
-        self.checked = match self.checked {
-            Selected::Selected => Selected::Unselected,
-            Selected::Unselected => Selected::Selected,
-            Selected::Indeterminate => Selected::Selected,
-        };
-        self
-    }
-
-    pub fn set_indeterminate(mut self) -> Self {
-        self.checked = Selected::Indeterminate;
-        self
-    }
-
-    pub fn set_disabled(mut self, disabled: bool) -> Self {
+    pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
-    pub fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let group_id = format!("checkbox_group_{}", self.id);
+    pub fn on_click(
+        mut self,
+        handler: impl 'static + Fn(&mut V, &mut ViewContext<V>) + Send + Sync,
+    ) -> Self {
+        self.on_click = Some(Arc::new(handler));
+        self
+    }
+
+    pub fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        let group_id = format!("checkbox_group_{:?}", self.id);
 
         // The icon is different depending on the state of the checkbox.
         //
@@ -124,6 +123,7 @@ impl Checkbox {
         };
 
         div()
+            .id(self.id)
             // Rather than adding `px_1()` to add some space around the checkbox,
             // we use a larger parent element to create a slightly larger
             // click area for the checkbox.
@@ -160,6 +160,13 @@ impl Checkbox {
                     })
                     .children(icon),
             )
+            .map(|this| {
+                if let Some(on_click) = self.on_click {
+                    this.on_click(move |view, _, cx| on_click(view, cx))
+                } else {
+                    this
+                }
+            })
     }
 }
 
@@ -179,7 +186,7 @@ mod stories {
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .child(Story::title_for::<_, Checkbox>(cx))
+                .child(Story::title_for::<_, Checkbox<Self>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
                     h_stack()
@@ -188,9 +195,12 @@ mod stories {
                         .rounded_md()
                         .border()
                         .border_color(cx.theme().colors().border)
-                        .child(Checkbox::new("checkbox-enabled"))
-                        .child(Checkbox::new("checkbox-intermediate").set_indeterminate())
-                        .child(Checkbox::new("checkbox-selected").toggle()),
+                        .child(Checkbox::new("checkbox-enabled", Selected::Unselected))
+                        .child(Checkbox::new(
+                            "checkbox-intermediate",
+                            Selected::Indeterminate,
+                        ))
+                        .child(Checkbox::new("checkbox-selected", Selected::Selected)),
                 )
                 .child(Story::label(cx, "Disabled"))
                 .child(
@@ -200,16 +210,19 @@ mod stories {
                         .rounded_md()
                         .border()
                         .border_color(cx.theme().colors().border)
-                        .child(Checkbox::new("checkbox-disabled").set_disabled(true))
                         .child(
-                            Checkbox::new("checkbox-disabled-intermediate")
-                                .set_disabled(true)
-                                .set_indeterminate(),
+                            Checkbox::new("checkbox-disabled", Selected::Unselected).disabled(true),
                         )
                         .child(
-                            Checkbox::new("checkbox-disabled-selected")
-                                .set_disabled(true)
-                                .toggle(),
+                            Checkbox::new(
+                                "checkbox-disabled-intermediate",
+                                Selected::Indeterminate,
+                            )
+                            .disabled(true),
+                        )
+                        .child(
+                            Checkbox::new("checkbox-disabled-selected", Selected::Selected)
+                                .disabled(true),
                         ),
                 )
         }

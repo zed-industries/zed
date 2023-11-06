@@ -161,3 +161,12 @@ pub enum Selected {
     Indeterminate,
     Selected,
 }
+
+impl Selected {
+    pub fn inverse(&self) -> Self {
+        match self {
+            Self::Unselected | Self::Indeterminate => Self::Selected,
+            Self::Selected => Self::Unselected,
+        }
+    }
+}
