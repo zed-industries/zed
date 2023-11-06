@@ -170,9 +170,7 @@ impl FollowableItem for FollowableEditor {
             )
             .await?;
 
-            editor
-                .update(&mut cx, |_, cx| cx.add_view(|_| FollowableEditor(editor)))
-                .ok_or_else(|| anyhow!("Could not deserialize FollowableEditor"))
+            pane.update(&mut cx, |_, cx| cx.add_view(|_| FollowableEditor(editor)))
         }))
     }
 
@@ -646,7 +644,7 @@ impl Item for FollowableEditor {
     where
         Self: Sized,
     {
-        Some(Self(cx.add_view(|cx| self.0.read(cx).clone(cx))))
+        Some(self.clone(cx))
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, cx: &mut ViewContext<Self>) {
@@ -944,7 +942,12 @@ impl Item for FollowableEditor {
                                     Some(Arc::new(ProjectHandle(project))),
                                     cx,
                                 );
-                                editor.read_scroll_position_from_db(&DB, item_id, workspace_id, cx);
+                                editor.read_scroll_position_from_db(
+                                    &*DB,
+                                    item_id,
+                                    workspace_id,
+                                    cx,
+                                );
                                 editor
                             }))
                         })
@@ -1009,9 +1012,11 @@ impl SearchableItem for FollowableEditor {
     }
 
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
-        let this = self.0.read(cx);
-        let display_map = this.snapshot(cx).display_snapshot;
-        let selection = this.selections.newest::<usize>(cx);
+        let (display_map, selection) = self.0.update(cx, |this, cx| {
+            let display_map = this.snapshot(cx).display_snapshot;
+            let selection = this.selections.newest::<usize>(cx);
+            (display_map, selection)
+        });
         if selection.start == selection.end {
             let point = selection.start.to_display_point(&display_map);
             let range = surrounding_word(&display_map, point);

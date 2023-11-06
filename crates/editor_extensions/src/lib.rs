@@ -3,6 +3,7 @@ mod persistence;
 use gpui::elements::ChildView;
 use gpui::elements::ParentElement;
 use gpui::keymap_matcher::KeymapContext;
+use gpui::WindowContext;
 use gpui::{
     AnyViewHandle, AppContext, Element, ModelHandle, Subscription, Task, ViewContext, ViewHandle,
     WeakViewHandle,
@@ -320,12 +321,11 @@ impl editor::Workspace for WeakWorkspaceHandle {
         focus_item: bool,
         cx: &mut AppContext,
     ) -> Task<Result<ViewHandle<Editor>>> {
-        cx.spawn(|mut cx| async move {
-            Ok(self
-                .0
-                .update(&mut cx, |this, cx| {
-                    this.open_path(path, None, focus_item, cx)
-                })?
+        let open_task = self
+            .0
+            .update(cx, |this, cx| this.open_path(path, None, focus_item, cx));
+        cx.spawn(move |mut cx| async move {
+            Ok(open_task?
                 .await?
                 .downcast::<Editor>()
                 .ok_or_else(|| anyhow!("opened item was not an editor"))?)
@@ -417,7 +417,7 @@ impl editor::Workspace for WeakWorkspaceHandle {
     }
 
     fn db(&self) -> Arc<dyn editor::Db> {
-        Arc::new(persistence::DB)
+        Arc::new(persistence::DB.clone())
     }
 }
 
@@ -429,7 +429,7 @@ impl gpui::Entity for FollowableEditor {
 
 impl FollowableEditor {
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
-        Self(cx.add_view(|cx| self.0.read(cx).clone(cx)))
+        Self(cx.add_view(|cx| self.0.update(cx, |this, cx| this.clone(cx))))
     }
 }
 
@@ -602,10 +602,12 @@ fn open_excerpts(workspace: &mut Workspace, _: &OpenExcerpts, cx: &mut ViewConte
     cx.defer(move |workspace, cx| {
         for (buffer, ranges) in new_selections_by_buffer.into_iter() {
             let editor = workspace.open_project_item::<FollowableEditor>(buffer, cx);
-            editor.read(cx).0.update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
-                    s.select_ranges(ranges);
-                });
+            editor.update(cx, |this, cx| {
+                this.0.update(cx, |editor, cx| {
+                    editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                        s.select_ranges(ranges);
+                    });
+                })
             });
         }
 

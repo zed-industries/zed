@@ -118,6 +118,7 @@ pub async fn open_test_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection<M>
 #[macro_export]
 macro_rules! define_connection {
     (pub static ref $id:ident: $t:ident<()> = $migrations:expr;) => {
+        #[derive(Clone)]
         pub struct $t($crate::sqlez::thread_safe_connection::ThreadSafeConnection<$t>);
 
         impl ::std::ops::Deref for $t {
@@ -149,6 +150,7 @@ macro_rules! define_connection {
         }
     };
     (pub static ref $id:ident: $t:ident<$($d:ty),+> = $migrations:expr;) => {
+                #[derive(Clone)]
         pub struct $t($crate::sqlez::thread_safe_connection::ThreadSafeConnection<( $($d),+, $t )>);
 
         impl ::std::ops::Deref for $t {

@@ -86,7 +86,7 @@ impl EditorDb {
 }
 
 #[async_trait]
-impl editor::Db for DB {
+impl editor::Db for EditorDb {
     async fn save_scroll_position(
         &self,
         item_id: ItemId,
@@ -95,14 +95,21 @@ impl editor::Db for DB {
         vertical_offset: f32,
         horizontal_offset: f32,
     ) -> Result<()> {
-        todo!();
+        self.save_scroll_position(
+            item_id,
+            workspace_id,
+            top_row,
+            vertical_offset,
+            horizontal_offset,
+        )
+        .await
     }
     fn get_scroll_position(
         &self,
         item_id: ItemId,
         workspace_id: WorkspaceId,
     ) -> Result<Option<(u32, f32, f32)>> {
-        todo!();
+        self.get_scroll_position(item_id, workspace_id)
     }
     async fn save_path(
         &self,
@@ -110,6 +117,6 @@ impl editor::Db for DB {
         workspace_id: WorkspaceId,
         path: PathBuf,
     ) -> Result<()> {
-        todo!();
+        self.save_path(item_id, workspace_id, path).await
     }
 }
