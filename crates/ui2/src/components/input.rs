@@ -59,12 +59,12 @@ impl Input {
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let (input_bg, input_hover_bg, input_active_bg) = match self.variant {
             InputVariant::Ghost => (
-                cx.theme().colors().ghost_element,
+                cx.theme().colors().ghost_element_background,
                 cx.theme().colors().ghost_element_hover,
                 cx.theme().colors().ghost_element_active,
             ),
             InputVariant::Filled => (
-                cx.theme().colors().element,
+                cx.theme().colors().element_background,
                 cx.theme().colors().element_hover,
                 cx.theme().colors().element_active,
             ),

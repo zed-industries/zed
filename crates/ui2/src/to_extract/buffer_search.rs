@@ -30,14 +30,17 @@ impl Render for BufferSearch {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
-        h_stack().bg(cx.theme().colors().toolbar).p_2().child(
-            h_stack().child(Input::new("Search")).child(
-                IconButton::<Self>::new("replace", Icon::Replace)
-                    .when(self.is_replace_open, |this| this.color(IconColor::Accent))
-                    .on_click(|buffer_search, cx| {
-                        buffer_search.toggle_replace(cx);
-                    }),
-            ),
-        )
+        h_stack()
+            .bg(cx.theme().colors().toolbar_background)
+            .p_2()
+            .child(
+                h_stack().child(Input::new("Search")).child(
+                    IconButton::<Self>::new("replace", Icon::Replace)
+                        .when(self.is_replace_open, |this| this.color(IconColor::Accent))
+                        .on_click(|buffer_search, cx| {
+                            buffer_search.toggle_replace(cx);
+                        }),
+                ),
+            )
     }
 }

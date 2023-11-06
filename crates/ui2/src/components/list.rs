@@ -79,7 +79,7 @@ impl ListHeader {
 
         h_stack()
             .w_full()
-            .bg(cx.theme().colors().surface)
+            .bg(cx.theme().colors().surface_background)
             // TODO: Add focus state
             // .when(self.state == InteractionState::Focused, |this| {
             //     this.border()
@@ -307,7 +307,7 @@ impl ListEntry {
         div()
             .relative()
             .group("")
-            .bg(cx.theme().colors().surface)
+            .bg(cx.theme().colors().surface_background)
             // TODO: Add focus state
             .child(
                 sized_item

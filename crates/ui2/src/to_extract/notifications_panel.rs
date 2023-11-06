@@ -22,7 +22,7 @@ impl NotificationsPanel {
             .flex()
             .flex_col()
             .size_full()
-            .bg(cx.theme().colors().surface)
+            .bg(cx.theme().colors().surface_background)
             .child(
                 ListHeader::new("Notifications").meta(Some(ListHeaderMeta::Tools(vec![
                     Icon::AtSign,
@@ -43,7 +43,7 @@ impl NotificationsPanel {
                             .p_1()
                             // TODO: Add cursor style
                             // .cursor(Cursor::IBeam)
-                            .bg(cx.theme().colors().element)
+                            .bg(cx.theme().colors().element_background)
                             .border()
                             .border_color(cx.theme().colors().border_variant)
                             .child(
