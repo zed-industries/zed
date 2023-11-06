@@ -1,7 +1,6 @@
-use crate::prelude::*;
+use crate::{prelude::*, Toggle};
 use crate::{
-    static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon, List,
-    ListHeader, ToggleState,
+    static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon, List, ListHeader,
 };
 
 #[derive(Component)]
@@ -34,17 +33,17 @@ impl CollabPanel {
                                     .header(
                                         ListHeader::new("CRDB")
                                             .left_icon(Icon::Hash.into())
-                                            .toggle(ToggleState::Toggled),
+                                            .toggle(Toggle::Toggled(true)),
                                     )
-                                    .toggle(ToggleState::Toggled),
+                                    .toggle(Toggle::Toggled(true)),
                             ),
                     )
                     .child(
                         v_stack().id("channels").py_1().child(
                             List::new(static_collab_panel_channels())
-                                .header(ListHeader::new("CHANNELS").toggle(ToggleState::Toggled))
+                                .header(ListHeader::new("CHANNELS").toggle(Toggle::Toggled(true)))
                                 .empty_message("No channels yet. Add a channel to get started.")
-                                .toggle(ToggleState::Toggled),
+                                .toggle(Toggle::Toggled(true)),
                         ),
                     )
                     .child(
@@ -52,9 +51,9 @@ impl CollabPanel {
                             List::new(static_collab_panel_current_call())
                                 .header(
                                     ListHeader::new("CONTACTS – ONLINE")
-                                        .toggle(ToggleState::Toggled),
+                                        .toggle(Toggle::Toggled(true)),
                                 )
-                                .toggle(ToggleState::Toggled),
+                                .toggle(Toggle::Toggled(true)),
                         ),
                     )
                     .child(
@@ -62,9 +61,9 @@ impl CollabPanel {
                             List::new(static_collab_panel_current_call())
                                 .header(
                                     ListHeader::new("CONTACTS – OFFLINE")
-                                        .toggle(ToggleState::NotToggled),
+                                        .toggle(Toggle::Toggled(false)),
                                 )
-                                .toggle(ToggleState::NotToggled),
+                                .toggle(Toggle::Toggled(false)),
                         ),
                     ),
             )

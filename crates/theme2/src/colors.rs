@@ -49,12 +49,14 @@ pub struct GitStatusColors {
 }
 
 #[derive(Refineable, Clone, Debug)]
-#[refineable(debug)]
+#[refineable(debug, deserialize)]
 pub struct ThemeColors {
     pub border: Hsla,
     pub border_variant: Hsla,
     pub border_focused: Hsla,
+    pub border_selected: Hsla,
     pub border_transparent: Hsla,
+    pub border_disabled: Hsla,
     pub elevated_surface_background: Hsla,
     pub surface_background: Hsla,
     pub background: Hsla,
@@ -122,6 +124,8 @@ pub struct ThemeStyles {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -162,5 +166,17 @@ mod tests {
 
         assert_eq!(colors.text, magenta);
         assert_eq!(colors.background, green);
+    }
+
+    #[test]
+    fn deserialize_theme_colors_refinement_from_json() {
+        let colors: ThemeColorsRefinement = serde_json::from_value(json!({
+            "background": "#ff00ff",
+            "text": "#ff0000"
+        }))
+        .unwrap();
+
+        assert_eq!(colors.background, Some(gpui::rgb(0xff00ff)));
+        assert_eq!(colors.text, Some(gpui::rgb(0xff0000)));
     }
 }
