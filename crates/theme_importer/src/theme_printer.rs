@@ -134,6 +134,8 @@ impl<'a> Debug for ThemeColorsPrinter<'a> {
             .field("border", &HslaPrinter(self.0.border))
             .field("border_variant", &HslaPrinter(self.0.border_variant))
             .field("border_focused", &HslaPrinter(self.0.border_focused))
+            .field("border_disabled", &HslaPrinter(self.0.border_disabled))
+            .field("border_selected", &HslaPrinter(self.0.border_selected))
             .field(
                 "border_transparent",
                 &HslaPrinter(self.0.border_transparent),

@@ -50,19 +50,42 @@ pub struct ThemeMetadata {
 }
 
 fn main() -> Result<()> {
+    const SOURCE_PATH: &str = "assets/themes/src/vscode";
+    const OUT_PATH: &str = "crates/theme2/src/themes";
+
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    println!("Creating path: assets/themes/src/vscode/");
-    let vscode_themes_path = PathBuf::from_str("assets/themes/src/vscode/")?;
+    let themes_output_path = PathBuf::from_str(OUT_PATH)?;
+
+    if !themes_output_path.exists() {
+        println!("Creating directory: {:?}", themes_output_path);
+        fs::create_dir_all(&themes_output_path)?;
+    }
+
+    // We create mod.rs at the beginning to prevent `mod themes;`/`pub use themes::*;` from being
+    // invalid in the theme crate root.
+    println!(
+        "Creating file: {:?}",
+        themes_output_path.join(format!("mod.rs"))
+    );
+
+    let mut mod_rs_file = File::create(themes_output_path.join(format!("mod.rs")))?;
+
+    println!("Loading themes source...");
+    let vscode_themes_path = PathBuf::from_str(SOURCE_PATH)?;
+    if !vscode_themes_path.exists() {
+        return Err(anyhow!(format!(
+            "Couldn't find {}, make sure it exists",
+            SOURCE_PATH
+        )));
+    }
 
     let mut theme_families = Vec::new();
 
     for theme_family_dir in fs::read_dir(&vscode_themes_path)? {
-        println!("Reading directory: {:?}", vscode_themes_path);
-
         let theme_family_dir = theme_family_dir?;
 
-        if theme_family_dir.file_name().to_str() == Some(".DS_Store") {
+        if !theme_family_dir.file_type()?.is_dir() {
             continue;
         }
 
@@ -72,12 +95,18 @@ fn main() -> Result<()> {
             .ok_or(anyhow!("no file stem"))
             .map(|stem| stem.to_string_lossy().to_string())?;
 
-        println!(
-            "Opening file: {:?}",
-            theme_family_dir.path().join("family.json")
-        );
         let family_metadata_file = File::open(theme_family_dir.path().join("family.json"))
-            .context(format!("no `family.json` found for '{theme_family_slug}'"))?;
+            .context(format!(
+                "no `family.json` found for '{}'",
+                theme_family_slug
+            ))?;
+
+        let license_file_path = theme_family_dir.path().join("LICENSE");
+
+        if !license_file_path.exists() {
+            println!("Skipping theme family '{}' because it does not have a LICENSE file. This theme will only be imported once a LICENSE file is provided.", theme_family_slug);
+            continue;
+        }
 
         let family_metadata: FamilyMetadata = serde_json::from_reader(family_metadata_file)
             .context(format!(
@@ -118,8 +147,6 @@ fn main() -> Result<()> {
         theme_families.push(theme_family);
     }
 
-    let themes_output_path = PathBuf::from_str("crates/theme2/src/themes")?;
-
     let mut theme_modules = Vec::new();
 
     for theme_family in theme_families {
@@ -153,17 +180,28 @@ fn main() -> Result<()> {
         theme_modules.push(theme_family_slug);
     }
 
-    println!(
-        "Creating file: {:?}",
-        themes_output_path.join(format!("mod.rs"))
+    let themes_vector_contents = format!(
+        r#"
+        use crate::ThemeFamily;
+
+        pub(crate) fn all_imported_themes() -> Vec<ThemeFamily> {{
+            vec![{all_themes}]
+        }}
+        "#,
+        all_themes = theme_modules
+            .iter()
+            .map(|module| format!("{}()", module))
+            .collect::<Vec<_>>()
+            .join(", ")
     );
-    let mut mod_rs_file = File::create(themes_output_path.join(format!("mod.rs")))?;
 
     let mod_rs_contents = format!(
         r#"
         {mod_statements}
 
         {use_statements}
+
+        {themes_vector_contents}
         "#,
         mod_statements = theme_modules
             .iter()
@@ -174,7 +212,8 @@ fn main() -> Result<()> {
             .iter()
             .map(|module| format!("pub use {module}::*;"))
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n"),
+        themes_vector_contents = themes_vector_contents
     );
 
     mod_rs_file.write_all(mod_rs_contents.as_bytes())?;

@@ -456,6 +456,14 @@ impl VsCodeThemeConverter {
                 .panel_border
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
+            border_disabled: vscode_colors
+                .panel_border
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            border_selected: vscode_colors
+                .panel_border
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             border_transparent: vscode_colors
                 .panel_border
                 .as_ref()
