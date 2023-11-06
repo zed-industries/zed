@@ -156,9 +156,12 @@ impl<V: 'static> Checkbox<V> {
                     })
                     .children(icon),
             )
-            .when_some(self.on_click, |this, on_click| {
-                this.on_click(move |view, _, cx| on_click(self.checked.inverse(), view, cx))
-            })
+            .when_some(
+                self.on_click.filter(|_| !self.disabled),
+                |this, on_click| {
+                    this.on_click(move |view, _, cx| on_click(self.checked.inverse(), view, cx))
+                },
+            )
     }
 }
 
