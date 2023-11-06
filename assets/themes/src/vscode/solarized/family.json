@@ -1,0 +1,16 @@
+{
+    "name": "Solarized",
+    "author": "Ethan Schoonover (altercation)",
+    "themes": [
+        {
+            "name": "Solarized Dark",
+            "file_name": "dark.json",
+            "appearance": "dark"
+        },
+        {
+            "name": "Solarized Light",
+            "file_name": "light.json",
+            "appearance": "light"
+        }
+    ]
+}

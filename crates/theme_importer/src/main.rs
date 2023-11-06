@@ -55,22 +55,6 @@ fn main() -> Result<()> {
 
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    let themes_output_path = PathBuf::from_str(OUT_PATH)?;
-
-    if !themes_output_path.exists() {
-        println!("Creating directory: {:?}", themes_output_path);
-        fs::create_dir_all(&themes_output_path)?;
-    }
-
-    // We create mod.rs at the beginning to prevent `mod themes;`/`pub use themes::*;` from being
-    // invalid in the theme crate root.
-    println!(
-        "Creating file: {:?}",
-        themes_output_path.join(format!("mod.rs"))
-    );
-
-    let mut mod_rs_file = File::create(themes_output_path.join(format!("mod.rs")))?;
-
     println!("Loading themes source...");
     let vscode_themes_path = PathBuf::from_str(SOURCE_PATH)?;
     if !vscode_themes_path.exists() {
@@ -146,6 +130,15 @@ fn main() -> Result<()> {
 
         theme_families.push(theme_family);
     }
+
+    let themes_output_path = PathBuf::from_str(OUT_PATH)?;
+
+    if !themes_output_path.exists() {
+        println!("Creating directory: {:?}", themes_output_path);
+        fs::create_dir_all(&themes_output_path)?;
+    }
+
+    let mut mod_rs_file = File::create(themes_output_path.join(format!("mod.rs")))?;
 
     let mut theme_modules = Vec::new();
 

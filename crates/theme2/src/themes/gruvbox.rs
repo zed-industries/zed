@@ -7,12 +7,12 @@ use crate::{
 
 pub fn gruvbox() -> ThemeFamily {
     ThemeFamily {
-        id: "c3d8b05f-5538-4b73-9ce9-30a31f73f5f2".into(),
+        id: "c0b7f0e7-f261-4a33-a2bf-baf2e140aac4".into(),
         name: "Gruvbox".into(),
         author: "morhetz".into(),
         themes: vec![
             ThemeVariant {
-                id: "014ce751-7184-44a0-b977-001d88e94d75".into(),
+                id: "fb9f8f64-372b-4fda-8dbd-d610c97a9691".into(),
                 name: "Gruvbox Dark Hard".into(),
                 appearance: Appearance::Dark,
                 styles: ThemeStyles {
@@ -170,7 +170,7 @@ pub fn gruvbox() -> ThemeFamily {
                 },
             },
             ThemeVariant {
-                id: "abf0dd62-cc6a-464b-bd63-75c28eabb1c0".into(),
+                id: "72f0ea45-33bc-49d8-9f52-87540f858fb4".into(),
                 name: "Gruvbox Dark Medium".into(),
                 appearance: Appearance::Dark,
                 styles: ThemeStyles {
@@ -328,7 +328,7 @@ pub fn gruvbox() -> ThemeFamily {
                 },
             },
             ThemeVariant {
-                id: "03a2ee16-8076-449b-9bb2-16fd02fbf21d".into(),
+                id: "5ea1cdf8-6ed0-4e54-b44a-14c6634701cf".into(),
                 name: "Gruvbox Dark Soft".into(),
                 appearance: Appearance::Dark,
                 styles: ThemeStyles {
@@ -486,7 +486,7 @@ pub fn gruvbox() -> ThemeFamily {
                 },
             },
             ThemeVariant {
-                id: "7bbc0a0b-5b57-4731-bfae-02b4ff7ee821".into(),
+                id: "b0c9082f-00c8-4a02-a4de-9fd7af97c7f2".into(),
                 name: "Gruvbox Light Hard".into(),
                 appearance: Appearance::Light,
                 styles: ThemeStyles {
@@ -644,7 +644,7 @@ pub fn gruvbox() -> ThemeFamily {
                 },
             },
             ThemeVariant {
-                id: "3319ee0f-2d7f-4efc-84ae-132b30126bb1".into(),
+                id: "172c281c-ff0a-496e-8794-880e2fc3aa49".into(),
                 name: "Gruvbox Light Medium".into(),
                 appearance: Appearance::Light,
                 styles: ThemeStyles {
@@ -802,7 +802,7 @@ pub fn gruvbox() -> ThemeFamily {
                 },
             },
             ThemeVariant {
-                id: "d455f416-a0a5-4ef6-a808-64aafeb7aaae".into(),
+                id: "b94f3305-b755-44f2-948c-cfd8c9d3158f".into(),
                 name: "Gruvbox Light Soft".into(),
                 appearance: Appearance::Light,
                 styles: ThemeStyles {

@@ -7,11 +7,11 @@ use crate::{
 
 pub fn nord() -> ThemeFamily {
     ThemeFamily {
-        id: "63407887-c052-4dd4-b781-e6194ddcbead".into(),
+        id: "dcd03133-f540-47e7-9360-91bb1c94d16e".into(),
         name: "Nord".into(),
         author: "Sven Greb (svengreb)".into(),
         themes: vec![ThemeVariant {
-            id: "27d48816-e82b-4285-a615-7a970d51b4a0".into(),
+            id: "ed7e8c08-321a-41f0-bd22-ca92c0b42e0e".into(),
             name: "Nord".into(),
             appearance: Appearance::Dark,
             styles: ThemeStyles {
