@@ -8693,9 +8693,9 @@ impl Editor {
         }
     }
 
-    //     pub fn show_local_cursors(&self, cx: &AppContext) -> bool {
-    //         self.blink_manager.read(cx).visible() && self.focused
-    //     }
+    pub fn show_local_cursors(&self, cx: &AppContext) -> bool {
+        self.blink_manager.read(cx).visible() && self.focused
+    }
 
     fn on_buffer_changed(&mut self, _: Model<MultiBuffer>, cx: &mut ViewContext<Self>) {
         cx.notify();

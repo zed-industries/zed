@@ -9,12 +9,13 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
     black, hsla, point, px, relative, size, transparent_black, AnyElement, BorrowWindow, Bounds,
-    ContentMask, Corners, Edges, Element, Hsla, Line, Pixels, Size, Style, TextRun, TextStyle,
-    TextSystem, ViewContext, WindowContext,
+    ContentMask, Corners, Edges, Element, Hsla, Line, Pixels, ShapedGlyph, Size, Style, TextRun,
+    TextStyle, TextSystem, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
 use multi_buffer::Anchor;
+use project::project_settings::{GitGutterSetting, ProjectSettings};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{
@@ -373,29 +374,29 @@ impl EditorElement {
     //     );
 
     //     if editor.has_pending_selection() {
-    //         let mut scroll_delta = gpui::Point<Pixels>::zero();
+    //         let mut scroll_delta = gpui::Point::<Pixels>::zero();
 
     //         let vertical_margin = position_map.line_height.min(text_bounds.height() / 3.0);
     //         let top = text_bounds.origin.y + vertical_margin;
-    //         let bottom = text_bounds.lower_left().y() - vertical_margin;
-    //         if position.y() < top {
-    //             scroll_delta.set_y(-scale_vertical_mouse_autoscroll_delta(top - position.y()))
+    //         let bottom = text_bounds.lower_left().y - vertical_margin;
+    //         if position.y < top {
+    //             scroll_delta.set_y(-scale_vertical_mouse_autoscroll_delta(top - position.y))
     //         }
-    //         if position.y() > bottom {
-    //             scroll_delta.set_y(scale_vertical_mouse_autoscroll_delta(position.y() - bottom))
+    //         if position.y > bottom {
+    //             scroll_delta.set_y(scale_vertical_mouse_autoscroll_delta(position.y - bottom))
     //         }
 
     //         let horizontal_margin = position_map.line_height.min(text_bounds.width() / 3.0);
     //         let left = text_bounds.origin.x + horizontal_margin;
-    //         let right = text_bounds.upper_right().x() - horizontal_margin;
-    //         if position.x() < left {
+    //         let right = text_bounds.upper_right().x - horizontal_margin;
+    //         if position.x < left {
     //             scroll_delta.set_x(-scale_horizontal_mouse_autoscroll_delta(
-    //                 left - position.x(),
+    //                 left - position.x,
     //             ))
     //         }
-    //         if position.x() > right {
+    //         if position.x > right {
     //             scroll_delta.set_x(scale_horizontal_mouse_autoscroll_delta(
-    //                 position.x() - right,
+    //                 position.x - right,
     //             ))
     //         }
 
@@ -406,7 +407,7 @@ impl EditorElement {
     //                 position: point_for_position.previous_valid,
     //                 goal_column: point_for_position.exact_unclipped.column(),
     //                 scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
-    //                     .clamp(gpui::Point<Pixels>::zero(), position_map.scroll_max),
+    //                     .clamp(gpui::Point::<Pixels>::zero(), position_map.scroll_max),
     //             },
     //             cx,
     //         );
@@ -489,9 +490,9 @@ impl EditorElement {
     //     };
 
     //     let scroll_position = position_map.snapshot.scroll_position();
-    //     let x = (scroll_position.x() * max_glyph_width - delta.x()) / max_glyph_width;
-    //     let y = (scroll_position.y() * line_height - delta.y()) / line_height;
-    //     let scroll_position = point(x, y).clamp(gpui::Point<Pixels>::zero(), position_map.scroll_max);
+    //     let x = (scroll_position.x * max_glyph_width - delta.x) / max_glyph_width;
+    //     let y = (scroll_position.y * line_height - delta.y) / line_height;
+    //     let scroll_position = point(x, y).clamp(gpui::Point::<Pixels>::zero(), position_map.scroll_max);
     //     editor.scroll(scroll_position, axis, cx);
 
     //     true
@@ -608,452 +609,476 @@ impl EditorElement {
         }
     }
 
-    // fn paint_gutter(
-    //     &mut self,
-    //     bounds: Bounds<Pixels>,
-    //     visible_bounds: Bounds<Pixels>,
-    //     layout: &mut LayoutState,
-    //     editor: &mut Editor,
-    //     cx: &mut ViewContext<Editor>,
-    // ) {
-    //     let line_height = layout.position_map.line_height;
+    fn paint_gutter(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        layout: &mut LayoutState,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let line_height = layout.position_map.line_height;
 
-    //     let scroll_position = layout.position_map.snapshot.scroll_position();
-    //     let scroll_top = scroll_position.y() * line_height;
+        let scroll_position = layout.position_map.snapshot.scroll_position();
+        let scroll_top = scroll_position.y * line_height;
 
-    //     let show_gutter = matches!(
-    //         settings::get::<ProjectSettings>(cx).git.git_gutter,
-    //         Some(GitGutterSetting::TrackedFiles)
-    //     );
+        let show_gutter = matches!(
+            ProjectSettings::get_global(cx).git.git_gutter,
+            Some(GitGutterSetting::TrackedFiles)
+        );
 
-    //     if show_gutter {
-    //         Self::paint_diff_hunks(bounds, layout, cx);
-    //     }
+        if show_gutter {
+            Self::paint_diff_hunks(bounds, layout, cx);
+        }
 
-    //     for (ix, line) in layout.line_number_layouts.iter().enumerate() {
-    //         if let Some(line) = line {
-    //             let line_origin = bounds.origin()
-    //                 + point(
-    //                     bounds.width() - line.width() - layout.gutter_padding,
-    //                     ix as f32 * line_height - (scroll_top % line_height),
-    //                 );
+        for (ix, line) in layout.line_number_layouts.iter().enumerate() {
+            if let Some(line) = line {
+                let line_origin = bounds.origin
+                    + point(
+                        bounds.size.width - line.width - layout.gutter_padding,
+                        ix as f32 * line_height - (scroll_top % line_height),
+                    );
 
-    //             line.paint(line_origin, visible_bounds, line_height, cx);
-    //         }
-    //     }
+                line.paint(line_origin, line_height, cx);
+            }
+        }
 
-    //     for (ix, fold_indicator) in layout.fold_indicators.iter_mut().enumerate() {
-    //         if let Some(indicator) = fold_indicator.as_mut() {
-    //             let position = point(
-    //                 bounds.width() - layout.gutter_padding,
-    //                 ix as f32 * line_height - (scroll_top % line_height),
-    //             );
-    //             let centering_offset = point(
-    //                 (layout.gutter_padding + layout.gutter_margin - indicator.size().x()) / 2.,
-    //                 (line_height - indicator.size().y()) / 2.,
-    //             );
+        // todo!("fold indicators")
+        // for (ix, fold_indicator) in layout.fold_indicators.iter_mut().enumerate() {
+        //     if let Some(indicator) = fold_indicator.as_mut() {
+        //         let position = point(
+        //             bounds.width() - layout.gutter_padding,
+        //             ix as f32 * line_height - (scroll_top % line_height),
+        //         );
+        //         let centering_offset = point(
+        //             (layout.gutter_padding + layout.gutter_margin - indicator.size().x) / 2.,
+        //             (line_height - indicator.size().y) / 2.,
+        //         );
 
-    //             let indicator_origin = bounds.origin() + position + centering_offset;
+        //         let indicator_origin = bounds.origin + position + centering_offset;
 
-    //             indicator.paint(indicator_origin, visible_bounds, editor, cx);
-    //         }
-    //     }
+        //         indicator.paint(indicator_origin, visible_bounds, editor, cx);
+        //     }
+        // }
 
-    //     if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
-    //         let mut x = 0.;
-    //         let mut y = *row as f32 * line_height - scroll_top;
-    //         x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
-    //         y += (line_height - indicator.size().y()) / 2.;
-    //         indicator.paint(bounds.origin() + point(x, y), visible_bounds, editor, cx);
-    //     }
-    // }
+        // todo!("code actions indicator")
+        // if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
+        //     let mut x = 0.;
+        //     let mut y = *row as f32 * line_height - scroll_top;
+        //     x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x) / 2.;
+        //     y += (line_height - indicator.size().y) / 2.;
+        //     indicator.paint(bounds.origin + point(x, y), visible_bounds, editor, cx);
+        // }
+    }
 
-    // fn paint_diff_hunks(bounds: Bounds<Pixels>, layout: &mut LayoutState, cx: &mut ViewContext<Editor>) {
-    //     let diff_style = &theme::current(cx).editor.diff.clone();
-    //     let line_height = layout.position_map.line_height;
+    fn paint_diff_hunks(
+        bounds: Bounds<Pixels>,
+        layout: &mut LayoutState,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        // todo!()
+        // let diff_style = &theme::current(cx).editor.diff.clone();
+        // let line_height = layout.position_map.line_height;
 
-    //     let scroll_position = layout.position_map.snapshot.scroll_position();
-    //     let scroll_top = scroll_position.y() * line_height;
+        // let scroll_position = layout.position_map.snapshot.scroll_position();
+        // let scroll_top = scroll_position.y * line_height;
 
-    //     for hunk in &layout.display_hunks {
-    //         let (display_row_range, status) = match hunk {
-    //             //TODO: This rendering is entirely a horrible hack
-    //             &DisplayDiffHunk::Folded { display_row: row } => {
-    //                 let start_y = row as f32 * line_height - scroll_top;
-    //                 let end_y = start_y + line_height;
+        // for hunk in &layout.display_hunks {
+        //     let (display_row_range, status) = match hunk {
+        //         //TODO: This rendering is entirely a horrible hack
+        //         &DisplayDiffHunk::Folded { display_row: row } => {
+        //             let start_y = row as f32 * line_height - scroll_top;
+        //             let end_y = start_y + line_height;
 
-    //                 let width = diff_style.removed_width_em * line_height;
-    //                 let highlight_origin = bounds.origin() + point(-width, start_y);
-    //                 let highlight_size = point(width * 2., end_y - start_y);
-    //                 let highlight_bounds = Bounds<Pixels>::new(highlight_origin, highlight_size);
+        //             let width = diff_style.removed_width_em * line_height;
+        //             let highlight_origin = bounds.origin + point(-width, start_y);
+        //             let highlight_size = point(width * 2., end_y - start_y);
+        //             let highlight_bounds = Bounds::<Pixels>::new(highlight_origin, highlight_size);
 
-    //                 cx.paint_quad(Quad {
-    //                     bounds: highlight_bounds,
-    //                     background: Some(diff_style.modified),
-    //                     border: Border::new(0., Color::transparent_black()).into(),
-    //                     corner_radii: (1. * line_height).into(),
-    //                 });
+        //             cx.paint_quad(Quad {
+        //                 bounds: highlight_bounds,
+        //                 background: Some(diff_style.modified),
+        //                 border: Border::new(0., Color::transparent_black()).into(),
+        //                 corner_radii: (1. * line_height).into(),
+        //             });
 
-    //                 continue;
-    //             }
+        //             continue;
+        //         }
 
-    //             DisplayDiffHunk::Unfolded {
-    //                 display_row_range,
-    //                 status,
-    //             } => (display_row_range, status),
-    //         };
+        //         DisplayDiffHunk::Unfolded {
+        //             display_row_range,
+        //             status,
+        //         } => (display_row_range, status),
+        //     };
 
-    //         let color = match status {
-    //             DiffHunkStatus::Added => diff_style.inserted,
-    //             DiffHunkStatus::Modified => diff_style.modified,
+        //     let color = match status {
+        //         DiffHunkStatus::Added => diff_style.inserted,
+        //         DiffHunkStatus::Modified => diff_style.modified,
 
-    //             //TODO: This rendering is entirely a horrible hack
-    //             DiffHunkStatus::Removed => {
-    //                 let row = display_row_range.start;
+        //         //TODO: This rendering is entirely a horrible hack
+        //         DiffHunkStatus::Removed => {
+        //             let row = display_row_range.start;
 
-    //                 let offset = line_height / 2.;
-    //                 let start_y = row as f32 * line_height - offset - scroll_top;
-    //                 let end_y = start_y + line_height;
+        //             let offset = line_height / 2.;
+        //             let start_y = row as f32 * line_height - offset - scroll_top;
+        //             let end_y = start_y + line_height;
 
-    //                 let width = diff_style.removed_width_em * line_height;
-    //                 let highlight_origin = bounds.origin() + point(-width, start_y);
-    //                 let highlight_size = point(width * 2., end_y - start_y);
-    //                 let highlight_bounds = Bounds<Pixels>::new(highlight_origin, highlight_size);
+        //             let width = diff_style.removed_width_em * line_height;
+        //             let highlight_origin = bounds.origin + point(-width, start_y);
+        //             let highlight_size = point(width * 2., end_y - start_y);
+        //             let highlight_bounds = Bounds::<Pixels>::new(highlight_origin, highlight_size);
 
-    //                 cx.paint_quad(Quad {
-    //                     bounds: highlight_bounds,
-    //                     background: Some(diff_style.deleted),
-    //                     border: Border::new(0., Color::transparent_black()).into(),
-    //                     corner_radii: (1. * line_height).into(),
-    //                 });
+        //             cx.paint_quad(Quad {
+        //                 bounds: highlight_bounds,
+        //                 background: Some(diff_style.deleted),
+        //                 border: Border::new(0., Color::transparent_black()).into(),
+        //                 corner_radii: (1. * line_height).into(),
+        //             });
 
-    //                 continue;
-    //             }
-    //         };
+        //             continue;
+        //         }
+        //     };
 
-    //         let start_row = display_row_range.start;
-    //         let end_row = display_row_range.end;
+        //     let start_row = display_row_range.start;
+        //     let end_row = display_row_range.end;
 
-    //         let start_y = start_row as f32 * line_height - scroll_top;
-    //         let end_y = end_row as f32 * line_height - scroll_top;
+        //     let start_y = start_row as f32 * line_height - scroll_top;
+        //     let end_y = end_row as f32 * line_height - scroll_top;
 
-    //         let width = diff_style.width_em * line_height;
-    //         let highlight_origin = bounds.origin() + point(-width, start_y);
-    //         let highlight_size = point(width * 2., end_y - start_y);
-    //         let highlight_bounds = Bounds<Pixels>::new(highlight_origin, highlight_size);
+        //     let width = diff_style.width_em * line_height;
+        //     let highlight_origin = bounds.origin + point(-width, start_y);
+        //     let highlight_size = point(width * 2., end_y - start_y);
+        //     let highlight_bounds = Bounds::<Pixels>::new(highlight_origin, highlight_size);
 
-    //         cx.paint_quad(Quad {
-    //             bounds: highlight_bounds,
-    //             background: Some(color),
-    //             border: Border::new(0., Color::transparent_black()).into(),
-    //             corner_radii: (diff_style.corner_radius * line_height).into(),
-    //         });
-    //     }
-    // }
+        //     cx.paint_quad(Quad {
+        //         bounds: highlight_bounds,
+        //         background: Some(color),
+        //         border: Border::new(0., Color::transparent_black()).into(),
+        //         corner_radii: (diff_style.corner_radius * line_height).into(),
+        //     });
+        // }
+    }
 
-    // fn paint_text(
-    //     &mut self,
-    //     bounds: Bounds<Pixels>,
-    //     visible_bounds: Bounds<Pixels>,
-    //     layout: &mut LayoutState,
-    //     editor: &mut Editor,
-    //     cx: &mut ViewContext<Editor>,
-    // ) {
-    //     let style = &self.style;
-    //     let scroll_position = layout.position_map.snapshot.scroll_position();
-    //     let start_row = layout.visible_display_row_range.start;
-    //     let scroll_top = scroll_position.y() * layout.position_map.line_height;
-    //     let max_glyph_width = layout.position_map.em_width;
-    //     let scroll_left = scroll_position.x() * max_glyph_width;
-    //     let content_origin = bounds.origin() + point(layout.gutter_margin, 0.);
-    //     let line_end_overshoot = 0.15 * layout.position_map.line_height;
-    //     let whitespace_setting = editor.buffer.read(cx).settings_at(0, cx).show_whitespaces;
+    fn paint_text(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        layout: &mut LayoutState,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let style = &self.style;
+        let scroll_position = layout.position_map.snapshot.scroll_position();
+        let start_row = layout.visible_display_row_range.start;
+        let scroll_top = scroll_position.y * layout.position_map.line_height;
+        let max_glyph_width = layout.position_map.em_width;
+        let scroll_left = scroll_position.x * max_glyph_width;
+        let content_origin = bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
+        let line_end_overshoot = 0.15 * layout.position_map.line_height;
+        let whitespace_setting = editor.buffer.read(cx).settings_at(0, cx).show_whitespaces;
 
-    //     cx.scene().push_layer(Some(bounds));
+        cx.with_content_mask(ContentMask { bounds }, |cx| {
+            // todo!("cursor region")
+            // cx.scene().push_cursor_region(CursorRegion {
+            //     bounds,
+            //     style: if !editor.link_go_to_definition_state.definitions.is_empty {
+            //         CursorStyle::PointingHand
+            //     } else {
+            //         CursorStyle::IBeam
+            //     },
+            // });
 
-    //     cx.scene().push_cursor_region(CursorRegion {
-    //         bounds,
-    //         style: if !editor.link_go_to_definition_state.definitions.is_empty() {
-    //             CursorStyle::PointingHand
-    //         } else {
-    //             CursorStyle::IBeam
-    //         },
-    //     });
+            // todo!("fold ranges")
+            // let fold_corner_radius =
+            //     self.style.folds.ellipses.corner_radius_factor * layout.position_map.line_height;
+            // for (id, range, color) in layout.fold_ranges.iter() {
+            //     self.paint_highlighted_range(
+            //         range.clone(),
+            //         *color,
+            //         fold_corner_radius,
+            //         fold_corner_radius * 2.,
+            //         layout,
+            //         content_origin,
+            //         scroll_top,
+            //         scroll_left,
+            //         bounds,
+            //         cx,
+            //     );
 
-    //     let fold_corner_radius =
-    //         self.style.folds.ellipses.corner_radius_factor * layout.position_map.line_height;
-    //     for (id, range, color) in layout.fold_ranges.iter() {
-    //         self.paint_highlighted_range(
-    //             range.clone(),
-    //             *color,
-    //             fold_corner_radius,
-    //             fold_corner_radius * 2.,
-    //             layout,
-    //             content_origin,
-    //             scroll_top,
-    //             scroll_left,
-    //             bounds,
-    //             cx,
-    //         );
+            //     for bound in range_to_bounds(
+            //         &range,
+            //         content_origin,
+            //         scroll_left,
+            //         scroll_top,
+            //         &layout.visible_display_row_range,
+            //         line_end_overshoot,
+            //         &layout.position_map,
+            //     ) {
+            //         cx.scene().push_cursor_region(CursorRegion {
+            //             bounds: bound,
+            //             style: CursorStyle::PointingHand,
+            //         });
 
-    //         for bound in range_to_bounds(
-    //             &range,
-    //             content_origin,
-    //             scroll_left,
-    //             scroll_top,
-    //             &layout.visible_display_row_range,
-    //             line_end_overshoot,
-    //             &layout.position_map,
-    //         ) {
-    //             cx.scene().push_cursor_region(CursorRegion {
-    //                 bounds: bound,
-    //                 style: CursorStyle::PointingHand,
-    //             });
+            //         let display_row = range.start.row();
 
-    //             let display_row = range.start.row();
+            //         let buffer_row = DisplayPoint::new(display_row, 0)
+            //             .to_point(&layout.position_map.snapshot.display_snapshot)
+            //             .row;
 
-    //             let buffer_row = DisplayPoint::new(display_row, 0)
-    //                 .to_point(&layout.position_map.snapshot.display_snapshot)
-    //                 .row;
+            //         let view_id = cx.view_id();
+            //         cx.scene().push_mouse_region(
+            //             MouseRegion::new::<FoldMarkers>(view_id, *id as usize, bound)
+            //                 .on_click(MouseButton::Left, move |_, editor: &mut Editor, cx| {
+            //                     editor.unfold_at(&UnfoldAt { buffer_row }, cx)
+            //                 })
+            //                 .with_notify_on_hover(true)
+            //                 .with_notify_on_click(true),
+            //         )
+            //     }
+            // }
 
-    //             let view_id = cx.view_id();
-    //             cx.scene().push_mouse_region(
-    //                 MouseRegion::new::<FoldMarkers>(view_id, *id as usize, bound)
-    //                     .on_click(MouseButton::Left, move |_, editor: &mut Editor, cx| {
-    //                         editor.unfold_at(&UnfoldAt { buffer_row }, cx)
-    //                     })
-    //                     .with_notify_on_hover(true)
-    //                     .with_notify_on_click(true),
-    //             )
-    //         }
-    //     }
+            for (range, color) in &layout.highlighted_ranges {
+                self.paint_highlighted_range(
+                    range.clone(),
+                    *color,
+                    Pixels::ZERO,
+                    line_end_overshoot,
+                    layout,
+                    content_origin,
+                    scroll_top,
+                    scroll_left,
+                    bounds,
+                    cx,
+                );
+            }
 
-    //     for (range, color) in &layout.highlighted_ranges {
-    //         self.paint_highlighted_range(
-    //             range.clone(),
-    //             *color,
-    //             0.,
-    //             line_end_overshoot,
-    //             layout,
-    //             content_origin,
-    //             scroll_top,
-    //             scroll_left,
-    //             bounds,
-    //             cx,
-    //         );
-    //     }
+            let mut cursors = SmallVec::<[Cursor; 32]>::new();
+            let corner_radius = 0.15 * layout.position_map.line_height;
+            let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
 
-    //     let mut cursors = SmallVec::<[Cursor; 32]>::new();
-    //     let corner_radius = 0.15 * layout.position_map.line_height;
-    //     let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
+            for (selection_style, selections) in &layout.selections {
+                for selection in selections {
+                    self.paint_highlighted_range(
+                        selection.range.clone(),
+                        selection_style.selection,
+                        corner_radius,
+                        corner_radius * 2.,
+                        layout,
+                        content_origin,
+                        scroll_top,
+                        scroll_left,
+                        bounds,
+                        cx,
+                    );
 
-    //     for (selection_style, selections) in &layout.selections {
-    //         for selection in selections {
-    //             self.paint_highlighted_range(
-    //                 selection.range.clone(),
-    //                 selection_style.selection,
-    //                 corner_radius,
-    //                 corner_radius * 2.,
-    //                 layout,
-    //                 content_origin,
-    //                 scroll_top,
-    //                 scroll_left,
-    //                 bounds,
-    //                 cx,
-    //             );
+                    if selection.is_local && !selection.range.is_empty() {
+                        invisible_display_ranges.push(selection.range.clone());
+                    }
+                    if !selection.is_local || editor.show_local_cursors(cx) {
+                        let cursor_position = selection.head;
+                        if layout
+                            .visible_display_row_range
+                            .contains(&cursor_position.row())
+                        {
+                            let cursor_row_layout = &layout.position_map.line_layouts
+                                [(cursor_position.row() - start_row) as usize]
+                                .line;
+                            let cursor_column = cursor_position.column() as usize;
 
-    //             if selection.is_local && !selection.range.is_empty() {
-    //                 invisible_display_ranges.push(selection.range.clone());
-    //             }
-    //             if !selection.is_local || editor.show_local_cursors(cx) {
-    //                 let cursor_position = selection.head;
-    //                 if layout
-    //                     .visible_display_row_range
-    //                     .contains(&cursor_position.row())
-    //                 {
-    //                     let cursor_row_layout = &layout.position_map.line_layouts
-    //                         [(cursor_position.row() - start_row) as usize]
-    //                         .line;
-    //                     let cursor_column = cursor_position.column() as usize;
+                            let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+                            let mut block_width = cursor_row_layout.x_for_index(cursor_column + 1)
+                                - cursor_character_x;
+                            if block_width == Pixels::ZERO {
+                                block_width = layout.position_map.em_width;
+                            }
+                            let block_text = if let CursorShape::Block = selection.cursor_shape {
+                                layout
+                                    .position_map
+                                    .snapshot
+                                    .chars_at(cursor_position)
+                                    .next()
+                                    .and_then(|(character, _)| {
+                                        let font_id =
+                                            cursor_row_layout.font_for_index(cursor_column)?;
+                                        let text = character.to_string();
 
-    //                     let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
-    //                     let mut block_width =
-    //                         cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
-    //                     if block_width == 0.0 {
-    //                         block_width = layout.position_map.em_width;
-    //                     }
-    //                     let block_text = if let CursorShape::Block = selection.cursor_shape {
-    //                         layout
-    //                             .position_map
-    //                             .snapshot
-    //                             .chars_at(cursor_position)
-    //                             .next()
-    //                             .and_then(|(character, _)| {
-    //                                 let font_id =
-    //                                     cursor_row_layout.font_for_index(cursor_column)?;
-    //                                 let text = character.to_string();
+                                        cx.text_system().layout_text(
+                                            &text,
+                                            cursor_row_layout.font_size,
+                                            &[TextRun {
+                                                len: text.len(),
+                                                font: todo!(),
+                                                color: todo!(),
+                                                underline: todo!(),
+                                            }],
+                                            None,
+                                        );
+                                        Some(cx.text_layout_cache().layout_str(
+                                            &text,
+                                            cursor_row_layout.font_size,
+                                            &[(
+                                                text.chars().count(),
+                                                RunStyle {
+                                                    font_id,
+                                                    color: style.background,
+                                                    underline: Default::default(),
+                                                },
+                                            )],
+                                        ))
+                                    })
+                            } else {
+                                None
+                            };
 
-    //                                 Some(cx.text_layout_cache().layout_str(
-    //                                     &text,
-    //                                     cursor_row_layout.font_size(),
-    //                                     &[(
-    //                                         text.chars().count(),
-    //                                         RunStyle {
-    //                                             font_id,
-    //                                             color: style.background,
-    //                                             underline: Default::default(),
-    //                                         },
-    //                                     )],
-    //                                 ))
-    //                             })
-    //                     } else {
-    //                         None
-    //                     };
+                            let x = cursor_character_x - scroll_left;
+                            let y = cursor_position.row() as f32 * layout.position_map.line_height
+                                - scroll_top;
+                            if selection.is_newest {
+                                editor.pixel_position_of_newest_cursor = Some(point(
+                                    bounds.origin.x + x + block_width / 2.,
+                                    bounds.origin.y + y + layout.position_map.line_height / 2.,
+                                ));
+                            }
+                            cursors.push(Cursor {
+                                color: selection_style.cursor,
+                                block_width,
+                                origin: point(x, y),
+                                line_height: layout.position_map.line_height,
+                                shape: selection.cursor_shape,
+                                block_text,
+                            });
+                        }
+                    }
+                }
+            }
 
-    //                     let x = cursor_character_x - scroll_left;
-    //                     let y = cursor_position.row() as f32 * layout.position_map.line_height
-    //                         - scroll_top;
-    //                     if selection.is_newest {
-    //                         editor.pixel_position_of_newest_cursor = Some(point(
-    //                             bounds.origin.x + x + block_width / 2.,
-    //                             bounds.origin.y + y + layout.position_map.line_height / 2.,
-    //                         ));
-    //                     }
-    //                     cursors.push(Cursor {
-    //                         color: selection_style.cursor,
-    //                         block_width,
-    //                         origin: point(x, y),
-    //                         line_height: layout.position_map.line_height,
-    //                         shape: selection.cursor_shape,
-    //                         block_text,
-    //                     });
-    //                 }
-    //             }
-    //         }
-    //     }
+            for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
+                let row = start_row + ix as u32;
+                line_with_invisibles.draw(
+                    layout,
+                    row,
+                    scroll_top,
+                    content_origin,
+                    scroll_left,
+                    visible_text_bounds,
+                    whitespace_setting,
+                    &invisible_display_ranges,
+                    visible_bounds,
+                    cx,
+                )
+            }
 
-    //     if let Some(visible_text_bounds) = bounds.intersection(visible_bounds) {
-    //         for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
-    //             let row = start_row + ix as u32;
-    //             line_with_invisibles.draw(
-    //                 layout,
-    //                 row,
-    //                 scroll_top,
-    //                 content_origin,
-    //                 scroll_left,
-    //                 visible_text_bounds,
-    //                 whitespace_setting,
-    //                 &invisible_display_ranges,
-    //                 visible_bounds,
-    //                 cx,
-    //             )
-    //         }
-    //     }
+            cx.scene().push_layer(Some(bounds));
+            for cursor in cursors {
+                cursor.paint(content_origin, cx);
+            }
+            cx.scene().pop_layer();
 
-    //     cx.scene().push_layer(Some(bounds));
-    //     for cursor in cursors {
-    //         cursor.paint(content_origin, cx);
-    //     }
-    //     cx.scene().pop_layer();
+            if let Some((position, context_menu)) = layout.context_menu.as_mut() {
+                cx.scene().push_stacking_context(None, None);
+                let cursor_row_layout =
+                    &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
+                let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
+                let y = (position.row() + 1) as f32 * layout.position_map.line_height - scroll_top;
+                let mut list_origin = content_origin + point(x, y);
+                let list_width = context_menu.size().x;
+                let list_height = context_menu.size().y;
 
-    //     if let Some((position, context_menu)) = layout.context_menu.as_mut() {
-    //         cx.scene().push_stacking_context(None, None);
-    //         let cursor_row_layout =
-    //             &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
-    //         let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
-    //         let y = (position.row() + 1) as f32 * layout.position_map.line_height - scroll_top;
-    //         let mut list_origin = content_origin + point(x, y);
-    //         let list_width = context_menu.size().x();
-    //         let list_height = context_menu.size().y();
+                // Snap the right edge of the list to the right edge of the window if
+                // its horizontal bounds overflow.
+                if list_origin.x + list_width > cx.window_size().x {
+                    list_origin.set_x((cx.window_size().x - list_width).max(0.));
+                }
 
-    //         // Snap the right edge of the list to the right edge of the window if
-    //         // its horizontal bounds overflow.
-    //         if list_origin.x() + list_width > cx.window_size().x() {
-    //             list_origin.set_x((cx.window_size().x() - list_width).max(0.));
-    //         }
+                if list_origin.y + list_height > bounds.max_y {
+                    list_origin
+                        .set_y(list_origin.y - layout.position_map.line_height - list_height);
+                }
 
-    //         if list_origin.y() + list_height > bounds.max_y() {
-    //             list_origin.set_y(list_origin.y() - layout.position_map.line_height - list_height);
-    //         }
+                context_menu.paint(
+                    list_origin,
+                    Bounds::<Pixels>::from_points(
+                        gpui::Point::<Pixels>::zero(),
+                        point(f32::MAX, f32::MAX),
+                    ), // Let content bleed outside of editor
+                    editor,
+                    cx,
+                );
 
-    //         context_menu.paint(
-    //             list_origin,
-    //             Bounds<Pixels>::from_points(gpui::Point<Pixels>::zero(), point(f32::MAX, f32::MAX)), // Let content bleed outside of editor
-    //             editor,
-    //             cx,
-    //         );
+                cx.scene().pop_stacking_context();
+            }
 
-    //         cx.scene().pop_stacking_context();
-    //     }
+            if let Some((position, hover_popovers)) = layout.hover_popovers.as_mut() {
+                cx.scene().push_stacking_context(None, None);
 
-    //     if let Some((position, hover_popovers)) = layout.hover_popovers.as_mut() {
-    //         cx.scene().push_stacking_context(None, None);
+                // This is safe because we check on layout whether the required row is available
+                let hovered_row_layout =
+                    &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
 
-    //         // This is safe because we check on layout whether the required row is available
-    //         let hovered_row_layout =
-    //             &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
+                // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
+                // height. This is the size we will use to decide whether to render popovers above or below
+                // the hovered line.
+                let first_size = hover_popovers[0].size();
+                let height_to_reserve = first_size.y
+                    + 1.5 * MIN_POPOVER_LINE_HEIGHT as f32 * layout.position_map.line_height;
 
-    //         // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
-    //         // height. This is the size we will use to decide whether to render popovers above or below
-    //         // the hovered line.
-    //         let first_size = hover_popovers[0].size();
-    //         let height_to_reserve = first_size.y()
-    //             + 1.5 * MIN_POPOVER_LINE_HEIGHT as f32 * layout.position_map.line_height;
+                // Compute Hovered Point
+                let x = hovered_row_layout.x_for_index(position.column() as usize) - scroll_left;
+                let y = position.row() as f32 * layout.position_map.line_height - scroll_top;
+                let hovered_point = content_origin + point(x, y);
 
-    //         // Compute Hovered Point
-    //         let x = hovered_row_layout.x_for_index(position.column() as usize) - scroll_left;
-    //         let y = position.row() as f32 * layout.position_map.line_height - scroll_top;
-    //         let hovered_point = content_origin + point(x, y);
+                if hovered_point.y - height_to_reserve > 0.0 {
+                    // There is enough space above. Render popovers above the hovered point
+                    let mut current_y = hovered_point.y;
+                    for hover_popover in hover_popovers {
+                        let size = hover_popover.size();
+                        let mut popover_origin = point(hovered_point.x, current_y - size.y);
 
-    //         if hovered_point.y() - height_to_reserve > 0.0 {
-    //             // There is enough space above. Render popovers above the hovered point
-    //             let mut current_y = hovered_point.y();
-    //             for hover_popover in hover_popovers {
-    //                 let size = hover_popover.size();
-    //                 let mut popover_origin = point(hovered_point.x(), current_y - size.y());
+                        let x_out_of_bounds = bounds.max_x - (popover_origin.x + size.x);
+                        if x_out_of_bounds < 0.0 {
+                            popover_origin.set_x(popover_origin.x + x_out_of_bounds);
+                        }
 
-    //                 let x_out_of_bounds = bounds.max_x() - (popover_origin.x() + size.x());
-    //                 if x_out_of_bounds < 0.0 {
-    //                     popover_origin.set_x(popover_origin.x() + x_out_of_bounds);
-    //                 }
+                        hover_popover.paint(
+                            popover_origin,
+                            Bounds::<Pixels>::from_points(
+                                gpui::Point::<Pixels>::zero(),
+                                point(f32::MAX, f32::MAX),
+                            ), // Let content bleed outside of editor
+                            editor,
+                            cx,
+                        );
 
-    //                 hover_popover.paint(
-    //                     popover_origin,
-    //                     Bounds<Pixels>::from_points(gpui::Point<Pixels>::zero(), point(f32::MAX, f32::MAX)), // Let content bleed outside of editor
-    //                     editor,
-    //                     cx,
-    //                 );
+                        current_y = popover_origin.y - HOVER_POPOVER_GAP;
+                    }
+                } else {
+                    // There is not enough space above. Render popovers below the hovered point
+                    let mut current_y = hovered_point.y + layout.position_map.line_height;
+                    for hover_popover in hover_popovers {
+                        let size = hover_popover.size();
+                        let mut popover_origin = point(hovered_point.x, current_y);
 
-    //                 current_y = popover_origin.y() - HOVER_POPOVER_GAP;
-    //             }
-    //         } else {
-    //             // There is not enough space above. Render popovers below the hovered point
-    //             let mut current_y = hovered_point.y() + layout.position_map.line_height;
-    //             for hover_popover in hover_popovers {
-    //                 let size = hover_popover.size();
-    //                 let mut popover_origin = point(hovered_point.x(), current_y);
+                        let x_out_of_bounds = bounds.max_x - (popover_origin.x + size.x);
+                        if x_out_of_bounds < 0.0 {
+                            popover_origin.set_x(popover_origin.x + x_out_of_bounds);
+                        }
 
-    //                 let x_out_of_bounds = bounds.max_x() - (popover_origin.x() + size.x());
-    //                 if x_out_of_bounds < 0.0 {
-    //                     popover_origin.set_x(popover_origin.x() + x_out_of_bounds);
-    //                 }
+                        hover_popover.paint(
+                            popover_origin,
+                            Bounds::<Pixels>::from_points(
+                                gpui::Point::<Pixels>::zero(),
+                                point(f32::MAX, f32::MAX),
+                            ), // Let content bleed outside of editor
+                            editor,
+                            cx,
+                        );
 
-    //                 hover_popover.paint(
-    //                     popover_origin,
-    //                     Bounds<Pixels>::from_points(gpui::Point<Pixels>::zero(), point(f32::MAX, f32::MAX)), // Let content bleed outside of editor
-    //                     editor,
-    //                     cx,
-    //                 );
+                        current_y = popover_origin.y + size.y + HOVER_POPOVER_GAP;
+                    }
+                }
 
-    //                 current_y = popover_origin.y() + size.y() + HOVER_POPOVER_GAP;
-    //             }
-    //         }
-
-    //         cx.scene().pop_stacking_context();
-    //     }
-
-    //     cx.scene().pop_layer();
-    // }
+                cx.scene().pop_stacking_context();
+            }
+        })
+    }
 
     fn scrollbar_left(&self, bounds: &Bounds<Pixels>) -> Pixels {
         bounds.upper_right().x - self.style.scrollbar_width
@@ -1073,9 +1098,9 @@ impl EditorElement {
 
     //     let style = &self.style.theme.scrollbar;
 
-    //     let top = bounds.min_y();
-    //     let bottom = bounds.max_y();
-    //     let right = bounds.max_x();
+    //     let top = bounds.min_y;
+    //     let bottom = bounds.max_y;
+    //     let right = bounds.max_x;
     //     let left = self.scrollbar_left(&bounds);
     //     let row_range = &layout.scrollbar_row_range;
     //     let max_row = layout.max_row as f32 + (row_range.end - row_range.start);
@@ -1097,8 +1122,8 @@ impl EditorElement {
 
     //     let thumb_top = y_for_row(row_range.start) - first_row_y_offset;
     //     let thumb_bottom = y_for_row(row_range.end) + first_row_y_offset;
-    //     let track_bounds = Bounds<Pixels>::from_points(point(left, top), point(right, bottom));
-    //     let thumb_bounds = Bounds<Pixels>::from_points(point(left, thumb_top), point(right, thumb_bottom));
+    //     let track_bounds = Bounds::<Pixels>::from_points(point(left, top), point(right, bottom));
+    //     let thumb_bounds = Bounds::<Pixels>::from_points(point(left, thumb_top), point(right, thumb_bottom));
 
     //     if layout.show_scrollbars {
     //         cx.paint_quad(Quad {
@@ -1112,7 +1137,7 @@ impl EditorElement {
     //         let scrollbar_theme = &theme.editor.scrollbar;
     //         if layout.is_singleton && scrollbar_settings.selections {
     //             let start_anchor = Anchor::min();
-    //             let end_anchor = Anchor::max();
+    //             let end_anchor = Anchor::max;
     //             let color = scrollbar_theme.selections;
     //             let border = Border {
     //                 width: 1.,
@@ -1129,7 +1154,7 @@ impl EditorElement {
     //                 if end_y - start_y < 1. {
     //                     end_y = start_y + 1.;
     //                 }
-    //                 let bounds = Bounds<Pixels>::from_points(point(left, start_y), point(right, end_y));
+    //                 let bounds = Bounds::<Pixels>::from_points(point(left, start_y), point(right, end_y));
 
     //                 cx.paint_quad(Quad {
     //                     bounds,
@@ -1173,7 +1198,7 @@ impl EditorElement {
     //                 if end_y - start_y < 1. {
     //                     end_y = start_y + 1.;
     //                 }
-    //                 let bounds = Bounds<Pixels>::from_points(point(left, start_y), point(right, end_y));
+    //                 let bounds = Bounds::<Pixels>::from_points(point(left, start_y), point(right, end_y));
 
     //                 let color = match hunk.status() {
     //                     DiffHunkStatus::Added => diff_style.inserted,
@@ -1223,7 +1248,7 @@ impl EditorElement {
     //             .on_down(MouseButton::Left, {
     //                 let row_range = row_range.clone();
     //                 move |event, editor: &mut Editor, cx| {
-    //                     let y = event.position.y();
+    //                     let y = event.position.y;
     //                     if y < thumb_top || thumb_bottom < y {
     //                         let center_row = ((y - top) * max_row as f32 / height).round() as u32;
     //                         let top_row = center_row
@@ -1242,12 +1267,12 @@ impl EditorElement {
     //                         return;
     //                     }
 
-    //                     let y = event.prev_mouse_position.y();
-    //                     let new_y = event.position.y();
+    //                     let y = event.prev_mouse_position.y;
+    //                     let new_y = event.position.y;
     //                     if thumb_top < y && y < thumb_bottom {
     //                         let mut position = editor.scroll_position(cx);
-    //                         position.set_y(position.y() + (new_y - y) * (max_row as f32) / height);
-    //                         if position.y() < 0.0 {
+    //                         position.set_y(position.y + (new_y - y) * (max_row as f32) / height);
+    //                         if position.y < 0.0 {
     //                             position.set_y(0.);
     //                         }
     //                         editor.set_scroll_position(position, cx);
@@ -1257,65 +1282,65 @@ impl EditorElement {
     //     );
     // }
 
-    // #[allow(clippy::too_many_arguments)]
-    // fn paint_highlighted_range(
-    //     &self,
-    //     range: Range<DisplayPoint>,
-    //     color: Color,
-    //     corner_radius: f32,
-    //     line_end_overshoot: f32,
-    //     layout: &LayoutState,
-    //     content_origin: gpui::Point<Pixels>,
-    //     scroll_top: f32,
-    //     scroll_left: f32,
-    //     bounds: Bounds<Pixels>,
-    //     cx: &mut ViewContext<Editor>,
-    // ) {
-    //     let start_row = layout.visible_display_row_range.start;
-    //     let end_row = layout.visible_display_row_range.end;
-    //     if range.start != range.end {
-    //         let row_range = if range.end.column() == 0 {
-    //             cmp::max(range.start.row(), start_row)..cmp::min(range.end.row(), end_row)
-    //         } else {
-    //             cmp::max(range.start.row(), start_row)..cmp::min(range.end.row() + 1, end_row)
-    //         };
+    #[allow(clippy::too_many_arguments)]
+    fn paint_highlighted_range(
+        &self,
+        range: Range<DisplayPoint>,
+        color: Hsla,
+        corner_radius: Pixels,
+        line_end_overshoot: Pixels,
+        layout: &LayoutState,
+        content_origin: gpui::Point<Pixels>,
+        scroll_top: Pixels,
+        scroll_left: Pixels,
+        bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let start_row = layout.visible_display_row_range.start;
+        let end_row = layout.visible_display_row_range.end;
+        if range.start != range.end {
+            let row_range = if range.end.column() == 0 {
+                cmp::max(range.start.row(), start_row)..cmp::min(range.end.row(), end_row)
+            } else {
+                cmp::max(range.start.row(), start_row)..cmp::min(range.end.row() + 1, end_row)
+            };
 
-    //         let highlighted_range = HighlightedRange {
-    //             color,
-    //             line_height: layout.position_map.line_height,
-    //             corner_radius,
-    //             start_y: content_origin.y()
-    //                 + row_range.start as f32 * layout.position_map.line_height
-    //                 - scroll_top,
-    //             lines: row_range
-    //                 .into_iter()
-    //                 .map(|row| {
-    //                     let line_layout =
-    //                         &layout.position_map.line_layouts[(row - start_row) as usize].line;
-    //                     HighlightedRangeLine {
-    //                         start_x: if row == range.start.row() {
-    //                             content_origin.x()
-    //                                 + line_layout.x_for_index(range.start.column() as usize)
-    //                                 - scroll_left
-    //                         } else {
-    //                             content_origin.x() - scroll_left
-    //                         },
-    //                         end_x: if row == range.end.row() {
-    //                             content_origin.x()
-    //                                 + line_layout.x_for_index(range.end.column() as usize)
-    //                                 - scroll_left
-    //                         } else {
-    //                             content_origin.x() + line_layout.width() + line_end_overshoot
-    //                                 - scroll_left
-    //                         },
-    //                     }
-    //                 })
-    //                 .collect(),
-    //         };
+            let highlighted_range = HighlightedRange {
+                color,
+                line_height: layout.position_map.line_height,
+                corner_radius,
+                start_y: content_origin.y
+                    + row_range.start as f32 * layout.position_map.line_height
+                    - scroll_top,
+                lines: row_range
+                    .into_iter()
+                    .map(|row| {
+                        let line_layout =
+                            &layout.position_map.line_layouts[(row - start_row) as usize].line;
+                        HighlightedRangeLine {
+                            start_x: if row == range.start.row() {
+                                content_origin.x
+                                    + line_layout.x_for_index(range.start.column() as usize)
+                                    - scroll_left
+                            } else {
+                                content_origin.x - scroll_left
+                            },
+                            end_x: if row == range.end.row() {
+                                content_origin.x
+                                    + line_layout.x_for_index(range.end.column() as usize)
+                                    - scroll_left
+                            } else {
+                                content_origin.x + line_layout.width + line_end_overshoot
+                                    - scroll_left
+                            },
+                        }
+                    })
+                    .collect(),
+            };
 
-    //         highlighted_range.paint(bounds, cx);
-    //     }
-    // }
+            highlighted_range.paint(bounds, cx);
+        }
+    }
 
     // fn paint_blocks(
     //     &mut self,
@@ -1326,11 +1351,11 @@ impl EditorElement {
     //     cx: &mut ViewContext<Editor>,
     // ) {
     //     let scroll_position = layout.position_map.snapshot.scroll_position();
-    //     let scroll_left = scroll_position.x() * layout.position_map.em_width;
-    //     let scroll_top = scroll_position.y() * layout.position_map.line_height;
+    //     let scroll_left = scroll_position.x * layout.position_map.em_width;
+    //     let scroll_top = scroll_position.y * layout.position_map.line_height;
 
     //     for block in &mut layout.blocks {
-    //         let mut origin = bounds.origin()
+    //         let mut origin = bounds.origin
     //             + point(
     //                 0.,
     //                 block.row as f32 * layout.position_map.line_height - scroll_top,
@@ -1530,7 +1555,7 @@ impl EditorElement {
         }
 
         // When the editor is empty and unfocused, then show the placeholder.
-        if snapshot.is_empty() {
+        if snapshot.is_empty {
             let font_size = self.style.text.font_size * cx.rem_size();
             let placeholder_color = cx.theme().styles.colors.text_placeholder;
             let placeholder_text = snapshot.placeholder_text();
@@ -1583,7 +1608,7 @@ impl EditorElement {
         bounds: Bounds<Pixels>,
     ) -> LayoutState {
         // let mut size = constraint.max;
-        // if size.x().is_infinite() {
+        // if size.x.is_infinite() {
         //     unimplemented!("we don't yet handle an infinite width constraint on buffer elements");
         // }
 
@@ -1615,9 +1640,9 @@ impl EditorElement {
             gutter_width = self.max_line_number_width(&snapshot, cx) + gutter_padding * 2.0;
             gutter_margin = -descent;
         } else {
-            gutter_padding = px(0.0);
-            gutter_width = px(0.0);
-            gutter_margin = px(0.0);
+            gutter_padding = Pixels::ZERO;
+            gutter_width = Pixels::ZERO;
+            gutter_margin = Pixels::ZERO;
         };
 
         let text_width = bounds.size.width - gutter_width;
@@ -1662,7 +1687,7 @@ impl EditorElement {
             //     size.set_y(line_height.max(constraint.min_along(Axis::Vertical)))
         }
         // todo!()
-        // else if size.y().is_infinite() {
+        // else if size.y.is_infinite() {
         //     //     size.set_y(scroll_height);
         // }
         //
@@ -1691,7 +1716,7 @@ impl EditorElement {
                 .anchor_before(DisplayPoint::new(start_row, 0).to_offset(&snapshot, Bias::Left))
         };
         let end_anchor = if end_row > max_row {
-            Anchor::max()
+            Anchor::max
         } else {
             snapshot
                 .buffer_snapshot
@@ -1822,7 +1847,7 @@ impl EditorElement {
                 (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
                         ||
                         // Selections
-                        (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty())
+                        (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty)
                         // Scrollmanager
                         || editor.scroll_manager.scrollbars_visible()
             }
@@ -1890,7 +1915,7 @@ impl EditorElement {
         // let (scroll_width, blocks) = self.layout_blocks(
         //     start_row..end_row,
         //     &snapshot,
-        //     size.x(),
+        //     size.x,
         //     scroll_width,
         //     gutter_padding,
         //     gutter_width,
@@ -1973,10 +1998,10 @@ impl EditorElement {
         // if let Some((_, context_menu)) = context_menu.as_mut() {
         //     context_menu.layout(
         //         SizeConstraint {
-        //             min: gpui::Point<Pixels>::zero(),
+        //             min: gpui::Point::<Pixels>::zero(),
         //             max: point(
-        //                 cx.window_size().x() * 0.7,
-        //                 (12. * line_height).min((size.y() - line_height) / 2.),
+        //                 cx.window_size().x * 0.7,
+        //                 (12. * line_height).min((size.y - line_height) / 2.),
         //             ),
         //         },
         //         editor,
@@ -2015,13 +2040,13 @@ impl EditorElement {
         //     for hover_popover in hover_popovers.iter_mut() {
         //         hover_popover.layout(
         //             SizeConstraint {
-        //                 min: gpui::Point<Pixels>::zero(),
+        //                 min: gpui::Point::<Pixels>::zero(),
         //                 max: point(
         //                     (120. * em_width) // Default size
-        //                         .min(size.x() / 2.) // Shrink to half of the editor width
+        //                         .min(size.x / 2.) // Shrink to half of the editor width
         //                         .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
         //                     (16. * line_height) // Default size
-        //                         .min(size.y() / 2.) // Shrink to half of the editor height
+        //                         .min(size.y / 2.) // Shrink to half of the editor height
         //                         .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
         //                 ),
         //             },
@@ -2121,7 +2146,7 @@ impl EditorElement {
     //     cx: &mut ViewContext<Editor>,
     // ) -> (f32, Vec<BlockLayout>) {
     //     let mut block_id = 0;
-    //     let scroll_x = snapshot.scroll_anchor.offset.x();
+    //     let scroll_x = snapshot.scroll_anchor.offset.x;
     //     let (fixed_blocks, non_fixed_blocks) = snapshot
     //         .blocks_in_range(rows.clone())
     //         .partition::<Vec<_>, _>(|(_, block)| match block {
@@ -2233,9 +2258,9 @@ impl EditorElement {
     //                     let mut parent_path = None;
     //                     // Can't use .and_then() because `.file_name()` and `.parent()` return references :(
     //                     if let Some(path) = path {
-    //                         filename = path.file_name().map(|f| f.to_string_lossy().to_string());
+    //                         filename = path.file_name().map(|f| f.to_string_lossy.to_string());
     //                         parent_path =
-    //                             path.parent().map(|p| p.to_string_lossy().to_string() + "/");
+    //                             path.parent().map(|p| p.to_string_lossy.to_string() + "/");
     //                     }
 
     //                     Flex::row()
@@ -2277,7 +2302,7 @@ impl EditorElement {
 
     //         element.layout(
     //             SizeConstraint {
-    //                 min: gpui::Point<Pixels>::zero(),
+    //                 min: gpui::Point::<Pixels>::zero(),
     //                 max: point(width, block.height() as f32 * line_height),
     //             },
     //             editor,
@@ -2291,7 +2316,7 @@ impl EditorElement {
     //     for (row, block) in fixed_blocks {
     //         let element = render_block(block, f32::INFINITY, block_id);
     //         block_id += 1;
-    //         fixed_block_max_width = fixed_block_max_width.max(element.size().x() + em_width);
+    //         fixed_block_max_width = fixed_block_max_width.max(element.size().x + em_width);
     //         blocks.push(BlockLayout {
     //             row,
     //             element,
@@ -2375,7 +2400,7 @@ impl LineWithInvisibles {
                     }
                 }
 
-                if !line_chunk.is_empty() && !line_exceeded_max_len {
+                if !line_chunk.is_empty && !line_exceeded_max_len {
                     let text_style = if let Some(style) = highlighted_chunk.style {
                         text_style
                             .clone()
@@ -2574,6 +2599,10 @@ impl Element<Editor> for EditorElement {
             };
 
             self.paint_background(gutter_bounds, text_bounds, &layout, cx);
+            if layout.gutter_size.width > Pixels::ZERO {
+                self.paint_gutter(gutter_bounds, layout, editor, cx);
+            }
+            self.paint_text(text_bounds, layout, editor, cx);
         });
     }
 }
@@ -2589,7 +2618,7 @@ impl Element<Editor> for EditorElement {
 //         cx: &mut ViewContext<Editor>,
 //     ) -> (gpui::Point<Pixels>, Self::LayoutState) {
 //         let mut size = constraint.max;
-//         if size.x().is_infinite() {
+//         if size.x.is_infinite() {
 //             unimplemented!("we don't yet handle an infinite width constraint on buffer elements");
 //         }
 
@@ -2612,14 +2641,14 @@ impl Element<Editor> for EditorElement {
 //             gutter_margin = 0.0;
 //         };
 
-//         let text_width = size.x() - gutter_width;
+//         let text_width = size.x - gutter_width;
 //         let em_width = style.text.em_width(cx.font_cache());
 //         let em_advance = style.text.em_advance(cx.font_cache());
 //         let overscroll = point(em_width, 0.);
 //         let snapshot = {
-//             editor.set_visible_line_count(size.y() / line_height, cx);
+//             editor.set_visible_line_count(size.y / line_height, cx);
 
-//             let editor_width = text_width - gutter_margin - overscroll.x() - em_width;
+//             let editor_width = text_width - gutter_margin - overscroll.x - em_width;
 //             let wrap_width = match editor.soft_wrap_mode(cx) {
 //                 SoftWrap::None => (MAX_LINE_LEN / 2) as f32 * em_advance,
 //                 SoftWrap::EditorWidth => editor_width,
@@ -2650,25 +2679,25 @@ impl Element<Editor> for EditorElement {
 //             )
 //         } else if let EditorMode::SingleLine = snapshot.mode {
 //             size.set_y(line_height.max(constraint.min_along(Axis::Vertical)))
-//         } else if size.y().is_infinite() {
+//         } else if size.y.is_infinite() {
 //             size.set_y(scroll_height);
 //         }
-//         let gutter_size = point(gutter_width, size.y());
-//         let text_size = point(text_width, size.y());
+//         let gutter_size = point(gutter_width, size.y);
+//         let text_size = point(text_width, size.y);
 
-//         let autoscroll_horizontally = editor.autoscroll_vertically(size.y(), line_height, cx);
+//         let autoscroll_horizontally = editor.autoscroll_vertically(size.y, line_height, cx);
 //         let mut snapshot = editor.snapshot(cx);
 
 //         let scroll_position = snapshot.scroll_position();
 //         // The scroll position is a fractional point, the whole number of which represents
 //         // the top of the window in terms of display rows.
-//         let start_row = scroll_position.y() as u32;
-//         let height_in_lines = size.y() / line_height;
+//         let start_row = scroll_position.y as u32;
+//         let height_in_lines = size.y / line_height;
 //         let max_row = snapshot.max_point().row();
 
 //         // Add 1 to ensure selections bleed off screen
 //         let end_row = 1 + cmp::min(
-//             (scroll_position.y() + height_in_lines).ceil() as u32,
+//             (scroll_position.y + height_in_lines).ceil() as u32,
 //             max_row,
 //         );
 
@@ -2680,7 +2709,7 @@ impl Element<Editor> for EditorElement {
 //                 .anchor_before(DisplayPoint::new(start_row, 0).to_offset(&snapshot, Bias::Left))
 //         };
 //         let end_anchor = if end_row > max_row {
-//             Anchor::max()
+//             Anchor::max
 //         } else {
 //             snapshot
 //                 .buffer_snapshot
@@ -2808,7 +2837,7 @@ impl Element<Editor> for EditorElement {
 //                 (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
 //                 ||
 //                 // Selections
-//                 (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty())
+//                 (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty)
 //                 // Scrollmanager
 //                 || editor.scroll_manager.scrollbars_visible()
 //             }
@@ -2856,7 +2885,7 @@ impl Element<Editor> for EditorElement {
 
 //         let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
-//         let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
+//         let scrollbar_row_range = scroll_position.y..(scroll_position.y + height_in_lines);
 
 //         let mut max_visible_line_width = 0.0;
 //         let line_layouts =
@@ -2875,12 +2904,12 @@ impl Element<Editor> for EditorElement {
 //             cx.text_layout_cache(),
 //         )
 //         .width();
-//         let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.x();
+//         let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.x;
 //         let em_width = style.text.em_width(cx.font_cache());
 //         let (scroll_width, blocks) = self.layout_blocks(
 //             start_row..end_row,
 //             &snapshot,
-//             size.x(),
+//             size.x,
 //             scroll_width,
 //             gutter_padding,
 //             gutter_width,
@@ -2894,16 +2923,16 @@ impl Element<Editor> for EditorElement {
 //         );
 
 //         let scroll_max = point(
-//             ((scroll_width - text_size.x()) / em_width).max(0.0),
+//             ((scroll_width - text_size.x) / em_width).max(0.0),
 //             max_row as f32,
 //         );
 
-//         let clamped = editor.scroll_manager.clamp_scroll_left(scroll_max.x());
+//         let clamped = editor.scroll_manager.clamp_scroll_left(scroll_max.x);
 
 //         let autoscrolled = if autoscroll_horizontally {
 //             editor.autoscroll_horizontally(
 //                 start_row,
-//                 text_size.x(),
+//                 text_size.x,
 //                 scroll_width,
 //                 em_width,
 //                 &line_layouts,
@@ -2961,10 +2990,10 @@ impl Element<Editor> for EditorElement {
 //         if let Some((_, context_menu)) = context_menu.as_mut() {
 //             context_menu.layout(
 //                 SizeConstraint {
-//                     min: gpui::Point<Pixels>::zero(),
+//                     min: gpui::Point::<Pixels>::zero(),
 //                     max: point(
-//                         cx.window_size().x() * 0.7,
-//                         (12. * line_height).min((size.y() - line_height) / 2.),
+//                         cx.window_size().x * 0.7,
+//                         (12. * line_height).min((size.y - line_height) / 2.),
 //                     ),
 //                 },
 //                 editor,
@@ -3000,13 +3029,13 @@ impl Element<Editor> for EditorElement {
 //             for hover_popover in hover_popovers.iter_mut() {
 //                 hover_popover.layout(
 //                     SizeConstraint {
-//                         min: gpui::Point<Pixels>::zero(),
+//                         min: gpui::Point::<Pixels>::zero(),
 //                         max: point(
 //                             (120. * em_width) // Default size
-//                                 .min(size.x() / 2.) // Shrink to half of the editor width
+//                                 .min(size.x / 2.) // Shrink to half of the editor width
 //                                 .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
 //                             (16. * line_height) // Default size
-//                                 .min(size.y() / 2.) // Shrink to half of the editor height
+//                                 .min(size.y / 2.) // Shrink to half of the editor height
 //                                 .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
 //                         ),
 //                     },
@@ -3083,9 +3112,9 @@ impl Element<Editor> for EditorElement {
 //         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 //         cx.scene().push_layer(Some(visible_bounds));
 
-//         let gutter_bounds = Bounds<Pixels>::new(bounds.origin(), layout.gutter_size);
-//         let text_bounds = Bounds<Pixels>::new(
-//             bounds.origin() + point(layout.gutter_size.x(), 0.0),
+//         let gutter_bounds = Bounds::<Pixels>::new(bounds.origin, layout.gutter_size);
+//         let text_bounds = Bounds::<Pixels>::new(
+//             bounds.origin + point(layout.gutter_size.x, 0.0),
 //             layout.text_size,
 //         );
 
@@ -3100,13 +3129,13 @@ impl Element<Editor> for EditorElement {
 //         );
 
 //         self.paint_background(gutter_bounds, text_bounds, layout, cx);
-//         if layout.gutter_size.x() > 0. {
+//         if layout.gutter_size.x > 0. {
 //             self.paint_gutter(gutter_bounds, visible_bounds, layout, editor, cx);
 //         }
 //         self.paint_text(text_bounds, visible_bounds, layout, editor, cx);
 
 //         cx.scene().push_layer(Some(bounds));
-//         if !layout.blocks.is_empty() {
+//         if !layout.blocks.is_empty {
 //             self.paint_blocks(bounds, visible_bounds, layout, editor, cx);
 //         }
 //         self.paint_scrollbar(bounds, layout, &editor, cx);
@@ -3124,15 +3153,15 @@ impl Element<Editor> for EditorElement {
 //         _: &Editor,
 //         _: &ViewContext<Editor>,
 //     ) -> Option<Bounds<Pixels>> {
-//         let text_bounds = Bounds<Pixels>::new(
-//             bounds.origin() + point(layout.gutter_size.x(), 0.0),
+//         let text_bounds = Bounds::<Pixels>::new(
+//             bounds.origin + point(layout.gutter_size.x, 0.0),
 //             layout.text_size,
 //         );
-//         let content_origin = text_bounds.origin() + point(layout.gutter_margin, 0.);
+//         let content_origin = text_bounds.origin + point(layout.gutter_margin, 0.);
 //         let scroll_position = layout.position_map.snapshot.scroll_position();
-//         let start_row = scroll_position.y() as u32;
-//         let scroll_top = scroll_position.y() * layout.position_map.line_height;
-//         let scroll_left = scroll_position.x() * layout.position_map.em_width;
+//         let start_row = scroll_position.y as u32;
+//         let scroll_top = scroll_position.y * layout.position_map.line_height;
+//         let scroll_left = scroll_position.x * layout.position_map.em_width;
 
 //         let range_start = OffsetUtf16(range_utf16.start)
 //             .to_display_point(&layout.position_map.snapshot.display_snapshot);
@@ -3147,7 +3176,7 @@ impl Element<Editor> for EditorElement {
 //             .line;
 //         let range_start_x = line.x_for_index(range_start.column() as usize);
 //         let range_start_y = range_start.row() as f32 * layout.position_map.line_height;
-//         Some(Bounds<Pixels>::new(
+//         Some(Bounds::<Pixels>::new(
 //             content_origin
 //                 + point(
 //                     range_start_x,
@@ -3265,7 +3294,7 @@ impl PositionMap {
             if let Some(ix) = line.index_for_x(x) {
                 (ix as u32, px(0.))
             } else {
-                (line.len as u32, px(0.).max(x - line.width()))
+                (line.len as u32, px(0.).max(x - line.width))
             }
         } else {
             (0, x)
@@ -3375,7 +3404,7 @@ impl Cursor {
             CursorShape::Underscore => Bounds {
                 origin: self.origin
                     + origin
-                    + gpui::Point::new(px(0.0), self.line_height - px(2.0)),
+                    + gpui::Point::new(Pixels::ZERO, self.line_height - px(2.0)),
                 size: size(self.block_width, px(2.0)),
             },
         };
@@ -3446,7 +3475,7 @@ impl HighlightedRange {
         bounds: Bounds<Pixels>,
         cx: &mut WindowContext,
     ) {
-        if lines.is_empty() {
+        if lines.is_empty {
             return;
         }
 
@@ -3570,25 +3599,25 @@ impl HighlightedRange {
 //     };
 
 //     let first_y =
-//         content_origin.y() + row_range.start as f32 * position_map.line_height - scroll_top;
+//         content_origin.y + row_range.start as f32 * position_map.line_height - scroll_top;
 
 //     for (idx, row) in row_range.enumerate() {
 //         let line_layout = &position_map.line_layouts[(row - start_row) as usize].line;
 
 //         let start_x = if row == range.start.row() {
-//             content_origin.x() + line_layout.x_for_index(range.start.column() as usize)
+//             content_origin.x + line_layout.x_for_index(range.start.column() as usize)
 //                 - scroll_left
 //         } else {
-//             content_origin.x() - scroll_left
+//             content_origin.x - scroll_left
 //         };
 
 //         let end_x = if row == range.end.row() {
-//             content_origin.x() + line_layout.x_for_index(range.end.column() as usize) - scroll_left
+//             content_origin.x + line_layout.x_for_index(range.end.column() as usize) - scroll_left
 //         } else {
-//             content_origin.x() + line_layout.width() + line_end_overshoot - scroll_left
+//             content_origin.x + line_layout.width() + line_end_overshoot - scroll_left
 //         };
 
-//         bounds.push(Bounds<Pixels>::from_points(
+//         bounds.push(Bounds::<Pixels>::from_points(
 //             point(start_x, first_y + position_map.line_height * idx as f32),
 //             point(end_x, first_y + position_map.line_height * (idx + 1) as f32),
 //         ))
@@ -3830,7 +3859,7 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 //                     disposition: BlockDisposition::Above,
 //                     height: 3,
 //                     position: Anchor::min(),
-//                     render: Arc::new(|_| Empty::new().into_any()),
+//                     render: Arc::new(|_| Empty::new().into_any),
 //                 }],
 //                 None,
 //                 cx,
@@ -3860,7 +3889,7 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 //         );
 
 //         // Don't panic.
-//         let bounds = Bounds<Pixels>::new(Default::default(), size);
+//         let bounds = Bounds::<Pixels>::new(Default::default(), size);
 //         editor.update(cx, |editor, cx| {
 //             element.paint(bounds, bounds, &mut state, editor, cx);
 //         });
@@ -3928,7 +3957,7 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 //                 "\t\t\t| | a b",
 //                 500.0,
 //             );
-//             assert!(invisibles.is_empty(),
+//             assert!(invisibles.is_empty,
 //                 "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}");
 //         }
 //     }
@@ -4001,7 +4030,7 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 //             }
 //             let missing_expected_invisibles = &expected_invisibles[i + 1..];
 //             assert!(
-//                 missing_expected_invisibles.is_empty(),
+//                 missing_expected_invisibles.is_empty,
 //                 "Missing expected invisibles after index {i}: {missing_expected_invisibles:?}"
 //             );
 
