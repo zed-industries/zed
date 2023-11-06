@@ -140,17 +140,6 @@ fn main() {
         // command_palette::init(cx);
         language::init(cx);
         editor::init(cx);
-        // go_to_line::init(cx);
-        // file_finder::init(cx);
-        // outline::init(cx);
-        // project_symbols::init(cx);
-        // project_panel::init(Assets, cx);
-        // channel::init(&client, user_store.clone(), cx);
-        // diagnostics::init(cx);
-        // search::init(cx);
-        // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
-        // vim::init(cx);
-        // terminal_view::init(cx);
         copilot::init(
             copilot_language_server_id,
             http.clone(),
@@ -192,6 +181,18 @@ fn main() {
 
         workspace::init(app_state.clone(), cx);
         // recent_projects::init(cx);
+
+        go_to_line::init(cx);
+        // file_finder::init(cx);
+        // outline::init(cx);
+        // project_symbols::init(cx);
+        // project_panel::init(Assets, cx);
+        // channel::init(&client, user_store.clone(), cx);
+        // diagnostics::init(cx);
+        // search::init(cx);
+        // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
+        // vim::init(cx);
+        // terminal_view::init(cx);
 
         // journal2::init(app_state.clone(), cx);
         // language_selector::init(cx);

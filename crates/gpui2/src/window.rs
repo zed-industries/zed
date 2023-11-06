@@ -2035,9 +2035,9 @@ impl<V> Context for ViewContext<'_, V> {
 impl<V: 'static> VisualContext for ViewContext<'_, V> {
     fn build_view<W: 'static>(
         &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, W>) -> W,
+        build_view_state: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>> {
-        self.window_cx.build_view(build_view)
+        self.window_cx.build_view(build_view_state)
     }
 
     fn update_view<V2: 'static, R>(
