@@ -9,8 +9,9 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
     black, hsla, point, px, relative, size, transparent_black, AnyElement, BorrowWindow, Bounds,
-    ContentMask, Corners, Edges, Element, Hsla, Line, Pixels, ShapedGlyph, Size, Style, TextRun,
-    TextStyle, TextSystem, ViewContext, WindowContext,
+    ContentMask, Corners, DispatchPhase, Edges, Element, ElementId, Hsla, Line, Pixels,
+    ScrollWheelEvent, ShapedGlyph, Size, StatefulInteraction, Style, TextRun, TextStyle,
+    TextSystem, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -464,39 +465,41 @@ impl EditorElement {
     //     true
     // }
 
-    // fn scroll(
-    //     editor: &mut Editor,
-    //     position: gpui::Point<Pixels>,
-    //     mut delta: gpui::Point<Pixels>,
-    //     precise: bool,
-    //     position_map: &PositionMap,
-    //     bounds: Bounds<Pixels>,
-    //     cx: &mut ViewContext<Editor>,
-    // ) -> bool {
-    //     if !bounds.contains_point(position) {
-    //         return false;
-    //     }
+    fn scroll(
+        editor: &mut Editor,
+        event: &ScrollWheelEvent,
+        position_map: &PositionMap,
+        bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        if !bounds.contains_point(&event.position) {
+            return false;
+        }
 
-    //     let line_height = position_map.line_height;
-    //     let max_glyph_width = position_map.em_width;
+        let line_height = position_map.line_height;
+        let max_glyph_width = position_map.em_width;
+        let (delta, axis) = match event.delta {
+            gpui::ScrollDelta::Pixels(mut pixels) => {
+                //Trackpad
+                let axis = position_map.snapshot.ongoing_scroll.filter(&mut pixels);
+                (pixels, axis)
+            }
 
-    //     let axis = if precise {
-    //         //Trackpad
-    //         position_map.snapshot.ongoing_scroll.filter(&mut delta)
-    //     } else {
-    //         //Not trackpad
-    //         delta *= point(max_glyph_width, line_height);
-    //         None //Resets ongoing scroll
-    //     };
+            gpui::ScrollDelta::Lines(lines) => {
+                //Not trackpad
+                let pixels = point(lines.x * max_glyph_width, lines.y * line_height);
+                (pixels, None)
+            }
+        };
 
-    //     let scroll_position = position_map.snapshot.scroll_position();
-    //     let x = (scroll_position.x * max_glyph_width - delta.x) / max_glyph_width;
-    //     let y = (scroll_position.y * line_height - delta.y) / line_height;
-    //     let scroll_position = point(x, y).clamp(gpui::Point::<Pixels>::zero(), position_map.scroll_max);
-    //     editor.scroll(scroll_position, axis, cx);
+        let scroll_position = position_map.snapshot.scroll_position();
+        let x = f32::from((scroll_position.x * max_glyph_width - delta.x) / max_glyph_width);
+        let y = f32::from((scroll_position.y * line_height - delta.y) / line_height);
+        let scroll_position = point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
+        editor.scroll(scroll_position, axis, cx);
 
-    //     true
-    // }
+        true
+    }
 
     fn paint_background(
         &self,
@@ -951,7 +954,7 @@ impl EditorElement {
             )
         }
 
-        cx.stack(9999, |cx| {
+        cx.stack(0, |cx| {
             for cursor in cursors {
                 cursor.paint(content_origin, cx);
             }
@@ -2573,6 +2576,20 @@ impl Element<Editor> for EditorElement {
         cx: &mut gpui::ViewContext<Editor>,
     ) {
         let layout = self.compute_layout(editor, cx, bounds);
+
+        cx.on_mouse_event({
+            let position_map = layout.position_map.clone();
+            move |editor, event: &ScrollWheelEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if Self::scroll(editor, event, &position_map, bounds, cx) {
+                    cx.stop_propagation();
+                }
+            }
+        });
+
         cx.with_content_mask(ContentMask { bounds }, |cx| {
             let gutter_bounds = Bounds {
                 origin: bounds.origin,

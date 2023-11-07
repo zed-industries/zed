@@ -36,9 +36,9 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    div, px, AnyElement, AppContext, BackgroundExecutor, Context, Div, Element, EventEmitter,
-    FocusHandle, FontStyle, FontWeight, Hsla, Model, Pixels, Render, Styled, Subscription, Task,
-    TextStyle, View, ViewContext, VisualContext, WeakView, WindowContext,
+    div, px, AnyElement, AppContext, BackgroundExecutor, Context, Div, Element, Entity,
+    EventEmitter, FocusHandle, FontStyle, FontWeight, Hsla, Model, Pixels, Render, Styled,
+    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
