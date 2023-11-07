@@ -23,11 +23,12 @@ pub struct PlayerColors(pub Vec<PlayerColor>);
 
 impl PlayerColors {
     pub fn local(&self) -> PlayerColor {
+        // todo!("use a valid color");
         *self.0.first().unwrap()
     }
 
     pub fn absent(&self) -> PlayerColor {
-        todo!("use a valid color");
+        // todo!("use a valid color");
         *self.0.last().unwrap()
     }
 
