@@ -36,8 +36,8 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    div, px, AnyElement, AppContext, BackgroundExecutor, Context, Div, Element, Entity,
-    EventEmitter, FocusHandle, FontStyle, FontWeight, Hsla, Model, Pixels, Render, Styled,
+    div, px, AnyElement, AppContext, BackgroundExecutor, Context, DispatchContext, Div, Element,
+    Entity, EventEmitter, FocusHandle, FontStyle, FontWeight, Hsla, Model, Pixels, Render, Styled,
     Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -54,6 +54,7 @@ use language::{
 };
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
 use lsp::{DiagnosticSeverity, Documentation, LanguageServerId};
+use movement::TextLayoutDetails;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
@@ -397,6 +398,18 @@ pub struct GoToTypeDefinition;
 pub struct GoToDefinitionSplit;
 pub struct GoToTypeDefinitionSplit;
 
+#[derive(PartialEq, Clone, Default, Deserialize)]
+pub struct MoveLeft;
+
+#[derive(PartialEq, Clone, Default, Deserialize)]
+pub struct MoveRight;
+
+#[derive(PartialEq, Clone, Default, Deserialize)]
+pub struct MoveDown;
+
+#[derive(PartialEq, Clone, Default, Deserialize)]
+pub struct MoveUp;
+
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
@@ -413,130 +426,130 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(cx: &mut AppContext) {
     init_settings(cx);
-    // cx.add_action(Editor::new_file);
-    // cx.add_action(Editor::new_file_in_direction);
-    // cx.add_action(Editor::cancel);
-    // cx.add_action(Editor::newline);
-    // cx.add_action(Editor::newline_above);
-    // cx.add_action(Editor::newline_below);
-    // cx.add_action(Editor::backspace);
-    // cx.add_action(Editor::delete);
-    // cx.add_action(Editor::tab);
-    // cx.add_action(Editor::tab_prev);
-    // cx.add_action(Editor::indent);
-    // cx.add_action(Editor::outdent);
-    // cx.add_action(Editor::delete_line);
-    // cx.add_action(Editor::join_lines);
-    // cx.add_action(Editor::sort_lines_case_sensitive);
-    // cx.add_action(Editor::sort_lines_case_insensitive);
-    // cx.add_action(Editor::reverse_lines);
-    // cx.add_action(Editor::shuffle_lines);
-    // cx.add_action(Editor::convert_to_upper_case);
-    // cx.add_action(Editor::convert_to_lower_case);
-    // cx.add_action(Editor::convert_to_title_case);
-    // cx.add_action(Editor::convert_to_snake_case);
-    // cx.add_action(Editor::convert_to_kebab_case);
-    // cx.add_action(Editor::convert_to_upper_camel_case);
-    // cx.add_action(Editor::convert_to_lower_camel_case);
-    // cx.add_action(Editor::delete_to_previous_word_start);
-    // cx.add_action(Editor::delete_to_previous_subword_start);
-    // cx.add_action(Editor::delete_to_next_word_end);
-    // cx.add_action(Editor::delete_to_next_subword_end);
-    // cx.add_action(Editor::delete_to_beginning_of_line);
-    // cx.add_action(Editor::delete_to_end_of_line);
-    // cx.add_action(Editor::cut_to_end_of_line);
-    // cx.add_action(Editor::duplicate_line);
-    // cx.add_action(Editor::move_line_up);
-    // cx.add_action(Editor::move_line_down);
-    // cx.add_action(Editor::transpose);
-    // cx.add_action(Editor::cut);
-    // cx.add_action(Editor::copy);
-    // cx.add_action(Editor::paste);
-    // cx.add_action(Editor::undo);
-    // cx.add_action(Editor::redo);
-    // cx.add_action(Editor::move_up);
-    // cx.add_action(Editor::move_page_up);
-    // cx.add_action(Editor::move_down);
-    // cx.add_action(Editor::move_page_down);
-    // cx.add_action(Editor::next_screen);
-    // cx.add_action(Editor::move_left);
-    // cx.add_action(Editor::move_right);
-    // cx.add_action(Editor::move_to_previous_word_start);
-    // cx.add_action(Editor::move_to_previous_subword_start);
-    // cx.add_action(Editor::move_to_next_word_end);
-    // cx.add_action(Editor::move_to_next_subword_end);
-    // cx.add_action(Editor::move_to_beginning_of_line);
-    // cx.add_action(Editor::move_to_end_of_line);
-    // cx.add_action(Editor::move_to_start_of_paragraph);
-    // cx.add_action(Editor::move_to_end_of_paragraph);
-    // cx.add_action(Editor::move_to_beginning);
-    // cx.add_action(Editor::move_to_end);
-    // cx.add_action(Editor::select_up);
-    // cx.add_action(Editor::select_down);
-    // cx.add_action(Editor::select_left);
-    // cx.add_action(Editor::select_right);
-    // cx.add_action(Editor::select_to_previous_word_start);
-    // cx.add_action(Editor::select_to_previous_subword_start);
-    // cx.add_action(Editor::select_to_next_word_end);
-    // cx.add_action(Editor::select_to_next_subword_end);
-    // cx.add_action(Editor::select_to_beginning_of_line);
-    // cx.add_action(Editor::select_to_end_of_line);
-    // cx.add_action(Editor::select_to_start_of_paragraph);
-    // cx.add_action(Editor::select_to_end_of_paragraph);
-    // cx.add_action(Editor::select_to_beginning);
-    // cx.add_action(Editor::select_to_end);
-    // cx.add_action(Editor::select_all);
-    // cx.add_action(Editor::select_all_matches);
-    // cx.add_action(Editor::select_line);
-    // cx.add_action(Editor::split_selection_into_lines);
-    // cx.add_action(Editor::add_selection_above);
-    // cx.add_action(Editor::add_selection_below);
-    // cx.add_action(Editor::select_next);
-    // cx.add_action(Editor::select_previous);
-    // cx.add_action(Editor::toggle_comments);
-    // cx.add_action(Editor::select_larger_syntax_node);
-    // cx.add_action(Editor::select_smaller_syntax_node);
-    // cx.add_action(Editor::move_to_enclosing_bracket);
-    // cx.add_action(Editor::undo_selection);
-    // cx.add_action(Editor::redo_selection);
-    // cx.add_action(Editor::go_to_diagnostic);
-    // cx.add_action(Editor::go_to_prev_diagnostic);
-    // cx.add_action(Editor::go_to_hunk);
-    // cx.add_action(Editor::go_to_prev_hunk);
-    // cx.add_action(Editor::go_to_definition);
-    // cx.add_action(Editor::go_to_definition_split);
-    // cx.add_action(Editor::go_to_type_definition);
-    // cx.add_action(Editor::go_to_type_definition_split);
-    // cx.add_action(Editor::fold);
-    // cx.add_action(Editor::fold_at);
-    // cx.add_action(Editor::unfold_lines);
-    // cx.add_action(Editor::unfold_at);
-    // cx.add_action(Editor::gutter_hover);
-    // cx.add_action(Editor::fold_selected_ranges);
-    // cx.add_action(Editor::show_completions);
-    // cx.add_action(Editor::toggle_code_actions);
-    // cx.add_action(Editor::open_excerpts);
-    // cx.add_action(Editor::toggle_soft_wrap);
-    // cx.add_action(Editor::toggle_inlay_hints);
-    // cx.add_action(Editor::reveal_in_finder);
-    // cx.add_action(Editor::copy_path);
-    // cx.add_action(Editor::copy_relative_path);
-    // cx.add_action(Editor::copy_highlight_json);
+    // cx.register_action_type(Editor::new_file);
+    // cx.register_action_type(Editor::new_file_in_direction);
+    // cx.register_action_type(Editor::cancel);
+    // cx.register_action_type(Editor::newline);
+    // cx.register_action_type(Editor::newline_above);
+    // cx.register_action_type(Editor::newline_below);
+    // cx.register_action_type(Editor::backspace);
+    // cx.register_action_type(Editor::delete);
+    // cx.register_action_type(Editor::tab);
+    // cx.register_action_type(Editor::tab_prev);
+    // cx.register_action_type(Editor::indent);
+    // cx.register_action_type(Editor::outdent);
+    // cx.register_action_type(Editor::delete_line);
+    // cx.register_action_type(Editor::join_lines);
+    // cx.register_action_type(Editor::sort_lines_case_sensitive);
+    // cx.register_action_type(Editor::sort_lines_case_insensitive);
+    // cx.register_action_type(Editor::reverse_lines);
+    // cx.register_action_type(Editor::shuffle_lines);
+    // cx.register_action_type(Editor::convert_to_upper_case);
+    // cx.register_action_type(Editor::convert_to_lower_case);
+    // cx.register_action_type(Editor::convert_to_title_case);
+    // cx.register_action_type(Editor::convert_to_snake_case);
+    // cx.register_action_type(Editor::convert_to_kebab_case);
+    // cx.register_action_type(Editor::convert_to_upper_camel_case);
+    // cx.register_action_type(Editor::convert_to_lower_camel_case);
+    // cx.register_action_type(Editor::delete_to_previous_word_start);
+    // cx.register_action_type(Editor::delete_to_previous_subword_start);
+    // cx.register_action_type(Editor::delete_to_next_word_end);
+    // cx.register_action_type(Editor::delete_to_next_subword_end);
+    // cx.register_action_type(Editor::delete_to_beginning_of_line);
+    // cx.register_action_type(Editor::delete_to_end_of_line);
+    // cx.register_action_type(Editor::cut_to_end_of_line);
+    // cx.register_action_type(Editor::duplicate_line);
+    // cx.register_action_type(Editor::move_line_up);
+    // cx.register_action_type(Editor::move_line_down);
+    // cx.register_action_type(Editor::transpose);
+    // cx.register_action_type(Editor::cut);
+    // cx.register_action_type(Editor::copy);
+    // cx.register_action_type(Editor::paste);
+    // cx.register_action_type(Editor::undo);
+    // cx.register_action_type(Editor::redo);
+    cx.register_action_type::<MoveUp>();
+    // cx.register_action_type(Editor::move_page_up);
+    cx.register_action_type::<MoveDown>();
+    // cx.register_action_type(Editor::move_page_down);
+    // cx.register_action_type(Editor::next_screen);
+    cx.register_action_type::<MoveLeft>();
+    cx.register_action_type::<MoveRight>();
+    // cx.register_action_type(Editor::move_to_previous_word_start);
+    // cx.register_action_type(Editor::move_to_previous_subword_start);
+    // cx.register_action_type(Editor::move_to_next_word_end);
+    // cx.register_action_type(Editor::move_to_next_subword_end);
+    // cx.register_action_type(Editor::move_to_beginning_of_line);
+    // cx.register_action_type(Editor::move_to_end_of_line);
+    // cx.register_action_type(Editor::move_to_start_of_paragraph);
+    // cx.register_action_type(Editor::move_to_end_of_paragraph);
+    // cx.register_action_type(Editor::move_to_beginning);
+    // cx.register_action_type(Editor::move_to_end);
+    // cx.register_action_type(Editor::select_up);
+    // cx.register_action_type(Editor::select_down);
+    // cx.register_action_type(Editor::select_left);
+    // cx.register_action_type(Editor::select_right);
+    // cx.register_action_type(Editor::select_to_previous_word_start);
+    // cx.register_action_type(Editor::select_to_previous_subword_start);
+    // cx.register_action_type(Editor::select_to_next_word_end);
+    // cx.register_action_type(Editor::select_to_next_subword_end);
+    // cx.register_action_type(Editor::select_to_beginning_of_line);
+    // cx.register_action_type(Editor::select_to_end_of_line);
+    // cx.register_action_type(Editor::select_to_start_of_paragraph);
+    // cx.register_action_type(Editor::select_to_end_of_paragraph);
+    // cx.register_action_type(Editor::select_to_beginning);
+    // cx.register_action_type(Editor::select_to_end);
+    // cx.register_action_type(Editor::select_all);
+    // cx.register_action_type(Editor::select_all_matches);
+    // cx.register_action_type(Editor::select_line);
+    // cx.register_action_type(Editor::split_selection_into_lines);
+    // cx.register_action_type(Editor::add_selection_above);
+    // cx.register_action_type(Editor::add_selection_below);
+    // cx.register_action_type(Editor::select_next);
+    // cx.register_action_type(Editor::select_previous);
+    // cx.register_action_type(Editor::toggle_comments);
+    // cx.register_action_type(Editor::select_larger_syntax_node);
+    // cx.register_action_type(Editor::select_smaller_syntax_node);
+    // cx.register_action_type(Editor::move_to_enclosing_bracket);
+    // cx.register_action_type(Editor::undo_selection);
+    // cx.register_action_type(Editor::redo_selection);
+    // cx.register_action_type(Editor::go_to_diagnostic);
+    // cx.register_action_type(Editor::go_to_prev_diagnostic);
+    // cx.register_action_type(Editor::go_to_hunk);
+    // cx.register_action_type(Editor::go_to_prev_hunk);
+    // cx.register_action_type(Editor::go_to_definition);
+    // cx.register_action_type(Editor::go_to_definition_split);
+    // cx.register_action_type(Editor::go_to_type_definition);
+    // cx.register_action_type(Editor::go_to_type_definition_split);
+    // cx.register_action_type(Editor::fold);
+    // cx.register_action_type(Editor::fold_at);
+    // cx.register_action_type(Editor::unfold_lines);
+    // cx.register_action_type(Editor::unfold_at);
+    // cx.register_action_type(Editor::gutter_hover);
+    // cx.register_action_type(Editor::fold_selected_ranges);
+    // cx.register_action_type(Editor::show_completions);
+    // cx.register_action_type(Editor::toggle_code_actions);
+    // cx.register_action_type(Editor::open_excerpts);
+    // cx.register_action_type(Editor::toggle_soft_wrap);
+    // cx.register_action_type(Editor::toggle_inlay_hints);
+    // cx.register_action_type(Editor::reveal_in_finder);
+    // cx.register_action_type(Editor::copy_path);
+    // cx.register_action_type(Editor::copy_relative_path);
+    // cx.register_action_type(Editor::copy_highlight_json);
     // cx.add_async_action(Editor::format);
-    // cx.add_action(Editor::restart_language_server);
-    // cx.add_action(Editor::show_character_palette);
+    // cx.register_action_type(Editor::restart_language_server);
+    // cx.register_action_type(Editor::show_character_palette);
     // cx.add_async_action(Editor::confirm_completion);
     // cx.add_async_action(Editor::confirm_code_action);
     // cx.add_async_action(Editor::rename);
     // cx.add_async_action(Editor::confirm_rename);
     // cx.add_async_action(Editor::find_all_references);
-    // cx.add_action(Editor::next_copilot_suggestion);
-    // cx.add_action(Editor::previous_copilot_suggestion);
-    // cx.add_action(Editor::copilot_suggest);
-    // cx.add_action(Editor::context_menu_first);
-    // cx.add_action(Editor::context_menu_prev);
-    // cx.add_action(Editor::context_menu_next);
-    // cx.add_action(Editor::context_menu_last);
+    // cx.register_action_type(Editor::next_copilot_suggestion);
+    // cx.register_action_type(Editor::previous_copilot_suggestion);
+    // cx.register_action_type(Editor::copilot_suggest);
+    // cx.register_action_type(Editor::context_menu_first);
+    // cx.register_action_type(Editor::context_menu_prev);
+    // cx.register_action_type(Editor::context_menu_next);
+    // cx.register_action_type(Editor::context_menu_last);
 
     hover_popover::init(cx);
     scroll::actions::init(cx);
@@ -657,7 +670,7 @@ pub struct Editor {
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakView<Workspace>, i64)>,
-    // keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
+    keymap_context_layers: BTreeMap<TypeId, DispatchContext>,
     input_enabled: bool,
     read_only: bool,
     leader_peer_id: Option<PeerId>,
@@ -670,6 +683,7 @@ pub struct Editor {
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
+    style: Option<EditorStyle>,
 }
 
 pub struct EditorSnapshot {
@@ -1965,7 +1979,7 @@ impl Editor {
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
             workspace: None,
-            // keymap_context_layers: Default::default(),
+            keymap_context_layers: Default::default(),
             input_enabled: true,
             read_only: false,
             leader_peer_id: None,
@@ -1976,6 +1990,7 @@ impl Editor {
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
+            style: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -2014,6 +2029,48 @@ impl Editor {
         this
     }
 
+    fn dispatch_context(&self, cx: &AppContext) -> DispatchContext {
+        let mut dispatch_context = DispatchContext::default();
+        dispatch_context.insert("Editor");
+        let mode = match self.mode {
+            EditorMode::SingleLine => "single_line",
+            EditorMode::AutoHeight { .. } => "auto_height",
+            EditorMode::Full => "full",
+        };
+        dispatch_context.set("mode", mode);
+        if self.pending_rename.is_some() {
+            dispatch_context.insert("renaming");
+        }
+        if self.context_menu_visible() {
+            match self.context_menu.read().as_ref() {
+                Some(ContextMenu::Completions(_)) => {
+                    dispatch_context.insert("menu");
+                    dispatch_context.insert("showing_completions")
+                }
+                Some(ContextMenu::CodeActions(_)) => {
+                    dispatch_context.insert("menu");
+                    dispatch_context.insert("showing_code_actions")
+                }
+                None => {}
+            }
+        }
+
+        for layer in self.keymap_context_layers.values() {
+            dispatch_context.extend(layer);
+        }
+
+        if let Some(extension) = self
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|buffer| buffer.read(cx).file()?.path().extension()?.to_str())
+        {
+            dispatch_context.set("extension", extension.to_string());
+        }
+
+        dispatch_context
+    }
+
     //     pub fn new_file(
     //         workspace: &mut Workspace,
     //         _: &workspace::NewFile,
@@ -2021,7 +2078,7 @@ impl Editor {
     //     ) {
     //         let project = workspace.project().clone();
     //         if project.read(cx).is_remote() {
-    //             cx.propagate_action();
+    //             cx.propagate();
     //         } else if let Some(buffer) = project
     //             .update(cx, |project, cx| project.create_buffer("", None, cx))
     //             .log_err()
@@ -2040,7 +2097,7 @@ impl Editor {
     //     ) {
     //         let project = workspace.project().clone();
     //         if project.read(cx).is_remote() {
-    //             cx.propagate_action();
+    //             cx.propagate();
     //         } else if let Some(buffer) = project
     //             .update(cx, |project, cx| project.create_buffer("", None, cx))
     //             .log_err()
@@ -2731,7 +2788,7 @@ impl Editor {
     //             }
     //         }
 
-    //         cx.propagate_action();
+    //         cx.propagate();
     //     }
 
     //     pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
@@ -3482,13 +3539,12 @@ impl Editor {
             .collect()
     }
 
-    //     pub fn text_layout_details(&self, cx: &WindowContext) -> TextLayoutDetails {
-    //         TextLayoutDetails {
-    //             font_cache: cx.font_cache().clone(),
-    //             text_layout_cache: cx.text_layout_cache().clone(),
-    //             editor_style: self.style(cx),
-    //         }
-    //     }
+    pub fn text_layout_details(&self, cx: &WindowContext) -> TextLayoutDetails {
+        TextLayoutDetails {
+            text_system: cx.text_system().clone(),
+            editor_style: self.style.clone().unwrap(),
+        }
+    }
 
     fn splice_inlay_hints(
         &self,
@@ -4207,7 +4263,7 @@ impl Editor {
             let is_copilot_disabled = self.refresh_copilot_suggestions(false, cx).is_none();
             if is_copilot_disabled {
                 todo!();
-                // cx.propagate_action();
+                // cx.propagate();
             }
         }
     }
@@ -4429,12 +4485,14 @@ impl Editor {
     //             .collect()
     //     }
 
-    //     pub fn context_menu_visible(&self) -> bool {
-    //         self.context_menu
-    //             .read()
-    //             .as_ref()
-    //             .map_or(false, |menu| menu.visible())
-    //     }
+    pub fn context_menu_visible(&self) -> bool {
+        false
+        // todo!("context menu")
+        // self.context_menu
+        //     .read()
+        //     .as_ref()
+        //     .map_or(false, |menu| menu.visible())
+    }
 
     //     pub fn render_context_menu(
     //         &self,
@@ -5681,19 +5739,19 @@ impl Editor {
     //             .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
     //     }
 
-    //     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
-    //         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-    //             let line_mode = s.line_mode;
-    //             s.move_with(|map, selection| {
-    //                 let cursor = if selection.is_empty() && !line_mode {
-    //                     movement::left(map, selection.start)
-    //                 } else {
-    //                     selection.start
-    //                 };
-    //                 selection.collapse_to(cursor, SelectionGoal::None);
-    //             });
-    //         })
-    //     }
+    pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                let cursor = if selection.is_empty() && !line_mode {
+                    movement::left(map, selection.start)
+                } else {
+                    selection.start
+                };
+                selection.collapse_to(cursor, SelectionGoal::None);
+            });
+        })
+    }
 
     //     pub fn select_left(&mut self, _: &SelectLeft, cx: &mut ViewContext<Self>) {
     //         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -5701,19 +5759,19 @@ impl Editor {
     //         })
     //     }
 
-    //     pub fn move_right(&mut self, _: &MoveRight, cx: &mut ViewContext<Self>) {
-    //         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-    //             let line_mode = s.line_mode;
-    //             s.move_with(|map, selection| {
-    //                 let cursor = if selection.is_empty() && !line_mode {
-    //                     movement::right(map, selection.end)
-    //                 } else {
-    //                     selection.end
-    //                 };
-    //                 selection.collapse_to(cursor, SelectionGoal::None)
-    //             });
-    //         })
-    //     }
+    pub fn move_right(&mut self, _: &MoveRight, cx: &mut ViewContext<Self>) {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                let cursor = if selection.is_empty() && !line_mode {
+                    movement::right(map, selection.end)
+                } else {
+                    selection.end
+                };
+                selection.collapse_to(cursor, SelectionGoal::None)
+            });
+        })
+    }
 
     //     pub fn select_right(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
     //         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -5721,35 +5779,35 @@ impl Editor {
     //         })
     //     }
 
-    //     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
-    //         if self.take_rename(true, cx).is_some() {
-    //             return;
-    //         }
+    pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
 
-    //         if matches!(self.mode, EditorMode::SingleLine) {
-    //             cx.propagate_action();
-    //             return;
-    //         }
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
 
-    //         let text_layout_details = &self.text_layout_details(cx);
+        let text_layout_details = &self.text_layout_details(cx);
 
-    //         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-    //             let line_mode = s.line_mode;
-    //             s.move_with(|map, selection| {
-    //                 if !selection.is_empty() && !line_mode {
-    //                     selection.goal = SelectionGoal::None;
-    //                 }
-    //                 let (cursor, goal) = movement::up(
-    //                     map,
-    //                     selection.start,
-    //                     selection.goal,
-    //                     false,
-    //                     &text_layout_details,
-    //                 );
-    //                 selection.collapse_to(cursor, goal);
-    //             });
-    //         })
-    //     }
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                if !selection.is_empty() && !line_mode {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) = movement::up(
+                    map,
+                    selection.start,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
+                selection.collapse_to(cursor, goal);
+            });
+        })
+    }
 
     //     pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) {
     //         if self.take_rename(true, cx).is_some() {
@@ -5757,7 +5815,7 @@ impl Editor {
     //         }
 
     //         if matches!(self.mode, EditorMode::SingleLine) {
-    //             cx.propagate_action();
+    //             cx.propagate();
     //             return;
     //         }
 
@@ -5803,32 +5861,33 @@ impl Editor {
     //         })
     //     }
 
-    //     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
-    //         self.take_rename(true, cx);
+    pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
+        dbg!("move_down");
+        self.take_rename(true, cx);
 
-    //         if self.mode == EditorMode::SingleLine {
-    //             cx.propagate_action();
-    //             return;
-    //         }
+        if self.mode == EditorMode::SingleLine {
+            cx.propagate();
+            return;
+        }
 
-    //         let text_layout_details = &self.text_layout_details(cx);
-    //         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-    //             let line_mode = s.line_mode;
-    //             s.move_with(|map, selection| {
-    //                 if !selection.is_empty() && !line_mode {
-    //                     selection.goal = SelectionGoal::None;
-    //                 }
-    //                 let (cursor, goal) = movement::down(
-    //                     map,
-    //                     selection.end,
-    //                     selection.goal,
-    //                     false,
-    //                     &text_layout_details,
-    //                 );
-    //                 selection.collapse_to(cursor, goal);
-    //             });
-    //         });
-    //     }
+        let text_layout_details = &self.text_layout_details(cx);
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                if !selection.is_empty() && !line_mode {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) = movement::down(
+                    map,
+                    selection.end,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
+                selection.collapse_to(cursor, goal);
+            });
+        });
+    }
 
     //     pub fn move_page_down(&mut self, action: &MovePageDown, cx: &mut ViewContext<Self>) {
     //         if self.take_rename(true, cx).is_some() {
@@ -5846,7 +5905,7 @@ impl Editor {
     //         }
 
     //         if matches!(self.mode, EditorMode::SingleLine) {
-    //             cx.propagate_action();
+    //             cx.propagate();
     //             return;
     //         }
 
@@ -6193,7 +6252,7 @@ impl Editor {
     //         cx: &mut ViewContext<Self>,
     //     ) {
     //         if matches!(self.mode, EditorMode::SingleLine) {
-    //             cx.propagate_action();
+    //             cx.propagate();
     //             return;
     //         }
 
@@ -6213,7 +6272,7 @@ impl Editor {
     //         cx: &mut ViewContext<Self>,
     //     ) {
     //         if matches!(self.mode, EditorMode::SingleLine) {
-    //             cx.propagate_action();
+    //             cx.propagate();
     //             return;
     //         }
 
@@ -6233,7 +6292,7 @@ impl Editor {
     //         cx: &mut ViewContext<Self>,
     //     ) {
     //         if matches!(self.mode, EditorMode::SingleLine) {
-    //             cx.propagate_action();
+    //             cx.propagate();
     //             return;
     //         }
 
@@ -6253,7 +6312,7 @@ impl Editor {
     //         cx: &mut ViewContext<Self>,
     //     ) {
     //         if matches!(self.mode, EditorMode::SingleLine) {
-    //             cx.propagate_action();
+    //             cx.propagate();
     //             return;
     //         }
 
@@ -6269,7 +6328,7 @@ impl Editor {
 
     //     pub fn move_to_beginning(&mut self, _: &MoveToBeginning, cx: &mut ViewContext<Self>) {
     //         if matches!(self.mode, EditorMode::SingleLine) {
-    //             cx.propagate_action();
+    //             cx.propagate();
     //             return;
     //         }
 
@@ -6289,7 +6348,7 @@ impl Editor {
 
     //     pub fn move_to_end(&mut self, _: &MoveToEnd, cx: &mut ViewContext<Self>) {
     //         if matches!(self.mode, EditorMode::SingleLine) {
-    //             cx.propagate_action();
+    //             cx.propagate();
     //             return;
     //         }
 
@@ -8807,14 +8866,14 @@ impl Editor {
     //         {
     //             editor
     //         } else {
-    //             cx.propagate_action();
+    //             cx.propagate();
     //             return;
     //         };
 
     //         let editor = editor_handle.read(cx);
     //         let buffer = editor.buffer.read(cx);
     //         if buffer.is_singleton() {
-    //             cx.propagate_action();
+    //             cx.propagate();
     //             return;
     //         }
 
@@ -9443,46 +9502,7 @@ impl Render for Editor {
 
 //         false
 //     }
-
-//     fn update_keymap_context(&self, keymap: &mut KeymapContext, cx: &AppContext) {
-//         Self::reset_to_default_keymap_context(keymap);
-//         let mode = match self.mode {
-//             EditorMode::SingleLine => "single_line",
-//             EditorMode::AutoHeight { .. } => "auto_height",
-//             EditorMode::Full => "full",
-//         };
-//         keymap.add_key("mode", mode);
-//         if self.pending_rename.is_some() {
-//             keymap.add_identifier("renaming");
-//         }
-//         if self.context_menu_visible() {
-//             match self.context_menu.read().as_ref() {
-//                 Some(ContextMenu::Completions(_)) => {
-//                     keymap.add_identifier("menu");
-//                     keymap.add_identifier("showing_completions")
-//                 }
-//                 Some(ContextMenu::CodeActions(_)) => {
-//                     keymap.add_identifier("menu");
-//                     keymap.add_identifier("showing_code_actions")
-//                 }
-//                 None => {}
-//             }
-//         }
-
-//         for layer in self.keymap_context_layers.values() {
-//             keymap.extend(layer);
-//         }
-
-//         if let Some(extension) = self
-//             .buffer
-//             .read(cx)
-//             .as_singleton()
-//             .and_then(|buffer| buffer.read(cx).file()?.path().extension()?.to_str())
-//         {
-//             keymap.add_key("extension", extension.to_string());
-//         }
-//     }
-
+//
 //     fn text_for_range(&self, range_utf16: Range<usize>, cx: &AppContext) -> Option<String> {
 //         Some(
 //             self.buffer

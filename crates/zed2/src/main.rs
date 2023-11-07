@@ -20,7 +20,8 @@ use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use settings::{
-    default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
+    default_settings, handle_keymap_file_changes, handle_settings_file_changes, watch_config_file,
+    Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -76,7 +77,7 @@ fn main() {
         fs.clone(),
         paths::SETTINGS.clone(),
     );
-    let _user_keymap_file_rx = watch_config_file(
+    let user_keymap_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::KEYMAP.clone(),
@@ -116,7 +117,7 @@ fn main() {
             .unwrap();
         cx.set_global(store);
         handle_settings_file_changes(user_settings_file_rx, cx);
-        // handle_keymap_file_changes(user_keymap_file_rx, cx);
+        handle_keymap_file_changes(user_keymap_file_rx, cx);
 
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);

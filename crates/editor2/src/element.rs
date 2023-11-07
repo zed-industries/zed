@@ -3,15 +3,15 @@ use crate::{
     editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    Point, Selection, SoftWrap, ToPoint, MAX_LINE_LEN,
+    MoveDown, Point, Selection, SoftWrap, ToPoint, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
-    black, hsla, point, px, relative, size, transparent_black, AnyElement, BorrowWindow, Bounds,
-    ContentMask, Corners, DispatchPhase, Edges, Element, ElementId, Hsla, Line, Pixels,
-    ScrollWheelEvent, ShapedGlyph, Size, StatefulInteraction, Style, TextRun, TextStyle,
-    TextSystem, ViewContext, WindowContext,
+    black, hsla, point, px, relative, size, transparent_black, Action, AnyElement, BorrowWindow,
+    Bounds, ContentMask, Corners, DispatchContext, DispatchPhase, Edges, Element, ElementId,
+    Entity, Hsla, KeyDownEvent, KeyListener, KeyMatch, Line, Pixels, ScrollWheelEvent, ShapedGlyph,
+    Size, StatefulInteraction, Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -20,6 +20,7 @@ use project::project_settings::{GitGutterSetting, ProjectSettings};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{
+    any::TypeId,
     borrow::Cow,
     cmp::{self, Ordering},
     fmt::Write,
@@ -94,14 +95,12 @@ impl SelectionLayout {
 }
 
 pub struct EditorElement {
-    style: Arc<EditorStyle>,
+    style: EditorStyle,
 }
 
 impl EditorElement {
     pub fn new(style: EditorStyle) -> Self {
-        Self {
-            style: Arc::new(style),
-        }
+        Self { style }
     }
 
     // fn attach_mouse_handlers(
@@ -2554,7 +2553,38 @@ impl Element<Editor> for EditorElement {
         element_state: Option<Self::ElementState>,
         cx: &mut gpui::ViewContext<Editor>,
     ) -> Self::ElementState {
-        ()
+        editor.style = Some(self.style.clone()); // Long-term, we'd like to eliminate this.
+
+        let dispatch_context = editor.dispatch_context(cx);
+        cx.with_element_id(cx.view().entity_id(), |global_id, cx| {
+            cx.with_key_dispatch_context(dispatch_context, |cx| {
+                cx.with_key_listeners(
+                    [
+                        build_key_listener(
+                            move |editor, key_down: &KeyDownEvent, dispatch_context, phase, cx| {
+                                if phase == DispatchPhase::Bubble {
+                                    if let KeyMatch::Some(action) = cx.match_keystroke(
+                                        &global_id,
+                                        &key_down.keystroke,
+                                        dispatch_context,
+                                    ) {
+                                        dbg!(action.as_any());
+                                        return Some(action);
+                                    }
+                                }
+
+                                None
+                            },
+                        ),
+                        build_action_listener(Editor::move_left),
+                        build_action_listener(Editor::move_right),
+                        build_action_listener(Editor::move_down),
+                        build_action_listener(Editor::move_up),
+                    ],
+                    |cx| cx.with_focus(editor.focus_handle.clone(), |_| {}),
+                );
+            })
+        });
     }
 
     fn layout(
@@ -4080,3 +4110,33 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 //             .collect()
 //     }
 // }
+
+fn build_key_listener<T: 'static>(
+    listener: impl Fn(
+            &mut Editor,
+            &T,
+            &[&DispatchContext],
+            DispatchPhase,
+            &mut ViewContext<Editor>,
+        ) -> Option<Box<dyn Action>>
+        + 'static,
+) -> (TypeId, KeyListener<Editor>) {
+    (
+        TypeId::of::<T>(),
+        Box::new(move |editor, event, dispatch_context, phase, cx| {
+            let key_event = event.downcast_ref::<T>()?;
+            listener(editor, key_event, dispatch_context, phase, cx)
+        }),
+    )
+}
+
+fn build_action_listener<T: Action>(
+    listener: impl Fn(&mut Editor, &T, &mut ViewContext<Editor>) + 'static,
+) -> (TypeId, KeyListener<Editor>) {
+    build_key_listener(move |editor, action: &T, dispatch_context, phase, cx| {
+        if phase == DispatchPhase::Bubble {
+            listener(editor, action, cx);
+        }
+        None
+    })
+}

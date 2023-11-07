@@ -22,7 +22,8 @@ where
     A: for<'a> Deserialize<'a> + PartialEq + Clone + Default + 'static,
 {
     fn qualified_name() -> SharedString {
-        type_name::<A>().into()
+        // todo!() remove this
+        type_name::<A>().replace("2::", "::").into()
     }
 
     fn build(params: Option<serde_json::Value>) -> Result<Box<dyn Action>>

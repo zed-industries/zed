@@ -3,7 +3,7 @@ use crate::{char_kind, CharKind, EditorStyle, ToOffset, ToPoint};
 use gpui::{px, TextSystem};
 use language::Point;
 use serde::de::IntoDeserializer;
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 #[derive(Debug, PartialEq)]
 pub enum FindRange {
@@ -14,7 +14,7 @@ pub enum FindRange {
 /// TextLayoutDetails encompasses everything we need to move vertically
 /// taking into account variable width characters.
 pub struct TextLayoutDetails {
-    pub text_system: TextSystem,
+    pub text_system: Arc<TextSystem>,
     pub editor_style: EditorStyle,
 }
 

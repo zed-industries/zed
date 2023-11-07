@@ -1314,6 +1314,7 @@ impl<'a> WindowContext<'a> {
                 } = stack_frame
                 {
                     if action_type == *event_type {
+                        self.app.propagate_event = false;
                         listener(action.as_any(), &[], DispatchPhase::Bubble, self);
                         if !self.app.propagate_event {
                             break;
@@ -1328,6 +1329,7 @@ impl<'a> WindowContext<'a> {
                 self.app.global_action_listeners.remove(&action_type)
             {
                 for listener in global_listeners.iter().rev() {
+                    self.app.propagate_event = false;
                     listener(action.as_ref(), DispatchPhase::Bubble, self);
                     if !self.app.propagate_event {
                         break;
