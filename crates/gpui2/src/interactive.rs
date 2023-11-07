@@ -1233,8 +1233,6 @@ pub type KeyListener<V> = Box<
 
 #[cfg(test)]
 mod test {
-    use serde_derive::Deserialize;
-
     use crate::{
         self as gpui, div, Div, FocusHandle, KeyBinding, Keystroke, ParentElement, Render,
         StatefulInteraction, StatelessInteractive, TestAppContext, VisualContext,
@@ -1246,8 +1244,7 @@ mod test {
         focus_handle: FocusHandle,
     }
 
-    #[derive(PartialEq, Clone, Default, Deserialize)]
-    struct TestAction;
+    actions!(TestAction);
 
     impl Render for TestView {
         type Element = Div<Self, StatefulInteraction<Self>>;
