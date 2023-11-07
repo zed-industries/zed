@@ -1,3 +1,4 @@
+#[macro_use]
 mod action;
 mod app;
 mod assets;

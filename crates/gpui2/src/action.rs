@@ -4,7 +4,7 @@ use collections::{HashMap, HashSet};
 use serde::Deserialize;
 use std::any::{type_name, Any};
 
-pub trait Action: 'static {
+pub trait Action: std::fmt::Debug + 'static {
     fn qualified_name() -> SharedString
     where
         Self: Sized;
@@ -17,12 +17,39 @@ pub trait Action: 'static {
     fn as_any(&self) -> &dyn Any;
 }
 
+// actions defines structs that can be used as actions.
+#[macro_export]
+macro_rules! actions {
+    () => {};
+
+    ( $name:ident ) => {
+        #[derive(::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq, $crate::serde::Deserialize)]
+        struct $name;
+    };
+
+    ( $name:ident { $($token:tt)* } ) => {
+        #[derive(::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq, $crate::serde::Deserialize)]
+        struct $name { $($token)* }
+    };
+
+    ( $name:ident, $($rest:tt)* ) => {
+        actions!($name);
+        actions!($($rest)*);
+    };
+
+    ( $name:ident { $($token:tt)* }, $($rest:tt)* ) => {
+        actions!($name { $($token)* });
+        actions!($($rest)*);
+    };
+}
+
 impl<A> Action for A
 where
-    A: for<'a> Deserialize<'a> + PartialEq + Clone + Default + 'static,
+    A: for<'a> Deserialize<'a> + PartialEq + Clone + Default + std::fmt::Debug + 'static,
 {
     fn qualified_name() -> SharedString {
-        type_name::<A>().into()
+        // todo!() remove the 2 replacement when migration is done
+        type_name::<A>().replace("2::", "::").into()
     }
 
     fn build(params: Option<serde_json::Value>) -> Result<Box<dyn Action>>
@@ -291,6 +318,25 @@ fn skip_whitespace(source: &str) -> &str {
 mod tests {
     use super::*;
     use DispatchContextPredicate::*;
+
+    #[test]
+    fn test_actions_definition() {
+        {
+            actions!(A, B { field: i32 }, C, D, E, F {}, G);
+        }
+
+        {
+            actions!(
+                A,
+                B { field: i32 },
+                C,
+                D,
+                E,
+                F {},
+                G, // Don't wrap, test the trailing comma
+            );
+        }
+    }
 
     #[test]
     fn test_parse_context() {
