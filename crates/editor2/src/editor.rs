@@ -38,8 +38,8 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, div, px, relative, AnyElement, AppContext, BackgroundExecutor, Context,
     DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle, FontStyle, FontWeight, Hsla,
-    Model, Pixels, Render, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    Model, Pixels, PlatformInputHandler, Render, Styled, Subscription, Task, TextStyle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -82,7 +82,7 @@ use std::{
 };
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
-use text::Rope;
+use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
@@ -9485,214 +9485,225 @@ impl Render for Editor {
 
 //         false
 //     }
-//
-//     fn text_for_range(&self, range_utf16: Range<usize>, cx: &AppContext) -> Option<String> {
-//         Some(
-//             self.buffer
-//                 .read(cx)
-//                 .read(cx)
-//                 .text_for_range(OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end))
-//                 .collect(),
-//         )
-//     }
 
-//     fn selected_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
-//         // Prevent the IME menu from appearing when holding down an alphabetic key
-//         // while input is disabled.
-//         if !self.input_enabled {
-//             return None;
-//         }
+impl PlatformInputHandler for Editor {
+    fn text_for_range(&self, range_utf16: Range<usize>) -> Option<String> {
+        // Some(
+        //     self.buffer
+        //         .read(cx)
+        //         .read(cx)
+        //         .text_for_range(OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end))
+        //         .collect(),
+        // )
+        todo!()
+    }
 
-//         let range = self.selections.newest::<OffsetUtf16>(cx).range();
-//         Some(range.start.0..range.end.0)
-//     }
+    fn selected_text_range(&self) -> Option<Range<usize>> {
+        // Prevent the IME menu from appearing when holding down an alphabetic key
+        // while input is disabled.
+        // if !self.input_enabled {
+        //     return None;
+        // }
 
-//     fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
-//         let snapshot = self.buffer.read(cx).read(cx);
-//         let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
-//         Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
-//     }
+        // let range = self.selections.newest::<OffsetUtf16>(cx).range();
+        // Some(range.start.0..range.end.0)
+        todo!()
+    }
 
-//     fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
-//         self.clear_highlights::<InputComposition>(cx);
-//         self.ime_transaction.take();
-//     }
+    fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
+        // let snapshot = self.buffer.read(cx).read(cx);
+        // let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
+        // Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
+        todo!()
+    }
 
-//     fn replace_text_in_range(
-//         &mut self,
-//         range_utf16: Option<Range<usize>>,
-//         text: &str,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         if !self.input_enabled {
-//             cx.emit(Event::InputIgnored { text: text.into() });
-//             return;
-//         }
+    fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
+        // self.clear_highlights::<InputComposition>(cx);
+        // self.ime_transaction.take();
+        todo!()
+    }
 
-//         self.transact(cx, |this, cx| {
-//             let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
-//                 let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
-//                 Some(this.selection_replacement_ranges(range_utf16, cx))
-//             } else {
-//                 this.marked_text_ranges(cx)
-//             };
+    fn replace_text_in_range(
+        &mut self,
+        //range_utf16: Option<Range<usize>>,
+        // text: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        // if !self.input_enabled {
+        //     cx.emit(Event::InputIgnored { text: text.into() });
+        //     return;
+        // }
 
-//             let range_to_replace = new_selected_ranges.as_ref().and_then(|ranges_to_replace| {
-//                 let newest_selection_id = this.selections.newest_anchor().id;
-//                 this.selections
-//                     .all::<OffsetUtf16>(cx)
-//                     .iter()
-//                     .zip(ranges_to_replace.iter())
-//                     .find_map(|(selection, range)| {
-//                         if selection.id == newest_selection_id {
-//                             Some(
-//                                 (range.start.0 as isize - selection.head().0 as isize)
-//                                     ..(range.end.0 as isize - selection.head().0 as isize),
-//                             )
-//                         } else {
-//                             None
-//                         }
-//                     })
-//             });
+        // self.transact(cx, |this, cx| {
+        //     let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
+        //         let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+        //         Some(this.selection_replacement_ranges(range_utf16, cx))
+        //     } else {
+        //         this.marked_text_ranges(cx)
+        //     };
 
-//             cx.emit(Event::InputHandled {
-//                 utf16_range_to_replace: range_to_replace,
-//                 text: text.into(),
-//             });
+        //     let range_to_replace = new_selected_ranges.as_ref().and_then(|ranges_to_replace| {
+        //         let newest_selection_id = this.selections.newest_anchor().id;
+        //         this.selections
+        //             .all::<OffsetUtf16>(cx)
+        //             .iter()
+        //             .zip(ranges_to_replace.iter())
+        //             .find_map(|(selection, range)| {
+        //                 if selection.id == newest_selection_id {
+        //                     Some(
+        //                         (range.start.0 as isize - selection.head().0 as isize)
+        //                             ..(range.end.0 as isize - selection.head().0 as isize),
+        //                     )
+        //                 } else {
+        //                     None
+        //                 }
+        //             })
+        //     });
 
-//             if let Some(new_selected_ranges) = new_selected_ranges {
-//                 this.change_selections(None, cx, |selections| {
-//                     selections.select_ranges(new_selected_ranges)
-//                 });
-//             }
+        //     cx.emit(Event::InputHandled {
+        //         utf16_range_to_replace: range_to_replace,
+        //         text: text.into(),
+        //     });
 
-//             this.handle_input(text, cx);
-//         });
+        //     if let Some(new_selected_ranges) = new_selected_ranges {
+        //         this.change_selections(None, cx, |selections| {
+        //             selections.select_ranges(new_selected_ranges)
+        //         });
+        //     }
 
-//         if let Some(transaction) = self.ime_transaction {
-//             self.buffer.update(cx, |buffer, cx| {
-//                 buffer.group_until_transaction(transaction, cx);
-//             });
-//         }
+        //     this.handle_input(text, cx);
+        // });
 
-//         self.unmark_text(cx);
-//     }
+        // if let Some(transaction) = self.ime_transaction {
+        //     self.buffer.update(cx, |buffer, cx| {
+        //         buffer.group_until_transaction(transaction, cx);
+        //     });
+        // }
 
-//     fn replace_and_mark_text_in_range(
-//         &mut self,
-//         range_utf16: Option<Range<usize>>,
-//         text: &str,
-//         new_selected_range_utf16: Option<Range<usize>>,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         if !self.input_enabled {
-//             cx.emit(Event::InputIgnored { text: text.into() });
-//             return;
-//         }
+        // self.unmark_text(cx);
+        todo!()
+    }
 
-//         let transaction = self.transact(cx, |this, cx| {
-//             let ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx) {
-//                 let snapshot = this.buffer.read(cx).read(cx);
-//                 if let Some(relative_range_utf16) = range_utf16.as_ref() {
-//                     for marked_range in &mut marked_ranges {
-//                         marked_range.end.0 = marked_range.start.0 + relative_range_utf16.end;
-//                         marked_range.start.0 += relative_range_utf16.start;
-//                         marked_range.start =
-//                             snapshot.clip_offset_utf16(marked_range.start, Bias::Left);
-//                         marked_range.end =
-//                             snapshot.clip_offset_utf16(marked_range.end, Bias::Right);
-//                     }
-//                 }
-//                 Some(marked_ranges)
-//             } else if let Some(range_utf16) = range_utf16 {
-//                 let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
-//                 Some(this.selection_replacement_ranges(range_utf16, cx))
-//             } else {
-//                 None
-//             };
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        new_selected_range_utf16: Option<Range<usize>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        // if !self.input_enabled {
+        //     cx.emit(Event::InputIgnored { text: text.into() });
+        //     return;
+        // }
 
-//             let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
-//                 let newest_selection_id = this.selections.newest_anchor().id;
-//                 this.selections
-//                     .all::<OffsetUtf16>(cx)
-//                     .iter()
-//                     .zip(ranges_to_replace.iter())
-//                     .find_map(|(selection, range)| {
-//                         if selection.id == newest_selection_id {
-//                             Some(
-//                                 (range.start.0 as isize - selection.head().0 as isize)
-//                                     ..(range.end.0 as isize - selection.head().0 as isize),
-//                             )
-//                         } else {
-//                             None
-//                         }
-//                     })
-//             });
+        // let transaction = self.transact(cx, |this, cx| {
+        //     let ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx) {
+        //         let snapshot = this.buffer.read(cx).read(cx);
+        //         if let Some(relative_range_utf16) = range_utf16.as_ref() {
+        //             for marked_range in &mut marked_ranges {
+        //                 marked_range.end.0 = marked_range.start.0 + relative_range_utf16.end;
+        //                 marked_range.start.0 += relative_range_utf16.start;
+        //                 marked_range.start =
+        //                     snapshot.clip_offset_utf16(marked_range.start, Bias::Left);
+        //                 marked_range.end =
+        //                     snapshot.clip_offset_utf16(marked_range.end, Bias::Right);
+        //             }
+        //         }
+        //         Some(marked_ranges)
+        //     } else if let Some(range_utf16) = range_utf16 {
+        //         let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+        //         Some(this.selection_replacement_ranges(range_utf16, cx))
+        //     } else {
+        //         None
+        //     };
 
-//             cx.emit(Event::InputHandled {
-//                 utf16_range_to_replace: range_to_replace,
-//                 text: text.into(),
-//             });
+        //     let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
+        //         let newest_selection_id = this.selections.newest_anchor().id;
+        //         this.selections
+        //             .all::<OffsetUtf16>(cx)
+        //             .iter()
+        //             .zip(ranges_to_replace.iter())
+        //             .find_map(|(selection, range)| {
+        //                 if selection.id == newest_selection_id {
+        //                     Some(
+        //                         (range.start.0 as isize - selection.head().0 as isize)
+        //                             ..(range.end.0 as isize - selection.head().0 as isize),
+        //                     )
+        //                 } else {
+        //                     None
+        //                 }
+        //             })
+        //     });
 
-//             if let Some(ranges) = ranges_to_replace {
-//                 this.change_selections(None, cx, |s| s.select_ranges(ranges));
-//             }
+        //     cx.emit(Event::InputHandled {
+        //         utf16_range_to_replace: range_to_replace,
+        //         text: text.into(),
+        //     });
 
-//             let marked_ranges = {
-//                 let snapshot = this.buffer.read(cx).read(cx);
-//                 this.selections
-//                     .disjoint_anchors()
-//                     .iter()
-//                     .map(|selection| {
-//                         selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
-//                     })
-//                     .collect::<Vec<_>>()
-//             };
+        //     if let Some(ranges) = ranges_to_replace {
+        //         this.change_selections(None, cx, |s| s.select_ranges(ranges));
+        //     }
 
-//             if text.is_empty() {
-//                 this.unmark_text(cx);
-//             } else {
-//                 this.highlight_text::<InputComposition>(
-//                     marked_ranges.clone(),
-//                     this.style(cx).composition_mark,
-//                     cx,
-//                 );
-//             }
+        //     let marked_ranges = {
+        //         let snapshot = this.buffer.read(cx).read(cx);
+        //         this.selections
+        //             .disjoint_anchors()
+        //             .iter()
+        //             .map(|selection| {
+        //                 selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
+        //             })
+        //             .collect::<Vec<_>>()
+        //     };
 
-//             this.handle_input(text, cx);
+        //     if text.is_empty() {
+        //         this.unmark_text(cx);
+        //     } else {
+        //         this.highlight_text::<InputComposition>(
+        //             marked_ranges.clone(),
+        //             this.style(cx).composition_mark,
+        //             cx,
+        //         );
+        //     }
 
-//             if let Some(new_selected_range) = new_selected_range_utf16 {
-//                 let snapshot = this.buffer.read(cx).read(cx);
-//                 let new_selected_ranges = marked_ranges
-//                     .into_iter()
-//                     .map(|marked_range| {
-//                         let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
-//                         let new_start = OffsetUtf16(new_selected_range.start + insertion_start);
-//                         let new_end = OffsetUtf16(new_selected_range.end + insertion_start);
-//                         snapshot.clip_offset_utf16(new_start, Bias::Left)
-//                             ..snapshot.clip_offset_utf16(new_end, Bias::Right)
-//                     })
-//                     .collect::<Vec<_>>();
+        //     this.handle_input(text, cx);
 
-//                 drop(snapshot);
-//                 this.change_selections(None, cx, |selections| {
-//                     selections.select_ranges(new_selected_ranges)
-//                 });
-//             }
-//         });
+        //     if let Some(new_selected_range) = new_selected_range_utf16 {
+        //         let snapshot = this.buffer.read(cx).read(cx);
+        //         let new_selected_ranges = marked_ranges
+        //             .into_iter()
+        //             .map(|marked_range| {
+        //                 let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
+        //                 let new_start = OffsetUtf16(new_selected_range.start + insertion_start);
+        //                 let new_end = OffsetUtf16(new_selected_range.end + insertion_start);
+        //                 snapshot.clip_offset_utf16(new_start, Bias::Left)
+        //                     ..snapshot.clip_offset_utf16(new_end, Bias::Right)
+        //             })
+        //             .collect::<Vec<_>>();
 
-//         self.ime_transaction = self.ime_transaction.or(transaction);
-//         if let Some(transaction) = self.ime_transaction {
-//             self.buffer.update(cx, |buffer, cx| {
-//                 buffer.group_until_transaction(transaction, cx);
-//             });
-//         }
+        //         drop(snapshot);
+        //         this.change_selections(None, cx, |selections| {
+        //             selections.select_ranges(new_selected_ranges)
+        //         });
+        //     }
+        // });
 
-//         if self.text_highlights::<InputComposition>(cx).is_none() {
-//             self.ime_transaction.take();
-//         }
-//     }
-// }
+        // self.ime_transaction = self.ime_transaction.or(transaction);
+        // if let Some(transaction) = self.ime_transaction {
+        //     self.buffer.update(cx, |buffer, cx| {
+        //         buffer.group_until_transaction(transaction, cx);
+        //     });
+        // }
+
+        // if self.text_highlights::<InputComposition>(cx).is_none() {
+        //     self.ime_transaction.take();
+        // }
+        todo!()
+    }
+
+    fn bounds_for_range(&self, range_utf16: Range<usize>) -> Option<gpui::Bounds<f32>> {
+        todo!()
+    }
+}
 
 // fn build_style(
 //     settings: &ThemeSettings,
