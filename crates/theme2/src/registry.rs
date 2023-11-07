@@ -52,7 +52,10 @@ impl ThemeRegistry {
                     status: StatusColors::default(),
                     git: GitStatusColors::default(),
                     player: PlayerColors::default(),
-                    syntax: SyntaxTheme::default_dark(),
+                    syntax: match user_theme.appearance {
+                        Appearance::Light => SyntaxTheme::default_light(),
+                        Appearance::Dark => SyntaxTheme::default_dark(),
+                    },
                 },
             }
         }));
@@ -81,7 +84,7 @@ impl Default for ThemeRegistry {
         };
 
         this.insert_theme_families([zed_pro_family()]);
-        this.insert_user_theme_familes(crate::all_imported_themes());
+        this.insert_user_theme_familes(crate::all_user_themes());
 
         this
     }
