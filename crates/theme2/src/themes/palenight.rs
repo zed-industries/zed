@@ -2,7 +2,7 @@ use gpui::rgba;
 
 use crate::{
     default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
-    SyntaxTheme, SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 pub fn palenight() -> ThemeFamily {
@@ -11,7 +11,7 @@ pub fn palenight() -> ThemeFamily {
         name: "Palenight".into(),
         author: "Olaolu Olawuyi (whizkydee)".into(),
         themes: vec![
-            ThemeVariant {
+            Theme {
                 id: "39fdf216-2c76-4b3d-b368-7c31f479d524".into(),
                 name: "Palenight".into(),
                 appearance: Appearance::Dark,
@@ -178,7 +178,7 @@ pub fn palenight() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "5ff8120f-37e9-4ad3-8bd0-c3e449ff1aa1".into(),
                 name: "Palenight Operator".into(),
                 appearance: Appearance::Dark,
@@ -345,7 +345,7 @@ pub fn palenight() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "cff26efb-72f8-4496-b33b-991080a47f1c".into(),
                 name: "Palenight (Mild Contrast)".into(),
                 appearance: Appearance::Dark,

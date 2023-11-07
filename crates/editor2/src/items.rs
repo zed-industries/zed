@@ -27,7 +27,7 @@ use std::{
     sync::Arc,
 };
 use text::Selection;
-use theme::{ActiveTheme, ThemeVariant};
+use theme::{ActiveTheme, Theme};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
@@ -777,7 +777,7 @@ impl Item for Editor {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
-    fn breadcrumbs(&self, variant: &ThemeVariant, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, variant: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         todo!();
         // let cursor = self.selections.newest_anchor().head();
         // let multibuffer = &self.buffer().read(cx);

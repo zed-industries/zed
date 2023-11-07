@@ -2,7 +2,7 @@ use gpui::rgba;
 
 use crate::{
     default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
-    SyntaxTheme, SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 pub fn nord() -> ThemeFamily {
@@ -10,7 +10,7 @@ pub fn nord() -> ThemeFamily {
         id: "3295b94b-731f-41a8-8d5e-ad02638f8e0d".into(),
         name: "Nord".into(),
         author: "Sven Greb (svengreb)".into(),
-        themes: vec![ThemeVariant {
+        themes: vec![Theme {
             id: "dfdfd9f6-bc57-46dd-b919-42b18df35bdd".into(),
             name: "Nord".into(),
             appearance: Appearance::Dark,

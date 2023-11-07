@@ -2,7 +2,7 @@ use gpui::rgba;
 
 use crate::{
     default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
-    SyntaxTheme, SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 pub fn rose_pine() -> ThemeFamily {
@@ -11,7 +11,7 @@ pub fn rose_pine() -> ThemeFamily {
         name: "Rose Pine".into(),
         author: "Rosé Pine".into(),
         themes: vec![
-            ThemeVariant {
+            Theme {
                 id: "80a8f5dd-2ab5-4ee7-9b25-a60c8513234e".into(),
                 name: "Rose Pine".into(),
                 appearance: Appearance::Dark,
@@ -178,7 +178,7 @@ pub fn rose_pine() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "fe9e3c9e-954e-4f8e-849e-451ba5f6ceca".into(),
                 name: "Rose Moon".into(),
                 appearance: Appearance::Dark,
@@ -345,7 +345,7 @@ pub fn rose_pine() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "00cc7f69-9658-443e-b643-1c8dbffa047d".into(),
                 name: "Rose Pine Dawn".into(),
                 appearance: Appearance::Light,

@@ -2,7 +2,7 @@ use gpui::rgba;
 
 use crate::{
     default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
-    SyntaxTheme, SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 pub fn andromeda() -> ThemeFamily {
@@ -11,7 +11,7 @@ pub fn andromeda() -> ThemeFamily {
         name: "Andromeda".into(),
         author: "Eliver Lara (EliverLara)".into(),
         themes: vec![
-            ThemeVariant {
+            Theme {
                 id: "3bfb3b6e-365a-4cd2-9a80-2d2c81434729".into(),
                 name: "Andromeda".into(),
                 appearance: Appearance::Dark,
@@ -178,7 +178,7 @@ pub fn andromeda() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "7bc92ac8-152c-46d5-b346-df68e4db2e7c".into(),
                 name: "Andromeda Bordered".into(),
                 appearance: Appearance::Dark,

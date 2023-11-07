@@ -2,7 +2,7 @@ use gpui::rgba;
 
 use crate::{
     default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
-    SyntaxTheme, SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 pub fn ayu() -> ThemeFamily {
@@ -11,7 +11,7 @@ pub fn ayu() -> ThemeFamily {
         name: "Ayu".into(),
         author: "dempfi (Ike Ku)".into(),
         themes: vec![
-            ThemeVariant {
+            Theme {
                 id: "733aeb9b-98fd-4492-984e-d71540daf72e".into(),
                 name: "Ayu Light".into(),
                 appearance: Appearance::Light,
@@ -178,7 +178,7 @@ pub fn ayu() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "50f68427-2e1d-4bf1-981a-d08c6b38e846".into(),
                 name: "Ayu Mirage".into(),
                 appearance: Appearance::Dark,
@@ -345,7 +345,7 @@ pub fn ayu() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "22d8dede-57da-46e1-946a-16876679b4d2".into(),
                 name: "Ayu Dark".into(),
                 appearance: Appearance::Dark,

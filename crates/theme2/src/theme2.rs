@@ -33,11 +33,11 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub trait ActiveTheme {
-    fn theme(&self) -> &Arc<ThemeVariant>;
+    fn theme(&self) -> &Arc<Theme>;
 }
 
 impl ActiveTheme for AppContext {
-    fn theme(&self) -> &Arc<ThemeVariant> {
+    fn theme(&self) -> &Arc<Theme> {
         &ThemeSettings::get_global(self).active_theme
     }
 }
@@ -46,20 +46,20 @@ pub struct ThemeFamily {
     pub id: String,
     pub name: SharedString,
     pub author: SharedString,
-    pub themes: Vec<ThemeVariant>,
+    pub themes: Vec<Theme>,
     pub scales: ColorScales,
 }
 
 impl ThemeFamily {}
 
-pub struct ThemeVariant {
+pub struct Theme {
     pub id: String,
     pub name: SharedString,
     pub appearance: Appearance,
     pub styles: ThemeStyles,
 }
 
-impl ThemeVariant {
+impl Theme {
     /// Returns the [`ThemeColors`] for the theme.
     #[inline(always)]
     pub fn players(&self) -> &PlayerColors {

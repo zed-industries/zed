@@ -2,7 +2,7 @@ use gpui::rgba;
 
 use crate::{
     default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
-    SyntaxTheme, SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 pub fn night_owl() -> ThemeFamily {
@@ -11,7 +11,7 @@ pub fn night_owl() -> ThemeFamily {
         name: "Night Owl".into(),
         author: "Sarah Drasner (sdras)".into(),
         themes: vec![
-            ThemeVariant {
+            Theme {
                 id: "e5de91ed-fc95-46fb-a60b-ebd0602d04c7".into(),
                 name: "Night Owl".into(),
                 appearance: Appearance::Dark,
@@ -178,7 +178,7 @@ pub fn night_owl() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "998fc053-40c1-4a32-a31f-a17c9c07949a".into(),
                 name: "Night Owl Light".into(),
                 appearance: Appearance::Light,

@@ -2,7 +2,7 @@ use gpui::rgba;
 
 use crate::{
     default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
-    SyntaxTheme, SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 pub fn synthwave_84() -> ThemeFamily {
@@ -10,7 +10,7 @@ pub fn synthwave_84() -> ThemeFamily {
         id: "161a14a0-533c-4df1-b909-2bac37ac807d".into(),
         name: "Synthwave 84".into(),
         author: "Robb Owen (robb0wen)".into(),
-        themes: vec![ThemeVariant {
+        themes: vec![Theme {
             id: "7a7102b7-8778-4c24-ba79-7407857b4f8c".into(),
             name: "Synthwave 84".into(),
             appearance: Appearance::Dark,

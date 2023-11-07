@@ -2,7 +2,7 @@ use gpui::rgba;
 
 use crate::{
     default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
-    SyntaxTheme, SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 pub fn gruvbox() -> ThemeFamily {
@@ -11,7 +11,7 @@ pub fn gruvbox() -> ThemeFamily {
         name: "Gruvbox".into(),
         author: "morhetz".into(),
         themes: vec![
-            ThemeVariant {
+            Theme {
                 id: "0db938b2-2267-453b-af84-f82c5f3400e7".into(),
                 name: "Gruvbox Dark Hard".into(),
                 appearance: Appearance::Dark,
@@ -178,7 +178,7 @@ pub fn gruvbox() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "8e1a1896-ed0f-40be-b127-6c389eacc9f1".into(),
                 name: "Gruvbox Dark Medium".into(),
                 appearance: Appearance::Dark,
@@ -345,7 +345,7 @@ pub fn gruvbox() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "94410e6f-f4c4-4669-bb4d-5a20b4e4b1f3".into(),
                 name: "Gruvbox Dark Soft".into(),
                 appearance: Appearance::Dark,
@@ -512,7 +512,7 @@ pub fn gruvbox() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "e4a58582-478a-4934-ad73-135e23a0d66e".into(),
                 name: "Gruvbox Light Hard".into(),
                 appearance: Appearance::Light,
@@ -679,7 +679,7 @@ pub fn gruvbox() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "0e875280-93fa-4c76-8874-f858c7d985c1".into(),
                 name: "Gruvbox Light Medium".into(),
                 appearance: Appearance::Light,
@@ -846,7 +846,7 @@ pub fn gruvbox() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "914dbe6f-bc0f-4e6f-8d8c-5f4cabc1ca2d".into(),
                 name: "Gruvbox Light Soft".into(),
                 appearance: Appearance::Light,

@@ -21,7 +21,7 @@ use lsp::DiagnosticSeverity;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
-use theme::ThemeVariant;
+use theme::Theme;
 use wrap_map::WrapMap;
 
 pub use block_map::{
@@ -505,7 +505,7 @@ impl DisplaySnapshot {
         &'a self,
         display_rows: Range<u32>,
         language_aware: bool,
-        theme: &'a ThemeVariant,
+        theme: &'a Theme,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
         self.chunks(
             display_rows,

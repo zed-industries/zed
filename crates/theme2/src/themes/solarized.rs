@@ -2,7 +2,7 @@ use gpui::rgba;
 
 use crate::{
     default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
-    SyntaxTheme, SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 pub fn solarized() -> ThemeFamily {
@@ -11,7 +11,7 @@ pub fn solarized() -> ThemeFamily {
         name: "Solarized".into(),
         author: "Ethan Schoonover (altercation)".into(),
         themes: vec![
-            ThemeVariant {
+            Theme {
                 id: "265f93c5-c8e7-4962-b083-8550f4b5c2ff".into(),
                 name: "Solarized Dark".into(),
                 appearance: Appearance::Dark,
@@ -178,7 +178,7 @@ pub fn solarized() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "40e2070d-5846-4182-9dc9-bf56badf019f".into(),
                 name: "Solarized Light".into(),
                 appearance: Appearance::Light,
