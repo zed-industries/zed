@@ -8363,9 +8363,9 @@ impl Editor {
     //             .max_point()
     //     }
 
-    //     pub fn text(&self, cx: &AppContext) -> String {
-    //         self.buffer.read(cx).read(cx).text()
-    //     }
+    pub fn text(&self, cx: &AppContext) -> String {
+        self.buffer.read(cx).read(cx).text()
+    }
 
     //     pub fn set_text(&mut self, text: impl Into<Arc<str>>, cx: &mut ViewContext<Self>) {
     //         self.transact(cx, |this, cx| {
@@ -9185,6 +9185,10 @@ impl Editor {
     //         });
     //         supports
     //     }
+
+    fn focus(&self, cx: &mut WindowContext) {
+        cx.focus(&self.focus_handle)
+    }
 }
 
 pub trait CollaborationHub {
