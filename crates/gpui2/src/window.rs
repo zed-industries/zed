@@ -679,17 +679,6 @@ impl<'a> WindowContext<'a> {
         self.window.requested_cursor_style = Some(style)
     }
 
-    pub fn set_input_handler<V>(&mut self, handler: WeakView<V>, cx: ViewContext<V>)
-    where
-        V: InputHandler + 'static,
-    {
-        self.window.requested_input_handler = Some(Box::new(WindowInputHandler {
-            cx: cx.app.this.clone(),
-            window: cx.window_handle(),
-            handler,
-        }))
-    }
-
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
     pub fn stack<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -2006,6 +1995,19 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 handler(view, event, phase, cx);
             })
         });
+    }
+}
+
+impl<V> ViewContext<'_, V>
+where
+    V: InputHandler + 'static,
+{
+    pub fn handle_text_input(&mut self) {
+        self.window.requested_input_handler = Some(Box::new(WindowInputHandler {
+            cx: self.app.this.clone(),
+            window: self.window_handle(),
+            handler: self.view().downgrade(),
+        }))
     }
 }
 

@@ -2624,7 +2624,7 @@ impl Element<Editor> for EditorElement {
         });
 
         if editor.focus_handle.is_focused(cx) {
-            cx.set_input_handler(editor.handle);
+            cx.handle_text_input();
         }
 
         cx.with_content_mask(ContentMask { bounds }, |cx| {
