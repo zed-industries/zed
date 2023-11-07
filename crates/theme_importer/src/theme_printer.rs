@@ -140,7 +140,6 @@ impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
             ("element_active", self.0.element_active),
             ("element_selected", self.0.element_selected),
             ("element_disabled", self.0.element_disabled),
-            ("element_placeholder_text", self.0.element_placeholder_text),
             ("drop_target_background", self.0.drop_target_background),
             ("ghost_element_background", self.0.ghost_element_background),
             ("ghost_element_hover", self.0.ghost_element_hover),
