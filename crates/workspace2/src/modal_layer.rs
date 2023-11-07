@@ -1,7 +1,7 @@
 use std::{any::TypeId, sync::Arc};
 
 use gpui::{
-    div, hsla, px, red, AnyView, AppContext, Component, DispatchPhase, Div, ParentElement, Render,
+    div, px, AnyView, AppContext, Component, DispatchPhase, Div, ParentElement, Render,
     StatelessInteractive, Styled, View, ViewContext,
 };
 use ui::v_stack;
@@ -72,21 +72,8 @@ impl ModalLayer {
         Self { open_modal: None }
     }
 
-    // Workspace
-    // - ModalLayer parent
-    // - - container
-    // - - - modal
-    // - - - content of the modal
-    // - - content of the workspace
-
-    // app
-    // workspace
-    // container some layer that contains all modals and is 100% wide and high
-    // modal (this has a shadow, some witdht)
-    // whatever
-
     pub fn render(&self, workspace: &Workspace, cx: &ViewContext<Workspace>) -> Div<Workspace> {
-        let mut parent = div().relative().bg(red()).size_full();
+        let mut parent = div().relative().size_full();
 
         for (_, action) in cx.global::<ModalRegistry>().registered_modals.iter() {
             parent = (action)(parent);
@@ -104,11 +91,7 @@ impl ModalLayer {
                 .z_index(400);
 
             // transparent layer
-            let container2 = v_stack()
-                .bg(hsla(0.5, 0.5, 0.5, 0.5))
-                .h(px(0.0))
-                .relative()
-                .top_20();
+            let container2 = v_stack().h(px(0.0)).relative().top_20();
 
             parent.child(container1.child(container2.child(open_modal.clone())))
         })

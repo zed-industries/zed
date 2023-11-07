@@ -63,7 +63,13 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Returns the [`ThemeColors`] for the theme.
+    /// Returns the [`SystemColors`] for the theme.
+    #[inline(always)]
+    pub fn system(&self) -> &SystemColors {
+        &self.styles.system
+    }
+
+    /// Returns the [`PlayerColors`] for the theme.
     #[inline(always)]
     pub fn players(&self) -> &PlayerColors {
         &self.styles.player

@@ -36,10 +36,10 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, px, relative, AnyElement, AppContext, BackgroundExecutor, Context,
-    DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle, FontStyle, FontWeight, Hsla,
-    Model, Pixels, Render, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    actions, div, hsla, px, relative, rems, AnyElement, AppContext, BackgroundExecutor, Context,
+    DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle, FontFeatures, FontStyle,
+    FontWeight, Hsla, Model, Pixels, Render, Styled, Subscription, Task, TextStyle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -2162,14 +2162,14 @@ impl Editor {
     //         self.collaboration_hub = Some(hub);
     //     }
 
-    //     pub fn set_placeholder_text(
-    //         &mut self,
-    //         placeholder_text: impl Into<Arc<str>>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.placeholder_text = Some(placeholder_text.into());
-    //         cx.notify();
-    //     }
+    pub fn set_placeholder_text(
+        &mut self,
+        placeholder_text: impl Into<Arc<str>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.placeholder_text = Some(placeholder_text.into());
+        cx.notify();
+    }
 
     //     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
     //         self.cursor_shape = cursor_shape;
@@ -9365,18 +9365,42 @@ impl Render for Editor {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.buffer_font.family.clone(),
-            font_features: settings.buffer_font.features,
-            font_size: settings.buffer_font_size.into(),
-            font_weight: FontWeight::NORMAL,
-            font_style: FontStyle::Normal,
-            line_height: relative(settings.buffer_line_height.value()),
-            underline: None,
+        let text_style = match self.mode {
+            EditorMode::SingleLine => {
+                TextStyle {
+                    color: cx.theme().colors().text,
+                    font_family: "Zed Sans".into(), // todo!()
+                    font_features: FontFeatures::default(),
+                    font_size: rems(1.0).into(),
+                    font_weight: FontWeight::NORMAL,
+                    font_style: FontStyle::Normal,
+                    line_height: relative(1.3).into(), // TODO relative(settings.buffer_line_height.value()),
+                    underline: None,
+                }
+            }
+
+            EditorMode::AutoHeight { max_lines } => todo!(),
+
+            EditorMode::Full => TextStyle {
+                color: cx.theme().colors().text,
+                font_family: settings.buffer_font.family.clone(),
+                font_features: settings.buffer_font.features,
+                font_size: settings.buffer_font_size.into(),
+                font_weight: FontWeight::NORMAL,
+                font_style: FontStyle::Normal,
+                line_height: relative(settings.buffer_line_height.value()),
+                underline: None,
+            },
         };
+
+        let background = match self.mode {
+            EditorMode::SingleLine => cx.theme().system().transparent,
+            EditorMode::AutoHeight { max_lines } => cx.theme().system().transparent,
+            EditorMode::Full => cx.theme().colors().editor_background,
+        };
+
         EditorElement::new(EditorStyle {
-            background: cx.theme().colors().editor_background,
+            background,
             local_player: cx.theme().players().local(),
             text: text_style,
             scrollbar_width: px(12.),

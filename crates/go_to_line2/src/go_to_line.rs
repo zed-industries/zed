@@ -1,15 +1,11 @@
+use editor::Editor;
 use gpui::{
-    actions, div, px, red, AppContext, Div, ParentElement, Render, Styled, ViewContext,
-    VisualContext,
-};
-use ui::modal;
-use editor::{scroll::autoscroll::Autoscroll, Editor};
-use gpui::{
-    actions, div, px, red, AppContext, Div, EventEmitter, ParentElement, Render, Styled, View,
+    actions, div, AppContext, Div, EventEmitter, ParentElement, Render, SharedString, Styled, View,
     ViewContext, VisualContext,
 };
-use text::{Bias, Point};
-use ui::modal;
+use text::Point;
+use theme::ActiveTheme;
+use ui::{h_stack, modal, v_stack, Label, LabelColor};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::ModalRegistry;
 
@@ -33,6 +29,7 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct GoToLine {
     line_editor: View<Editor>,
+    #[allow(unused)] // todo!()
     active_editor: View<Editor>,
 }
 
@@ -46,7 +43,11 @@ impl EventEmitter for GoToLine {
 
 impl GoToLine {
     pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
-        let line_editor = cx.build_view(|cx| Editor::single_line(cx));
+        let line_editor = cx.build_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text("Find something", cx);
+            editor
+        });
         cx.subscribe(&line_editor, Self::on_line_editor_event)
             .detach();
 
@@ -65,26 +66,27 @@ impl GoToLine {
         match event {
             editor::Event::Blurred => cx.emit(Event::Dismissed),
             editor::Event::BufferEdited { .. } => {
-                if let Some(point) = self.point_from_query(cx) {
-                    // todo!()
-                    // self.active_editor.update(cx, |active_editor, cx| {
-                    //     let snapshot = active_editor.snapshot(cx).display_snapshot;
-                    //     let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-                    //     let display_point = point.to_display_point(&snapshot);
-                    //     let row = display_point.row();
-                    //     active_editor.highlight_rows(Some(row..row + 1));
-                    //     active_editor.request_autoscroll(Autoscroll::center(), cx);
-                    // });
-                    cx.notify();
-                }
+                //  if let Some(point) = self.point_from_query(cx) {
+                // todo!()
+                // self.active_editor.update(cx, |active_editor, cx| {
+                //     let snapshot = active_editor.snapshot(cx).display_snapshot;
+                //     let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
+                //     let display_point = point.to_display_point(&snapshot);
+                //     let row = display_point.row();
+                //     active_editor.highlight_rows(Some(row..row + 1));
+                //     active_editor.request_autoscroll(Autoscroll::center(), cx);
+                // });
+                //       cx.notify();
+                //  }
             }
             _ => {}
         }
     }
 
+    #[allow(unused)]
     fn point_from_query(&self, cx: &ViewContext<Self>) -> Option<Point> {
         // todo!()
-        let line_editor = "2:2"; //self.line_editor.read(cx).text(cx);
+        let line_editor = self.line_editor.read(cx).text(cx);
         let mut components = line_editor
             .splitn(2, FILE_ROW_COLUMN_DELIMITER)
             .map(str::trim)
@@ -97,22 +99,26 @@ impl GoToLine {
         ))
     }
 
-    fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Dismissed);
-    }
+    // fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+    //     cx.emit(Event::Dismissed);
+    // }
 
-    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-        if let Some(point) = self.point_from_query(cx) {
-            self.active_editor.update(cx, |active_editor, cx| {
-                let snapshot = active_editor.snapshot(cx).display_snapshot;
-                let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-                active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                    s.select_ranges([point..point])
-                });
-            });
-        }
+    // fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+    //     if let Some(point) = self.point_from_query(cx) {
+    //         self.active_editor.update(cx, |active_editor, cx| {
+    //             let snapshot = active_editor.snapshot(cx).display_snapshot;
+    //             let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
+    //             active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+    //                 s.select_ranges([point..point])
+    //             });
+    //         });
+    //     }
 
-        cx.emit(Event::Dismissed);
+    //     cx.emit(Event::Dismissed);
+    // }
+
+    fn status_text(&self) -> SharedString {
+        "Default text".into()
     }
 }
 
@@ -120,7 +126,31 @@ impl Render for GoToLine {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        modal(cx).child(self.line_editor.clone()).child("blah blah")
+        modal(cx).w_96().child(
+            v_stack()
+                .px_1()
+                .pt_0p5()
+                .gap_px()
+                .child(
+                    v_stack()
+                        .py_0p5()
+                        .px_1()
+                        .child(div().px_1().py_0p5().child(self.line_editor.clone())),
+                )
+                .child(
+                    div()
+                        .h_px()
+                        .w_full()
+                        .bg(cx.theme().colors().element_background),
+                )
+                .child(
+                    h_stack()
+                        .justify_between()
+                        .px_2()
+                        .py_1()
+                        .child(Label::new(self.status_text()).color(LabelColor::Muted)),
+                ),
+        )
     }
 }
 
