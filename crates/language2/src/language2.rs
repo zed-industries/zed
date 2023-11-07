@@ -43,7 +43,7 @@ use std::{
     },
 };
 use syntax_map::SyntaxSnapshot;
-use theme::{SyntaxTheme, ThemeVariant};
+use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
 use unicase::UniCase;
 use util::{http::HttpClient, paths::PathExt};
@@ -643,7 +643,7 @@ struct LanguageRegistryState {
     next_available_language_id: AvailableLanguageId,
     loading_languages: HashMap<AvailableLanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
     subscription: (watch::Sender<()>, watch::Receiver<()>),
-    theme: Option<Arc<ThemeVariant>>,
+    theme: Option<Arc<Theme>>,
     version: usize,
     reload_count: usize,
 }
@@ -744,7 +744,7 @@ impl LanguageRegistry {
         self.state.read().reload_count
     }
 
-    pub fn set_theme(&self, theme: Arc<ThemeVariant>) {
+    pub fn set_theme(&self, theme: Arc<Theme>) {
         let mut state = self.state.write();
         state.theme = Some(theme.clone());
         for language in &state.languages {

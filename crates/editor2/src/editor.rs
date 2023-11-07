@@ -36,9 +36,9 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    div, AnyElement, AppContext, BackgroundExecutor, Context, Div, Element, EventEmitter,
-    FocusHandle, Hsla, Model, Pixels, Render, Styled, Subscription, Task, TextStyle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    div, px, AnyElement, AppContext, BackgroundExecutor, Context, Div, Element, Entity,
+    EventEmitter, FocusHandle, FontStyle, FontWeight, Hsla, Model, Pixels, Render, Styled,
+    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -53,7 +53,7 @@ use language::{
     SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
-use lsp::{Documentation, LanguageServerId};
+use lsp::{DiagnosticSeverity, Documentation, LanguageServerId};
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
@@ -72,7 +72,7 @@ use smallvec::SmallVec;
 use std::{
     any::TypeId,
     borrow::Cow,
-    cmp::{self, Reverse},
+    cmp::{self, Ordering, Reverse},
     ops::{ControlFlow, Deref, DerefMut, Range},
     path::Path,
     sync::Arc,
@@ -81,7 +81,7 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::Rope;
-use theme::ThemeColors;
+use theme::{ActiveTheme, PlayerColor, Theme, ThemeColors, ThemeSettings};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, SplitDirection, ViewId, Workspace};
 
@@ -597,11 +597,11 @@ pub enum SoftWrap {
 
 #[derive(Clone)]
 pub struct EditorStyle {
+    pub background: Hsla,
+    pub local_player: PlayerColor,
     pub text: TextStyle,
     pub line_height_scalar: f32,
-    // pub placeholder_text: Option<TextStyle>,
-    //  pub theme: theme::Editor,
-    pub theme_id: usize,
+    pub scrollbar_width: Pixels,
 }
 
 type CompletionId = usize;
@@ -634,7 +634,6 @@ pub struct Editor {
     // override_text_style: Option<Box<OverrideTextStyle>>,
     project: Option<Model<Project>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
-    focused: bool,
     blink_manager: Model<BlinkManager>,
     pub show_local_selections: bool,
     mode: EditorMode,
@@ -1882,7 +1881,7 @@ impl Editor {
     ) -> Self {
         // let editor_view_id = cx.view_id();
         let style = cx.text_style();
-        let font_size = style.font_size * cx.rem_size();
+        let font_size = style.font_size.to_pixels(cx.rem_size());
         let display_map = cx.build_model(|cx| {
             // todo!()
             // let settings = settings::get::<ThemeSettings>(cx);
@@ -1940,7 +1939,6 @@ impl Editor {
             // get_field_editor_theme,
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
-            focused: false,
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
@@ -2211,7 +2209,7 @@ impl Editor {
         old_cursor_position: &Anchor,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.focused && self.leader_peer_id.is_none() {
+        if self.focus_handle.is_focused(cx) && self.leader_peer_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(
                     &self.selections.disjoint_anchors(),
@@ -2458,7 +2456,7 @@ impl Editor {
         click_count: usize,
         cx: &mut ViewContext<Self>,
     ) {
-        if !self.focused {
+        if !self.focus_handle.is_focused(cx) {
             cx.focus(&self.focus_handle);
         }
 
@@ -2524,7 +2522,7 @@ impl Editor {
         goal_column: u32,
         cx: &mut ViewContext<Self>,
     ) {
-        if !self.focused {
+        if !self.focus_handle.is_focused(cx) {
             cx.focus(&self.focus_handle);
         }
 
@@ -3631,7 +3629,7 @@ impl Editor {
                         _ => return,
                     }
 
-                    if this.focused && menu.is_some() {
+                    if this.focus_handle.is_focused(cx) && menu.is_some() {
                         let menu = menu.unwrap();
                         *context_menu = Some(ContextMenu::Completions(menu));
                         drop(context_menu);
@@ -4059,12 +4057,12 @@ impl Editor {
 
                     this.highlight_background::<DocumentHighlightRead>(
                         read_ranges,
-                        |theme| todo!("theme.editor.document_highlight_read_background"),
+                        |theme| theme.editor_document_highlight_read_background,
                         cx,
                     );
                     this.highlight_background::<DocumentHighlightWrite>(
                         write_ranges,
-                        |theme| todo!("theme.editor.document_highlight_write_background"),
+                        |theme| theme.editor_document_highlight_write_background,
                         cx,
                     );
                     cx.notify();
@@ -8445,13 +8443,13 @@ impl Editor {
     //         }
     //     }
 
-    //     pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
-    //         self.highlighted_rows = rows;
-    //     }
+    pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
+        self.highlighted_rows = rows;
+    }
 
-    //     pub fn highlighted_rows(&self) -> Option<Range<u32>> {
-    //         self.highlighted_rows.clone()
-    //     }
+    pub fn highlighted_rows(&self) -> Option<Range<u32>> {
+        self.highlighted_rows.clone()
+    }
 
     pub fn highlight_background<T: 'static>(
         &mut self,
@@ -8540,43 +8538,43 @@ impl Editor {
     //             })
     //     }
 
-    //     pub fn background_highlights_in_range(
-    //         &self,
-    //         search_range: Range<Anchor>,
-    //         display_snapshot: &DisplaySnapshot,
-    //         theme: &Theme,
-    //     ) -> Vec<(Range<DisplayPoint>, Color)> {
-    //         let mut results = Vec::new();
-    //         for (color_fetcher, ranges) in self.background_highlights.values() {
-    //             let color = color_fetcher(theme);
-    //             let start_ix = match ranges.binary_search_by(|probe| {
-    //                 let cmp = probe
-    //                     .end
-    //                     .cmp(&search_range.start, &display_snapshot.buffer_snapshot);
-    //                 if cmp.is_gt() {
-    //                     Ordering::Greater
-    //                 } else {
-    //                     Ordering::Less
-    //                 }
-    //             }) {
-    //                 Ok(i) | Err(i) => i,
-    //             };
-    //             for range in &ranges[start_ix..] {
-    //                 if range
-    //                     .start
-    //                     .cmp(&search_range.end, &display_snapshot.buffer_snapshot)
-    //                     .is_ge()
-    //                 {
-    //                     break;
-    //                 }
+    pub fn background_highlights_in_range(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        theme: &ThemeColors,
+    ) -> Vec<(Range<DisplayPoint>, Hsla)> {
+        let mut results = Vec::new();
+        for (color_fetcher, ranges) in self.background_highlights.values() {
+            let color = color_fetcher(theme);
+            let start_ix = match ranges.binary_search_by(|probe| {
+                let cmp = probe
+                    .end
+                    .cmp(&search_range.start, &display_snapshot.buffer_snapshot);
+                if cmp.is_gt() {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }) {
+                Ok(i) | Err(i) => i,
+            };
+            for range in &ranges[start_ix..] {
+                if range
+                    .start
+                    .cmp(&search_range.end, &display_snapshot.buffer_snapshot)
+                    .is_ge()
+                {
+                    break;
+                }
 
-    //                 let start = range.start.to_display_point(&display_snapshot);
-    //                 let end = range.end.to_display_point(&display_snapshot);
-    //                 results.push((start..end, color))
-    //             }
-    //         }
-    //         results
-    //     }
+                let start = range.start.to_display_point(&display_snapshot);
+                let end = range.end.to_display_point(&display_snapshot);
+                results.push((start..end, color))
+            }
+        }
+        results
+    }
 
     //     pub fn background_highlight_row_ranges<T: 'static>(
     //         &self,
@@ -8693,9 +8691,9 @@ impl Editor {
         }
     }
 
-    //     pub fn show_local_cursors(&self, cx: &AppContext) -> bool {
-    //         self.blink_manager.read(cx).visible() && self.focused
-    //     }
+    pub fn show_local_cursors(&self, cx: &WindowContext) -> bool {
+        self.blink_manager.read(cx).visible() && self.focus_handle.is_focused(cx)
+    }
 
     fn on_buffer_changed(&mut self, _: Model<MultiBuffer>, cx: &mut ViewContext<Self>) {
         cx.notify();
@@ -9325,10 +9323,23 @@ impl Render for Editor {
     type Element = EditorElement;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_features: settings.buffer_font.features,
+            font_size: settings.buffer_font_size.into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: Default::default(),
+            underline: None,
+        };
         EditorElement::new(EditorStyle {
-            text: cx.text_style(),
-            line_height_scalar: 1.,
-            theme_id: 0,
+            background: cx.theme().colors().editor_background,
+            local_player: cx.theme().players().local(),
+            text: text_style,
+            line_height_scalar: settings.buffer_line_height.value(),
+            scrollbar_width: px(12.),
         })
     }
 }
@@ -9951,23 +9962,19 @@ pub fn highlight_diagnostic_message(
     (message_without_backticks, highlights)
 }
 
-// pub fn diagnostic_style(
-//     severity: DiagnosticSeverity,
-//     valid: bool,
-//     theme: &theme::Editor,
-// ) -> DiagnosticStyle {
-//     match (severity, valid) {
-//         (DiagnosticSeverity::ERROR, true) => theme.error_diagnostic.clone(),
-//         (DiagnosticSeverity::ERROR, false) => theme.invalid_error_diagnostic.clone(),
-//         (DiagnosticSeverity::WARNING, true) => theme.warning_diagnostic.clone(),
-//         (DiagnosticSeverity::WARNING, false) => theme.invalid_warning_diagnostic.clone(),
-//         (DiagnosticSeverity::INFORMATION, true) => theme.information_diagnostic.clone(),
-//         (DiagnosticSeverity::INFORMATION, false) => theme.invalid_information_diagnostic.clone(),
-//         (DiagnosticSeverity::HINT, true) => theme.hint_diagnostic.clone(),
-//         (DiagnosticSeverity::HINT, false) => theme.invalid_hint_diagnostic.clone(),
-//         _ => theme.invalid_hint_diagnostic.clone(),
-//     }
-// }
+pub fn diagnostic_style(severity: DiagnosticSeverity, valid: bool, theme: &Theme) -> Hsla {
+    match (severity, valid) {
+        (DiagnosticSeverity::ERROR, true) => theme.status().error,
+        (DiagnosticSeverity::ERROR, false) => theme.status().error,
+        (DiagnosticSeverity::WARNING, true) => theme.status().warning,
+        (DiagnosticSeverity::WARNING, false) => theme.status().warning,
+        (DiagnosticSeverity::INFORMATION, true) => theme.status().info,
+        (DiagnosticSeverity::INFORMATION, false) => theme.status().info,
+        (DiagnosticSeverity::HINT, true) => theme.status().info,
+        (DiagnosticSeverity::HINT, false) => theme.status().info,
+        _ => theme.status().ignored,
+    }
+}
 
 // pub fn combine_syntax_and_fuzzy_match_highlights(
 //     text: &str,

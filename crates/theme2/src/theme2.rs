@@ -5,6 +5,10 @@ mod registry;
 mod scale;
 mod settings;
 mod syntax;
+mod themes;
+mod user_theme;
+
+use std::sync::Arc;
 
 use ::settings::Settings;
 pub use colors::*;
@@ -14,10 +18,13 @@ pub use registry::*;
 pub use scale::*;
 pub use settings::*;
 pub use syntax::*;
+pub use themes::*;
+pub use user_theme::*;
 
 use gpui::{AppContext, Hsla, SharedString};
+use serde::Deserialize;
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
 pub enum Appearance {
     Light,
     Dark,
@@ -29,35 +36,39 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub trait ActiveTheme {
-    fn theme(&self) -> &ThemeVariant;
+    fn theme(&self) -> &Arc<Theme>;
 }
 
 impl ActiveTheme for AppContext {
-    fn theme(&self) -> &ThemeVariant {
+    fn theme(&self) -> &Arc<Theme> {
         &ThemeSettings::get_global(self).active_theme
     }
 }
 
 pub struct ThemeFamily {
-    #[allow(dead_code)]
-    pub(crate) id: String,
+    pub id: String,
     pub name: SharedString,
     pub author: SharedString,
-    pub themes: Vec<ThemeVariant>,
+    pub themes: Vec<Theme>,
     pub scales: ColorScales,
 }
 
 impl ThemeFamily {}
 
-pub struct ThemeVariant {
-    #[allow(dead_code)]
-    pub(crate) id: String,
+pub struct Theme {
+    pub id: String,
     pub name: SharedString,
     pub appearance: Appearance,
     pub styles: ThemeStyles,
 }
 
-impl ThemeVariant {
+impl Theme {
+    /// Returns the [`ThemeColors`] for the theme.
+    #[inline(always)]
+    pub fn players(&self) -> &PlayerColors {
+        &self.styles.player
+    }
+
     /// Returns the [`ThemeColors`] for the theme.
     #[inline(always)]
     pub fn colors(&self) -> &ThemeColors {

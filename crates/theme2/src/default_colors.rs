@@ -59,24 +59,24 @@ impl Default for PlayerColors {
     fn default() -> Self {
         Self(vec![
             PlayerColor {
-                cursor: hsla(0.0, 0.0, 0.0, 0.0),
-                background: hsla(0.0, 0.0, 0.0, 0.0),
-                selection: hsla(0.0, 0.0, 0.0, 0.0),
+                cursor: hsla(0.0, 0.0, 0.0, 1.0),
+                background: hsla(0.0, 0.0, 0.0, 1.0),
+                selection: hsla(0.0, 0.0, 0.0, 1.0),
             },
             PlayerColor {
-                cursor: hsla(0.0, 0.0, 0.0, 0.0),
-                background: hsla(0.0, 0.0, 0.0, 0.0),
-                selection: hsla(0.0, 0.0, 0.0, 0.0),
+                cursor: hsla(0.0, 0.0, 0.0, 1.0),
+                background: hsla(0.0, 0.0, 0.0, 1.0),
+                selection: hsla(0.0, 0.0, 0.0, 1.0),
             },
             PlayerColor {
-                cursor: hsla(0.0, 0.0, 0.0, 0.0),
-                background: hsla(0.0, 0.0, 0.0, 0.0),
-                selection: hsla(0.0, 0.0, 0.0, 0.0),
+                cursor: hsla(0.0, 0.0, 0.0, 1.0),
+                background: hsla(0.0, 0.0, 0.0, 1.0),
+                selection: hsla(0.0, 0.0, 0.0, 1.0),
             },
             PlayerColor {
-                cursor: hsla(0.0, 0.0, 0.0, 0.0),
-                background: hsla(0.0, 0.0, 0.0, 0.0),
-                selection: hsla(0.0, 0.0, 0.0, 0.0),
+                cursor: hsla(0.0, 0.0, 0.0, 1.0),
+                background: hsla(0.0, 0.0, 0.0, 1.0),
+                selection: hsla(0.0, 0.0, 0.0, 1.0),
             },
         ])
     }
@@ -240,8 +240,17 @@ impl ThemeColors {
             tab_active_background: neutral().light().step_1(),
             tab_inactive_background: neutral().light().step_2(),
             editor_background: neutral().light().step_1(),
+            editor_gutter_background: neutral().light().step_1(), // todo!("pick the right colors")
             editor_subheader_background: neutral().light().step_2(),
-            editor_active_line: neutral().light_alpha().step_3(),
+            editor_active_line_background: neutral().light_alpha().step_3(),
+            editor_line_number: neutral().light_alpha().step_3(), // todo!("pick the right colors")
+            editor_active_line_number: neutral().light_alpha().step_3(), // todo!("pick the right colors")
+            editor_highlighted_line_background: neutral().light_alpha().step_4(), // todo!("pick the right colors")
+            editor_invisible: neutral().light_alpha().step_4(), // todo!("pick the right colors")
+            editor_wrap_guide: neutral().light_alpha().step_4(), // todo!("pick the right colors")
+            editor_active_wrap_guide: neutral().light_alpha().step_4(), // todo!("pick the right colors")
+            editor_document_highlight_read_background: neutral().light_alpha().step_4(), // todo!("pick the right colors")
+            editor_document_highlight_write_background: neutral().light_alpha().step_4(), // todo!("pick the right colors")
             terminal_background: neutral().light().step_1(),
             terminal_ansi_black: black().light().step_12(),
             terminal_ansi_red: red().light().step_11(),
@@ -304,8 +313,17 @@ impl ThemeColors {
             tab_active_background: neutral().dark().step_1(),
             tab_inactive_background: neutral().dark().step_2(),
             editor_background: neutral().dark().step_1(),
+            editor_gutter_background: neutral().dark().step_1(), // todo!("pick the right colors")
             editor_subheader_background: neutral().dark().step_2(),
-            editor_active_line: neutral().dark_alpha().step_3(),
+            editor_active_line_background: neutral().dark_alpha().step_3(),
+            editor_line_number: neutral().dark_alpha().step_3(), // todo!("pick the right colors")
+            editor_active_line_number: neutral().dark_alpha().step_3(), // todo!("pick the right colors")
+            editor_highlighted_line_background: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
+            editor_invisible: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
+            editor_wrap_guide: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
+            editor_active_wrap_guide: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
+            editor_document_highlight_read_background: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
+            editor_document_highlight_write_background: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
             terminal_background: neutral().dark().step_1(),
             terminal_ansi_black: black().dark().step_12(),
             terminal_ansi_red: red().dark().step_11(),

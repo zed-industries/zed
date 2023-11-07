@@ -21,6 +21,23 @@ pub struct PlayerColor {
 #[derive(Clone)]
 pub struct PlayerColors(pub Vec<PlayerColor>);
 
+impl PlayerColors {
+    pub fn local(&self) -> PlayerColor {
+        // todo!("use a valid color");
+        *self.0.first().unwrap()
+    }
+
+    pub fn absent(&self) -> PlayerColor {
+        // todo!("use a valid color");
+        *self.0.last().unwrap()
+    }
+
+    pub fn color_for_participant(&self, participant_index: u32) -> PlayerColor {
+        let len = self.0.len() - 1;
+        self.0[(participant_index as usize % len) + 1]
+    }
+}
+
 #[derive(Refineable, Clone, Debug)]
 #[refineable(debug)]
 pub struct StatusColors {
@@ -89,8 +106,17 @@ pub struct ThemeColors {
     pub tab_inactive_background: Hsla,
     pub tab_active_background: Hsla,
     pub editor_background: Hsla,
+    pub editor_gutter_background: Hsla,
     pub editor_subheader_background: Hsla,
-    pub editor_active_line: Hsla,
+    pub editor_active_line_background: Hsla,
+    pub editor_highlighted_line_background: Hsla,
+    pub editor_line_number: Hsla,
+    pub editor_active_line_number: Hsla,
+    pub editor_invisible: Hsla,
+    pub editor_wrap_guide: Hsla,
+    pub editor_active_wrap_guide: Hsla,
+    pub editor_document_highlight_read_background: Hsla,
+    pub editor_document_highlight_write_background: Hsla,
     pub terminal_background: Hsla,
     pub terminal_ansi_bright_black: Hsla,
     pub terminal_ansi_bright_red: Hsla,

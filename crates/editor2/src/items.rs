@@ -27,7 +27,7 @@ use std::{
     sync::Arc,
 };
 use text::Selection;
-use theme::{ActiveTheme, ThemeVariant};
+use theme::{ActiveTheme, Theme};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
@@ -159,16 +159,14 @@ impl FollowableItem for Editor {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.remove_active_selections(cx);
             });
-        } else {
+        } else if self.focus_handle.is_focused(cx) {
             self.buffer.update(cx, |buffer, cx| {
-                if self.focused {
-                    buffer.set_active_selections(
-                        &self.selections.disjoint_anchors(),
-                        self.selections.line_mode,
-                        self.cursor_shape,
-                        cx,
-                    );
-                }
+                buffer.set_active_selections(
+                    &self.selections.disjoint_anchors(),
+                    self.selections.line_mode,
+                    self.cursor_shape,
+                    cx,
+                );
             });
         }
         cx.notify();
@@ -779,7 +777,7 @@ impl Item for Editor {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
-    fn breadcrumbs(&self, variant: &ThemeVariant, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, variant: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         todo!();
         // let cursor = self.selections.newest_anchor().head();
         // let multibuffer = &self.buffer().read(cx);

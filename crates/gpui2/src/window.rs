@@ -1055,7 +1055,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Dispatch a mouse or keyboard event on the window.
-    fn dispatch_event(&mut self, event: InputEvent) -> bool {
+    pub fn dispatch_event(&mut self, event: InputEvent) -> bool {
         let event = match event {
             // Track the mouse position with our own state, since accessing the platform
             // API for the mouse position can only occur on the main thread.

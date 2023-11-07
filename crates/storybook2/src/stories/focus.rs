@@ -1,18 +1,10 @@
 use gpui::{
-    div, Div, FocusEnabled, Focusable, KeyBinding, ParentElement, Render, StatefulInteractivity,
-    StatelessInteractive, Styled, View, VisualContext, WindowContext,
+    actions, div, Div, FocusEnabled, Focusable, KeyBinding, ParentElement, Render,
+    StatefulInteractivity, StatelessInteractive, Styled, View, VisualContext, WindowContext,
 };
-use serde::Deserialize;
 use theme2::ActiveTheme;
 
-#[derive(Clone, Default, PartialEq, Deserialize)]
-struct ActionA;
-
-#[derive(Clone, Default, PartialEq, Deserialize)]
-struct ActionB;
-
-#[derive(Clone, Default, PartialEq, Deserialize)]
-struct ActionC;
+actions!(ActionA, ActionB, ActionC);
 
 pub struct FocusStory {}
 

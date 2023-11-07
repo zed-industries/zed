@@ -176,6 +176,15 @@ pub fn black() -> Hsla {
     }
 }
 
+pub fn transparent_black() -> Hsla {
+    Hsla {
+        h: 0.,
+        s: 0.,
+        l: 0.,
+        a: 0.,
+    }
+}
+
 pub fn white() -> Hsla {
     Hsla {
         h: 0.,
