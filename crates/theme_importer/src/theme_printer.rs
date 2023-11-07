@@ -3,7 +3,7 @@ use std::fmt::{self, Debug};
 use gpui::{Hsla, Rgba};
 use theme::{
     Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors, SyntaxTheme,
-    SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
+    SystemColors, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 struct RawSyntaxPrinter<'a>(&'a str);
@@ -38,18 +38,17 @@ impl<'a, T: Debug> Debug for VecPrinter<'a, T> {
     }
 }
 
-pub struct ThemeFamilyPrinter(ThemeFamily);
+pub struct UserThemeFamilyPrinter(UserThemeFamily);
 
-impl ThemeFamilyPrinter {
-    pub fn new(theme_family: ThemeFamily) -> Self {
+impl UserThemeFamilyPrinter {
+    pub fn new(theme_family: UserThemeFamily) -> Self {
         Self(theme_family)
     }
 }
 
-impl Debug for ThemeFamilyPrinter {
+impl Debug for UserThemeFamilyPrinter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ThemeFamily")
-            .field("id", &IntoPrinter(&self.0.id))
+        f.debug_struct("UserThemeFamily")
             .field("name", &IntoPrinter(&self.0.name))
             .field("author", &IntoPrinter(&self.0.author))
             .field(
@@ -59,24 +58,22 @@ impl Debug for ThemeFamilyPrinter {
                         .0
                         .themes
                         .iter()
-                        .map(|theme| ThemeVariantPrinter(theme))
+                        .map(|theme| UserThemePrinter(theme))
                         .collect(),
                 ),
             )
-            .field("scales", &RawSyntaxPrinter("default_color_scales()"))
             .finish()
     }
 }
 
-pub struct ThemeVariantPrinter<'a>(&'a Theme);
+pub struct UserThemePrinter<'a>(&'a UserTheme);
 
-impl<'a> Debug for ThemeVariantPrinter<'a> {
+impl<'a> Debug for UserThemePrinter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ThemeVariant")
-            .field("id", &IntoPrinter(&self.0.id))
+        f.debug_struct("UserTheme")
             .field("name", &IntoPrinter(&self.0.name))
             .field("appearance", &AppearancePrinter(self.0.appearance))
-            .field("styles", &ThemeStylesPrinter(&self.0.styles))
+            .field("styles", &UserThemeStylesRefinementPrinter(&self.0.styles))
             .finish()
     }
 }
@@ -89,17 +86,12 @@ impl Debug for AppearancePrinter {
     }
 }
 
-pub struct ThemeStylesPrinter<'a>(&'a ThemeStyles);
+pub struct UserThemeStylesRefinementPrinter<'a>(&'a UserThemeStylesRefinement);
 
-impl<'a> Debug for ThemeStylesPrinter<'a> {
+impl<'a> Debug for UserThemeStylesRefinementPrinter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ThemeStyles")
-            .field("system", &SystemColorsPrinter(&self.0.system))
-            .field("colors", &ThemeColorsPrinter(&self.0.colors))
-            .field("status", &StatusColorsPrinter(&self.0.status))
-            .field("git", &GitStatusColorsPrinter(&self.0.git))
-            .field("player", &PlayerColorsPrinter(&self.0.player))
-            .field("syntax", &SyntaxThemePrinter(&self.0.syntax))
+        f.debug_struct("UserThemeStylesRefinement")
+            .field("colors", &ThemeColorsRefinementPrinter(&self.0.colors))
             .finish()
     }
 }
@@ -126,204 +118,136 @@ impl<'a> Debug for SystemColorsPrinter<'a> {
     }
 }
 
-pub struct ThemeColorsPrinter<'a>(&'a ThemeColors);
+pub struct ThemeColorsRefinementPrinter<'a>(&'a ThemeColorsRefinement);
 
-impl<'a> Debug for ThemeColorsPrinter<'a> {
+impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ThemeColors")
-            .field("border", &HslaPrinter(self.0.border))
-            .field("border_variant", &HslaPrinter(self.0.border_variant))
-            .field("border_focused", &HslaPrinter(self.0.border_focused))
-            .field("border_selected", &HslaPrinter(self.0.border_selected))
-            .field(
-                "border_transparent",
-                &HslaPrinter(self.0.border_transparent),
-            )
-            .field("border_disabled", &HslaPrinter(self.0.border_disabled))
-            .field(
+        let theme_colors = vec![
+            ("border", self.0.border),
+            ("border_variant", self.0.border_variant),
+            ("border_focused", self.0.border_focused),
+            ("border_selected", self.0.border_selected),
+            ("border_transparent", self.0.border_transparent),
+            ("border_disabled", self.0.border_disabled),
+            (
                 "elevated_surface_background",
-                &HslaPrinter(self.0.elevated_surface_background),
-            )
-            .field(
-                "surface_background",
-                &HslaPrinter(self.0.surface_background),
-            )
-            .field("background", &HslaPrinter(self.0.background))
-            .field(
-                "element_background",
-                &HslaPrinter(self.0.element_background),
-            )
-            .field("element_hover", &HslaPrinter(self.0.element_hover))
-            .field("element_active", &HslaPrinter(self.0.element_active))
-            .field("element_selected", &HslaPrinter(self.0.element_selected))
-            .field("element_disabled", &HslaPrinter(self.0.element_disabled))
-            .field(
-                "element_placeholder",
-                &HslaPrinter(self.0.element_placeholder),
-            )
-            .field(
-                "element_drop_target",
-                &HslaPrinter(self.0.element_drop_target),
-            )
-            .field(
-                "ghost_element_background",
-                &HslaPrinter(self.0.ghost_element_background),
-            )
-            .field(
-                "ghost_element_hover",
-                &HslaPrinter(self.0.ghost_element_hover),
-            )
-            .field(
-                "ghost_element_active",
-                &HslaPrinter(self.0.ghost_element_active),
-            )
-            .field(
-                "ghost_element_selected",
-                &HslaPrinter(self.0.ghost_element_selected),
-            )
-            .field(
-                "ghost_element_disabled",
-                &HslaPrinter(self.0.ghost_element_disabled),
-            )
-            .field("text", &HslaPrinter(self.0.text))
-            .field("text_muted", &HslaPrinter(self.0.text_muted))
-            .field("text_placeholder", &HslaPrinter(self.0.text_placeholder))
-            .field("text_disabled", &HslaPrinter(self.0.text_disabled))
-            .field("text_accent", &HslaPrinter(self.0.text_accent))
-            .field("icon", &HslaPrinter(self.0.icon))
-            .field("icon_muted", &HslaPrinter(self.0.icon_muted))
-            .field("icon_disabled", &HslaPrinter(self.0.icon_disabled))
-            .field("icon_placeholder", &HslaPrinter(self.0.icon_placeholder))
-            .field("icon_accent", &HslaPrinter(self.0.icon_accent))
-            .field(
-                "status_bar_background",
-                &HslaPrinter(self.0.status_bar_background),
-            )
-            .field(
-                "title_bar_background",
-                &HslaPrinter(self.0.title_bar_background),
-            )
-            .field(
-                "toolbar_background",
-                &HslaPrinter(self.0.toolbar_background),
-            )
-            .field(
-                "tab_bar_background",
-                &HslaPrinter(self.0.tab_bar_background),
-            )
-            .field(
-                "tab_inactive_background",
-                &HslaPrinter(self.0.tab_inactive_background),
-            )
-            .field(
-                "tab_active_background",
-                &HslaPrinter(self.0.tab_active_background),
-            )
-            .field("editor_background", &HslaPrinter(self.0.editor_background))
-            .field(
-                "editor_gutter_background",
-                &HslaPrinter(self.0.editor_gutter_background),
-            )
-            .field(
+                self.0.elevated_surface_background,
+            ),
+            ("surface_background", self.0.surface_background),
+            ("background", self.0.background),
+            ("element_background", self.0.element_background),
+            ("element_hover", self.0.element_hover),
+            ("element_active", self.0.element_active),
+            ("element_selected", self.0.element_selected),
+            ("element_disabled", self.0.element_disabled),
+            ("element_placeholder", self.0.element_placeholder),
+            ("element_drop_target", self.0.element_drop_target),
+            ("ghost_element_background", self.0.ghost_element_background),
+            ("ghost_element_hover", self.0.ghost_element_hover),
+            ("ghost_element_active", self.0.ghost_element_active),
+            ("ghost_element_selected", self.0.ghost_element_selected),
+            ("ghost_element_disabled", self.0.ghost_element_disabled),
+            ("text", self.0.text),
+            ("text_muted", self.0.text_muted),
+            ("text_placeholder", self.0.text_placeholder),
+            ("text_disabled", self.0.text_disabled),
+            ("text_accent", self.0.text_accent),
+            ("icon", self.0.icon),
+            ("icon_muted", self.0.icon_muted),
+            ("icon_disabled", self.0.icon_disabled),
+            ("icon_placeholder", self.0.icon_placeholder),
+            ("icon_accent", self.0.icon_accent),
+            ("status_bar_background", self.0.status_bar_background),
+            ("title_bar_background", self.0.title_bar_background),
+            ("toolbar_background", self.0.toolbar_background),
+            ("tab_bar_background", self.0.tab_bar_background),
+            ("tab_inactive_background", self.0.tab_inactive_background),
+            ("tab_active_background", self.0.tab_active_background),
+            ("editor_background", self.0.editor_background),
+            ("editor_gutter_background", self.0.editor_gutter_background),
+            (
                 "editor_subheader_background",
-                &HslaPrinter(self.0.editor_subheader_background),
-            )
-            .field(
+                self.0.editor_subheader_background,
+            ),
+            (
                 "editor_active_line_background",
-                &HslaPrinter(self.0.editor_active_line_background),
-            )
-            .field(
+                self.0.editor_active_line_background,
+            ),
+            (
                 "editor_highlighted_line_background",
-                &HslaPrinter(self.0.editor_highlighted_line_background),
-            )
-            .field(
-                "editor_line_number",
-                &HslaPrinter(self.0.editor_line_number),
-            )
-            .field(
+                self.0.editor_highlighted_line_background,
+            ),
+            ("editor_line_number", self.0.editor_line_number),
+            (
                 "editor_active_line_number",
-                &HslaPrinter(self.0.editor_active_line_number),
-            )
-            .field("editor_invisible", &HslaPrinter(self.0.editor_invisible))
-            .field("editor_wrap_guide", &HslaPrinter(self.0.editor_wrap_guide))
-            .field(
-                "editor_active_wrap_guide",
-                &HslaPrinter(self.0.editor_active_wrap_guide),
-            )
-            .field(
+                self.0.editor_active_line_number,
+            ),
+            ("editor_invisible", self.0.editor_invisible),
+            ("editor_wrap_guide", self.0.editor_wrap_guide),
+            ("editor_active_wrap_guide", self.0.editor_active_wrap_guide),
+            (
                 "editor_document_highlight_read_background",
-                &HslaPrinter(self.0.editor_document_highlight_read_background),
-            )
-            .field(
+                self.0.editor_document_highlight_read_background,
+            ),
+            (
                 "editor_document_highlight_write_background",
-                &HslaPrinter(self.0.editor_document_highlight_write_background),
-            )
-            .field(
-                "terminal_background",
-                &HslaPrinter(self.0.terminal_background),
-            )
-            .field(
+                self.0.editor_document_highlight_write_background,
+            ),
+            ("terminal_background", self.0.terminal_background),
+            (
                 "terminal_ansi_bright_black",
-                &HslaPrinter(self.0.terminal_ansi_bright_black),
-            )
-            .field(
-                "terminal_ansi_bright_red",
-                &HslaPrinter(self.0.terminal_ansi_bright_red),
-            )
-            .field(
+                self.0.terminal_ansi_bright_black,
+            ),
+            ("terminal_ansi_bright_red", self.0.terminal_ansi_bright_red),
+            (
                 "terminal_ansi_bright_green",
-                &HslaPrinter(self.0.terminal_ansi_bright_green),
-            )
-            .field(
+                self.0.terminal_ansi_bright_green,
+            ),
+            (
                 "terminal_ansi_bright_yellow",
-                &HslaPrinter(self.0.terminal_ansi_bright_yellow),
-            )
-            .field(
+                self.0.terminal_ansi_bright_yellow,
+            ),
+            (
                 "terminal_ansi_bright_blue",
-                &HslaPrinter(self.0.terminal_ansi_bright_blue),
-            )
-            .field(
+                self.0.terminal_ansi_bright_blue,
+            ),
+            (
                 "terminal_ansi_bright_magenta",
-                &HslaPrinter(self.0.terminal_ansi_bright_magenta),
-            )
-            .field(
+                self.0.terminal_ansi_bright_magenta,
+            ),
+            (
                 "terminal_ansi_bright_cyan",
-                &HslaPrinter(self.0.terminal_ansi_bright_cyan),
-            )
-            .field(
+                self.0.terminal_ansi_bright_cyan,
+            ),
+            (
                 "terminal_ansi_bright_white",
-                &HslaPrinter(self.0.terminal_ansi_bright_white),
-            )
-            .field(
-                "terminal_ansi_black",
-                &HslaPrinter(self.0.terminal_ansi_black),
-            )
-            .field("terminal_ansi_red", &HslaPrinter(self.0.terminal_ansi_red))
-            .field(
-                "terminal_ansi_green",
-                &HslaPrinter(self.0.terminal_ansi_green),
-            )
-            .field(
-                "terminal_ansi_yellow",
-                &HslaPrinter(self.0.terminal_ansi_yellow),
-            )
-            .field(
-                "terminal_ansi_blue",
-                &HslaPrinter(self.0.terminal_ansi_blue),
-            )
-            .field(
-                "terminal_ansi_magenta",
-                &HslaPrinter(self.0.terminal_ansi_magenta),
-            )
-            .field(
-                "terminal_ansi_cyan",
-                &HslaPrinter(self.0.terminal_ansi_cyan),
-            )
-            .field(
-                "terminal_ansi_white",
-                &HslaPrinter(self.0.terminal_ansi_white),
-            )
-            .finish()
+                self.0.terminal_ansi_bright_white,
+            ),
+            ("terminal_ansi_black", self.0.terminal_ansi_black),
+            ("terminal_ansi_red", self.0.terminal_ansi_red),
+            ("terminal_ansi_green", self.0.terminal_ansi_green),
+            ("terminal_ansi_yellow", self.0.terminal_ansi_yellow),
+            ("terminal_ansi_blue", self.0.terminal_ansi_blue),
+            ("terminal_ansi_magenta", self.0.terminal_ansi_magenta),
+            ("terminal_ansi_cyan", self.0.terminal_ansi_cyan),
+            ("terminal_ansi_white", self.0.terminal_ansi_white),
+        ];
+
+        f.write_str("ThemeColorsRefinement {")?;
+
+        for (color_name, color) in theme_colors {
+            if let Some(color) = color {
+                f.write_str(color_name)?;
+                f.write_str(": ")?;
+                f.write_str("Some(")?;
+                HslaPrinter(color).fmt(f)?;
+                f.write_str(")")?;
+                f.write_str(",")?;
+            }
+        }
+
+        f.write_str("..Default::default()")?;
+        f.write_str("}")
     }
 }
 

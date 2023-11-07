@@ -6,6 +6,7 @@ mod scale;
 mod settings;
 mod syntax;
 mod themes;
+mod user_theme;
 
 use std::sync::Arc;
 
@@ -18,10 +19,12 @@ pub use scale::*;
 pub use settings::*;
 pub use syntax::*;
 pub use themes::*;
+pub use user_theme::*;
 
 use gpui::{AppContext, Hsla, SharedString};
+use serde::Deserialize;
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
 pub enum Appearance {
     Light,
     Dark,

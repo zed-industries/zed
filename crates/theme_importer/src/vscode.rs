@@ -1,10 +1,7 @@
 use anyhow::Result;
-use gpui::{Hsla, Refineable, Rgba};
+use gpui::{Hsla, Rgba};
 use serde::Deserialize;
-use theme::{
-    Appearance, GitStatusColors, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme,
-    ThemeColors, ThemeColorsRefinement, ThemeStyles,
-};
+use theme::{ThemeColorsRefinement, UserTheme, UserThemeStylesRefinement};
 
 use crate::util::Traverse;
 use crate::ThemeMetadata;
@@ -433,13 +430,8 @@ impl VsCodeThemeConverter {
         }
     }
 
-    pub fn convert(self) -> Result<Theme> {
+    pub fn convert(self) -> Result<UserTheme> {
         let appearance = self.theme_metadata.appearance.into();
-
-        let mut theme_colors = match appearance {
-            Appearance::Light => ThemeColors::default_light(),
-            Appearance::Dark => ThemeColors::default_dark(),
-        };
 
         let vscode_colors = &self.theme.colors;
 
@@ -567,40 +559,12 @@ impl VsCodeThemeConverter {
             ..Default::default()
         };
 
-        theme_colors.refine(&theme_colors_refinements);
-
-        Ok(Theme {
-            id: uuid::Uuid::new_v4().to_string(),
+        Ok(UserTheme {
             name: self.theme_metadata.name.into(),
             appearance,
-            styles: ThemeStyles {
-                system: SystemColors::default(),
-                colors: theme_colors,
-                status: StatusColors::default(),
-                git: GitStatusColors::default(),
-                player: PlayerColors::default(),
-                syntax: SyntaxTheme::default_dark(),
+            styles: UserThemeStylesRefinement {
+                colors: theme_colors_refinements,
             },
         })
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use std::path::PathBuf;
-
-//     #[test]
-//     fn test_deserialize_theme() {
-//         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-//         let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
-
-//         let mut d = root_dir.to_path_buf();
-//         d.push("assets/themes/src/vsc/dracula/dracula.json");
-
-//         let data = std::fs::read_to_string(d).expect("Unable to read file");
-
-//         let result: Theme = serde_json::from_str(&data).unwrap();
-//         println!("{:#?}", result);
-//     }
-// }
