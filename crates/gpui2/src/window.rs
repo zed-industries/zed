@@ -300,7 +300,8 @@ impl Window {
 
 /// When constructing the element tree, we maintain a stack of key dispatch frames until we
 /// find the focused element. We interleave key listeners with dispatch contexts so we can use the
-/// contexts when matching key events against the keymap.
+/// contexts when matching key events against the keymap. A key listener can be either an action
+/// handler or a [KeyDown] / [KeyUp] event listener.
 enum KeyDispatchStackFrame {
     Listener {
         event_type: TypeId,
@@ -1048,6 +1049,10 @@ impl<'a> WindowContext<'a> {
 
     /// Dispatch a mouse or keyboard event on the window.
     pub fn dispatch_event(&mut self, event: InputEvent) -> bool {
+        // Handlers may set this to false by calling `stop_propagation`
+        self.app.propagate_event = true;
+        self.window.default_prevented = false;
+
         let event = match event {
             // Track the mouse position with our own state, since accessing the platform
             // API for the mouse position can only occur on the main thread.
@@ -1101,10 +1106,6 @@ impl<'a> WindowContext<'a> {
         };
 
         if let Some(any_mouse_event) = event.mouse_event() {
-            // Handlers may set this to false by calling `stop_propagation`
-            self.app.propagate_event = true;
-            self.window.default_prevented = false;
-
             if let Some(mut handlers) = self
                 .window
                 .mouse_listeners
@@ -1314,6 +1315,7 @@ impl<'a> WindowContext<'a> {
                 } = stack_frame
                 {
                     if action_type == *event_type {
+                        self.app.propagate_event = false;
                         listener(action.as_any(), &[], DispatchPhase::Bubble, self);
                         if !self.app.propagate_event {
                             break;
@@ -1328,6 +1330,7 @@ impl<'a> WindowContext<'a> {
                 self.app.global_action_listeners.remove(&action_type)
             {
                 for listener in global_listeners.iter().rev() {
+                    self.app.propagate_event = false;
                     listener(action.as_ref(), DispatchPhase::Bubble, self);
                     if !self.app.propagate_event {
                         break;
@@ -2035,9 +2038,9 @@ impl<V> Context for ViewContext<'_, V> {
 impl<V: 'static> VisualContext for ViewContext<'_, V> {
     fn build_view<W: 'static>(
         &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, W>) -> W,
+        build_view_state: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>> {
-        self.window_cx.build_view(build_view)
+        self.window_cx.build_view(build_view_state)
     }
 
     fn update_view<V2: 'static, R>(

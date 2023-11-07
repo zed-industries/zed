@@ -95,6 +95,8 @@ mod tests {
             .iter()
             .map(|(name, color)| (name.to_string(), (*color).into()))
             .collect(),
+            inlay_style: HighlightStyle::default(),
+            suggestion_style: HighlightStyle::default(),
         };
 
         let capture_names = &[

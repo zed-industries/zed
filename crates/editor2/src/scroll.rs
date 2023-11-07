@@ -349,10 +349,12 @@ impl Editor {
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
     }
 
-    //     pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> gpui::Point<Pixels> {
-    //         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-    //         self.scroll_manager.anchor.scroll_position(&display_map)
-    //     }
+    pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> gpui::Point<Pixels> {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        // todo!() Should `self.scroll_manager.anchor.scroll_position()` return `Pixels`?
+        // self.scroll_manager.anchor.scroll_position(&display_map)
+        todo!()
+    }
 
     pub fn set_scroll_anchor(&mut self, scroll_anchor: ScrollAnchor, cx: &mut ViewContext<Self>) {
         hide_hover(self, cx);

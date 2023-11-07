@@ -138,6 +138,8 @@ impl SyntaxTheme {
                 ("variable.special".into(), red().light().step_7().into()),
                 ("variant".into(), red().light().step_7().into()),
             ],
+            inlay_style: tomato().light().step_1().into(), // todo!("nate: use a proper style")
+            suggestion_style: orange().light().step_1().into(), // todo!("nate: use proper style")
         }
     }
 
@@ -193,6 +195,8 @@ impl SyntaxTheme {
                 ("variable.special".into(), red().dark().step_7().into()),
                 ("variant".into(), red().dark().step_7().into()),
             ],
+            inlay_style: tomato().dark().step_1().into(), // todo!("nate: use a proper style")
+            suggestion_style: orange().dark().step_1().into(), // todo!("nate: use a proper style")
         }
     }
 }

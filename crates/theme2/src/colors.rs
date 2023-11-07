@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gpui::Hsla;
 use refineable::Refineable;
 
@@ -237,7 +239,7 @@ pub struct ThemeStyles {
     pub status: StatusColors,
     pub git: GitStatusColors,
     pub player: PlayerColors,
-    pub syntax: SyntaxTheme,
+    pub syntax: Arc<SyntaxTheme>,
 }
 
 #[cfg(test)]
