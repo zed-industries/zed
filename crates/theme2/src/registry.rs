@@ -1,4 +1,4 @@
-use crate::{all_imported_themes, zed_pro_family, ThemeFamily, ThemeVariant};
+use crate::{zed_pro_family, ThemeFamily, ThemeVariant};
 use anyhow::{anyhow, Result};
 use gpui::SharedString;
 use std::{collections::HashMap, sync::Arc};
@@ -42,10 +42,8 @@ impl Default for ThemeRegistry {
             themes: HashMap::default(),
         };
 
-        let mut all_themes = vec![zed_pro_family()];
-        all_themes.extend(all_imported_themes());
-
-        this.insert_theme_families(all_themes);
+        this.insert_theme_families([zed_pro_family()]);
+        this.insert_theme_families(crate::all_imported_themes());
 
         this
     }

@@ -7,6 +7,8 @@ mod settings;
 mod syntax;
 mod themes;
 
+use std::sync::Arc;
+
 use ::settings::Settings;
 pub use colors::*;
 pub use default_colors::*;
@@ -31,11 +33,11 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub trait ActiveTheme {
-    fn theme(&self) -> &ThemeVariant;
+    fn theme(&self) -> &Arc<ThemeVariant>;
 }
 
 impl ActiveTheme for AppContext {
-    fn theme(&self) -> &ThemeVariant {
+    fn theme(&self) -> &Arc<ThemeVariant> {
         &ThemeSettings::get_global(self).active_theme
     }
 }
@@ -58,6 +60,12 @@ pub struct ThemeVariant {
 }
 
 impl ThemeVariant {
+    /// Returns the [`ThemeColors`] for the theme.
+    #[inline(always)]
+    pub fn players(&self) -> &PlayerColors {
+        &self.styles.player
+    }
+
     /// Returns the [`ThemeColors`] for the theme.
     #[inline(always)]
     pub fn colors(&self) -> &ThemeColors {

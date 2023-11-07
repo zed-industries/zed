@@ -156,7 +156,7 @@ impl Buffer {
 
     fn render_row<V: 'static>(row: BufferRow, cx: &WindowContext) -> impl Component<V> {
         let line_background = if row.current {
-            cx.theme().colors().editor_active_line
+            cx.theme().colors().editor_active_line_background
         } else {
             cx.theme().styles.system.transparent
         };

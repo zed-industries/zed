@@ -2677,7 +2677,7 @@ dependencies = [
  "env_logger 0.9.3",
  "futures 0.3.28",
  "fuzzy2",
- "git",
+ "git3",
  "gpui2",
  "indoc",
  "itertools 0.10.5",

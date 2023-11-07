@@ -38,6 +38,7 @@ use std::{
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
+use theme::ActiveTheme;
 use util::{
     async_maybe,
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
@@ -164,7 +165,7 @@ fn main() {
         //     .detach();
         // watch_file_types(fs.clone(), cx);
 
-        // languages.set_theme(theme::current(cx).clone());
+        languages.set_theme(cx.theme().clone());
         // cx.observe_global::<SettingsStore, _>({
         //     let languages = languages.clone();
         //     move |cx| languages.set_theme(theme::current(cx).clone())

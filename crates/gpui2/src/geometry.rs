@@ -492,6 +492,15 @@ where
 impl<T: Clone + Default + Debug + Copy> Copy for Edges<T> {}
 
 impl<T: Clone + Default + Debug> Edges<T> {
+    pub fn all(value: T) -> Self {
+        Self {
+            top: value.clone(),
+            right: value.clone(),
+            bottom: value.clone(),
+            left: value,
+        }
+    }
+
     pub fn map<U>(&self, f: impl Fn(&T) -> U) -> Edges<U>
     where
         U: Clone + Default + Debug,
@@ -730,6 +739,7 @@ impl MulAssign<f32> for Pixels {
 }
 
 impl Pixels {
+    pub const ZERO: Pixels = Pixels(0.0);
     pub const MAX: Pixels = Pixels(f32::MAX);
 
     pub fn as_usize(&self) -> usize {

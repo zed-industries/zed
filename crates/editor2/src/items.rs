@@ -159,16 +159,14 @@ impl FollowableItem for Editor {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.remove_active_selections(cx);
             });
-        } else {
+        } else if self.focus_handle.is_focused(cx) {
             self.buffer.update(cx, |buffer, cx| {
-                if self.focused {
-                    buffer.set_active_selections(
-                        &self.selections.disjoint_anchors(),
-                        self.selections.line_mode,
-                        self.cursor_shape,
-                        cx,
-                    );
-                }
+                buffer.set_active_selections(
+                    &self.selections.disjoint_anchors(),
+                    self.selections.line_mode,
+                    self.cursor_shape,
+                    cx,
+                );
             });
         }
         cx.notify();

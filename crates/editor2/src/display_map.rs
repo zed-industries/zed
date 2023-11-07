@@ -4,6 +4,7 @@ mod inlay_map;
 mod tab_map;
 mod wrap_map;
 
+use crate::EditorStyle;
 use crate::{
     link_go_to_definition::InlayHighlight, movement::TextLayoutDetails, Anchor, AnchorRangeExt,
     InlayId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
@@ -11,14 +12,16 @@ use crate::{
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
-use gpui::{Font, FontId, HighlightStyle, Hsla, Line, Model, ModelContext, Pixels};
+use gpui::{Font, FontId, HighlightStyle, Hsla, Line, Model, ModelContext, Pixels, UnderlineStyle};
 use inlay_map::InlayMap;
 use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
 };
+use lsp::DiagnosticSeverity;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
+use theme::ThemeVariant;
 use wrap_map::WrapMap;
 
 pub use block_map::{
@@ -34,6 +37,8 @@ pub enum FoldStatus {
     Folded,
     Foldable,
 }
+
+const UNNECESSARY_CODE_FADE: f32 = 0.3;
 
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
@@ -496,63 +501,62 @@ impl DisplaySnapshot {
         )
     }
 
-    // pub fn highlighted_chunks<'a>(
-    //     &'a self,
-    //     display_rows: Range<u32>,
-    //     language_aware: bool,
-    //     style: &'a EditorStyle,
-    // ) -> impl Iterator<Item = HighlightedChunk<'a>> {
-    //     self.chunks(
-    //         display_rows,
-    //         language_aware,
-    //         Some(style.theme.hint),
-    //         Some(style.theme.suggestion),
-    //     )
-    //     .map(|chunk| {
-    //         let mut highlight_style = chunk
-    //             .syntax_highlight_id
-    //             .and_then(|id| id.style(&style.syntax));
+    pub fn highlighted_chunks<'a>(
+        &'a self,
+        display_rows: Range<u32>,
+        language_aware: bool,
+        theme: &'a ThemeVariant,
+    ) -> impl Iterator<Item = HighlightedChunk<'a>> {
+        self.chunks(
+            display_rows,
+            language_aware,
+            None, // todo!("add inlay highlight style")
+            None, // todo!("add suggestion highlight style")
+        )
+        .map(|chunk| {
+            let mut highlight_style = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(&theme.styles.syntax));
 
-    //         if let Some(chunk_highlight) = chunk.highlight_style {
-    //             if let Some(highlight_style) = highlight_style.as_mut() {
-    //                 highlight_style.highlight(chunk_highlight);
-    //             } else {
-    //                 highlight_style = Some(chunk_highlight);
-    //             }
-    //         }
+            if let Some(chunk_highlight) = chunk.highlight_style {
+                if let Some(highlight_style) = highlight_style.as_mut() {
+                    highlight_style.highlight(chunk_highlight);
+                } else {
+                    highlight_style = Some(chunk_highlight);
+                }
+            }
 
-    //         let mut diagnostic_highlight = HighlightStyle::default();
+            let mut diagnostic_highlight = HighlightStyle::default();
 
-    //         if chunk.is_unnecessary {
-    //             diagnostic_highlight.fade_out = Some(style.unnecessary_code_fade);
-    //         }
+            if chunk.is_unnecessary {
+                diagnostic_highlight.fade_out = Some(UNNECESSARY_CODE_FADE);
+            }
 
-    //         if let Some(severity) = chunk.diagnostic_severity {
-    //             // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
-    //             if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
-    //                 todo!()
-    //                 // let diagnostic_style = super::diagnostic_style(severity, true, style);
-    //                 // diagnostic_highlight.underline = Some(UnderlineStyle {
-    //                 //     color: Some(diagnostic_style.message.text.color),
-    //                 //     thickness: 1.0.into(),
-    //                 //     wavy: true,
-    //                 // });
-    //             }
-    //         }
+            if let Some(severity) = chunk.diagnostic_severity {
+                // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
+                if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
+                    let diagnostic_color = super::diagnostic_style(severity, true, theme);
+                    diagnostic_highlight.underline = Some(UnderlineStyle {
+                        color: Some(diagnostic_color),
+                        thickness: 1.0.into(),
+                        wavy: true,
+                    });
+                }
+            }
 
-    //         if let Some(highlight_style) = highlight_style.as_mut() {
-    //             highlight_style.highlight(diagnostic_highlight);
-    //         } else {
-    //             highlight_style = Some(diagnostic_highlight);
-    //         }
+            if let Some(highlight_style) = highlight_style.as_mut() {
+                highlight_style.highlight(diagnostic_highlight);
+            } else {
+                highlight_style = Some(diagnostic_highlight);
+            }
 
-    //         HighlightedChunk {
-    //             chunk: chunk.text,
-    //             style: highlight_style,
-    //             is_tab: chunk.is_tab,
-    //         }
-    //     })
-    // }
+            HighlightedChunk {
+                chunk: chunk.text,
+                style: highlight_style,
+                is_tab: chunk.is_tab,
+            }
+        })
+    }
 
     pub fn lay_out_line_for_row(
         &self,

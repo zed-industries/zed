@@ -82,18 +82,6 @@ impl LineLayout {
         self.width
     }
 
-    pub fn font_for_index(&self, index: usize) -> Option<FontId> {
-        for run in &self.runs {
-            for glyph in &run.glyphs {
-                if glyph.index >= index {
-                    return Some(run.font_id);
-                }
-            }
-        }
-
-        None
-    }
-
     fn compute_wrap_boundaries(
         &self,
         text: &str,

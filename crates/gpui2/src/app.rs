@@ -48,15 +48,15 @@ pub struct AppCell {
 impl AppCell {
     #[track_caller]
     pub fn borrow(&self) -> AppRef {
-        let thread_id = std::thread::current().id();
-        eprintln!("borrowed {thread_id:?}");
+        // let thread_id = std::thread::current().id();
+        // eprintln!("borrowed {thread_id:?}");
         AppRef(self.app.borrow())
     }
 
     #[track_caller]
     pub fn borrow_mut(&self) -> AppRefMut {
-        let thread_id = std::thread::current().id();
-        eprintln!("borrowed {thread_id:?}");
+        // let thread_id = std::thread::current().id();
+        // eprintln!("borrowed {thread_id:?}");
         AppRefMut(self.app.borrow_mut())
     }
 }

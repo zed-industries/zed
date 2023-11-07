@@ -1,8 +1,8 @@
 use crate::{
     black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
     Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font,
-    FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems,
-    Result, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext, WindowContext,
+    FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Result,
+    Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext, WindowContext,
 };
 use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
@@ -134,7 +134,7 @@ pub struct TextStyle {
     pub color: Hsla,
     pub font_family: SharedString,
     pub font_features: FontFeatures,
-    pub font_size: Rems,
+    pub font_size: AbsoluteLength,
     pub line_height: DefiniteLength,
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
@@ -147,7 +147,7 @@ impl Default for TextStyle {
             color: black(),
             font_family: "Helvetica".into(), // todo!("Get a font we know exists on the system")
             font_features: FontFeatures::default(),
-            font_size: rems(1.),
+            font_size: rems(1.).into(),
             line_height: phi(),
             font_weight: FontWeight::default(),
             font_style: FontStyle::default(),
