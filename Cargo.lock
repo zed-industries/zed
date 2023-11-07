@@ -8997,6 +8997,7 @@ dependencies = [
  "settings2",
  "toml 0.5.11",
  "util",
+ "uuid 1.4.1",
 ]
 
 [[package]]
