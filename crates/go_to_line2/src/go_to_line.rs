@@ -32,7 +32,7 @@ impl Render for GoToLine {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        modal(cx).child(div().bg(red()).w(px(100.0)).h(px(100.0)))
+        modal(cx).child(div().m_4().bg(red()).w(px(100.0)).h(px(100.0)))
     }
 }
 

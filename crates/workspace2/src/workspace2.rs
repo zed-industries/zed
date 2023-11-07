@@ -3710,10 +3710,10 @@ impl Render for Workspace {
                 self.modal_layer
                     .read(cx)
                     .render(self, cx)
+                    .relative()
                     .flex_1()
                     .w_full()
                     .flex()
-                    .flex_row()
                     .overflow_hidden()
                     .border_t()
                     .border_b()

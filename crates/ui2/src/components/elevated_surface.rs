@@ -1,4 +1,4 @@
-use gpui::{div, hsla, point, px, BoxShadow, Div};
+use gpui::Div;
 
 use crate::{prelude::*, v_stack};
 

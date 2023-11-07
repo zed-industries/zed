@@ -1,9 +1,10 @@
 use std::{any::TypeId, sync::Arc};
 
 use gpui::{
-    div, AnyView, AppContext, Component, DispatchPhase, Div, ParentElement, Render,
+    div, hsla, px, red, AnyView, AppContext, Component, DispatchPhase, Div, ParentElement, Render,
     StatelessInteractive, Styled, View, ViewContext,
 };
+use ui::v_stack;
 
 use crate::Workspace;
 
@@ -83,7 +84,7 @@ impl ModalLayer {
     // whatever
 
     pub fn render(&self, workspace: &Workspace, cx: &ViewContext<Workspace>) -> Div<Workspace> {
-        let mut parent = div().relative();
+        let mut parent = div().relative().bg(red()).size_full();
 
         for (_, action) in cx.global::<ModalRegistry>().registered_modals.iter() {
             parent = (action)(parent);
@@ -92,21 +93,20 @@ impl ModalLayer {
         parent.when_some(self.open_modal.as_ref(), |parent, open_modal| {
             let container1 = div()
                 .absolute()
+                .flex()
+                .flex_col()
+                .items_center()
                 .size_full()
                 .top_0()
                 .left_0()
-                .right_0()
-                .bottom_0();
+                .z_index(400);
 
             // transparent layer
-            let container2 = div()
-                .flex()
-                .h_96()
-                .justify_center()
-                .size_full()
+            let container2 = v_stack()
+                .bg(hsla(0.5, 0.5, 0.5, 0.5))
+                .h(px(0.0))
                 .relative()
-                .top_20()
-                .z_index(400);
+                .top_20();
 
             parent.child(container1.child(container2.child(open_modal.clone())))
         })
