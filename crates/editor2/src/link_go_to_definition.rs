@@ -581,7 +581,7 @@ fn go_to_fetched_definition_of_kind(
 
     let is_correct_kind = cached_definitions_kind == Some(kind);
     if !cached_definitions.is_empty() && is_correct_kind {
-        if !editor.focused {
+        if !editor.focus_handle.is_focused(cx) {
             cx.focus(&editor.focus_handle);
         }
 

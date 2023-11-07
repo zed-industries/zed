@@ -59,24 +59,24 @@ impl Default for PlayerColors {
     fn default() -> Self {
         Self(vec![
             PlayerColor {
-                cursor: hsla(0.0, 0.0, 0.0, 0.0),
-                background: hsla(0.0, 0.0, 0.0, 0.0),
-                selection: hsla(0.0, 0.0, 0.0, 0.0),
+                cursor: hsla(0.0, 0.0, 0.0, 1.0),
+                background: hsla(0.0, 0.0, 0.0, 1.0),
+                selection: hsla(0.0, 0.0, 0.0, 1.0),
             },
             PlayerColor {
-                cursor: hsla(0.0, 0.0, 0.0, 0.0),
-                background: hsla(0.0, 0.0, 0.0, 0.0),
-                selection: hsla(0.0, 0.0, 0.0, 0.0),
+                cursor: hsla(0.0, 0.0, 0.0, 1.0),
+                background: hsla(0.0, 0.0, 0.0, 1.0),
+                selection: hsla(0.0, 0.0, 0.0, 1.0),
             },
             PlayerColor {
-                cursor: hsla(0.0, 0.0, 0.0, 0.0),
-                background: hsla(0.0, 0.0, 0.0, 0.0),
-                selection: hsla(0.0, 0.0, 0.0, 0.0),
+                cursor: hsla(0.0, 0.0, 0.0, 1.0),
+                background: hsla(0.0, 0.0, 0.0, 1.0),
+                selection: hsla(0.0, 0.0, 0.0, 1.0),
             },
             PlayerColor {
-                cursor: hsla(0.0, 0.0, 0.0, 0.0),
-                background: hsla(0.0, 0.0, 0.0, 0.0),
-                selection: hsla(0.0, 0.0, 0.0, 0.0),
+                cursor: hsla(0.0, 0.0, 0.0, 1.0),
+                background: hsla(0.0, 0.0, 0.0, 1.0),
+                selection: hsla(0.0, 0.0, 0.0, 1.0),
             },
         ])
     }

@@ -634,7 +634,6 @@ pub struct Editor {
     // override_text_style: Option<Box<OverrideTextStyle>>,
     project: Option<Model<Project>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
-    focused: bool,
     blink_manager: Model<BlinkManager>,
     pub show_local_selections: bool,
     mode: EditorMode,
@@ -1940,7 +1939,6 @@ impl Editor {
             // get_field_editor_theme,
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
-            focused: false,
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
@@ -2211,7 +2209,7 @@ impl Editor {
         old_cursor_position: &Anchor,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.focused && self.leader_peer_id.is_none() {
+        if self.focus_handle.is_focused(cx) && self.leader_peer_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(
                     &self.selections.disjoint_anchors(),
@@ -2458,7 +2456,7 @@ impl Editor {
         click_count: usize,
         cx: &mut ViewContext<Self>,
     ) {
-        if !self.focused {
+        if !self.focus_handle.is_focused(cx) {
             cx.focus(&self.focus_handle);
         }
 
@@ -2524,7 +2522,7 @@ impl Editor {
         goal_column: u32,
         cx: &mut ViewContext<Self>,
     ) {
-        if !self.focused {
+        if !self.focus_handle.is_focused(cx) {
             cx.focus(&self.focus_handle);
         }
 
@@ -3631,7 +3629,7 @@ impl Editor {
                         _ => return,
                     }
 
-                    if this.focused && menu.is_some() {
+                    if this.focus_handle.is_focused(cx) && menu.is_some() {
                         let menu = menu.unwrap();
                         *context_menu = Some(ContextMenu::Completions(menu));
                         drop(context_menu);
@@ -8693,8 +8691,8 @@ impl Editor {
         }
     }
 
-    pub fn show_local_cursors(&self, cx: &AppContext) -> bool {
-        self.blink_manager.read(cx).visible() && self.focused
+    pub fn show_local_cursors(&self, cx: &WindowContext) -> bool {
+        self.blink_manager.read(cx).visible() && self.focus_handle.is_focused(cx)
     }
 
     fn on_buffer_changed(&mut self, _: Model<MultiBuffer>, cx: &mut ViewContext<Self>) {
