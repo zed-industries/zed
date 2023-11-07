@@ -25,6 +25,7 @@ smallvec.workspace = true
 strum = { version = "0.25.0", features = ["derive"] }
 theme = { path = "../theme" }
 theme2 = { path = "../theme2" }
+menu = { package = "menu2", path = "../menu2" }
 ui = { package = "ui2", path = "../ui2", features = ["stories"] }
 util = { path = "../util" }
 picker = { package = "picker2", path = "../picker2" }

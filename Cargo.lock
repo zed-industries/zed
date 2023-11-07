@@ -4970,7 +4970,8 @@ dependencies = [
 name = "menu2"
 version = "0.1.0"
 dependencies = [
- "gpui2",
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -8542,6 +8543,7 @@ dependencies = [
  "gpui2",
  "itertools 0.11.0",
  "log",
+ "menu2",
  "picker2",
  "rust-embed",
  "serde",

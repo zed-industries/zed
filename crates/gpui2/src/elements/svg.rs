@@ -1,21 +1,21 @@
 use crate::{
     div, AnyElement, Bounds, Component, Div, DivState, Element, ElementFocus, ElementId,
-    ElementInteraction, FocusDisabled, FocusEnabled, FocusListeners, Focusable, LayoutId, Pixels,
-    SharedString, StatefulInteraction, StatefulInteractive, StatelessInteraction,
-    StatelessInteractive, StyleRefinement, Styled, ViewContext,
+    ElementInteractivity, FocusDisabled, FocusEnabled, FocusListeners, Focusable, LayoutId, Pixels,
+    SharedString, StatefulInteractive, StatefulInteractivity, StatelessInteractive,
+    StatelessInteractivity, StyleRefinement, Styled, ViewContext,
 };
 use util::ResultExt;
 
 pub struct Svg<
     V: 'static,
-    I: ElementInteraction<V> = StatelessInteraction<V>,
+    I: ElementInteractivity<V> = StatelessInteractivity<V>,
     F: ElementFocus<V> = FocusDisabled,
 > {
     base: Div<V, I, F>,
     path: Option<SharedString>,
 }
 
-pub fn svg<V: 'static>() -> Svg<V, StatelessInteraction<V>, FocusDisabled> {
+pub fn svg<V: 'static>() -> Svg<V, StatelessInteractivity<V>, FocusDisabled> {
     Svg {
         base: div(),
         path: None,
@@ -24,7 +24,7 @@ pub fn svg<V: 'static>() -> Svg<V, StatelessInteraction<V>, FocusDisabled> {
 
 impl<V, I, F> Svg<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
@@ -33,11 +33,11 @@ where
     }
 }
 
-impl<V, F> Svg<V, StatelessInteraction<V>, F>
+impl<V, F> Svg<V, StatelessInteractivity<V>, F>
 where
     F: ElementFocus<V>,
 {
-    pub fn id(self, id: impl Into<ElementId>) -> Svg<V, StatefulInteraction<V>, F> {
+    pub fn id(self, id: impl Into<ElementId>) -> Svg<V, StatefulInteractivity<V>, F> {
         Svg {
             base: self.base.id(id),
             path: self.path,
@@ -47,7 +47,7 @@ where
 
 impl<V, I, F> Component<V> for Svg<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
     fn render(self) -> AnyElement<V> {
@@ -57,7 +57,7 @@ where
 
 impl<V, I, F> Element<V> for Svg<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
     type ElementState = DivState;
@@ -107,7 +107,7 @@ where
 
 impl<V, I, F> Styled for Svg<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
     fn style(&mut self) -> &mut StyleRefinement {
@@ -117,27 +117,27 @@ where
 
 impl<V, I, F> StatelessInteractive<V> for Svg<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
-    fn stateless_interaction(&mut self) -> &mut StatelessInteraction<V> {
-        self.base.stateless_interaction()
+    fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<V> {
+        self.base.stateless_interactivity()
     }
 }
 
-impl<V, F> StatefulInteractive<V> for Svg<V, StatefulInteraction<V>, F>
+impl<V, F> StatefulInteractive<V> for Svg<V, StatefulInteractivity<V>, F>
 where
     V: 'static,
     F: ElementFocus<V>,
 {
-    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<V> {
-        self.base.stateful_interaction()
+    fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<V> {
+        self.base.stateful_interactivity()
     }
 }
 
 impl<V: 'static, I> Focusable<V> for Svg<V, I, FocusEnabled<V>>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
 {
     fn focus_listeners(&mut self) -> &mut FocusListeners<V> {
         self.base.focus_listeners()

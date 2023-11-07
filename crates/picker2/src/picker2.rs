@@ -18,11 +18,11 @@
 //     Dismiss,
 // }
 
-use std::ops::Range;
+use std::cmp;
 
 use gpui::{
-    div, list, red, AppContext, Component, Div, Element, ElementId, ParentElement, Render, Styled,
-    ViewContext,
+    div, list, Component, ElementId, FocusHandle, Focusable, ParentElement, StatelessInteractive,
+    Styled, ViewContext,
 };
 
 // pub struct Picker<D> {
@@ -43,8 +43,9 @@ pub trait PickerDelegate: Sized + 'static {
 
     fn match_count(&self, picker_id: ElementId) -> usize;
 
-    //     fn selected_index(&self) -> usize;
-    //     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
+    fn selected_index(&self, picker_id: ElementId) -> usize;
+    fn set_selected_index(&mut self, ix: usize, picker_id: ElementId, cx: &mut ViewContext<Self>);
+
     //     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
     //     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
     //     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
@@ -53,8 +54,6 @@ pub trait PickerDelegate: Sized + 'static {
     fn render_match(
         &self,
         ix: usize,
-        active: bool,
-        hovered: bool,
         selected: bool,
         picker_id: ElementId,
         cx: &mut ViewContext<Self>,
@@ -84,32 +83,72 @@ pub trait PickerDelegate: Sized + 'static {
 #[derive(Component)]
 pub struct Picker<V: PickerDelegate> {
     id: ElementId,
+    focus_handle: FocusHandle,
     phantom: std::marker::PhantomData<V>,
 }
 
 impl<V: PickerDelegate> Picker<V> {
-    pub fn new(id: impl Into<ElementId>) -> Self {
+    pub fn new(id: impl Into<ElementId>, focus_handle: FocusHandle) -> Self {
         Self {
             id: id.into(),
+            focus_handle,
             phantom: std::marker::PhantomData,
         }
     }
 }
 
 impl<V: 'static + PickerDelegate> Picker<V> {
-    pub fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        div().size_full().id(self.id.clone()).child(
-            list(
-                "candidates",
-                view.match_count(self.id.clone()),
-                move |this: &mut V, visible_range, cx| {
-                    visible_range
-                        .map(|ix| this.render_match(ix, false, false, false, self.id.clone(), cx))
-                        .collect()
-                },
+    pub fn render(self, view: &mut V, _cx: &mut ViewContext<V>) -> impl Component<V> {
+        let id = self.id.clone();
+        div()
+            .size_full()
+            .id(self.id.clone())
+            .track_focus(&self.focus_handle)
+            .context("picker")
+            .on_focus(|v, e, cx| {
+                dbg!("FOCUSED!");
+            })
+            .on_blur(|v, e, cx| {
+                dbg!("BLURRED!");
+            })
+            .on_action({
+                let id = id.clone();
+                move |view: &mut V, _: &menu::SelectNext, cx| {
+                    let index = view.selected_index(id.clone());
+                    let count = view.match_count(id.clone());
+                    if count > 0 {
+                        view.set_selected_index(cmp::min(index + 1, count - 1), id.clone(), cx);
+                    }
+                }
+            })
+            .on_action({
+                let id = id.clone();
+                move |view, _: &menu::SelectPrev, cx| {
+                    let index = view.selected_index(id.clone());
+                    let count = view.match_count(id.clone());
+                    if count > 0 {
+                        view.set_selected_index((index + 1) % count, id.clone(), cx);
+                    }
+                }
+            })
+            .on_action(|view, _: &menu::SelectFirst, cx| {})
+            .on_action(|view, _: &menu::SelectLast, cx| {})
+            .on_action(|view, _: &menu::Cancel, cx| {})
+            .on_action(|view, _: &menu::Confirm, cx| {})
+            .on_action(|view, _: &menu::SecondaryConfirm, cx| {})
+            .child(
+                list(
+                    "candidates",
+                    view.match_count(self.id.clone()),
+                    move |view: &mut V, visible_range, cx| {
+                        let selected_ix = view.selected_index(self.id.clone());
+                        visible_range
+                            .map(|ix| view.render_match(ix, ix == selected_ix, self.id.clone(), cx))
+                            .collect()
+                    },
+                )
+                .size_full(),
             )
-            .size_full(),
-        )
     }
 }
 

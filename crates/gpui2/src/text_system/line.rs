@@ -142,8 +142,6 @@ impl Line {
                             color,
                         )?;
                     }
-                } else {
-                    dbg!(content_mask.bounds, max_glyph_bounds);
                 }
             }
         }

@@ -1,15 +1,12 @@
-use std::{cmp, ops::Range};
-
-use smallvec::SmallVec;
-
 use crate::{
     point, px, AnyElement, AvailableSpace, BorrowWindow, Bounds, Component, Element, ElementId,
-    LayoutId, Pixels, Size, StyleRefinement, Styled, ViewContext,
+    ElementInteractivity, InteractiveElementState, LayoutId, Pixels, Size, StatefulInteractive,
+    StatefulInteractivity, StatelessInteractive, StatelessInteractivity, StyleRefinement, Styled,
+    ViewContext,
 };
-
-// We want to support uniform and non-uniform height
-// We need to make the ID mandatory, to replace the 'state' field
-// Previous implementation measured the first element as early as possible
+use smallvec::SmallVec;
+use std::{cmp, ops::Range};
+use taffy::style::Overflow;
 
 pub fn list<Id, V, C>(
     id: Id,
@@ -21,8 +18,9 @@ where
     V: 'static,
     C: Component<V>,
 {
+    let id = id.into();
     List {
-        id: id.into(),
+        id: id.clone(),
         style: Default::default(),
         item_count,
         render_items: Box::new(move |view, visible_range, cx| {
@@ -31,10 +29,11 @@ where
                 .map(|component| component.render())
                 .collect()
         }),
+        interactivity: id.into(),
     }
 }
 
-pub struct List<V> {
+pub struct List<V: 'static> {
     id: ElementId,
     style: StyleRefinement,
     item_count: usize,
@@ -45,19 +44,12 @@ pub struct List<V> {
             &'a mut ViewContext<V>,
         ) -> SmallVec<[AnyElement<V>; 64]>,
     >,
+    interactivity: StatefulInteractivity<V>,
 }
-
-// #[derive(Debug)]
-// pub enum ScrollTarget {
-//     Show(usize),
-//     Center(usize),
-// }
 
 #[derive(Default)]
 pub struct ListState {
-    scroll_top: f32,
-    // todo
-    // scroll_to: Option<ScrollTarget>,
+    interactive: InteractiveElementState,
 }
 
 impl<V: 'static> Styled for List<V> {
@@ -111,30 +103,66 @@ impl<V: 'static> Element<V> for List<V> {
                 - point(border.right + padding.right, border.bottom + padding.bottom),
         );
 
-        if self.item_count > 0 {
-            let item_height = self.measure_item_height(view_state, padded_bounds, cx);
-            let visible_item_count = (padded_bounds.size.height / item_height).ceil() as usize;
-            let visible_range = 0..cmp::min(visible_item_count, self.item_count);
+        cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
+            let content_size;
+            if self.item_count > 0 {
+                let item_height = self.measure_item_height(view_state, padded_bounds, cx);
+                let visible_item_count =
+                    (padded_bounds.size.height / item_height).ceil() as usize + 1;
+                let scroll_offset = element_state
+                    .interactive
+                    .scroll_offset()
+                    .map_or((0.0).into(), |offset| offset.y);
+                let first_visible_element_ix = (-scroll_offset / item_height).floor() as usize;
+                let visible_range = first_visible_element_ix
+                    ..cmp::min(
+                        first_visible_element_ix + visible_item_count,
+                        self.item_count,
+                    );
 
-            let mut items = (self.render_items)(view_state, visible_range, cx);
+                let mut items = (self.render_items)(view_state, visible_range.clone(), cx);
 
-            dbg!(items.len(), self.item_count, visible_item_count);
+                content_size = Size {
+                    width: padded_bounds.size.width,
+                    height: item_height * self.item_count,
+                };
 
-            for (ix, item) in items.iter_mut().enumerate() {
-                item.initialize(view_state, cx);
+                cx.with_z_index(1, |cx| {
+                    for (item, ix) in items.iter_mut().zip(visible_range) {
+                        item.initialize(view_state, cx);
 
-                let layout_id = item.layout(view_state, cx);
-                cx.compute_layout(
-                    layout_id,
-                    Size {
-                        width: AvailableSpace::Definite(bounds.size.width),
-                        height: AvailableSpace::Definite(item_height),
-                    },
-                );
-                let offset = padded_bounds.origin + point(px(0.), item_height * ix);
-                cx.with_element_offset(Some(offset), |cx| item.paint(view_state, cx))
+                        let layout_id = item.layout(view_state, cx);
+                        cx.compute_layout(
+                            layout_id,
+                            Size {
+                                width: AvailableSpace::Definite(bounds.size.width),
+                                height: AvailableSpace::Definite(item_height),
+                            },
+                        );
+                        let offset =
+                            padded_bounds.origin + point(px(0.), item_height * ix + scroll_offset);
+                        cx.with_element_offset(Some(offset), |cx| item.paint(view_state, cx))
+                    }
+                });
+            } else {
+                content_size = Size {
+                    width: bounds.size.width,
+                    height: px(0.),
+                };
             }
-        }
+
+            let overflow = point(style.overflow.x, Overflow::Scroll);
+
+            cx.with_z_index(0, |cx| {
+                self.interactivity.paint(
+                    bounds,
+                    content_size,
+                    overflow,
+                    &mut element_state.interactive,
+                    cx,
+                );
+            });
+        })
     }
 }
 
@@ -158,6 +186,18 @@ impl<V> List<V> {
             },
         );
         cx.layout_bounds(layout_id).size.height
+    }
+}
+
+impl<V: 'static> StatelessInteractive<V> for List<V> {
+    fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<V> {
+        self.interactivity.as_stateless_mut()
+    }
+}
+
+impl<V: 'static> StatefulInteractive<V> for List<V> {
+    fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<V> {
+        &mut self.interactivity
     }
 }
 

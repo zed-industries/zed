@@ -128,7 +128,7 @@ impl<V: 'static> Checkbox<V> {
             // click area for the checkbox.
             .size_5()
             // Because we've enlarged the click area, we need to create a
-            // `group` to pass down interaction events to the checkbox.
+            // `group` to pass down interactivity events to the checkbox.
             .group(group_id.clone())
             .child(
                 div()
@@ -148,7 +148,7 @@ impl<V: 'static> Checkbox<V> {
                     .bg(bg_color)
                     .border()
                     .border_color(border_color)
-                    // We only want the interaction states to fire when we
+                    // We only want the interactivity states to fire when we
                     // are in a checkbox that isn't disabled.
                     .when(!self.disabled, |this| {
                         // Here instead of `hover()` we use `group_hover()`

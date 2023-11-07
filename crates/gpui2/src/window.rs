@@ -1698,8 +1698,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &mut self.window_cx
     }
 
-    pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.z_index_stack.push(order);
+    pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.window.z_index_stack.push(z_index);
         let result = f(self);
         self.window.z_index_stack.pop();
         result
