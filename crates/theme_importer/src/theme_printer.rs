@@ -134,12 +134,12 @@ impl<'a> Debug for ThemeColorsPrinter<'a> {
             .field("border", &HslaPrinter(self.0.border))
             .field("border_variant", &HslaPrinter(self.0.border_variant))
             .field("border_focused", &HslaPrinter(self.0.border_focused))
-            .field("border_disabled", &HslaPrinter(self.0.border_disabled))
             .field("border_selected", &HslaPrinter(self.0.border_selected))
             .field(
                 "border_transparent",
                 &HslaPrinter(self.0.border_transparent),
             )
+            .field("border_disabled", &HslaPrinter(self.0.border_disabled))
             .field(
                 "elevated_surface_background",
                 &HslaPrinter(self.0.elevated_surface_background),
@@ -221,12 +221,42 @@ impl<'a> Debug for ThemeColorsPrinter<'a> {
             )
             .field("editor_background", &HslaPrinter(self.0.editor_background))
             .field(
+                "editor_gutter_background",
+                &HslaPrinter(self.0.editor_gutter_background),
+            )
+            .field(
                 "editor_subheader_background",
                 &HslaPrinter(self.0.editor_subheader_background),
             )
             .field(
-                "editor_active_line",
+                "editor_active_line_background",
                 &HslaPrinter(self.0.editor_active_line_background),
+            )
+            .field(
+                "editor_highlighted_line_background",
+                &HslaPrinter(self.0.editor_highlighted_line_background),
+            )
+            .field(
+                "editor_line_number",
+                &HslaPrinter(self.0.editor_line_number),
+            )
+            .field(
+                "editor_active_line_number",
+                &HslaPrinter(self.0.editor_active_line_number),
+            )
+            .field("editor_invisible", &HslaPrinter(self.0.editor_invisible))
+            .field("editor_wrap_guide", &HslaPrinter(self.0.editor_wrap_guide))
+            .field(
+                "editor_active_wrap_guide",
+                &HslaPrinter(self.0.editor_active_wrap_guide),
+            )
+            .field(
+                "editor_document_highlight_read_background",
+                &HslaPrinter(self.0.editor_document_highlight_read_background),
+            )
+            .field(
+                "editor_document_highlight_write_background",
+                &HslaPrinter(self.0.editor_document_highlight_write_background),
             )
             .field(
                 "terminal_background",
