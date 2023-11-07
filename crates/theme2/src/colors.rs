@@ -69,25 +69,77 @@ pub struct GitStatusColors {
 #[refineable(debug, deserialize)]
 pub struct ThemeColors {
     pub border: Hsla,
+    /// Border color used for deemphasized borders, like a visual divider between two sections
     pub border_variant: Hsla,
+    /// Border color used for focused elements, like keyboard focused list item.
     pub border_focused: Hsla,
+    /// Border color used for selected elements, like an active search filter or selected checkbox.
     pub border_selected: Hsla,
+    /// Border color used for transparent borders. Used for placeholder borders when an element gains a border on state change.
     pub border_transparent: Hsla,
+    /// Border color used for disabled elements, like a disabled input or button.
     pub border_disabled: Hsla,
+    /// Used for elevated surfaces, like a context menu, popup, or dialog.
     pub elevated_surface_background: Hsla,
+    /// Used for grounded surfaces like a panel or tab.
     pub surface_background: Hsla,
+    /// Used the app background and blank panels or windows.
     pub background: Hsla,
+    /// Used for the background of an element that should have a different background than the surface it's on.
+    ///
+    /// Elements might include: Buttons, Inputs, Checkboxes, Radio Buttons...
+    ///
+    /// For an element that should have the same background as the surface it's on, use `ghost_element_background`.
     pub element_background: Hsla,
+    /// Used for the hover state of an element that should have a different background than the surface it's on.
+    ///
+    /// Hover states are triggered by the mouse entering an element, or a finger touching an element on a touch screen.
     pub element_hover: Hsla,
+    /// Used for the active state of an element that should have a different background than the surface it's on.
+    ///
+    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressd.
     pub element_active: Hsla,
+    /// Used for the selected state of an element that should have a different background than the surface it's on.
+    ///
+    /// Selected states are triggered by the element being selected (or "activated") by the user.
+    ///
+    /// This could include a selected checkbox, a toggleable button that is toggled on, etc.
     pub element_selected: Hsla,
+    /// Used for the disabled state of an element that should have a different background than the surface it's on.
+    ///
+    /// Disabled states are shown when a user cannot interact with an element, like a disabled button or input.
     pub element_disabled: Hsla,
-    pub element_placeholder: Hsla,
-    pub element_drop_target: Hsla,
+    /// Used for the text color of an element that should have a different background than the surface it's on.
+    ///
+    /// Example: A input with some default placeholder text.
+    pub element_placeholder_text: Hsla,
+    /// Background color of the area that shows where a dragged element will be dropped.
+    pub drop_target_background: Hsla,
+    /// Border color of the area that shows where a dragged element will be dropped.
+    // pub drop_target_border: Hsla,
+    /// Used for the background of a ghost element that should have the same background as the surface it's on.
+    ///
+    /// Elements might include: Buttons, Inputs, Checkboxes, Radio Buttons...
+    ///
+    /// For an element that should have a different background than the surface it's on, use `element_background`.
     pub ghost_element_background: Hsla,
+    /// Used for the hover state of a ghost element that should have the same background as the surface it's on.
+    ///
+    /// Hover states are triggered by the mouse entering an element, or a finger touching an element on a touch screen.
     pub ghost_element_hover: Hsla,
+    /// Used for the active state of a ghost element that should have the same background as the surface it's on.
+    ///
+    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressd.
     pub ghost_element_active: Hsla,
+    /// Used for the selected state of a ghost element that should have the same background as the surface it's on.
+    ///
+    /// Selected states are triggered by the element being selected (or "activated") by the user.
+    ///
+    /// This could include a selected checkbox, a toggleable button that is toggled on, etc.
     pub ghost_element_selected: Hsla,
+    /// Used for the disabled state of a ghost element that should have the same background as the surface it's on.
+    ///
+    /// Disabled states are shown when a user cannot interact with an element, like a disabled button or input.
     pub ghost_element_disabled: Hsla,
     pub text: Hsla,
     pub text_muted: Hsla,
@@ -134,6 +186,46 @@ pub struct ThemeColors {
     pub terminal_ansi_magenta: Hsla,
     pub terminal_ansi_cyan: Hsla,
     pub terminal_ansi_white: Hsla,
+    // new colors
+
+    // == elevation ==
+    // elevatation_0_shadow
+    // elevatation_0_shadow_color
+    // elevatation_1_shadow
+    // elevatation_1_shadow_color
+    // elevatation_2_shadow
+    // elevatation_2_shadow_color
+    // elevatation_3_shadow
+    // elevatation_3_shadow_color
+    // elevatation_4_shadow
+    // elevatation_4_shadow_color
+    // elevatation_5_shadow
+    // elevatation_5_shadow_color
+
+    // == rich text ==
+    // headline
+    // paragraph
+    // link
+    // link_hover
+    // code_block_background
+    // code_block_border
+
+    // == misc ==
+    // inverted_element_*
+    // foreground: Overall foreground color. This color is only used if not overridden by a component.
+    // disabledForeground: Overall foreground for disabled elements. This color is only used if not overridden by a component.
+    // widget.border: Border color of widgets such as Find/Replace inside the editor.
+    // widget.shadow: Shadow color of widgets such as Find/Replace inside the editor.
+    // selection - foreground, background
+    // active_element_border
+    // inactive_element_border
+    // element_seperator
+    // scrollbar_thumb_background
+    // scrollbar_thumb_hover_background
+    // scrollbar_thumb_border
+    // scrollbar_track_background
+    // scrollbar_track_border
+    // scrollbar_status_opacity
 }
 
 #[derive(Refineable, Clone)]
