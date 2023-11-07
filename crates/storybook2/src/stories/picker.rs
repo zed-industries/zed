@@ -48,9 +48,27 @@ impl PickerDelegate for PickerStory {
         &mut self,
         ix: usize,
         _picker_id: gpui::ElementId,
-        _cx: &mut gpui::ViewContext<Self>,
+        cx: &mut gpui::ViewContext<Self>,
     ) {
         self.selected_ix = ix;
+        cx.notify();
+    }
+
+    fn confirm(
+        &mut self,
+        secondary: bool,
+        picker_id: gpui::ElementId,
+        cx: &mut gpui::ViewContext<Self>,
+    ) {
+        if secondary {
+            eprintln!("Secondary confirmed {}", self.candidates[self.selected_ix])
+        } else {
+            eprintln!("Confirmed {}", self.candidates[self.selected_ix])
+        }
+    }
+
+    fn dismissed(&mut self, picker_id: gpui::ElementId, cx: &mut gpui::ViewContext<Self>) {
+        cx.quit();
     }
 }
 

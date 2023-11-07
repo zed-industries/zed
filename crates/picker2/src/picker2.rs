@@ -42,13 +42,12 @@ pub trait PickerDelegate: Sized + 'static {
     //     fn placeholder_text(&self) -> Arc<str>;
 
     fn match_count(&self, picker_id: ElementId) -> usize;
-
     fn selected_index(&self, picker_id: ElementId) -> usize;
     fn set_selected_index(&mut self, ix: usize, picker_id: ElementId, cx: &mut ViewContext<Self>);
 
     //     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
-    //     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
-    //     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
+    fn confirm(&mut self, secondary: bool, picker_id: ElementId, cx: &mut ViewContext<Self>);
+    fn dismissed(&mut self, picker_id: ElementId, cx: &mut ViewContext<Self>);
 
     // todo!("rename to render_candidate?")
     fn render_match(
@@ -105,18 +104,18 @@ impl<V: 'static + PickerDelegate> Picker<V> {
             .id(self.id.clone())
             .track_focus(&self.focus_handle)
             .context("picker")
-            .on_focus(|v, e, cx| {
-                dbg!("FOCUSED!");
+            .on_focus(|_, _, _cx| {
+                eprintln!("picker focused");
             })
-            .on_blur(|v, e, cx| {
-                dbg!("BLURRED!");
+            .on_blur(|_, _, _cx| {
+                eprintln!("picker blurred");
             })
             .on_action({
                 let id = id.clone();
                 move |view: &mut V, _: &menu::SelectNext, cx| {
-                    let index = view.selected_index(id.clone());
                     let count = view.match_count(id.clone());
                     if count > 0 {
+                        let index = view.selected_index(id.clone());
                         view.set_selected_index(cmp::min(index + 1, count - 1), id.clone(), cx);
                     }
                 }
@@ -124,18 +123,46 @@ impl<V: 'static + PickerDelegate> Picker<V> {
             .on_action({
                 let id = id.clone();
                 move |view, _: &menu::SelectPrev, cx| {
-                    let index = view.selected_index(id.clone());
                     let count = view.match_count(id.clone());
                     if count > 0 {
-                        view.set_selected_index((index + 1) % count, id.clone(), cx);
+                        let index = view.selected_index(id.clone());
+                        view.set_selected_index(index.saturating_sub(1), id.clone(), cx);
                     }
                 }
             })
-            .on_action(|view, _: &menu::SelectFirst, cx| {})
-            .on_action(|view, _: &menu::SelectLast, cx| {})
-            .on_action(|view, _: &menu::Cancel, cx| {})
-            .on_action(|view, _: &menu::Confirm, cx| {})
-            .on_action(|view, _: &menu::SecondaryConfirm, cx| {})
+            .on_action({
+                let id = id.clone();
+                move |view: &mut V, _: &menu::SelectFirst, cx| {
+                    view.set_selected_index(0, id.clone(), cx);
+                }
+            })
+            .on_action({
+                let id = id.clone();
+                move |view: &mut V, _: &menu::SelectLast, cx| {
+                    let count = view.match_count(id.clone());
+                    if count > 0 {
+                        view.set_selected_index(count - 1, id.clone(), cx);
+                    }
+                }
+            })
+            .on_action({
+                let id = id.clone();
+                move |view: &mut V, _: &menu::Cancel, cx| {
+                    view.dismissed(id.clone(), cx);
+                }
+            })
+            .on_action({
+                let id = id.clone();
+                move |view: &mut V, _: &menu::Confirm, cx| {
+                    view.confirm(false, id.clone(), cx);
+                }
+            })
+            .on_action({
+                let id = id.clone();
+                move |view: &mut V, _: &menu::SecondaryConfirm, cx| {
+                    view.confirm(true, id.clone(), cx);
+                }
+            })
             .child(
                 list(
                     "candidates",
