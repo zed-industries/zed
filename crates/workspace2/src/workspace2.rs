@@ -3707,7 +3707,9 @@ impl Render for Workspace {
             .bg(cx.theme().colors().background)
             .child(self.render_titlebar(cx))
             .child(
-                div()
+                self.modal_layer
+                    .read(cx)
+                    .render(self, cx)
                     .flex_1()
                     .w_full()
                     .flex()
@@ -3840,8 +3842,6 @@ impl Render for Workspace {
                               //         .on_click(Arc::new(|workspace, cx| workspace.toggle_debug(cx))),
                               // ),
             )
-            //     .child(self.modal_layer.clone())
-            .child(self.modal_layer.read(cx).render(cx))
     }
 }
 

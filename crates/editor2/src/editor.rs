@@ -36,10 +36,10 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, px, AnyElement, AppContext, BackgroundExecutor, Context, DispatchContext, Div,
-    Element, Entity, EventEmitter, FocusHandle, FontStyle, FontWeight, Hsla, Model, Pixels, Render,
-    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    actions, div, px, relative, AnyElement, AppContext, BackgroundExecutor, Context,
+    DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle, FontStyle, FontWeight, Hsla,
+    Model, Pixels, Render, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -593,7 +593,6 @@ pub struct EditorStyle {
     pub background: Hsla,
     pub local_player: PlayerColor,
     pub text: TextStyle,
-    pub line_height_scalar: f32,
     pub scrollbar_width: Pixels,
     pub syntax: Arc<SyntaxTheme>,
     pub diagnostic_style: DiagnosticStyle,
@@ -1795,14 +1794,11 @@ impl InlayHintRefreshReason {
 }
 
 impl Editor {
-    //     pub fn single_line(
-    //         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Self {
-    //         let buffer = cx.build_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
-    //         let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
-    //         Self::new(EditorMode::SingleLine, buffer, None, field_editor_style, cx)
-    //     }
+    pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
+        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
+        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+        Self::new(EditorMode::SingleLine, buffer, None, cx)
+    }
 
     //     pub fn multi_line(
     //         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
@@ -9372,14 +9368,13 @@ impl Render for Editor {
             font_size: settings.buffer_font_size.into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: Default::default(),
+            line_height: relative(settings.buffer_line_height.value()),
             underline: None,
         };
         EditorElement::new(EditorStyle {
             background: cx.theme().colors().editor_background,
             local_player: cx.theme().players().local(),
             text: text_style,
-            line_height_scalar: settings.buffer_line_height.value(),
             scrollbar_width: px(12.),
             syntax: cx.theme().syntax().clone(),
             diagnostic_style: cx.theme().diagnostic_style(),
