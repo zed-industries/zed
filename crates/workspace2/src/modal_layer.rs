@@ -33,7 +33,7 @@ impl ModalRegistry {
     pub fn register_modal<A: 'static, V, B>(&mut self, action: A, build_view: B)
     where
         V: Render,
-        B: Fn(&Workspace, &mut ViewContext<Workspace>) -> View<V> + 'static,
+        B: Fn(&Workspace, &mut ViewContext<Workspace>) -> Option<View<V>> + 'static,
     {
         let build_view = Arc::new(build_view);
 
@@ -47,12 +47,14 @@ impl ModalRegistry {
                           event: &A,
                           phase: DispatchPhase,
                           cx: &mut ViewContext<Workspace>| {
-                        dbg!("GOT HERE");
                         if phase == DispatchPhase::Capture {
                             return;
                         }
 
-                        let new_modal = (build_view)(workspace, cx);
+                        let Some(new_modal) = (build_view)(workspace, cx) else {
+                            return;
+                        };
+
                         workspace.modal_layer.update(cx, |modal_layer, _| {
                             modal_layer.open_modal = Some(new_modal.into());
                         });

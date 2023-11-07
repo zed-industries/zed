@@ -3,22 +3,27 @@ use gpui::{
     VisualContext,
 };
 use ui::modal;
+use editor::{scroll::autoscroll::Autoscroll, Editor};
+use gpui::{
+    actions, div, px, red, AppContext, Div, EventEmitter, ParentElement, Render, Styled, View,
+    ViewContext, VisualContext,
+};
+use text::{Bias, Point};
+use ui::modal;
+use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::ModalRegistry;
 
-actions!(Toggle);
+actions!(Toggle, Cancel, Confirm);
 
 pub fn init(cx: &mut AppContext) {
     cx.register_action_type::<Toggle>();
     cx.global_mut::<ModalRegistry>()
-        .register_modal(Toggle, |_, cx| {
-            // if let Some(editor) = workspace
-            //     .active_item(cx)
-            //     .and_then(|active_item| active_item.downcast::<Editor>())
-            // {
-            //     cx.build_view(|cx| GoToLine::new(editor, cx))
-            // }
-            let view = cx.build_view(|_| GoToLine);
-            view
+        .register_modal(Toggle, |workspace, cx| {
+            let editor = workspace
+                .active_item(cx)
+                .and_then(|active_item| active_item.downcast::<Editor>())?;
+
+            Some(cx.build_view(|cx| GoToLine::new(editor, cx)))
         });
 
     // cx.add_action(GoToLine::toggle);
@@ -26,13 +31,96 @@ pub fn init(cx: &mut AppContext) {
     // cx.add_action(GoToLine::cancel);
 }
 
-pub struct GoToLine;
+pub struct GoToLine {
+    line_editor: View<Editor>,
+    active_editor: View<Editor>,
+}
+
+pub enum Event {
+    Dismissed,
+}
+
+impl EventEmitter for GoToLine {
+    type Event = Event;
+}
+
+impl GoToLine {
+    pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
+        let line_editor = cx.build_view(|cx| Editor::single_line(cx));
+        cx.subscribe(&line_editor, Self::on_line_editor_event)
+            .detach();
+
+        Self {
+            line_editor,
+            active_editor,
+        }
+    }
+
+    fn on_line_editor_event(
+        &mut self,
+        _: View<Editor>,
+        event: &editor::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            editor::Event::Blurred => cx.emit(Event::Dismissed),
+            editor::Event::BufferEdited { .. } => {
+                if let Some(point) = self.point_from_query(cx) {
+                    // todo!()
+                    // self.active_editor.update(cx, |active_editor, cx| {
+                    //     let snapshot = active_editor.snapshot(cx).display_snapshot;
+                    //     let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
+                    //     let display_point = point.to_display_point(&snapshot);
+                    //     let row = display_point.row();
+                    //     active_editor.highlight_rows(Some(row..row + 1));
+                    //     active_editor.request_autoscroll(Autoscroll::center(), cx);
+                    // });
+                    cx.notify();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn point_from_query(&self, cx: &ViewContext<Self>) -> Option<Point> {
+        // todo!()
+        let line_editor = "2:2"; //self.line_editor.read(cx).text(cx);
+        let mut components = line_editor
+            .splitn(2, FILE_ROW_COLUMN_DELIMITER)
+            .map(str::trim)
+            .fuse();
+        let row = components.next().and_then(|row| row.parse::<u32>().ok())?;
+        let column = components.next().and_then(|col| col.parse::<u32>().ok());
+        Some(Point::new(
+            row.saturating_sub(1),
+            column.unwrap_or(0).saturating_sub(1),
+        ))
+    }
+
+    fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Dismissed);
+    }
+
+    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+        if let Some(point) = self.point_from_query(cx) {
+            self.active_editor.update(cx, |active_editor, cx| {
+                let snapshot = active_editor.snapshot(cx).display_snapshot;
+                let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
+                active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                    s.select_ranges([point..point])
+                });
+            });
+        }
+
+        cx.emit(Event::Dismissed);
+    }
+}
 
 impl Render for GoToLine {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        modal(cx).child(div().m_4().bg(red()).w(px(100.0)).h(px(100.0)))
+        modal(cx).child(self.line_editor.clone()).child("blah blah")
     }
 }
 
@@ -51,14 +139,6 @@ impl Render for GoToLine {
 
 // impl GoToLine {
 //     pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
-//         // let line_editor = cx.build_view(|cx| {
-//         //     Editor::single_line(
-//         //         Some(Arc::new(|theme| theme.picker.input_editor.clone())),
-//         //         cx,
-//         //     )
-//         // });
-//         // cx.subscribe(&line_editor, Self::on_line_editor_event)
-//         //     .detach();
 
 //         let (scroll_position, cursor_point, max_point) = active_editor.update(cx, |editor, cx| {
 //             let scroll_position = editor.scroll_position(cx);
@@ -100,49 +180,6 @@ impl Render for GoToLine {
 
 //         cx.emit(Event::Dismissed);
 //     }
-
-//     fn on_line_editor_event(
-//         &mut self,
-//         _: View<Editor>,
-//         event: &editor::Event,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         match event {
-//             editor::Event::Blurred => cx.emit(Event::Dismissed),
-//             editor::Event::BufferEdited { .. } => {
-//                 if let Some(point) = self.point_from_query(cx) {
-//                     // todo!()
-//                     // self.active_editor.update(cx, |active_editor, cx| {
-//                     //     let snapshot = active_editor.snapshot(cx).display_snapshot;
-//                     //     let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-//                     //     let display_point = point.to_display_point(&snapshot);
-//                     //     let row = display_point.row();
-//                     //     active_editor.highlight_rows(Some(row..row + 1));
-//                     //     active_editor.request_autoscroll(Autoscroll::center(), cx);
-//                     // });
-//                     cx.notify();
-//                 }
-//             }
-//             _ => {}
-//         }
-//     }
-
-//     fn point_from_query(&self, cx: &ViewContext<Self>) -> Option<Point> {
-//         return None;
-//         // todo!()
-//         // let line_editor = self.line_editor.read(cx).text(cx);
-//         // let mut components = line_editor
-//         //     .splitn(2, FILE_ROW_COLUMN_DELIMITER)
-//         //     .map(str::trim)
-//         //     .fuse();
-//         // let row = components.next().and_then(|row| row.parse::<u32>().ok())?;
-//         // let column = components.next().and_then(|col| col.parse::<u32>().ok());
-//         // Some(Point::new(
-//         //     row.saturating_sub(1),
-//         //     column.unwrap_or(0).saturating_sub(1),
-//         // ))
-//     }
-// }
 
 // impl EventEmitter for GoToLine {
 //     type Event = Event;
