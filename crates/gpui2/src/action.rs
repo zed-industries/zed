@@ -24,12 +24,12 @@ macro_rules! actions {
 
     ( $name:ident ) => {
         #[derive(::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq, $crate::serde::Deserialize)]
-        struct $name;
+        pub struct $name;
     };
 
     ( $name:ident { $($token:tt)* } ) => {
         #[derive(::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq, $crate::serde::Deserialize)]
-        struct $name { $($token)* }
+        pub struct $name { $($token)* }
     };
 
     ( $name:ident, $($rest:tt)* ) => {

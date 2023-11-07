@@ -1577,12 +1577,10 @@ impl EditorElement {
                 })
                 .collect()
         } else {
-            let style = &self.style;
-            let chunks = snapshot.highlighted_chunks(rows.clone(), true, cx.theme());
-
+            let chunks = snapshot.highlighted_chunks(rows.clone(), true, &self.style);
             LineWithInvisibles::from_chunks(
                 chunks,
-                &style.text,
+                &self.style.text,
                 MAX_LINE_LEN,
                 rows.len() as usize,
                 line_number_layouts,
@@ -2560,6 +2558,10 @@ impl Element<Editor> for EditorElement {
             cx.with_key_dispatch_context(dispatch_context, |cx| {
                 cx.with_key_listeners(
                     [
+                        build_action_listener(Editor::move_left),
+                        build_action_listener(Editor::move_right),
+                        build_action_listener(Editor::move_down),
+                        build_action_listener(Editor::move_up),
                         build_key_listener(
                             move |editor, key_down: &KeyDownEvent, dispatch_context, phase, cx| {
                                 if phase == DispatchPhase::Bubble {
@@ -2568,7 +2570,6 @@ impl Element<Editor> for EditorElement {
                                         &key_down.keystroke,
                                         dispatch_context,
                                     ) {
-                                        dbg!(action.as_any());
                                         return Some(action);
                                     }
                                 }
@@ -2576,10 +2577,6 @@ impl Element<Editor> for EditorElement {
                                 None
                             },
                         ),
-                        build_action_listener(Editor::move_left),
-                        build_action_listener(Editor::move_right),
-                        build_action_listener(Editor::move_down),
-                        build_action_listener(Editor::move_up),
                     ],
                     |cx| cx.with_focus(editor.focus_handle.clone(), |_| {}),
                 );

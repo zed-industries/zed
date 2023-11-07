@@ -36,9 +36,10 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    div, px, AnyElement, AppContext, BackgroundExecutor, Context, DispatchContext, Div, Element,
-    Entity, EventEmitter, FocusHandle, FontStyle, FontWeight, Hsla, Model, Pixels, Render, Styled,
-    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, div, px, AnyElement, AppContext, BackgroundExecutor, Context, DispatchContext, Div,
+    Element, Entity, EventEmitter, FocusHandle, FontStyle, FontWeight, Hsla, Model, Pixels, Render,
+    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -82,7 +83,9 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::Rope;
-use theme::{ActiveTheme, PlayerColor, Theme, ThemeColors, ThemeSettings};
+use theme::{
+    ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
+};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, SplitDirection, ViewId, Workspace};
 
@@ -257,118 +260,115 @@ impl InlayId {
     }
 }
 
-// actions!(
-//     editor,
-//     [
-//         Cancel,
-//         Backspace,
-//         Delete,
-//         Newline,
-//         NewlineAbove,
-//         NewlineBelow,
-//         GoToDiagnostic,
-//         GoToPrevDiagnostic,
-//         GoToHunk,
-//         GoToPrevHunk,
-//         Indent,
-//         Outdent,
-//         DeleteLine,
-//         DeleteToPreviousWordStart,
-//         DeleteToPreviousSubwordStart,
-//         DeleteToNextWordEnd,
-//         DeleteToNextSubwordEnd,
-//         DeleteToBeginningOfLine,
-//         DeleteToEndOfLine,
-//         CutToEndOfLine,
-//         DuplicateLine,
-//         MoveLineUp,
-//         MoveLineDown,
-//         JoinLines,
-//         SortLinesCaseSensitive,
-//         SortLinesCaseInsensitive,
-//         ReverseLines,
-//         ShuffleLines,
-//         ConvertToUpperCase,
-//         ConvertToLowerCase,
-//         ConvertToTitleCase,
-//         ConvertToSnakeCase,
-//         ConvertToKebabCase,
-//         ConvertToUpperCamelCase,
-//         ConvertToLowerCamelCase,
-//         Transpose,
-//         Cut,
-//         Copy,
-//         Paste,
-//         Undo,
-//         Redo,
-//         MoveUp,
-//         PageUp,
-//         MoveDown,
-//         PageDown,
-//         MoveLeft,
-//         MoveRight,
-//         MoveToPreviousWordStart,
-//         MoveToPreviousSubwordStart,
-//         MoveToNextWordEnd,
-//         MoveToNextSubwordEnd,
-//         MoveToBeginningOfLine,
-//         MoveToEndOfLine,
-//         MoveToStartOfParagraph,
-//         MoveToEndOfParagraph,
-//         MoveToBeginning,
-//         MoveToEnd,
-//         SelectUp,
-//         SelectDown,
-//         SelectLeft,
-//         SelectRight,
-//         SelectToPreviousWordStart,
-//         SelectToPreviousSubwordStart,
-//         SelectToNextWordEnd,
-//         SelectToNextSubwordEnd,
-//         SelectToStartOfParagraph,
-//         SelectToEndOfParagraph,
-//         SelectToBeginning,
-//         SelectToEnd,
-//         SelectAll,
-//         SelectLine,
-//         SplitSelectionIntoLines,
-//         AddSelectionAbove,
-//         AddSelectionBelow,
-//         Tab,
-//         TabPrev,
-//         ShowCharacterPalette,
-//         SelectLargerSyntaxNode,
-//         SelectSmallerSyntaxNode,
-//         GoToDefinition,
-//         GoToDefinitionSplit,
-//         GoToTypeDefinition,
-//         GoToTypeDefinitionSplit,
-//         MoveToEnclosingBracket,
-//         UndoSelection,
-//         RedoSelection,
-//         FindAllReferences,
-//         Rename,
-//         ConfirmRename,
-//         Fold,
-//         UnfoldLines,
-//         FoldSelectedRanges,
-//         ShowCompletions,
-//         OpenExcerpts,
-//         RestartLanguageServer,
-//         Hover,
-//         Format,
-//         ToggleSoftWrap,
-//         ToggleInlayHints,
-//         RevealInFinder,
-//         CopyPath,
-//         CopyRelativePath,
-//         CopyHighlightJson,
-//         ContextMenuFirst,
-//         ContextMenuPrev,
-//         ContextMenuNext,
-//         ContextMenuLast,
-//     ]
-// );
+actions!(
+    Cancel,
+    Backspace,
+    Delete,
+    Newline,
+    NewlineAbove,
+    NewlineBelow,
+    GoToDiagnostic,
+    GoToPrevDiagnostic,
+    GoToHunk,
+    GoToPrevHunk,
+    Indent,
+    Outdent,
+    DeleteLine,
+    DeleteToPreviousWordStart,
+    DeleteToPreviousSubwordStart,
+    DeleteToNextWordEnd,
+    DeleteToNextSubwordEnd,
+    DeleteToBeginningOfLine,
+    DeleteToEndOfLine,
+    CutToEndOfLine,
+    DuplicateLine,
+    MoveLineUp,
+    MoveLineDown,
+    JoinLines,
+    SortLinesCaseSensitive,
+    SortLinesCaseInsensitive,
+    ReverseLines,
+    ShuffleLines,
+    ConvertToUpperCase,
+    ConvertToLowerCase,
+    ConvertToTitleCase,
+    ConvertToSnakeCase,
+    ConvertToKebabCase,
+    ConvertToUpperCamelCase,
+    ConvertToLowerCamelCase,
+    Transpose,
+    Cut,
+    Copy,
+    Paste,
+    Undo,
+    Redo,
+    MoveUp,
+    PageUp,
+    MoveDown,
+    PageDown,
+    MoveLeft,
+    MoveRight,
+    MoveToPreviousWordStart,
+    MoveToPreviousSubwordStart,
+    MoveToNextWordEnd,
+    MoveToNextSubwordEnd,
+    MoveToBeginningOfLine,
+    MoveToEndOfLine,
+    MoveToStartOfParagraph,
+    MoveToEndOfParagraph,
+    MoveToBeginning,
+    MoveToEnd,
+    SelectUp,
+    SelectDown,
+    SelectLeft,
+    SelectRight,
+    SelectToPreviousWordStart,
+    SelectToPreviousSubwordStart,
+    SelectToNextWordEnd,
+    SelectToNextSubwordEnd,
+    SelectToStartOfParagraph,
+    SelectToEndOfParagraph,
+    SelectToBeginning,
+    SelectToEnd,
+    SelectAll,
+    SelectLine,
+    SplitSelectionIntoLines,
+    AddSelectionAbove,
+    AddSelectionBelow,
+    Tab,
+    TabPrev,
+    ShowCharacterPalette,
+    SelectLargerSyntaxNode,
+    SelectSmallerSyntaxNode,
+    GoToDefinition,
+    GoToDefinitionSplit,
+    GoToTypeDefinition,
+    GoToTypeDefinitionSplit,
+    MoveToEnclosingBracket,
+    UndoSelection,
+    RedoSelection,
+    FindAllReferences,
+    Rename,
+    ConfirmRename,
+    Fold,
+    UnfoldLines,
+    FoldSelectedRanges,
+    ShowCompletions,
+    OpenExcerpts,
+    RestartLanguageServer,
+    Hover,
+    Format,
+    ToggleSoftWrap,
+    ToggleInlayHints,
+    RevealInFinder,
+    CopyPath,
+    CopyRelativePath,
+    CopyHighlightJson,
+    ContextMenuFirst,
+    ContextMenuPrev,
+    ContextMenuNext,
+    ContextMenuLast,
+);
 
 // impl_actions!(
 //     editor,
@@ -389,26 +389,6 @@ impl InlayId {
 //         GutterHover
 //     ]
 // );
-
-// todo!(revisit these actions)
-pub struct ShowCompletions;
-pub struct Rename;
-pub struct GoToDefinition;
-pub struct GoToTypeDefinition;
-pub struct GoToDefinitionSplit;
-pub struct GoToTypeDefinitionSplit;
-
-#[derive(PartialEq, Clone, Default, Deserialize)]
-pub struct MoveLeft;
-
-#[derive(PartialEq, Clone, Default, Deserialize)]
-pub struct MoveRight;
-
-#[derive(PartialEq, Clone, Default, Deserialize)]
-pub struct MoveDown;
-
-#[derive(PartialEq, Clone, Default, Deserialize)]
-pub struct MoveUp;
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -615,6 +595,8 @@ pub struct EditorStyle {
     pub text: TextStyle,
     pub line_height_scalar: f32,
     pub scrollbar_width: Pixels,
+    pub syntax: Arc<SyntaxTheme>,
+    pub diagnostic_style: DiagnosticStyle,
 }
 
 type CompletionId = usize;
@@ -3543,6 +3525,7 @@ impl Editor {
         TextLayoutDetails {
             text_system: cx.text_system().clone(),
             editor_style: self.style.clone().unwrap(),
+            rem_size: cx.rem_size(),
         }
     }
 
@@ -5862,7 +5845,6 @@ impl Editor {
     //     }
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
-        dbg!("move_down");
         self.take_rename(true, cx);
 
         if self.mode == EditorMode::SingleLine {
@@ -9399,6 +9381,8 @@ impl Render for Editor {
             text: text_style,
             line_height_scalar: settings.buffer_line_height.value(),
             scrollbar_width: px(12.),
+            syntax: cx.theme().syntax().clone(),
+            diagnostic_style: cx.theme().diagnostic_style(),
         })
     }
 }
@@ -9982,17 +9966,21 @@ pub fn highlight_diagnostic_message(
     (message_without_backticks, highlights)
 }
 
-pub fn diagnostic_style(severity: DiagnosticSeverity, valid: bool, theme: &Theme) -> Hsla {
+pub fn diagnostic_style(
+    severity: DiagnosticSeverity,
+    valid: bool,
+    style: &DiagnosticStyle,
+) -> Hsla {
     match (severity, valid) {
-        (DiagnosticSeverity::ERROR, true) => theme.status().error,
-        (DiagnosticSeverity::ERROR, false) => theme.status().error,
-        (DiagnosticSeverity::WARNING, true) => theme.status().warning,
-        (DiagnosticSeverity::WARNING, false) => theme.status().warning,
-        (DiagnosticSeverity::INFORMATION, true) => theme.status().info,
-        (DiagnosticSeverity::INFORMATION, false) => theme.status().info,
-        (DiagnosticSeverity::HINT, true) => theme.status().info,
-        (DiagnosticSeverity::HINT, false) => theme.status().info,
-        _ => theme.status().ignored,
+        (DiagnosticSeverity::ERROR, true) => style.error,
+        (DiagnosticSeverity::ERROR, false) => style.error,
+        (DiagnosticSeverity::WARNING, true) => style.warning,
+        (DiagnosticSeverity::WARNING, false) => style.warning,
+        (DiagnosticSeverity::INFORMATION, true) => style.info,
+        (DiagnosticSeverity::INFORMATION, false) => style.info,
+        (DiagnosticSeverity::HINT, true) => style.info,
+        (DiagnosticSeverity::HINT, false) => style.info,
+        _ => style.ignored,
     }
 }
 

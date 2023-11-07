@@ -52,7 +52,7 @@ impl ThemeRegistry {
                     status: StatusColors::default(),
                     git: GitStatusColors::default(),
                     player: PlayerColors::default(),
-                    syntax: SyntaxTheme::default_dark(),
+                    syntax: Arc::new(SyntaxTheme::default_dark()),
                 },
             }
         }));

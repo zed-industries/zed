@@ -1,6 +1,6 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, CharKind, EditorStyle, ToOffset, ToPoint};
-use gpui::{px, TextSystem};
+use gpui::{px, Pixels, TextSystem};
 use language::Point;
 use serde::de::IntoDeserializer;
 use std::{ops::Range, sync::Arc};
@@ -16,6 +16,7 @@ pub enum FindRange {
 pub struct TextLayoutDetails {
     pub text_system: Arc<TextSystem>,
     pub editor_style: EditorStyle,
+    pub rem_size: Pixels,
 }
 
 pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
