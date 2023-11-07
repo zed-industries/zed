@@ -1,28 +1,8 @@
-// use editor::Editor;
-// use gpui::{
-//     elements::*,
-//     geometry::vector::{vec2f, Vector2F},
-//     keymap_matcher::KeymapContext,
-//     platform::{CursorStyle, MouseButton},
-//     AnyElement, AnyViewHandle, AppContext, Axis, Entity, MouseState, Task, View, ViewContext,
-//     ViewHandle,
-// };
-// use menu::{Cancel, Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
-// use parking_lot::Mutex;
-// use std::{cmp, sync::Arc};
-// use util::ResultExt;
-// use workspace::Modal;
-
-// #[derive(Clone, Copy)]
-// pub enum PickerEvent {
-//     Dismiss,
-// }
-
 use std::cmp;
 
 use gpui::{
-    div, list, Component, ElementId, FocusHandle, Focusable, ParentElement, StatelessInteractive,
-    Styled, ViewContext,
+    div, list, Component, ElementId, FocusHandle, Focusable, ListScrollHandle, ParentElement,
+    StatelessInteractive, Styled, ViewContext,
 };
 
 // pub struct Picker<D> {
@@ -99,6 +79,7 @@ impl<V: PickerDelegate> Picker<V> {
 impl<V: 'static + PickerDelegate> Picker<V> {
     pub fn render(self, view: &mut V, _cx: &mut ViewContext<V>) -> impl Component<V> {
         let id = self.id.clone();
+        let scroll_handle = ListScrollHandle::new();
         div()
             .size_full()
             .id(self.id.clone())
@@ -112,36 +93,49 @@ impl<V: 'static + PickerDelegate> Picker<V> {
             })
             .on_action({
                 let id = id.clone();
+                let scroll_handle = scroll_handle.clone();
                 move |view: &mut V, _: &menu::SelectNext, cx| {
                     let count = view.match_count(id.clone());
                     if count > 0 {
                         let index = view.selected_index(id.clone());
-                        view.set_selected_index(cmp::min(index + 1, count - 1), id.clone(), cx);
+                        let ix = cmp::min(index + 1, count - 1);
+                        view.set_selected_index(ix, id.clone(), cx);
+                        scroll_handle.scroll_to_item(ix);
                     }
                 }
             })
             .on_action({
                 let id = id.clone();
+                let scroll_handle = scroll_handle.clone();
                 move |view, _: &menu::SelectPrev, cx| {
                     let count = view.match_count(id.clone());
                     if count > 0 {
                         let index = view.selected_index(id.clone());
-                        view.set_selected_index(index.saturating_sub(1), id.clone(), cx);
+                        let ix = index.saturating_sub(1);
+                        view.set_selected_index(ix, id.clone(), cx);
+                        scroll_handle.scroll_to_item(ix);
                     }
                 }
             })
             .on_action({
                 let id = id.clone();
+                let scroll_handle = scroll_handle.clone();
                 move |view: &mut V, _: &menu::SelectFirst, cx| {
-                    view.set_selected_index(0, id.clone(), cx);
+                    let count = view.match_count(id.clone());
+                    if count > 0 {
+                        view.set_selected_index(0, id.clone(), cx);
+                        scroll_handle.scroll_to_item(0);
+                    }
                 }
             })
             .on_action({
                 let id = id.clone();
+                let scroll_handle = scroll_handle.clone();
                 move |view: &mut V, _: &menu::SelectLast, cx| {
                     let count = view.match_count(id.clone());
                     if count > 0 {
                         view.set_selected_index(count - 1, id.clone(), cx);
+                        scroll_handle.scroll_to_item(count - 1);
                     }
                 }
             })
@@ -174,6 +168,7 @@ impl<V: 'static + PickerDelegate> Picker<V> {
                             .collect()
                     },
                 )
+                .track_scroll(scroll_handle.clone())
                 .size_full(),
             )
     }

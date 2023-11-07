@@ -1,11 +1,12 @@
 use crate::{
     point, px, AnyElement, AvailableSpace, BorrowWindow, Bounds, Component, Element, ElementId,
-    ElementInteractivity, InteractiveElementState, LayoutId, Pixels, Size, StatefulInteractive,
-    StatefulInteractivity, StatelessInteractive, StatelessInteractivity, StyleRefinement, Styled,
-    ViewContext,
+    ElementInteractivity, InteractiveElementState, LayoutId, Pixels, Point, Size,
+    StatefulInteractive, StatefulInteractivity, StatelessInteractive, StatelessInteractivity,
+    StyleRefinement, Styled, ViewContext,
 };
+use parking_lot::Mutex;
 use smallvec::SmallVec;
-use std::{cmp, ops::Range};
+use std::{cmp, ops::Range, sync::Arc};
 use taffy::style::Overflow;
 
 pub fn list<Id, V, C>(
@@ -30,6 +31,7 @@ where
                 .collect()
         }),
         interactivity: id.into(),
+        scroll_handle: None,
     }
 }
 
@@ -45,6 +47,37 @@ pub struct List<V: 'static> {
         ) -> SmallVec<[AnyElement<V>; 64]>,
     >,
     interactivity: StatefulInteractivity<V>,
+    scroll_handle: Option<ListScrollHandle>,
+}
+
+#[derive(Clone)]
+pub struct ListScrollHandle(Arc<Mutex<Option<ListScrollHandleState>>>);
+
+#[derive(Clone, Debug)]
+struct ListScrollHandleState {
+    item_height: Pixels,
+    list_height: Pixels,
+    scroll_offset: Arc<Mutex<Point<Pixels>>>,
+}
+
+impl ListScrollHandle {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(None)))
+    }
+
+    pub fn scroll_to_item(&self, ix: usize) {
+        if let Some(state) = &*self.0.lock() {
+            let mut scroll_offset = state.scroll_offset.lock();
+            let item_top = state.item_height * ix;
+            let item_bottom = item_top + state.item_height;
+            let scroll_top = -scroll_offset.y;
+            if item_top < scroll_top {
+                scroll_offset.y = -item_top;
+            } else if item_bottom > scroll_top + state.list_height {
+                scroll_offset.y = -(item_bottom - state.list_height);
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -107,6 +140,13 @@ impl<V: 'static> Element<V> for List<V> {
             let content_size;
             if self.item_count > 0 {
                 let item_height = self.measure_item_height(view_state, padded_bounds, cx);
+                if let Some(scroll_handle) = self.scroll_handle.clone() {
+                    scroll_handle.0.lock().replace(ListScrollHandleState {
+                        item_height,
+                        list_height: padded_bounds.size.height,
+                        scroll_offset: element_state.interactive.track_scroll_offset(),
+                    });
+                }
                 let visible_item_count =
                     (padded_bounds.size.height / item_height).ceil() as usize + 1;
                 let scroll_offset = element_state
@@ -186,6 +226,11 @@ impl<V> List<V> {
             },
         );
         cx.layout_bounds(layout_id).size.height
+    }
+
+    pub fn track_scroll(mut self, handle: ListScrollHandle) -> Self {
+        self.scroll_handle = Some(handle);
+        self
     }
 }
 

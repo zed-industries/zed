@@ -900,6 +900,12 @@ impl InteractiveElementState {
             .as_ref()
             .map(|offset| offset.lock().clone())
     }
+
+    pub fn track_scroll_offset(&mut self) -> Arc<Mutex<Point<Pixels>>> {
+        self.scroll_offset
+            .get_or_insert_with(|| Arc::new(Mutex::new(Default::default())))
+            .clone()
+    }
 }
 
 impl<V> Default for StatelessInteractivity<V> {
