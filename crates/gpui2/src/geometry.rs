@@ -124,6 +124,10 @@ where
             },
         }
     }
+
+    pub fn clamp(&self, min: &Self, max: &Self) -> Self {
+        self.max(min).min(max)
+    }
 }
 
 impl<T: Clone + Default + Debug> Clone for Point<T> {
