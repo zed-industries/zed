@@ -93,11 +93,11 @@ impl PickerStory {
                 KeyBinding::new("ctrl-c", menu::Cancel, Some("picker")),
             ]);
 
-            let fh = cx.focus_handle();
-            cx.focus(&fh);
+            let focus_handle = cx.focus_handle();
+            cx.focus(&focus_handle);
 
             PickerStory {
-                focus_handle: fh,
+                focus_handle,
                 candidates: vec![
                     "Baguette (France)".into(),
                     "Baklava (Turkey)".into(),
