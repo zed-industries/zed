@@ -189,6 +189,10 @@ impl TextStyle {
         }
     }
 
+    pub fn line_height_in_pixels(&self, rem_size: Pixels) -> Pixels {
+        self.line_height.to_pixels(self.font_size, rem_size)
+    }
+
     pub fn to_run(&self, len: usize) -> TextRun {
         TextRun {
             len,

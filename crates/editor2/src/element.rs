@@ -1605,7 +1605,7 @@ impl EditorElement {
         let style = self.style.clone();
         let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
         let font_size = style.text.font_size.to_pixels(cx.rem_size());
-        let line_height = (font_size * style.line_height_scalar).round();
+        let line_height = style.text.line_height_in_pixels(cx.rem_size());
         let em_width = cx
             .text_system()
             .typographic_bounds(font_id, font_size, 'm')
@@ -2593,7 +2593,11 @@ impl Element<Editor> for EditorElement {
         let rem_size = cx.rem_size();
         let mut style = Style::default();
         style.size.width = relative(1.).into();
-        style.size.height = relative(1.).into();
+        style.size.height = match editor.mode {
+            EditorMode::SingleLine => self.style.text.line_height_in_pixels(cx.rem_size()).into(),
+            EditorMode::AutoHeight { .. } => todo!(),
+            EditorMode::Full => relative(1.).into(),
+        };
         cx.request_layout(&style, None)
     }
 

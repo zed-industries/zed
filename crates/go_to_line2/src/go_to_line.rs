@@ -1,12 +1,10 @@
-use gpui::{div, px, red, AppContext, Div, Render, Styled, ViewContext, VisualContext};
-use serde::Deserialize;
+use gpui::{actions, div, px, red, AppContext, Div, Render, Styled, ViewContext, VisualContext};
 use workspace::ModalRegistry;
 
-// actions!(go_to_line, [Toggle]);
-#[derive(Clone, Default, PartialEq, Deserialize)]
-struct Toggle;
+actions!(Toggle);
 
 pub fn init(cx: &mut AppContext) {
+    cx.register_action_type::<Toggle>();
     cx.global_mut::<ModalRegistry>()
         .register_modal(Toggle, |_, cx| {
             // if let Some(editor) = workspace

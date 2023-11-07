@@ -422,9 +422,10 @@ pub trait ElementInteractivity<V: 'static>: 'static {
                         None
                     }),
                 ));
-                let result = stateful.stateless.initialize(cx, f);
-                stateful.key_listeners.pop();
-                result
+
+                cx.with_key_dispatch_context(stateful.dispatch_context.clone(), |cx| {
+                    cx.with_key_listeners(mem::take(&mut stateful.key_listeners), f)
+                })
             })
         } else {
             let stateless = self.as_stateless_mut();
