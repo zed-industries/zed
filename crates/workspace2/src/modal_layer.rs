@@ -1,11 +1,8 @@
-use std::{any::TypeId, sync::Arc};
-
-use gpui::{
-    div, AnyView, AppContext, Component, Div, ParentElement, Render, StatelessInteractive, View,
-    ViewContext,
-};
-
 use crate::Workspace;
+use gpui::{
+    div, AnyView, AppContext, Div, ParentElement, Render, StatelessInteractive, View, ViewContext,
+};
+use std::{any::TypeId, sync::Arc};
 
 pub struct ModalRegistry {
     registered_modals: Vec<(TypeId, Box<dyn Fn(Div<Workspace>) -> Div<Workspace>>)>,
