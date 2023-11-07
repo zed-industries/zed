@@ -1,6 +1,6 @@
 use gpui::{
-    div, list, Component, ElementId, FocusHandle, ListScrollHandle, ParentElement,
-    StatelessInteractive, Styled, ViewContext,
+    div, uniform_list, Component, ElementId, FocusHandle, ParentElement, StatelessInteractive,
+    Styled, UniformListScrollHandle, ViewContext,
 };
 use std::cmp;
 
@@ -24,7 +24,6 @@ pub trait PickerDelegate: Sized + 'static {
     fn confirm(&mut self, secondary: bool, picker_id: ElementId, cx: &mut ViewContext<Self>);
     fn dismissed(&mut self, picker_id: ElementId, cx: &mut ViewContext<Self>);
 
-    // todo!("rename to render_candidate?")
     fn render_match(
         &self,
         ix: usize,
@@ -47,7 +46,7 @@ impl<V: PickerDelegate> Picker<V> {
 impl<V: 'static + PickerDelegate> Picker<V> {
     pub fn render(self, view: &mut V, _cx: &mut ViewContext<V>) -> impl Component<V> {
         let id = self.id.clone();
-        let scroll_handle = ListScrollHandle::new();
+        let scroll_handle = UniformListScrollHandle::new();
         div()
             .size_full()
             .id(self.id.clone())
@@ -120,7 +119,7 @@ impl<V: 'static + PickerDelegate> Picker<V> {
                 }
             })
             .child(
-                list(
+                uniform_list(
                     "candidates",
                     view.match_count(self.id.clone()),
                     move |view: &mut V, visible_range, cx| {

@@ -9,18 +9,18 @@ use smallvec::SmallVec;
 use std::{cmp, ops::Range, sync::Arc};
 use taffy::style::Overflow;
 
-pub fn list<Id, V, C>(
+pub fn uniform_list<Id, V, C>(
     id: Id,
     item_count: usize,
     f: impl 'static + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> SmallVec<[C; 64]>,
-) -> List<V>
+) -> UniformList<V>
 where
     Id: Into<ElementId>,
     V: 'static,
     C: Component<V>,
 {
     let id = id.into();
-    List {
+    UniformList {
         id: id.clone(),
         style: Default::default(),
         item_count,
@@ -35,7 +35,7 @@ where
     }
 }
 
-pub struct List<V: 'static> {
+pub struct UniformList<V: 'static> {
     id: ElementId,
     style: StyleRefinement,
     item_count: usize,
@@ -47,20 +47,20 @@ pub struct List<V: 'static> {
         ) -> SmallVec<[AnyElement<V>; 64]>,
     >,
     interactivity: StatefulInteractivity<V>,
-    scroll_handle: Option<ListScrollHandle>,
+    scroll_handle: Option<UniformListScrollHandle>,
 }
 
 #[derive(Clone)]
-pub struct ListScrollHandle(Arc<Mutex<Option<ListScrollHandleState>>>);
+pub struct UniformListScrollHandle(Arc<Mutex<Option<ScrollHandleState>>>);
 
 #[derive(Clone, Debug)]
-struct ListScrollHandleState {
+struct ScrollHandleState {
     item_height: Pixels,
     list_height: Pixels,
     scroll_offset: Arc<Mutex<Point<Pixels>>>,
 }
 
-impl ListScrollHandle {
+impl UniformListScrollHandle {
     pub fn new() -> Self {
         Self(Arc::new(Mutex::new(None)))
     }
@@ -80,19 +80,14 @@ impl ListScrollHandle {
     }
 }
 
-#[derive(Default)]
-pub struct ListState {
-    interactive: InteractiveElementState,
-}
-
-impl<V: 'static> Styled for List<V> {
+impl<V: 'static> Styled for UniformList<V> {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style
     }
 }
 
-impl<V: 'static> Element<V> for List<V> {
-    type ElementState = ListState;
+impl<V: 'static> Element<V> for UniformList<V> {
+    type ElementState = InteractiveElementState;
 
     fn id(&self) -> Option<crate::ElementId> {
         Some(self.id.clone())
@@ -104,8 +99,7 @@ impl<V: 'static> Element<V> for List<V> {
         element_state: Option<Self::ElementState>,
         _: &mut ViewContext<V>,
     ) -> Self::ElementState {
-        let element_state = element_state.unwrap_or_default();
-        element_state
+        element_state.unwrap_or_default()
     }
 
     fn layout(
@@ -141,16 +135,15 @@ impl<V: 'static> Element<V> for List<V> {
             if self.item_count > 0 {
                 let item_height = self.measure_item_height(view_state, padded_bounds, cx);
                 if let Some(scroll_handle) = self.scroll_handle.clone() {
-                    scroll_handle.0.lock().replace(ListScrollHandleState {
+                    scroll_handle.0.lock().replace(ScrollHandleState {
                         item_height,
                         list_height: padded_bounds.size.height,
-                        scroll_offset: element_state.interactive.track_scroll_offset(),
+                        scroll_offset: element_state.track_scroll_offset(),
                     });
                 }
                 let visible_item_count =
                     (padded_bounds.size.height / item_height).ceil() as usize + 1;
                 let scroll_offset = element_state
-                    .interactive
                     .scroll_offset()
                     .map_or((0.0).into(), |offset| offset.y);
                 let first_visible_element_ix = (-scroll_offset / item_height).floor() as usize;
@@ -194,19 +187,14 @@ impl<V: 'static> Element<V> for List<V> {
             let overflow = point(style.overflow.x, Overflow::Scroll);
 
             cx.with_z_index(0, |cx| {
-                self.interactivity.paint(
-                    bounds,
-                    content_size,
-                    overflow,
-                    &mut element_state.interactive,
-                    cx,
-                );
+                self.interactivity
+                    .paint(bounds, content_size, overflow, element_state, cx);
             });
         })
     }
 }
 
-impl<V> List<V> {
+impl<V> UniformList<V> {
     fn measure_item_height(
         &self,
         view_state: &mut V,
@@ -228,25 +216,25 @@ impl<V> List<V> {
         cx.layout_bounds(layout_id).size.height
     }
 
-    pub fn track_scroll(mut self, handle: ListScrollHandle) -> Self {
+    pub fn track_scroll(mut self, handle: UniformListScrollHandle) -> Self {
         self.scroll_handle = Some(handle);
         self
     }
 }
 
-impl<V: 'static> StatelessInteractive<V> for List<V> {
+impl<V: 'static> StatelessInteractive<V> for UniformList<V> {
     fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<V> {
         self.interactivity.as_stateless_mut()
     }
 }
 
-impl<V: 'static> StatefulInteractive<V> for List<V> {
+impl<V: 'static> StatefulInteractive<V> for UniformList<V> {
     fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<V> {
         &mut self.interactivity
     }
 }
 
-impl<V: 'static> Component<V> for List<V> {
+impl<V: 'static> Component<V> for UniformList<V> {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
