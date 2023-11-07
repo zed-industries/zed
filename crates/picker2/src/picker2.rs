@@ -1,149 +1,121 @@
+use editor::Editor;
 use gpui::{
-    div, uniform_list, Component, ElementId, FocusHandle, ParentElement, StatelessInteractive,
-    Styled, UniformListScrollHandle, ViewContext,
+    div, uniform_list, Component, Div, ParentElement, Render, StatelessInteractive, Styled,
+    UniformListScrollHandle, View, ViewContext, VisualContext,
 };
 use std::cmp;
 
-#[derive(Component)]
-pub struct Picker<V: PickerDelegate> {
-    id: ElementId,
-    focus_handle: FocusHandle,
-    phantom: std::marker::PhantomData<V>,
+pub struct Picker<D: PickerDelegate> {
+    pub delegate: D,
+    scroll_handle: UniformListScrollHandle,
+    editor: View<Editor>,
 }
 
 pub trait PickerDelegate: Sized + 'static {
-    type ListItem: Component<Self>;
+    type ListItem: Component<Picker<Self>>;
 
-    fn match_count(&self, picker_id: ElementId) -> usize;
-    fn selected_index(&self, picker_id: ElementId) -> usize;
-    fn set_selected_index(&mut self, ix: usize, picker_id: ElementId, cx: &mut ViewContext<Self>);
+    fn match_count(&self) -> usize;
+    fn selected_index(&self) -> usize;
+    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
 
     // fn placeholder_text(&self) -> Arc<str>;
     // fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
 
-    fn confirm(&mut self, secondary: bool, picker_id: ElementId, cx: &mut ViewContext<Self>);
-    fn dismissed(&mut self, picker_id: ElementId, cx: &mut ViewContext<Self>);
+    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
 
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
-        picker_id: ElementId,
-        cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Self::ListItem;
 }
 
-impl<V: PickerDelegate> Picker<V> {
-    pub fn new(id: impl Into<ElementId>, focus_handle: FocusHandle) -> Self {
+impl<D: PickerDelegate> Picker<D> {
+    pub fn new(delegate: D, cx: &mut ViewContext<Self>) -> Self {
         Self {
-            id: id.into(),
-            focus_handle,
-            phantom: std::marker::PhantomData,
+            delegate,
+            scroll_handle: UniformListScrollHandle::new(),
+            editor: cx.build_view(|cx| Editor::single_line(cx)),
         }
     }
 
-    fn bind_actions<T: StatelessInteractive<V>>(
-        div: T,
-        id: ElementId,
-        scroll_handle: &UniformListScrollHandle,
-    ) -> T {
-        div.on_action({
-            let id = id.clone();
-            let scroll_handle = scroll_handle.clone();
-            move |view: &mut V, _: &menu::SelectNext, cx| {
-                let count = view.match_count(id.clone());
-                if count > 0 {
-                    let index = view.selected_index(id.clone());
-                    let ix = cmp::min(index + 1, count - 1);
-                    view.set_selected_index(ix, id.clone(), cx);
-                    scroll_handle.scroll_to_item(ix);
-                }
-            }
-        })
-        .on_action({
-            let id = id.clone();
-            let scroll_handle = scroll_handle.clone();
-            move |view, _: &menu::SelectPrev, cx| {
-                let count = view.match_count(id.clone());
-                if count > 0 {
-                    let index = view.selected_index(id.clone());
-                    let ix = index.saturating_sub(1);
-                    view.set_selected_index(ix, id.clone(), cx);
-                    scroll_handle.scroll_to_item(ix);
-                }
-            }
-        })
-        .on_action({
-            let id = id.clone();
-            let scroll_handle = scroll_handle.clone();
-            move |view: &mut V, _: &menu::SelectFirst, cx| {
-                let count = view.match_count(id.clone());
-                if count > 0 {
-                    view.set_selected_index(0, id.clone(), cx);
-                    scroll_handle.scroll_to_item(0);
-                }
-            }
-        })
-        .on_action({
-            let id = id.clone();
-            let scroll_handle = scroll_handle.clone();
-            move |view: &mut V, _: &menu::SelectLast, cx| {
-                let count = view.match_count(id.clone());
-                if count > 0 {
-                    view.set_selected_index(count - 1, id.clone(), cx);
-                    scroll_handle.scroll_to_item(count - 1);
-                }
-            }
-        })
-        .on_action({
-            let id = id.clone();
-            move |view: &mut V, _: &menu::Cancel, cx| {
-                view.dismissed(id.clone(), cx);
-            }
-        })
-        .on_action({
-            let id = id.clone();
-            move |view: &mut V, _: &menu::Confirm, cx| {
-                view.confirm(false, id.clone(), cx);
-            }
-        })
-        .on_action({
-            let id = id.clone();
-            move |view: &mut V, _: &menu::SecondaryConfirm, cx| {
-                view.confirm(true, id.clone(), cx);
-            }
-        })
+    fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+        let count = self.delegate.match_count();
+        if count > 0 {
+            let index = self.delegate.selected_index();
+            let ix = cmp::min(index + 1, count - 1);
+            self.delegate.set_selected_index(ix, cx);
+            self.scroll_handle.scroll_to_item(ix);
+        }
+    }
+
+    fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+        let count = self.delegate.match_count();
+        if count > 0 {
+            let index = self.delegate.selected_index();
+            let ix = index.saturating_sub(1);
+            self.delegate.set_selected_index(ix, cx);
+            self.scroll_handle.scroll_to_item(ix);
+        }
+    }
+
+    fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
+        let count = self.delegate.match_count();
+        if count > 0 {
+            self.delegate.set_selected_index(0, cx);
+            self.scroll_handle.scroll_to_item(0);
+        }
+    }
+
+    fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
+        let count = self.delegate.match_count();
+        if count > 0 {
+            self.delegate.set_selected_index(count - 1, cx);
+            self.scroll_handle.scroll_to_item(count - 1);
+        }
+    }
+
+    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        self.delegate.dismissed(cx);
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+        self.delegate.confirm(false, cx);
+    }
+
+    fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
+        self.delegate.confirm(true, cx);
     }
 }
 
-impl<V: 'static + PickerDelegate> Picker<V> {
-    pub fn render(self, view: &mut V, _cx: &mut ViewContext<V>) -> impl Component<V> {
-        let id = self.id.clone();
-        let scroll_handle = UniformListScrollHandle::new();
-        Self::bind_actions(
-            div()
-                .id(self.id.clone())
-                .size_full()
-                .track_focus(&self.focus_handle)
-                .context("picker")
-                .child(
-                    uniform_list(
-                        "candidates",
-                        view.match_count(self.id.clone()),
-                        move |view: &mut V, visible_range, cx| {
-                            let selected_ix = view.selected_index(self.id.clone());
-                            visible_range
-                                .map(|ix| {
-                                    view.render_match(ix, ix == selected_ix, self.id.clone(), cx)
-                                })
-                                .collect()
-                        },
-                    )
-                    .track_scroll(scroll_handle.clone())
-                    .size_full(),
-                ),
-            id,
-            &scroll_handle,
-        )
+impl<D: PickerDelegate> Render for Picker<D> {
+    type Element = Div<Self>;
+
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+        div()
+            .size_full()
+            .context("picker")
+            .on_action(Self::select_next)
+            .on_action(Self::select_prev)
+            .on_action(Self::select_first)
+            .on_action(Self::select_last)
+            .on_action(Self::cancel)
+            .on_action(Self::confirm)
+            .on_action(Self::secondary_confirm)
+            .child(self.editor.clone())
+            .child(
+                uniform_list("candidates", self.delegate.match_count(), {
+                    move |this: &mut Self, visible_range, cx| {
+                        let selected_ix = this.delegate.selected_index();
+                        visible_range
+                            .map(|ix| this.delegate.render_match(ix, ix == selected_ix, cx))
+                            .collect()
+                    }
+                })
+                .track_scroll(self.scroll_handle.clone())
+                .size_full(),
+            )
     }
 }

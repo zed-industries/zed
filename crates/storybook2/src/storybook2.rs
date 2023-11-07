@@ -72,6 +72,8 @@ fn main() {
         ThemeSettings::override_global(theme_settings, cx);
 
         ui::settings::init(cx);
+        language::init(cx);
+        editor::init(cx);
 
         let window = cx.open_window(
             WindowOptions {
