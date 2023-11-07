@@ -52,7 +52,10 @@ impl ThemeRegistry {
                     status: StatusColors::default(),
                     git: GitStatusColors::default(),
                     player: PlayerColors::default(),
-                    syntax: SyntaxTheme::default_dark(),
+                    syntax: match user_theme.appearance {
+                        Appearance::Light => SyntaxTheme::default_light(),
+                        Appearance::Dark => SyntaxTheme::default_dark(),
+                    },
                 },
             }
         }));
