@@ -1,13 +1,12 @@
 use gpui::{
-    div, Component, Div, FocusHandle, KeyBinding, ParentElement, Render, SharedString,
-    StatelessInteractive, Styled, View, VisualContext, WindowContext,
+    div, Component, Div, KeyBinding, ParentElement, Render, SharedString, StatelessInteractive,
+    Styled, View, VisualContext, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
 use theme2::ActiveTheme;
 
 pub struct PickerStory {
     picker: View<Picker<Delegate>>,
-    focus_handle: FocusHandle,
 }
 
 struct Delegate {
@@ -86,13 +85,9 @@ impl PickerStory {
                 KeyBinding::new("ctrl-c", menu::Cancel, Some("picker")),
             ]);
 
-            let focus_handle = cx.focus_handle();
-            cx.focus(&focus_handle);
-
             PickerStory {
-                focus_handle,
                 picker: cx.build_view(|cx| {
-                    Picker::new(
+                    let picker = Picker::new(
                         Delegate {
                             candidates: vec![
                                 "Baguette (France)".into(),
@@ -148,7 +143,9 @@ impl PickerStory {
                             selected_ix: 0,
                         },
                         cx,
-                    )
+                    );
+                    picker.focus(cx);
+                    picker
                 }),
             }
         })

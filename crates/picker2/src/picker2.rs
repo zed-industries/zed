@@ -1,7 +1,8 @@
 use editor::Editor;
 use gpui::{
-    div, uniform_list, Component, Div, ParentElement, Render, StatelessInteractive, Styled,
-    UniformListScrollHandle, View, ViewContext, VisualContext,
+    div, uniform_list, Component, Div, FocusEnabled, ParentElement, Render, StatefulInteractivity,
+    StatelessInteractive, Styled, UniformListScrollHandle, View, ViewContext, VisualContext,
+    WindowContext,
 };
 use std::cmp;
 
@@ -39,6 +40,10 @@ impl<D: PickerDelegate> Picker<D> {
             scroll_handle: UniformListScrollHandle::new(),
             editor: cx.build_view(|cx| Editor::single_line(cx)),
         }
+    }
+
+    pub fn focus(&self, cx: &mut WindowContext) {
+        self.editor.update(cx, |editor, cx| editor.focus(cx));
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
@@ -91,12 +96,14 @@ impl<D: PickerDelegate> Picker<D> {
 }
 
 impl<D: PickerDelegate> Render for Picker<D> {
-    type Element = Div<Self>;
+    type Element = Div<Self, StatefulInteractivity<Self>, FocusEnabled<Self>>;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         div()
-            .size_full()
             .context("picker")
+            .id("picker-container")
+            .focusable()
+            .size_full()
             .on_action(Self::select_next)
             .on_action(Self::select_prev)
             .on_action(Self::select_first)
