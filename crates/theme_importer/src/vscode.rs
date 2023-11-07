@@ -2,8 +2,8 @@ use anyhow::Result;
 use gpui::{Hsla, Refineable, Rgba};
 use serde::Deserialize;
 use theme::{
-    Appearance, GitStatusColors, PlayerColors, StatusColors, SyntaxTheme, SystemColors,
-    ThemeColors, ThemeColorsRefinement, ThemeStyles, ThemeVariant,
+    Appearance, GitStatusColors, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme,
+    ThemeColors, ThemeColorsRefinement, ThemeStyles,
 };
 
 use crate::util::Traverse;
@@ -433,7 +433,7 @@ impl VsCodeThemeConverter {
         }
     }
 
-    pub fn convert(self) -> Result<ThemeVariant> {
+    pub fn convert(self) -> Result<Theme> {
         let appearance = self.theme_metadata.appearance.into();
 
         let mut theme_colors = match appearance {
@@ -569,7 +569,7 @@ impl VsCodeThemeConverter {
 
         theme_colors.refine(&theme_colors_refinements);
 
-        Ok(ThemeVariant {
+        Ok(Theme {
             id: uuid::Uuid::new_v4().to_string(),
             name: self.theme_metadata.name.into(),
             appearance,

@@ -2,7 +2,7 @@ use gpui::rgba;
 
 use crate::{
     default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
-    SyntaxTheme, SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 pub fn notctis() -> ThemeFamily {
@@ -11,7 +11,7 @@ pub fn notctis() -> ThemeFamily {
         name: "Notctis".into(),
         author: "Liviu Schera (liviuschera)".into(),
         themes: vec![
-            ThemeVariant {
+            Theme {
                 id: "2dc5fee8-30ff-4a50-bfae-c13bd19c9f89".into(),
                 name: "Noctis Azureus".into(),
                 appearance: Appearance::Dark,
@@ -178,7 +178,7 @@ pub fn notctis() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "ba4f5a34-987a-4e2c-939c-7f1b02d0e432".into(),
                 name: "Noctis Bordo".into(),
                 appearance: Appearance::Dark,
@@ -345,7 +345,7 @@ pub fn notctis() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "a2e4f327-82e8-41c1-a66f-bc7f27419c2e".into(),
                 name: "Noctus Hibernus".into(),
                 appearance: Appearance::Light,
@@ -512,7 +512,7 @@ pub fn notctis() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "2fde44fb-e5b2-4cc2-962f-f1c77a4eb12a".into(),
                 name: "Noctis Lilac".into(),
                 appearance: Appearance::Dark,
@@ -679,7 +679,7 @@ pub fn notctis() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "2b89f218-c238-4905-9578-674d6995d2e0".into(),
                 name: "Noctis Lux".into(),
                 appearance: Appearance::Light,
@@ -846,7 +846,7 @@ pub fn notctis() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "f88e2cd7-2415-4118-a638-5cfd3132ecf8".into(),
                 name: "Noctis Minimus".into(),
                 appearance: Appearance::Dark,
@@ -1013,7 +1013,7 @@ pub fn notctis() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "c4d43fc2-6166-47b7-8c5c-dd24afd4b735".into(),
                 name: "Noctis".into(),
                 appearance: Appearance::Dark,
@@ -1180,7 +1180,7 @@ pub fn notctis() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "7253a515-c612-403c-89de-5b62dc5cbac7".into(),
                 name: "Noctis Obscuro".into(),
                 appearance: Appearance::Dark,
@@ -1347,7 +1347,7 @@ pub fn notctis() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "b0f2d7b8-ac5f-466f-9bbf-e7cac242149c".into(),
                 name: "Noctis Sereno".into(),
                 appearance: Appearance::Dark,
@@ -1514,7 +1514,7 @@ pub fn notctis() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "331ce3fd-8faf-4a46-ad89-2c678abc4cd3".into(),
                 name: "Noctis Uva".into(),
                 appearance: Appearance::Dark,
@@ -1681,7 +1681,7 @@ pub fn notctis() -> ThemeFamily {
                     },
                 },
             },
-            ThemeVariant {
+            Theme {
                 id: "209964f1-6a61-4e40-a605-be245555c493".into(),
                 name: "Noctis Viola".into(),
                 appearance: Appearance::Dark,

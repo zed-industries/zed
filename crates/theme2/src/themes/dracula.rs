@@ -2,7 +2,7 @@ use gpui::rgba;
 
 use crate::{
     default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
-    SyntaxTheme, SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 pub fn dracula() -> ThemeFamily {
@@ -10,7 +10,7 @@ pub fn dracula() -> ThemeFamily {
         id: "0abb0e55-f034-45d9-a84d-e880dfd65711".into(),
         name: "Dracula".into(),
         author: "Zeno Rocha".into(),
-        themes: vec![ThemeVariant {
+        themes: vec![Theme {
             id: "d20497ef-85be-4ea2-9070-a182d03aac73".into(),
             name: "Dracula".into(),
             appearance: Appearance::Dark,

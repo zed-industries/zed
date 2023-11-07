@@ -1,10 +1,10 @@
 use crate::{
     colors::{GitStatusColors, PlayerColors, StatusColors, SystemColors, ThemeColors, ThemeStyles},
-    default_color_scales, Appearance, SyntaxTheme, ThemeFamily, ThemeVariant,
+    default_color_scales, Appearance, SyntaxTheme, Theme, ThemeFamily,
 };
 
-fn zed_pro_daylight() -> ThemeVariant {
-    ThemeVariant {
+fn zed_pro_daylight() -> Theme {
+    Theme {
         id: "zed_pro_daylight".to_string(),
         name: "Zed Pro Daylight".into(),
         appearance: Appearance::Light,
@@ -19,8 +19,8 @@ fn zed_pro_daylight() -> ThemeVariant {
     }
 }
 
-pub(crate) fn zed_pro_moonlight() -> ThemeVariant {
-    ThemeVariant {
+pub(crate) fn zed_pro_moonlight() -> Theme {
+    Theme {
         id: "zed_pro_moonlight".to_string(),
         name: "Zed Pro Moonlight".into(),
         appearance: Appearance::Dark,
@@ -51,7 +51,7 @@ impl Default for ThemeFamily {
     }
 }
 
-impl Default for ThemeVariant {
+impl Default for Theme {
     fn default() -> Self {
         zed_pro_daylight()
     }

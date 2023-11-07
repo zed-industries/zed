@@ -3,7 +3,7 @@ use std::fmt::{self, Debug};
 use gpui::{Hsla, Rgba};
 use theme::{
     Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors, SyntaxTheme,
-    SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+    SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 struct RawSyntaxPrinter<'a>(&'a str);
@@ -68,7 +68,7 @@ impl Debug for ThemeFamilyPrinter {
     }
 }
 
-pub struct ThemeVariantPrinter<'a>(&'a ThemeVariant);
+pub struct ThemeVariantPrinter<'a>(&'a Theme);
 
 impl<'a> Debug for ThemeVariantPrinter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -1,10 +1,10 @@
-use crate::{zed_pro_family, ThemeFamily, ThemeVariant};
+use crate::{zed_pro_family, Theme, ThemeFamily};
 use anyhow::{anyhow, Result};
 use gpui::SharedString;
 use std::{collections::HashMap, sync::Arc};
 
 pub struct ThemeRegistry {
-    themes: HashMap<SharedString, Arc<ThemeVariant>>,
+    themes: HashMap<SharedString, Arc<Theme>>,
 }
 
 impl ThemeRegistry {
@@ -14,7 +14,7 @@ impl ThemeRegistry {
         }
     }
 
-    fn insert_themes(&mut self, themes: impl IntoIterator<Item = ThemeVariant>) {
+    fn insert_themes(&mut self, themes: impl IntoIterator<Item = Theme>) {
         for theme in themes.into_iter() {
             self.themes.insert(theme.name.clone(), Arc::new(theme));
         }
@@ -28,7 +28,7 @@ impl ThemeRegistry {
         self.themes.values().map(|theme| theme.name.clone())
     }
 
-    pub fn get(&self, name: &str) -> Result<Arc<ThemeVariant>> {
+    pub fn get(&self, name: &str) -> Result<Arc<Theme>> {
         self.themes
             .get(name)
             .ok_or_else(|| anyhow!("theme not found: {}", name))
