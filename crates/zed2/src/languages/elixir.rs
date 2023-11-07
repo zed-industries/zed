@@ -140,8 +140,8 @@ impl LspAdapter for ElixirLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let zip_path = container_dir.join(format!("elixir-ls_{}.zip", version.name));
-        let version_dir = container_dir.join(format!("elixir-ls_{}", version.name));
-        let binary_path = version_dir.join("language_server.sh");
+        let folder_path = container_dir.join("elixir-ls");
+        let binary_path = folder_path.join("language_server.sh");
 
         if fs::metadata(&binary_path).await.is_err() {
             let mut response = delegate
@@ -160,13 +160,13 @@ impl LspAdapter for ElixirLspAdapter {
             }
             futures::io::copy(response.body_mut(), &mut file).await?;
 
-            fs::create_dir_all(&version_dir)
+            fs::create_dir_all(&folder_path)
                 .await
-                .with_context(|| format!("failed to create directory {}", version_dir.display()))?;
+                .with_context(|| format!("failed to create directory {}", folder_path.display()))?;
             let unzip_status = smol::process::Command::new("unzip")
                 .arg(&zip_path)
                 .arg("-d")
-                .arg(&version_dir)
+                .arg(&folder_path)
                 .output()
                 .await?
                 .status;
@@ -174,7 +174,7 @@ impl LspAdapter for ElixirLspAdapter {
                 Err(anyhow!("failed to unzip elixir-ls archive"))?;
             }
 
-            remove_matching(&container_dir, |entry| entry != version_dir).await;
+            remove_matching(&container_dir, |entry| entry != folder_path).await;
         }
 
         Ok(LanguageServerBinary {
@@ -285,20 +285,16 @@ impl LspAdapter for ElixirLspAdapter {
 async fn get_cached_server_binary_elixir_ls(
     container_dir: PathBuf,
 ) -> Option<LanguageServerBinary> {
-    (|| async move {
-        let mut last = None;
-        let mut entries = fs::read_dir(&container_dir).await?;
-        while let Some(entry) = entries.next().await {
-            last = Some(entry?.path());
-        }
-        last.map(|path| LanguageServerBinary {
-            path,
+    let server_path = container_dir.join("elixir-ls/language_server.sh");
+    if server_path.exists() {
+        Some(LanguageServerBinary {
+            path: server_path,
             arguments: vec![],
         })
-        .ok_or_else(|| anyhow!("no cached binary"))
-    })()
-    .await
-    .log_err()
+    } else {
+        log::error!("missing executable in directory {:?}", server_path);
+        None
+    }
 }
 
 pub struct NextLspAdapter;

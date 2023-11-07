@@ -544,6 +544,7 @@ impl DelayedDebouncedEditAction {
 pub enum Event {
     PaneAdded(View<Pane>),
     ContactRequestedJoin(u64),
+    WorkspaceCreated(WeakView<Workspace>),
 }
 
 pub struct Workspace {
@@ -698,8 +699,7 @@ impl Workspace {
             Ok(())
         });
 
-        // todo!("replace with a different mechanism")
-        // cx.emit_global(WorkspaceCreated(weak_handle.clone()));
+        cx.emit(Event::WorkspaceCreated(weak_handle.clone()));
 
         let left_dock = cx.build_view(|_| Dock::new(DockPosition::Left));
         let bottom_dock = cx.build_view(|_| Dock::new(DockPosition::Bottom));
@@ -2697,7 +2697,7 @@ impl Workspace {
 
     fn render_titlebar(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
         div()
-            .bg(cx.theme().colors().title_bar)
+            .bg(cx.theme().colors().title_bar_background)
             .when(
                 !matches!(cx.window_bounds(), WindowBounds::Fullscreen),
                 |s| s.pl_20(),
@@ -4253,7 +4253,7 @@ impl ViewId {
 //     }
 // }
 
-// pub struct WorkspaceCreated(pub WeakView<Workspace>);
+pub struct WorkspaceCreated(pub WeakView<Workspace>);
 
 pub fn activate_workspace_for_project(
     cx: &mut AppContext,

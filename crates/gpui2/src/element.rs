@@ -212,6 +212,19 @@ pub trait Component<V> {
     {
         self.map(|this| if condition { then(this) } else { this })
     }
+
+    fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| {
+            if let Some(value) = option {
+                then(this, value)
+            } else {
+                this
+            }
+        })
+    }
 }
 
 impl<V> Component<V> for AnyElement<V> {

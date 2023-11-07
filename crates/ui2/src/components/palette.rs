@@ -47,7 +47,7 @@ impl Palette {
             .id(self.id.clone())
             .w_96()
             .rounded_lg()
-            .bg(cx.theme().colors().elevated_surface)
+            .bg(cx.theme().colors().elevated_surface_background)
             .border()
             .border_color(cx.theme().colors().border)
             .child(
@@ -56,7 +56,12 @@ impl Palette {
                     .child(v_stack().py_0p5().px_1().child(div().px_2().py_0p5().child(
                         Label::new(self.input_placeholder.clone()).color(LabelColor::Placeholder),
                     )))
-                    .child(div().h_px().w_full().bg(cx.theme().colors().element))
+                    .child(
+                        div()
+                            .h_px()
+                            .w_full()
+                            .bg(cx.theme().colors().element_background),
+                    )
                     .child(
                         v_stack()
                             .id("items")
@@ -148,13 +153,13 @@ impl PaletteItem {
     }
 }
 
-use gpui2::ElementId;
+use gpui::ElementId;
 #[cfg(feature = "stories")]
 pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     use crate::{ModifierKeys, Story};
 

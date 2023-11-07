@@ -66,7 +66,7 @@ impl Key {
             .rounded_md()
             .text_sm()
             .text_color(cx.theme().colors().text)
-            .bg(cx.theme().colors().element)
+            .bg(cx.theme().colors().element_background)
             .child(self.key.clone())
     }
 }
@@ -158,7 +158,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
     use itertools::Itertools;
 
     pub struct KeybindingStory;

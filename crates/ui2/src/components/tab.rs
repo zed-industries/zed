@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::{Icon, IconColor, IconElement, Label, LabelColor};
-use gpui2::{red, Div, ElementId, Render, View, VisualContext};
+use gpui::{red, Div, ElementId, Render, View, VisualContext};
 
 #[derive(Component, Clone)]
 pub struct Tab {
@@ -109,12 +109,12 @@ impl Tab {
 
         let (tab_bg, tab_hover_bg, tab_active_bg) = match self.current {
             false => (
-                cx.theme().colors().tab_inactive,
+                cx.theme().colors().tab_inactive_background,
                 cx.theme().colors().ghost_element_hover,
                 cx.theme().colors().ghost_element_active,
             ),
             true => (
-                cx.theme().colors().tab_active,
+                cx.theme().colors().tab_active_background,
                 cx.theme().colors().element_hover,
                 cx.theme().colors().element_active,
             ),

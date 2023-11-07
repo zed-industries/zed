@@ -1,4 +1,4 @@
-use gpui2::AnyElement;
+use gpui::AnyElement;
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -54,7 +54,7 @@ impl<V: 'static> Toast<V> {
             .rounded_lg()
             .shadow_md()
             .overflow_hidden()
-            .bg(cx.theme().colors().elevated_surface)
+            .bg(cx.theme().colors().elevated_surface_background)
             .children(self.children)
     }
 }
@@ -70,7 +70,7 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     use crate::{Label, Story};
 

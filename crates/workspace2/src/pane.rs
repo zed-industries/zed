@@ -26,7 +26,7 @@ use std::{
     },
 };
 use ui::v_stack;
-use ui::{prelude::*, Icon, IconButton, IconColor, IconElement};
+use ui::{prelude::*, Icon, IconButton, IconColor, IconElement, TextTooltip};
 use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -1361,25 +1361,29 @@ impl Pane {
         let label = item.tab_content(Some(detail), cx);
         let close_icon = || {
             let id = item.id();
+
             div()
                 .id(item.id())
-                .child(IconElement::new(Icon::Close).color(IconColor::Muted))
-                .on_click(move |pane: &mut Self, _, cx| {
-                    pane.close_item_by_id(id, SaveIntent::Close, cx)
-                        .detach_and_log_err(cx);
-                })
+                .invisible()
+                .group_hover("", |style| style.visible())
+                .child(IconButton::new("close_tab", Icon::Close).on_click(
+                    move |pane: &mut Self, cx| {
+                        pane.close_item_by_id(id, SaveIntent::Close, cx)
+                            .detach_and_log_err(cx);
+                    },
+                ))
         };
 
         let (text_color, tab_bg, tab_hover_bg, tab_active_bg) = match ix == self.active_item_index {
             false => (
                 cx.theme().colors().text_muted,
-                cx.theme().colors().tab_inactive,
+                cx.theme().colors().tab_inactive_background,
                 cx.theme().colors().ghost_element_hover,
                 cx.theme().colors().ghost_element_active,
             ),
             true => (
                 cx.theme().colors().text,
-                cx.theme().colors().tab_active,
+                cx.theme().colors().tab_active_background,
                 cx.theme().colors().element_hover,
                 cx.theme().colors().element_active,
             ),
@@ -1388,7 +1392,12 @@ impl Pane {
         let close_right = ItemSettings::get_global(cx).close_position.right();
 
         div()
+            .group("")
             .id(item.id())
+            .cursor_pointer()
+            .when_some(item.tab_tooltip_text(cx), |div, text| {
+                div.tooltip(move |_, cx| cx.build_view(|cx| TextTooltip::new(text.clone())))
+            })
             // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
             // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
             // .on_drop(|_view, state: View<DraggedTab>, cx| {
@@ -1444,7 +1453,7 @@ impl Pane {
             .id("tab_bar")
             .w_full()
             .flex()
-            .bg(cx.theme().colors().tab_bar)
+            .bg(cx.theme().colors().tab_bar_background)
             // Left Side
             .child(
                 div()

@@ -5,6 +5,7 @@ mod registry;
 mod scale;
 mod settings;
 mod syntax;
+mod themes;
 
 use std::sync::Arc;
 
@@ -16,10 +17,11 @@ pub use registry::*;
 pub use scale::*;
 pub use settings::*;
 pub use syntax::*;
+pub use themes::*;
 
 use gpui::{AppContext, Hsla, SharedString};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Appearance {
     Light,
     Dark,
@@ -41,8 +43,7 @@ impl ActiveTheme for AppContext {
 }
 
 pub struct ThemeFamily {
-    #[allow(dead_code)]
-    pub(crate) id: String,
+    pub id: String,
     pub name: SharedString,
     pub author: SharedString,
     pub themes: Vec<ThemeVariant>,
@@ -52,8 +53,7 @@ pub struct ThemeFamily {
 impl ThemeFamily {}
 
 pub struct ThemeVariant {
-    #[allow(dead_code)]
-    pub(crate) id: String,
+    pub id: String,
     pub name: SharedString,
     pub appearance: Appearance,
     pub styles: ThemeStyles,

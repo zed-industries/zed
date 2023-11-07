@@ -11,11 +11,7 @@ use objc::{
 };
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
-use std::{
-    ffi::c_void,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{ffi::c_void, sync::Arc, time::Duration};
 
 include!(concat!(env!("OUT_DIR"), "/dispatch_sys.rs"));
 
@@ -62,16 +58,10 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
-        let now = SystemTime::now();
-        let after_duration = now
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64
-            + duration.as_nanos() as u64;
         unsafe {
             let queue =
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT.try_into().unwrap(), 0);
-            let when = dispatch_time(0, after_duration as i64);
+            let when = dispatch_time(DISPATCH_TIME_NOW as u64, duration.as_nanos() as i64);
             dispatch_after_f(
                 when,
                 queue,

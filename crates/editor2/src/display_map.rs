@@ -510,8 +510,8 @@ impl DisplaySnapshot {
         self.chunks(
             display_rows,
             language_aware,
-            Some(theme.styles.inlay_highlight_style),
-            Some(theme.styles.suggestion_highlight_style),
+            None, // todo!("add inlay highlight style")
+            None, // todo!("add suggestion highlight style")
         )
         .map(|chunk| {
             let mut highlight_style = chunk

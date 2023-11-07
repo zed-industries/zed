@@ -1,4 +1,4 @@
-use gpui::{HighlightStyle, Hsla};
+use gpui::Hsla;
 use refineable::Refineable;
 
 use crate::SyntaxTheme;
@@ -64,24 +64,26 @@ pub struct GitStatusColors {
     pub renamed: Hsla,
 }
 
-#[derive(Refineable, Clone, Debug, Default)]
-#[refineable(debug)]
+#[derive(Refineable, Clone, Debug)]
+#[refineable(debug, deserialize)]
 pub struct ThemeColors {
     pub border: Hsla,
     pub border_variant: Hsla,
     pub border_focused: Hsla,
+    pub border_selected: Hsla,
     pub border_transparent: Hsla,
-    pub elevated_surface: Hsla,
-    pub surface: Hsla,
+    pub border_disabled: Hsla,
+    pub elevated_surface_background: Hsla,
+    pub surface_background: Hsla,
     pub background: Hsla,
-    pub element: Hsla,
+    pub element_background: Hsla,
     pub element_hover: Hsla,
     pub element_active: Hsla,
     pub element_selected: Hsla,
     pub element_disabled: Hsla,
     pub element_placeholder: Hsla,
     pub element_drop_target: Hsla,
-    pub ghost_element: Hsla,
+    pub ghost_element_background: Hsla,
     pub ghost_element_hover: Hsla,
     pub ghost_element_active: Hsla,
     pub ghost_element_selected: Hsla,
@@ -96,38 +98,57 @@ pub struct ThemeColors {
     pub icon_disabled: Hsla,
     pub icon_placeholder: Hsla,
     pub icon_accent: Hsla,
-    pub status_bar: Hsla,
-    pub title_bar: Hsla,
-    pub toolbar: Hsla,
-    pub tab_bar: Hsla,
-    pub tab_inactive: Hsla,
-    pub tab_active: Hsla,
-    pub editor: Hsla,
-    pub editor_gutter: Hsla,
-    pub editor_subheader: Hsla,
-    pub editor_active_line: Hsla,
-    pub editor_highlighted_line: Hsla,
+    pub status_bar_background: Hsla,
+    pub title_bar_background: Hsla,
+    pub toolbar_background: Hsla,
+    pub tab_bar_background: Hsla,
+    pub tab_inactive_background: Hsla,
+    pub tab_active_background: Hsla,
+    pub editor_background: Hsla,
+    pub editor_gutter_background: Hsla,
+    pub editor_subheader_background: Hsla,
+    pub editor_active_line_background: Hsla,
+    pub editor_highlighted_line_background: Hsla,
     pub editor_line_number: Hsla,
     pub editor_active_line_number: Hsla,
     pub editor_invisible: Hsla,
     pub editor_wrap_guide: Hsla,
     pub editor_active_wrap_guide: Hsla,
+    pub terminal_background: Hsla,
+    pub terminal_ansi_bright_black: Hsla,
+    pub terminal_ansi_bright_red: Hsla,
+    pub terminal_ansi_bright_green: Hsla,
+    pub terminal_ansi_bright_yellow: Hsla,
+    pub terminal_ansi_bright_blue: Hsla,
+    pub terminal_ansi_bright_magenta: Hsla,
+    pub terminal_ansi_bright_cyan: Hsla,
+    pub terminal_ansi_bright_white: Hsla,
+    pub terminal_ansi_black: Hsla,
+    pub terminal_ansi_red: Hsla,
+    pub terminal_ansi_green: Hsla,
+    pub terminal_ansi_yellow: Hsla,
+    pub terminal_ansi_blue: Hsla,
+    pub terminal_ansi_magenta: Hsla,
+    pub terminal_ansi_cyan: Hsla,
+    pub terminal_ansi_white: Hsla,
 }
 
 #[derive(Refineable, Clone)]
 pub struct ThemeStyles {
     pub system: SystemColors,
+
+    #[refineable]
     pub colors: ThemeColors,
     pub status: StatusColors,
     pub git: GitStatusColors,
     pub player: PlayerColors,
     pub syntax: SyntaxTheme,
-    pub inlay_highlight_style: HighlightStyle,
-    pub suggestion_highlight_style: HighlightStyle,
 }
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -168,5 +189,17 @@ mod tests {
 
         assert_eq!(colors.text, magenta);
         assert_eq!(colors.background, green);
+    }
+
+    #[test]
+    fn deserialize_theme_colors_refinement_from_json() {
+        let colors: ThemeColorsRefinement = serde_json::from_value(json!({
+            "background": "#ff00ff",
+            "text": "#ff0000"
+        }))
+        .unwrap();
+
+        assert_eq!(colors.background, Some(gpui::rgb(0xff00ff)));
+        assert_eq!(colors.text, Some(gpui::rgb(0xff0000)));
     }
 }

@@ -1,4 +1,4 @@
-use gpui2::AnyElement;
+use gpui::AnyElement;
 use smallvec::SmallVec;
 
 use crate::{h_stack, prelude::*, v_stack, Button, Icon, IconButton, Label};

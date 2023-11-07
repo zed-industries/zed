@@ -1,4 +1,4 @@
-use gpui2::{
+use gpui::{
     div, px, Component, Div, ParentElement, Render, SharedString, StatefulInteraction, Styled,
     View, VisualContext, WindowContext,
 };
@@ -15,7 +15,7 @@ impl ScrollStory {
 impl Render for ScrollStory {
     type Element = Div<Self, StatefulInteraction<Self>>;
 
-    fn render(&mut self, cx: &mut gpui2::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let theme = cx.theme();
         let color_1 = theme.styles.git.created;
         let color_2 = theme.styles.git.modified;

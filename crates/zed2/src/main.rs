@@ -209,7 +209,6 @@ fn main() {
         if stdout_is_a_pty() {
             cx.activate(true);
             let urls = collect_url_args();
-            dbg!(&urls);
             if !urls.is_empty() {
                 listener.open_urls(urls)
             }

@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::lock::Mutex;
-use gpui2::executor::Background;
+use gpui::executor::Background;
 use language2::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp2::LanguageServerBinary;
 use plugin_runtime::{Plugin, PluginBinary, PluginBuilder, WasiFn};

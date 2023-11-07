@@ -9335,7 +9335,7 @@ impl Render for Editor {
             underline: None,
         };
         EditorElement::new(EditorStyle {
-            background: cx.theme().colors().editor,
+            background: cx.theme().colors().editor_background,
             local_player: cx.theme().players().local(),
             text: text_style,
             line_height_scalar: settings.buffer_line_height.value(),

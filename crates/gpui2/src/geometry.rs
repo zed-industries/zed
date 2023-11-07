@@ -21,7 +21,7 @@ pub fn point<T: Clone + Debug + Default>(x: T, y: T) -> Point<T> {
 }
 
 impl<T: Clone + Debug + Default> Point<T> {
-    pub fn new(x: T, y: T) -> Self {
+    pub const fn new(x: T, y: T) -> Self {
         Self { x, y }
     }
 

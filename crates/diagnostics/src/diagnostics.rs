@@ -2,8 +2,8 @@ pub mod items;
 mod project_diagnostics_settings;
 mod toolbar_controls;
 
-use anyhow::Result;
-use collections::{BTreeSet, HashSet};
+use anyhow::{Context, Result};
+use collections::{HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
@@ -11,9 +11,10 @@ use editor::{
     scroll::autoscroll::Autoscroll,
     Editor, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
+use futures::future::try_join_all;
 use gpui::{
     actions, elements::*, fonts::TextStyle, serde_json, AnyViewHandle, AppContext, Entity,
-    ModelHandle, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -28,6 +29,7 @@ use std::{
     any::{Any, TypeId},
     borrow::Cow,
     cmp::Ordering,
+    mem,
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -60,8 +62,10 @@ struct ProjectDiagnosticsEditor {
     summary: DiagnosticSummary,
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<PathState>,
-    paths_to_update: BTreeSet<(ProjectPath, LanguageServerId)>,
+    paths_to_update: HashMap<LanguageServerId, HashSet<ProjectPath>>,
+    current_diagnostics: HashMap<LanguageServerId, HashSet<ProjectPath>>,
     include_warnings: bool,
+    _subscriptions: Vec<Subscription>,
 }
 
 struct PathState {
@@ -125,9 +129,12 @@ impl View for ProjectDiagnosticsEditor {
                 "summary": project.diagnostic_summary(cx),
             }),
             "summary": self.summary,
-            "paths_to_update": self.paths_to_update.iter().map(|(path, server_id)|
-                (path.path.to_string_lossy(), server_id.0)
-            ).collect::<Vec<_>>(),
+            "paths_to_update": self.paths_to_update.iter().map(|(server_id, paths)|
+                (server_id.0, paths.into_iter().map(|path| path.path.to_string_lossy()).collect::<Vec<_>>())
+            ).collect::<HashMap<_, _>>(),
+            "current_diagnostics": self.current_diagnostics.iter().map(|(server_id, paths)|
+                (server_id.0, paths.into_iter().map(|path| path.path.to_string_lossy()).collect::<Vec<_>>())
+            ).collect::<HashMap<_, _>>(),
             "paths_states": self.path_states.iter().map(|state|
                 json!({
                     "path": state.path.path.to_string_lossy(),
@@ -149,21 +156,30 @@ impl ProjectDiagnosticsEditor {
         workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        cx.subscribe(&project_handle, |this, _, event, cx| match event {
-            project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
-                this.update_excerpts(Some(*language_server_id), cx);
-                this.update_title(cx);
-            }
-            project::Event::DiagnosticsUpdated {
-                language_server_id,
-                path,
-            } => {
-                this.paths_to_update
-                    .insert((path.clone(), *language_server_id));
-            }
-            _ => {}
-        })
-        .detach();
+        let project_event_subscription =
+            cx.subscribe(&project_handle, |this, _, event, cx| match event {
+                project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
+                    log::debug!("Disk based diagnostics finished for server {language_server_id}");
+                    this.update_excerpts(Some(*language_server_id), cx);
+                }
+                project::Event::DiagnosticsUpdated {
+                    language_server_id,
+                    path,
+                } => {
+                    log::debug!("Adding path {path:?} to update for server {language_server_id}");
+                    this.paths_to_update
+                        .entry(*language_server_id)
+                        .or_default()
+                        .insert(path.clone());
+                    let no_multiselections = this.editor.update(cx, |editor, cx| {
+                        editor.selections.all::<usize>(cx).len() <= 1
+                    });
+                    if no_multiselections && !this.is_dirty(cx) {
+                        this.update_excerpts(Some(*language_server_id), cx);
+                    }
+                }
+                _ => {}
+            });
 
         let excerpts = cx.add_model(|cx| MultiBuffer::new(project_handle.read(cx).replica_id()));
         let editor = cx.add_view(|cx| {
@@ -172,19 +188,14 @@ impl ProjectDiagnosticsEditor {
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
-        cx.subscribe(&editor, |this, _, event, cx| {
+        let editor_event_subscription = cx.subscribe(&editor, |this, _, event, cx| {
             cx.emit(event.clone());
             if event == &editor::Event::Focused && this.path_states.is_empty() {
                 cx.focus_self()
             }
-        })
-        .detach();
+        });
 
         let project = project_handle.read(cx);
-        let paths_to_update = project
-            .diagnostic_summaries(cx)
-            .map(|(path, server_id, _)| (path, server_id))
-            .collect();
         let summary = project.diagnostic_summary(cx);
         let mut this = Self {
             project: project_handle,
@@ -193,8 +204,10 @@ impl ProjectDiagnosticsEditor {
             excerpts,
             editor,
             path_states: Default::default(),
-            paths_to_update,
+            paths_to_update: HashMap::default(),
             include_warnings: settings::get::<ProjectDiagnosticsSettings>(cx).include_warnings,
+            current_diagnostics: HashMap::default(),
+            _subscriptions: vec![project_event_subscription, editor_event_subscription],
         };
         this.update_excerpts(None, cx);
         this
@@ -214,12 +227,7 @@ impl ProjectDiagnosticsEditor {
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
         self.include_warnings = !self.include_warnings;
-        self.paths_to_update = self
-            .project
-            .read(cx)
-            .diagnostic_summaries(cx)
-            .map(|(path, server_id, _)| (path, server_id))
-            .collect();
+        self.paths_to_update = self.current_diagnostics.clone();
         self.update_excerpts(None, cx);
         cx.notify();
     }
@@ -229,29 +237,94 @@ impl ProjectDiagnosticsEditor {
         language_server_id: Option<LanguageServerId>,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut paths = Vec::new();
-        self.paths_to_update.retain(|(path, server_id)| {
-            if language_server_id
-                .map_or(true, |language_server_id| language_server_id == *server_id)
-            {
-                paths.push(path.clone());
-                false
+        log::debug!("Updating excerpts for server {language_server_id:?}");
+        let mut paths_to_recheck = HashSet::default();
+        let mut new_summaries: HashMap<LanguageServerId, HashSet<ProjectPath>> = self
+            .project
+            .read(cx)
+            .diagnostic_summaries(cx)
+            .fold(HashMap::default(), |mut summaries, (path, server_id, _)| {
+                summaries.entry(server_id).or_default().insert(path);
+                summaries
+            });
+        let mut old_diagnostics = if let Some(language_server_id) = language_server_id {
+            new_summaries.retain(|server_id, _| server_id == &language_server_id);
+            self.paths_to_update.retain(|server_id, paths| {
+                if server_id == &language_server_id {
+                    paths_to_recheck.extend(paths.drain());
+                    false
+                } else {
+                    true
+                }
+            });
+            let mut old_diagnostics = HashMap::default();
+            if let Some(new_paths) = new_summaries.get(&language_server_id) {
+                if let Some(old_paths) = self
+                    .current_diagnostics
+                    .insert(language_server_id, new_paths.clone())
+                {
+                    old_diagnostics.insert(language_server_id, old_paths);
+                }
             } else {
-                true
+                if let Some(old_paths) = self.current_diagnostics.remove(&language_server_id) {
+                    old_diagnostics.insert(language_server_id, old_paths);
+                }
             }
-        });
+            old_diagnostics
+        } else {
+            paths_to_recheck.extend(self.paths_to_update.drain().flat_map(|(_, paths)| paths));
+            mem::replace(&mut self.current_diagnostics, new_summaries.clone())
+        };
+        for (server_id, new_paths) in new_summaries {
+            match old_diagnostics.remove(&server_id) {
+                Some(mut old_paths) => {
+                    paths_to_recheck.extend(
+                        new_paths
+                            .into_iter()
+                            .filter(|new_path| !old_paths.remove(new_path)),
+                    );
+                    paths_to_recheck.extend(old_paths);
+                }
+                None => paths_to_recheck.extend(new_paths),
+            }
+        }
+        paths_to_recheck.extend(old_diagnostics.into_iter().flat_map(|(_, paths)| paths));
+
+        if paths_to_recheck.is_empty() {
+            log::debug!("No paths to recheck for language server {language_server_id:?}");
+            return;
+        }
+        log::debug!(
+            "Rechecking {} paths for language server {:?}",
+            paths_to_recheck.len(),
+            language_server_id
+        );
         let project = self.project.clone();
         cx.spawn(|this, mut cx| {
             async move {
-                for path in paths {
-                    let buffer = project
-                        .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))
-                        .await?;
-                    this.update(&mut cx, |this, cx| {
-                        this.populate_excerpts(path, language_server_id, buffer, cx)
-                    })?;
-                }
-                Result::<_, anyhow::Error>::Ok(())
+                let _: Vec<()> = try_join_all(paths_to_recheck.into_iter().map(|path| {
+                    let mut cx = cx.clone();
+                    let project = project.clone();
+                    async move {
+                        let buffer = project
+                            .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))
+                            .await
+                            .with_context(|| format!("opening buffer for path {path:?}"))?;
+                        this.update(&mut cx, |this, cx| {
+                            this.populate_excerpts(path, language_server_id, buffer, cx);
+                        })
+                        .context("missing project")?;
+                        anyhow::Ok(())
+                    }
+                }))
+                .await
+                .context("rechecking diagnostics for paths")?;
+
+                this.update(&mut cx, |this, cx| {
+                    this.summary = this.project.read(cx).diagnostic_summary(cx);
+                    cx.emit(Event::TitleChanged);
+                })?;
+                anyhow::Ok(())
             }
             .log_err()
         })
@@ -553,11 +626,6 @@ impl ProjectDiagnosticsEditor {
             cx.focus(&self.editor);
         }
         cx.notify();
-    }
-
-    fn update_title(&mut self, cx: &mut ViewContext<Self>) {
-        self.summary = self.project.read(cx).diagnostic_summary(cx);
-        cx.emit(Event::TitleChanged);
     }
 }
 
@@ -1301,25 +1369,6 @@ mod tests {
                     cx,
                 )
                 .unwrap();
-            project
-                .update_diagnostic_entries(
-                    server_id_2,
-                    PathBuf::from("/test/main.js"),
-                    None,
-                    vec![DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(1, 0))..Unclipped(PointUtf16::new(1, 1)),
-                        diagnostic: Diagnostic {
-                            message: "warning 1".to_string(),
-                            severity: DiagnosticSeverity::ERROR,
-                            is_primary: true,
-                            is_disk_based: true,
-                            group_id: 2,
-                            ..Default::default()
-                        },
-                    }],
-                    cx,
-                )
-                .unwrap();
         });
 
         // The first language server finishes
@@ -1353,6 +1402,25 @@ mod tests {
 
         // The second language server finishes
         project.update(cx, |project, cx| {
+            project
+                .update_diagnostic_entries(
+                    server_id_2,
+                    PathBuf::from("/test/main.js"),
+                    None,
+                    vec![DiagnosticEntry {
+                        range: Unclipped(PointUtf16::new(1, 0))..Unclipped(PointUtf16::new(1, 1)),
+                        diagnostic: Diagnostic {
+                            message: "warning 1".to_string(),
+                            severity: DiagnosticSeverity::ERROR,
+                            is_primary: true,
+                            is_disk_based: true,
+                            group_id: 2,
+                            ..Default::default()
+                        },
+                    }],
+                    cx,
+                )
+                .unwrap();
             project.disk_based_diagnostics_finished(server_id_2, cx);
         });
 

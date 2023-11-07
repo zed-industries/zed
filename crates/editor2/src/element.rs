@@ -508,7 +508,7 @@ impl EditorElement {
         let bounds = gutter_bounds.union(&text_bounds);
         let scroll_top =
             layout.position_map.snapshot.scroll_position().y * layout.position_map.line_height;
-        let gutter_bg = cx.theme().colors().editor_gutter;
+        let gutter_bg = cx.theme().colors().editor_gutter_background;
         cx.paint_quad(
             gutter_bounds,
             Corners::default(),
@@ -545,7 +545,7 @@ impl EditorElement {
                         bounds.size.width,
                         layout.position_map.line_height * (end_row - start_row + 1) as f32,
                     );
-                    let active_line_bg = cx.theme().colors().editor_active_line;
+                    let active_line_bg = cx.theme().colors().editor_active_line_background;
                     cx.paint_quad(
                         Bounds { origin, size },
                         Corners::default(),
@@ -567,7 +567,7 @@ impl EditorElement {
                     bounds.size.width,
                     layout.position_map.line_height * highlighted_rows.len() as f32,
                 );
-                let highlighted_line_bg = cx.theme().colors().editor_highlighted_line;
+                let highlighted_line_bg = cx.theme().colors().editor_highlighted_line_background;
                 cx.paint_quad(
                     Bounds { origin, size },
                     Corners::default(),

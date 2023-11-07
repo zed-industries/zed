@@ -3,17 +3,17 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::DateTime;
-use gpui2::{AppContext, ViewContext};
+use gpui::{AppContext, ViewContext};
 use rand::Rng;
 use theme2::ActiveTheme;
 
+use crate::HighlightedText;
 use crate::{
     Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
-    HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListSubHeader,
-    Livestream, MicStatus, ModifierKeys, Notification, PaletteItem, Player, PlayerCallStatus,
-    PlayerWithCallStatus, PublicActor, ScreenShareStatus, Symbol, Tab, ToggleState, VideoStatus,
+    HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, Livestream,
+    MicStatus, ModifierKeys, Notification, PaletteItem, Player, PlayerCallStatus,
+    PlayerWithCallStatus, PublicPlayer, ScreenShareStatus, Symbol, Tab, Toggle, VideoStatus,
 };
-use crate::{HighlightedText, ListDetailsEntry};
 use crate::{ListItem, NotificationAction};
 
 pub fn static_tabs_example() -> Vec<Tab> {
@@ -345,7 +345,7 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
             DateTime::parse_from_rfc3339("2023-11-02T12:09:07Z")
                 .unwrap()
                 .naive_local(),
-            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            PublicPlayer::new("as-cii", "http://github.com/as-cii.png?s=50"),
             [
                 NotificationAction::new(
                     Button::new("Decline"),
@@ -374,7 +374,7 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
             DateTime::parse_from_rfc3339("2023-11-01T12:09:07Z")
                 .unwrap()
                 .naive_local(),
-            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            PublicPlayer::new("as-cii", "http://github.com/as-cii.png?s=50"),
             [
                 NotificationAction::new(
                     Button::new("Decline"),
@@ -403,7 +403,7 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
             DateTime::parse_from_rfc3339("2022-10-25T12:09:07Z")
                 .unwrap()
                 .naive_local(),
-            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            PublicPlayer::new("as-cii", "http://github.com/as-cii.png?s=50"),
             [
                 NotificationAction::new(
                     Button::new("Decline"),
@@ -432,7 +432,7 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
             DateTime::parse_from_rfc3339("2021-10-12T12:09:07Z")
                 .unwrap()
                 .naive_local(),
-            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            PublicPlayer::new("as-cii", "http://github.com/as-cii.png?s=50"),
             [
                 NotificationAction::new(
                     Button::new("Decline"),
@@ -461,7 +461,7 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
             DateTime::parse_from_rfc3339("1969-07-20T00:00:00Z")
                 .unwrap()
                 .naive_local(),
-            PublicActor::new("as-cii", "http://github.com/as-cii.png?s=50"),
+            PublicPlayer::new("as-cii", "http://github.com/as-cii.png?s=50"),
             [
                 NotificationAction::new(
                     Button::new("Decline"),
@@ -478,89 +478,12 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
     ]
 }
 
-pub fn static_new_notification_items<V: 'static>() -> Vec<ListItem<V>> {
-    vec![
-        ListItem::Header(ListSubHeader::new("New")),
-        ListItem::Details(
-            ListDetailsEntry::new("maxdeviant invited you to join a stream in #design.")
-                .meta("4 people in stream."),
-        ),
-        ListItem::Details(ListDetailsEntry::new(
-            "nathansobo accepted your contact request.",
-        )),
-        ListItem::Header(ListSubHeader::new("Earlier")),
-        ListItem::Details(
-            ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
-                Button::new("Decline"),
-                Button::new("Accept").variant(crate::ButtonVariant::Filled),
-            ]),
-        ),
-        ListItem::Details(
-            ListDetailsEntry::new("maxdeviant invited you to a stream in #design.")
-                .seen(true)
-                .meta("This stream has ended."),
-        ),
-        ListItem::Details(ListDetailsEntry::new(
-            "as-cii accepted your contact request.",
-        )),
-        ListItem::Details(
-            ListDetailsEntry::new("You were added as an admin on the #gpui2 channel.").seen(true),
-        ),
-        ListItem::Details(ListDetailsEntry::new(
-            "osiewicz accepted your contact request.",
-        )),
-        ListItem::Details(ListDetailsEntry::new(
-            "ConradIrwin accepted your contact request.",
-        )),
-        ListItem::Details(
-            ListDetailsEntry::new("nathansobo invited you to a stream in #gpui2.")
-                .seen(true)
-                .meta("This stream has ended."),
-        ),
-        ListItem::Details(ListDetailsEntry::new(
-            "nathansobo accepted your contact request.",
-        )),
-        ListItem::Header(ListSubHeader::new("Earlier")),
-        ListItem::Details(
-            ListDetailsEntry::new("mikaylamaki added you as a contact.").actions(vec![
-                Button::new("Decline"),
-                Button::new("Accept").variant(crate::ButtonVariant::Filled),
-            ]),
-        ),
-        ListItem::Details(
-            ListDetailsEntry::new("maxdeviant invited you to a stream in #design.")
-                .seen(true)
-                .meta("This stream has ended."),
-        ),
-        ListItem::Details(ListDetailsEntry::new(
-            "as-cii accepted your contact request.",
-        )),
-        ListItem::Details(
-            ListDetailsEntry::new("You were added as an admin on the #gpui2 channel.").seen(true),
-        ),
-        ListItem::Details(ListDetailsEntry::new(
-            "osiewicz accepted your contact request.",
-        )),
-        ListItem::Details(ListDetailsEntry::new(
-            "ConradIrwin accepted your contact request.",
-        )),
-        ListItem::Details(
-            ListDetailsEntry::new("nathansobo invited you to a stream in #gpui2.")
-                .seen(true)
-                .meta("This stream has ended."),
-        ),
-    ]
-    .into_iter()
-    .map(From::from)
-    .collect()
-}
-
-pub fn static_project_panel_project_items<V: 'static>() -> Vec<ListItem<V>> {
+pub fn static_project_panel_project_items() -> Vec<ListItem> {
     vec![
         ListEntry::new(Label::new("zed"))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(0)
-            .toggle(ToggleState::Toggled),
+            .toggle(Toggle::Toggled(true)),
         ListEntry::new(Label::new(".cargo"))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
@@ -579,14 +502,14 @@ pub fn static_project_panel_project_items<V: 'static>() -> Vec<ListItem<V>> {
         ListEntry::new(Label::new("assets"))
             .left_icon(Icon::Folder.into())
             .indent_level(1)
-            .toggle(ToggleState::Toggled),
+            .toggle(Toggle::Toggled(true)),
         ListEntry::new(Label::new("cargo-target").color(LabelColor::Hidden))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
         ListEntry::new(Label::new("crates"))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(1)
-            .toggle(ToggleState::Toggled),
+            .toggle(Toggle::Toggled(true)),
         ListEntry::new(Label::new("activity_indicator"))
             .left_icon(Icon::Folder.into())
             .indent_level(2),
@@ -608,38 +531,38 @@ pub fn static_project_panel_project_items<V: 'static>() -> Vec<ListItem<V>> {
         ListEntry::new(Label::new("sqlez").color(LabelColor::Modified))
             .left_icon(Icon::Folder.into())
             .indent_level(2)
-            .toggle(ToggleState::NotToggled),
+            .toggle(Toggle::Toggled(false)),
         ListEntry::new(Label::new("gpui2"))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(2)
-            .toggle(ToggleState::Toggled),
+            .toggle(Toggle::Toggled(true)),
         ListEntry::new(Label::new("src"))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(3)
-            .toggle(ToggleState::Toggled),
+            .toggle(Toggle::Toggled(true)),
         ListEntry::new(Label::new("derive_element.rs"))
             .left_icon(Icon::FileRust.into())
             .indent_level(4),
         ListEntry::new(Label::new("storybook").color(LabelColor::Modified))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(1)
-            .toggle(ToggleState::Toggled),
+            .toggle(Toggle::Toggled(true)),
         ListEntry::new(Label::new("docs").color(LabelColor::Default))
             .left_icon(Icon::Folder.into())
             .indent_level(2)
-            .toggle(ToggleState::Toggled),
+            .toggle(Toggle::Toggled(true)),
         ListEntry::new(Label::new("src").color(LabelColor::Modified))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(3)
-            .toggle(ToggleState::Toggled),
+            .toggle(Toggle::Toggled(true)),
         ListEntry::new(Label::new("ui").color(LabelColor::Modified))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(4)
-            .toggle(ToggleState::Toggled),
+            .toggle(Toggle::Toggled(true)),
         ListEntry::new(Label::new("component").color(LabelColor::Created))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(5)
-            .toggle(ToggleState::Toggled),
+            .toggle(Toggle::Toggled(true)),
         ListEntry::new(Label::new("facepile.rs").color(LabelColor::Default))
             .left_icon(Icon::FileRust.into())
             .indent_level(6),
@@ -682,7 +605,7 @@ pub fn static_project_panel_project_items<V: 'static>() -> Vec<ListItem<V>> {
     .collect()
 }
 
-pub fn static_project_panel_single_items<V: 'static>() -> Vec<ListItem<V>> {
+pub fn static_project_panel_single_items() -> Vec<ListItem> {
     vec![
         ListEntry::new(Label::new("todo.md"))
             .left_icon(Icon::FileDoc.into())
@@ -699,7 +622,7 @@ pub fn static_project_panel_single_items<V: 'static>() -> Vec<ListItem<V>> {
     .collect()
 }
 
-pub fn static_collab_panel_current_call<V: 'static>() -> Vec<ListItem<V>> {
+pub fn static_collab_panel_current_call() -> Vec<ListItem> {
     vec![
         ListEntry::new(Label::new("as-cii")).left_avatar("http://github.com/as-cii.png?s=50"),
         ListEntry::new(Label::new("nathansobo"))
@@ -712,7 +635,7 @@ pub fn static_collab_panel_current_call<V: 'static>() -> Vec<ListItem<V>> {
     .collect()
 }
 
-pub fn static_collab_panel_channels<V: 'static>() -> Vec<ListItem<V>> {
+pub fn static_collab_panel_channels() -> Vec<ListItem> {
     vec![
         ListEntry::new(Label::new("zed"))
             .left_icon(Icon::Hash.into())

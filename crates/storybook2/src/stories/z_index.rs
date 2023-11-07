@@ -1,4 +1,4 @@
-use gpui2::{px, rgb, Div, Hsla, Render};
+use gpui::{px, rgb, Div, Hsla, Render};
 use ui::prelude::*;
 
 use crate::story::Story;
