@@ -1595,7 +1595,7 @@ impl EditorElement {
         &mut self,
         editor: &mut Editor,
         cx: &mut ViewContext<'_, Editor>,
-        bounds: Bounds<Pixels>,
+        mut bounds: Bounds<Pixels>,
     ) -> LayoutState {
         // let mut size = constraint.max;
         // if size.x.is_infinite() {
@@ -1673,8 +1673,7 @@ impl EditorElement {
             //             .min(line_height * max_lines as f32),
             //     )
         } else if let EditorMode::SingleLine = editor_mode {
-            todo!()
-            //     size.set_y(line_height.max(constraint.min_along(Axis::Vertical)))
+            bounds.size.height = line_height.min(bounds.size.height);
         }
         // todo!()
         // else if size.y.is_infinite() {
