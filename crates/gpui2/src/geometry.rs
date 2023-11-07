@@ -25,6 +25,10 @@ impl<T: Clone + Debug + Default> Point<T> {
         Self { x, y }
     }
 
+    pub fn zero() -> Self {
+        Self::new(T::default(), T::default())
+    }
+
     pub fn map<U: Clone + Default + Debug>(&self, f: impl Fn(T) -> U) -> Point<U> {
         Point {
             x: f(self.x.clone()),

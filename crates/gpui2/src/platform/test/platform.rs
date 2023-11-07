@@ -1,10 +1,18 @@
-use crate::{BackgroundExecutor, DisplayId, ForegroundExecutor, Platform, PlatformTextSystem};
+use crate::{
+    AnyWindowHandle, BackgroundExecutor, CursorStyle, DisplayId, ForegroundExecutor, Platform,
+    PlatformDisplay, PlatformTextSystem, TestDisplay, TestWindow, WindowOptions,
+};
 use anyhow::{anyhow, Result};
-use std::sync::Arc;
+use parking_lot::Mutex;
+use std::{rc::Rc, sync::Arc};
 
 pub struct TestPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
+
+    active_window: Arc<Mutex<Option<AnyWindowHandle>>>,
+    active_display: Rc<dyn PlatformDisplay>,
+    active_cursor: Mutex<CursorStyle>,
 }
 
 impl TestPlatform {
@@ -12,6 +20,10 @@ impl TestPlatform {
         TestPlatform {
             background_executor: executor,
             foreground_executor,
+
+            active_cursor: Default::default(),
+            active_display: Rc::new(TestDisplay::new()),
+            active_window: Default::default(),
         }
     }
 }
@@ -59,11 +71,11 @@ impl Platform for TestPlatform {
     }
 
     fn displays(&self) -> Vec<std::rc::Rc<dyn crate::PlatformDisplay>> {
-        unimplemented!()
+        vec![self.active_display.clone()]
     }
 
-    fn display(&self, _id: DisplayId) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
-        unimplemented!()
+    fn display(&self, id: DisplayId) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
+        self.displays().iter().find(|d| d.id() == id).cloned()
     }
 
     fn main_window(&self) -> Option<crate::AnyWindowHandle> {
@@ -72,10 +84,11 @@ impl Platform for TestPlatform {
 
     fn open_window(
         &self,
-        _handle: crate::AnyWindowHandle,
-        _options: crate::WindowOptions,
+        handle: AnyWindowHandle,
+        options: WindowOptions,
     ) -> Box<dyn crate::PlatformWindow> {
-        unimplemented!()
+        *self.active_window.lock() = Some(handle);
+        Box::new(TestWindow::new(options, self.active_display.clone()))
     }
 
     fn set_display_link_output_callback(
@@ -164,8 +177,8 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn set_cursor_style(&self, _style: crate::CursorStyle) {
-        unimplemented!()
+    fn set_cursor_style(&self, style: crate::CursorStyle) {
+        *self.active_cursor.lock() = style;
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
