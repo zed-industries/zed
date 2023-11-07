@@ -1230,3 +1230,73 @@ pub type KeyListener<V> = Box<
         ) -> Option<Box<dyn Action>>
         + 'static,
 >;
+
+#[cfg(test)]
+mod test {
+    use serde_derive::Deserialize;
+
+    use crate::{
+        self as gpui, div, Div, FocusHandle, KeyBinding, Keystroke, ParentElement, Render,
+        StatefulInteraction, StatelessInteractive, TestAppContext, VisualContext,
+    };
+
+    struct TestView {
+        saw_key_down: bool,
+        saw_action: bool,
+        focus_handle: FocusHandle,
+    }
+
+    #[derive(PartialEq, Clone, Default, Deserialize)]
+    struct TestAction;
+
+    impl Render for TestView {
+        type Element = Div<Self, StatefulInteraction<Self>>;
+
+        fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> Self::Element {
+            div().id("testview").child(
+                div()
+                    .on_key_down(|this: &mut TestView, _, _, _| {
+                        dbg!("ola!");
+                        this.saw_key_down = true
+                    })
+                    .on_action(|this: &mut TestView, _: &TestAction, _, _| {
+                        dbg!("ola!");
+                        this.saw_action = true
+                    })
+                    .track_focus(&self.focus_handle),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn test_on_events(cx: &mut TestAppContext) {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |cx| {
+                cx.build_view(|cx| TestView {
+                    saw_key_down: false,
+                    saw_action: false,
+                    focus_handle: cx.focus_handle(),
+                })
+            })
+        });
+
+        cx.update(|cx| {
+            cx.bind_keys(vec![KeyBinding::new("ctrl-g", TestAction, None)]);
+        });
+
+        window
+            .update(cx, |test_view, cx| cx.focus(&test_view.focus_handle))
+            .unwrap();
+
+        cx.dispatch_keystroke(*window, Keystroke::parse("space").unwrap(), false);
+        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap(), false);
+
+        window
+            .update(cx, |test_view, _| {
+                assert!(test_view.saw_key_down || test_view.saw_action);
+                assert!(test_view.saw_key_down);
+                assert!(test_view.saw_action);
+            })
+            .unwrap();
+    }
+}
