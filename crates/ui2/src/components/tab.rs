@@ -127,7 +127,7 @@ impl Tab {
         div()
             .id(self.id.clone())
             .on_drag(move |_view, cx| cx.build_view(|cx| drag_state.clone()))
-            .drag_over::<TabDragState>(|d| d.bg(cx.theme().colors().element_drop_target))
+            .drag_over::<TabDragState>(|d| d.bg(cx.theme().colors().drop_target_background))
             .on_drop(|_view, state: View<TabDragState>, cx| {
                 eprintln!("{:?}", state.read(cx));
             })
