@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     colors::{GitStatusColors, PlayerColors, StatusColors, SystemColors, ThemeColors, ThemeStyles},
     default_color_scales, Appearance, SyntaxTheme, Theme, ThemeFamily,
@@ -14,7 +16,7 @@ fn zed_pro_daylight() -> Theme {
             status: StatusColors::default(),
             git: GitStatusColors::default(),
             player: PlayerColors::default(),
-            syntax: SyntaxTheme::default_light(),
+            syntax: Arc::new(SyntaxTheme::default_light()),
         },
     }
 }
@@ -30,7 +32,7 @@ pub(crate) fn zed_pro_moonlight() -> Theme {
             status: StatusColors::default(),
             git: GitStatusColors::default(),
             player: PlayerColors::default(),
-            syntax: SyntaxTheme::default_dark(),
+            syntax: Arc::new(SyntaxTheme::default_dark()),
         },
     }
 }

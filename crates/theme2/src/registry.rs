@@ -53,8 +53,8 @@ impl ThemeRegistry {
                     git: GitStatusColors::default(),
                     player: PlayerColors::default(),
                     syntax: match user_theme.appearance {
-                        Appearance::Light => SyntaxTheme::default_light(),
-                        Appearance::Dark => SyntaxTheme::default_dark(),
+                        Appearance::Light => Arc::new(SyntaxTheme::default_light()),
+                        Appearance::Dark => Arc::new(SyntaxTheme::default_dark()),
                     },
                 },
             }

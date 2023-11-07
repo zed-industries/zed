@@ -77,7 +77,7 @@ impl Theme {
 
     /// Returns the [`SyntaxTheme`] for the theme.
     #[inline(always)]
-    pub fn syntax(&self) -> &SyntaxTheme {
+    pub fn syntax(&self) -> &Arc<SyntaxTheme> {
         &self.styles.syntax
     }
 
@@ -98,4 +98,25 @@ impl Theme {
     pub fn syntax_color(&self, name: &str) -> Hsla {
         self.syntax().color(name)
     }
+
+    /// Returns the [`StatusColors`] for the theme.
+    #[inline(always)]
+    pub fn diagnostic_style(&self) -> DiagnosticStyle {
+        DiagnosticStyle {
+            error: self.status().error,
+            warning: self.status().warning,
+            info: self.status().info,
+            hint: self.status().info,
+            ignored: self.status().ignored,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DiagnosticStyle {
+    pub error: Hsla,
+    pub warning: Hsla,
+    pub info: Hsla,
+    pub hint: Hsla,
+    pub ignored: Hsla,
 }

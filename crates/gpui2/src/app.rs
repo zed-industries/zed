@@ -779,10 +779,20 @@ impl AppContext {
         (build)(params)
     }
 
-    /// Halt propagation of a mouse event, keyboard event, or action. This prevents listeners
-    /// that have not yet been invoked from receiving the event.
+    /// Event handlers propagate events by default. Call this method to stop dispatching to
+    /// event handlers with a lower z-index (mouse) or higher in the tree (keyboard). This is
+    /// the opposite of [propagate]. It's also possible to cancel a call to [propagate] by
+    /// calling this method before effects are flushed.
     pub fn stop_propagation(&mut self) {
         self.propagate_event = false;
+    }
+
+    /// Action handlers stop propagation by default during the bubble phase of action dispatch
+    /// dispatching to action handlers higher in the element tree. This is the opposite of
+    /// [stop_propagation]. It's also possible to cancel a call to [stop_propagate] by calling
+    /// this method before effects are flushed.
+    pub fn propagate(&mut self) {
+        self.propagate_event = true;
     }
 }
 

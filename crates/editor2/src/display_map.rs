@@ -12,7 +12,9 @@ use crate::{
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
-use gpui::{Font, FontId, HighlightStyle, Hsla, Line, Model, ModelContext, Pixels, UnderlineStyle};
+use gpui::{
+    Font, FontId, HighlightStyle, Hsla, Line, Model, ModelContext, Pixels, TextRun, UnderlineStyle,
+};
 use inlay_map::InlayMap;
 use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
@@ -21,7 +23,7 @@ use lsp::DiagnosticSeverity;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
-use theme::Theme;
+use theme::{SyntaxTheme, Theme};
 use wrap_map::WrapMap;
 
 pub use block_map::{
@@ -505,18 +507,18 @@ impl DisplaySnapshot {
         &'a self,
         display_rows: Range<u32>,
         language_aware: bool,
-        theme: &'a Theme,
+        editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
         self.chunks(
             display_rows,
             language_aware,
-            None, // todo!("add inlay highlight style")
-            None, // todo!("add suggestion highlight style")
+            Some(editor_style.syntax.inlay_style),
+            Some(editor_style.syntax.suggestion_style),
         )
         .map(|chunk| {
             let mut highlight_style = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.style(&theme.styles.syntax));
+                .and_then(|id| id.style(&editor_style.syntax));
 
             if let Some(chunk_highlight) = chunk.highlight_style {
                 if let Some(highlight_style) = highlight_style.as_mut() {
@@ -535,7 +537,8 @@ impl DisplaySnapshot {
             if let Some(severity) = chunk.diagnostic_severity {
                 // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
                 if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
-                    let diagnostic_color = super::diagnostic_style(severity, true, theme);
+                    let diagnostic_color =
+                        super::diagnostic_style(severity, true, &editor_style.diagnostic_style);
                     diagnostic_highlight.underline = Some(UnderlineStyle {
                         color: Some(diagnostic_color),
                         thickness: 1.0.into(),
@@ -564,53 +567,46 @@ impl DisplaySnapshot {
         TextLayoutDetails {
             text_system,
             editor_style,
+            rem_size,
         }: &TextLayoutDetails,
     ) -> Line {
-        todo!()
-        // let mut styles = Vec::new();
-        // let mut line = String::new();
-        // let mut ended_in_newline = false;
+        let mut runs = Vec::new();
+        let mut line = String::new();
+        let mut ended_in_newline = false;
 
-        // let range = display_row..display_row + 1;
-        // for chunk in self.highlighted_chunks(range, false, editor_style) {
-        //     line.push_str(chunk.chunk);
+        let range = display_row..display_row + 1;
+        for chunk in self.highlighted_chunks(range, false, &editor_style) {
+            line.push_str(chunk.chunk);
 
-        //     let text_style = if let Some(style) = chunk.style {
-        //         editor_style
-        //             .text
-        //             .clone()
-        //             .highlight(style, text_system)
-        //             .map(Cow::Owned)
-        //             .unwrap_or_else(|_| Cow::Borrowed(&editor_style.text))
-        //     } else {
-        //         Cow::Borrowed(&editor_style.text)
-        //     };
-        //     ended_in_newline = chunk.chunk.ends_with("\n");
+            let text_style = if let Some(style) = chunk.style {
+                editor_style
+                    .text
+                    .clone()
+                    .highlight(style)
+                    .map(Cow::Owned)
+                    .unwrap_or_else(|_| Cow::Borrowed(&editor_style.text))
+            } else {
+                Cow::Borrowed(&editor_style.text)
+            };
+            ended_in_newline = chunk.chunk.ends_with("\n");
 
-        //     styles.push(
-        //         todo!(), // len: chunk.chunk.len(),
-        //                  // font_id: text_style.font_id,
-        //                  // color: text_style.color,
-        //                  // underline: text_style.underline,
-        //     );
-        // }
+            runs.push(text_style.to_run(chunk.chunk.len()))
+        }
 
-        // // our pixel positioning logic assumes each line ends in \n,
-        // // this is almost always true except for the last line which
-        // // may have no trailing newline.
-        // if !ended_in_newline && display_row == self.max_point().row() {
-        //     line.push_str("\n");
+        // our pixel positioning logic assumes each line ends in \n,
+        // this is almost always true except for the last line which
+        // may have no trailing newline.
+        if !ended_in_newline && display_row == self.max_point().row() {
+            line.push_str("\n");
+            runs.push(editor_style.text.to_run("\n".len()));
+        }
 
-        //     todo!();
-        //     // styles.push(RunStyle {
-        //     //     len: "\n".len(),
-        //     //     font_id: editor_style.text.font_id,
-        //     //     color: editor_style.text_color,
-        //     //     underline: editor_style.text.underline,
-        //     // });
-        // }
-
-        // text_system.layout_text(&line, editor_style.text.font_size, &styles, None)
+        let font_size = editor_style.text.font_size.to_pixels(*rem_size);
+        text_system
+            .layout_text(&line, font_size, &runs, None)
+            .unwrap()
+            .pop()
+            .unwrap()
     }
 
     pub fn x_for_point(
