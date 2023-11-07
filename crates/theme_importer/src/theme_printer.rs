@@ -123,7 +123,130 @@ pub struct ThemeColorsRefinementPrinter<'a>(&'a ThemeColorsRefinement);
 
 impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let theme_colors = vec![
+            ("border", self.0.border),
+            ("border_variant", self.0.border_variant),
+            ("border_focused", self.0.border_focused),
+            ("border_selected", self.0.border_selected),
+            ("border_transparent", self.0.border_transparent),
+            ("border_disabled", self.0.border_disabled),
+            (
+                "elevated_surface_background",
+                self.0.elevated_surface_background,
+            ),
+            ("surface_background", self.0.surface_background),
+            ("background", self.0.background),
+            ("element_background", self.0.element_background),
+            ("element_hover", self.0.element_hover),
+            ("element_active", self.0.element_active),
+            ("element_selected", self.0.element_selected),
+            ("element_disabled", self.0.element_disabled),
+            ("element_placeholder", self.0.element_placeholder),
+            ("element_drop_target", self.0.element_drop_target),
+            ("ghost_element_background", self.0.ghost_element_background),
+            ("ghost_element_hover", self.0.ghost_element_hover),
+            ("ghost_element_active", self.0.ghost_element_active),
+            ("ghost_element_selected", self.0.ghost_element_selected),
+            ("ghost_element_disabled", self.0.ghost_element_disabled),
+            ("text", self.0.text),
+            ("text_muted", self.0.text_muted),
+            ("text_placeholder", self.0.text_placeholder),
+            ("text_disabled", self.0.text_disabled),
+            ("text_accent", self.0.text_accent),
+            ("icon", self.0.icon),
+            ("icon_muted", self.0.icon_muted),
+            ("icon_disabled", self.0.icon_disabled),
+            ("icon_placeholder", self.0.icon_placeholder),
+            ("icon_accent", self.0.icon_accent),
+            ("status_bar_background", self.0.status_bar_background),
+            ("title_bar_background", self.0.title_bar_background),
+            ("toolbar_background", self.0.toolbar_background),
+            ("tab_bar_background", self.0.tab_bar_background),
+            ("tab_inactive_background", self.0.tab_inactive_background),
+            ("tab_active_background", self.0.tab_active_background),
+            ("editor_background", self.0.editor_background),
+            ("editor_gutter_background", self.0.editor_gutter_background),
+            (
+                "editor_subheader_background",
+                self.0.editor_subheader_background,
+            ),
+            (
+                "editor_active_line_background",
+                self.0.editor_active_line_background,
+            ),
+            (
+                "editor_highlighted_line_background",
+                self.0.editor_highlighted_line_background,
+            ),
+            ("editor_line_number", self.0.editor_line_number),
+            (
+                "editor_active_line_number",
+                self.0.editor_active_line_number,
+            ),
+            ("editor_invisible", self.0.editor_invisible),
+            ("editor_wrap_guide", self.0.editor_wrap_guide),
+            ("editor_active_wrap_guide", self.0.editor_active_wrap_guide),
+            (
+                "editor_document_highlight_read_background",
+                self.0.editor_document_highlight_read_background,
+            ),
+            (
+                "editor_document_highlight_write_background",
+                self.0.editor_document_highlight_write_background,
+            ),
+            ("terminal_background", self.0.terminal_background),
+            (
+                "terminal_ansi_bright_black",
+                self.0.terminal_ansi_bright_black,
+            ),
+            ("terminal_ansi_bright_red", self.0.terminal_ansi_bright_red),
+            (
+                "terminal_ansi_bright_green",
+                self.0.terminal_ansi_bright_green,
+            ),
+            (
+                "terminal_ansi_bright_yellow",
+                self.0.terminal_ansi_bright_yellow,
+            ),
+            (
+                "terminal_ansi_bright_blue",
+                self.0.terminal_ansi_bright_blue,
+            ),
+            (
+                "terminal_ansi_bright_magenta",
+                self.0.terminal_ansi_bright_magenta,
+            ),
+            (
+                "terminal_ansi_bright_cyan",
+                self.0.terminal_ansi_bright_cyan,
+            ),
+            (
+                "terminal_ansi_bright_white",
+                self.0.terminal_ansi_bright_white,
+            ),
+            ("terminal_ansi_black", self.0.terminal_ansi_black),
+            ("terminal_ansi_red", self.0.terminal_ansi_red),
+            ("terminal_ansi_green", self.0.terminal_ansi_green),
+            ("terminal_ansi_yellow", self.0.terminal_ansi_yellow),
+            ("terminal_ansi_blue", self.0.terminal_ansi_blue),
+            ("terminal_ansi_magenta", self.0.terminal_ansi_magenta),
+            ("terminal_ansi_cyan", self.0.terminal_ansi_cyan),
+            ("terminal_ansi_white", self.0.terminal_ansi_white),
+        ];
+
         f.write_str("ThemeColorsRefinement {")?;
+
+        for (color_name, color) in theme_colors {
+            if let Some(color) = color {
+                f.write_str(color_name)?;
+                f.write_str(": ")?;
+                f.write_str("Some(")?;
+                HslaPrinter(color).fmt(f)?;
+                f.write_str(")")?;
+                f.write_str(",")?;
+            }
+        }
+
         f.write_str("..Default::default()")?;
         f.write_str("}")
 
