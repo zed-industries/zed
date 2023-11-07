@@ -249,6 +249,8 @@ impl ThemeColors {
             editor_invisible: neutral().light_alpha().step_4(), // todo!("pick the right colors")
             editor_wrap_guide: neutral().light_alpha().step_4(), // todo!("pick the right colors")
             editor_active_wrap_guide: neutral().light_alpha().step_4(), // todo!("pick the right colors")
+            editor_document_highlight_read_background: neutral().light_alpha().step_4(), // todo!("pick the right colors")
+            editor_document_highlight_write_background: neutral().light_alpha().step_4(), // todo!("pick the right colors")
             terminal_background: neutral().light().step_1(),
             terminal_ansi_black: black().light().step_12(),
             terminal_ansi_red: red().light().step_11(),
@@ -320,6 +322,8 @@ impl ThemeColors {
             editor_invisible: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
             editor_wrap_guide: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
             editor_active_wrap_guide: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
+            editor_document_highlight_read_background: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
+            editor_document_highlight_write_background: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
             terminal_background: neutral().dark().step_1(),
             terminal_ansi_black: black().dark().step_12(),
             terminal_ansi_red: red().dark().step_11(),

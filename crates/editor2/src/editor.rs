@@ -4057,12 +4057,12 @@ impl Editor {
 
                     this.highlight_background::<DocumentHighlightRead>(
                         read_ranges,
-                        |theme| todo!("theme.editor.document_highlight_read_background"),
+                        |theme| theme.editor_document_highlight_read_background,
                         cx,
                     );
                     this.highlight_background::<DocumentHighlightWrite>(
                         write_ranges,
-                        |theme| todo!("theme.editor.document_highlight_write_background"),
+                        |theme| theme.editor_document_highlight_write_background,
                         cx,
                     );
                     cx.notify();

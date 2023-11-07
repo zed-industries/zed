@@ -114,6 +114,8 @@ pub struct ThemeColors {
     pub editor_invisible: Hsla,
     pub editor_wrap_guide: Hsla,
     pub editor_active_wrap_guide: Hsla,
+    pub editor_document_highlight_read_background: Hsla,
+    pub editor_document_highlight_write_background: Hsla,
     pub terminal_background: Hsla,
     pub terminal_ansi_bright_black: Hsla,
     pub terminal_ansi_bright_red: Hsla,
