@@ -1,8 +1,8 @@
 use std::{any::TypeId, sync::Arc};
 
 use gpui::{
-    div, AnyView, AppContext, DispatchPhase, Div, ParentElement, Render, StatelessInteractive,
-    View, ViewContext,
+    div, AnyView, AppContext, Component, DispatchPhase, Div, ParentElement, Render,
+    StatelessInteractive, Styled, View, ViewContext,
 };
 
 use crate::Workspace;
@@ -69,22 +69,47 @@ impl ModalLayer {
         Self { open_modal: None }
     }
 
+    // Workspace
+    // - ModalLayer parent
+    // - - container
+    // - - - modal
+    // - - - content of the modal
+    // - - content of the workspace
+
+    // app
+    // workspace
+    // container some layer that contains all modals and is 100% wide and high
+    // modal (this has a shadow, some witdht)
+    // whatever
+
     pub fn render(&self, workspace: &Workspace, cx: &ViewContext<Workspace>) -> Div<Workspace> {
-        let mut div = div();
-
-        // div, c workspace.toggle_modal()div.on_action()) {
-        //
-        // }
-
-        // for (type_id, action) in cx.global::<ModalRegistry>().registered_modals.iter() {
-        //     div = div.useful_on_action(*type_id, action)
-        // }
+        let mut parent = div().relative();
 
         for (_, action) in cx.global::<ModalRegistry>().registered_modals.iter() {
-            div = (action)(div);
+            parent = (action)(parent);
         }
 
-        div.children(self.open_modal.clone())
+        parent.when_some(self.open_modal.as_ref(), |parent, open_modal| {
+            let container1 = div()
+                .absolute()
+                .size_full()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0();
+
+            // transparent layer
+            let container2 = div()
+                .flex()
+                .h_96()
+                .justify_center()
+                .size_full()
+                .relative()
+                .top_20()
+                .z_index(400);
+
+            parent.child(container1.child(container2.child(open_modal.clone())))
+        })
     }
 }
 

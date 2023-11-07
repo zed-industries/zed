@@ -1,4 +1,8 @@
-use gpui::{actions, div, px, red, AppContext, Div, Render, Styled, ViewContext, VisualContext};
+use gpui::{
+    actions, div, px, red, AppContext, Div, ParentElement, Render, Styled, ViewContext,
+    VisualContext,
+};
+use ui::modal;
 use workspace::ModalRegistry;
 
 actions!(Toggle);
@@ -27,9 +31,8 @@ pub struct GoToLine;
 impl Render for GoToLine {
     type Element = Div<Self>;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        dbg!("rendering GoToLine");
-        div().bg(red()).w(px(100.0)).h(px(100.0))
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        modal(cx).child(div().bg(red()).w(px(100.0)).h(px(100.0)))
     }
 }
 
