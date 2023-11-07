@@ -13,7 +13,7 @@ use gpui::serde_json;
 use log::LevelFilter;
 use serde::Deserialize;
 use simplelog::SimpleLogger;
-use theme::{default_color_scales, Appearance, ThemeFamily, UserThemeFamily};
+use theme::{Appearance, UserThemeFamily};
 use vscode::VsCodeThemeConverter;
 
 use crate::theme_printer::UserThemeFamilyPrinter;
