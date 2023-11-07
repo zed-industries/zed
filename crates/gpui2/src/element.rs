@@ -134,7 +134,10 @@ where
                         .layout(state, frame_state.as_mut().unwrap(), cx);
                 }
             }
-            _ => panic!("must call initialize before layout"),
+            ElementRenderPhase::Start => panic!("must call initialize before layout"),
+            ElementRenderPhase::LayoutRequested { .. } | ElementRenderPhase::Painted => {
+                panic!("element rendered twice")
+            }
         };
 
         self.phase = ElementRenderPhase::LayoutRequested {
