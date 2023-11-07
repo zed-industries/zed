@@ -13,10 +13,10 @@ use gpui::serde_json;
 use log::LevelFilter;
 use serde::Deserialize;
 use simplelog::SimpleLogger;
-use theme::{default_color_scales, Appearance, ThemeFamily};
+use theme::{Appearance, UserThemeFamily};
 use vscode::VsCodeThemeConverter;
 
-use crate::theme_printer::ThemeFamilyPrinter;
+use crate::theme_printer::UserThemeFamilyPrinter;
 use crate::vscode::VsCodeTheme;
 
 #[derive(Debug, Deserialize)]
@@ -120,12 +120,10 @@ fn main() -> Result<()> {
             themes.push(theme);
         }
 
-        let theme_family = ThemeFamily {
-            id: uuid::Uuid::new_v4().to_string(),
+        let theme_family = UserThemeFamily {
             name: family_metadata.name.into(),
             author: family_metadata.author.into(),
             themes,
-            scales: default_color_scales(),
         };
 
         theme_families.push(theme_family);
@@ -157,15 +155,14 @@ fn main() -> Result<()> {
             use gpui::rgba;
 
             use crate::{{
-                default_color_scales, Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors,
-                SyntaxTheme, SystemColors, ThemeColors, ThemeFamily, ThemeStyles, ThemeVariant,
+                Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
             }};
 
-            pub fn {theme_family_slug}() -> ThemeFamily {{
+            pub fn {theme_family_slug}() -> UserThemeFamily {{
                 {theme_family_definition}
             }}
             "#,
-            theme_family_definition = format!("{:#?}", ThemeFamilyPrinter::new(theme_family))
+            theme_family_definition = format!("{:#?}", UserThemeFamilyPrinter::new(theme_family))
         );
 
         output_file.write_all(theme_module.as_bytes())?;
@@ -175,9 +172,9 @@ fn main() -> Result<()> {
 
     let themes_vector_contents = format!(
         r#"
-        use crate::ThemeFamily;
+        use crate::UserThemeFamily;
 
-        pub(crate) fn all_imported_themes() -> Vec<ThemeFamily> {{
+        pub(crate) fn all_imported_themes() -> Vec<UserThemeFamily> {{
             vec![{all_themes}]
         }}
         "#,

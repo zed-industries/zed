@@ -28,6 +28,7 @@ serde_derive.workspace = true
 serde_json.workspace = true
 settings = { package = "settings2", path = "../settings2" }
 toml.workspace = true
+uuid.workspace = true
 util = { path = "../util" }
 
 [dev-dependencies]

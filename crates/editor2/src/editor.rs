@@ -82,7 +82,7 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::Rope;
-use theme::{ActiveTheme, PlayerColor, ThemeColors, ThemeSettings, ThemeVariant};
+use theme::{ActiveTheme, PlayerColor, Theme, ThemeColors, ThemeSettings};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, SplitDirection, ViewId, Workspace};
 
@@ -9982,7 +9982,7 @@ pub fn highlight_diagnostic_message(
     (message_without_backticks, highlights)
 }
 
-pub fn diagnostic_style(severity: DiagnosticSeverity, valid: bool, theme: &ThemeVariant) -> Hsla {
+pub fn diagnostic_style(severity: DiagnosticSeverity, valid: bool, theme: &Theme) -> Hsla {
     match (severity, valid) {
         (DiagnosticSeverity::ERROR, true) => theme.status().error,
         (DiagnosticSeverity::ERROR, false) => theme.status().error,

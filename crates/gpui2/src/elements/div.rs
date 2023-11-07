@@ -209,15 +209,15 @@ where
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
         let mut element_state = element_state.unwrap_or_default();
-        self.focus
-            .initialize(element_state.focus_handle.take(), cx, |focus_handle, cx| {
-                element_state.focus_handle = focus_handle;
-                self.interaction.initialize(cx, |cx| {
+        self.interaction.initialize(cx, |cx| {
+            self.focus
+                .initialize(element_state.focus_handle.take(), cx, |focus_handle, cx| {
+                    element_state.focus_handle = focus_handle;
                     for child in &mut self.children {
                         child.initialize(view_state, cx);
                     }
                 })
-            });
+        });
         element_state
     }
 

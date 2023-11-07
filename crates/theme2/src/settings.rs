@@ -1,4 +1,4 @@
-use crate::{ThemeRegistry, ThemeVariant};
+use crate::{Theme, ThemeRegistry};
 use anyhow::Result;
 use gpui::{px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels};
 use schemars::{
@@ -21,7 +21,7 @@ pub struct ThemeSettings {
     pub buffer_font: Font,
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
-    pub active_theme: Arc<ThemeVariant>,
+    pub active_theme: Arc<Theme>,
 }
 
 #[derive(Default)]
