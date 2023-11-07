@@ -74,7 +74,7 @@ impl<V: 'static> Element<V> for Text<V> {
     ) -> LayoutId {
         let text_system = cx.text_system().clone();
         let text_style = cx.text_style();
-        let font_size = text_style.font_size * cx.rem_size();
+        let font_size = text_style.font_size.to_pixels(cx.rem_size());
         let line_height = text_style
             .line_height
             .to_pixels(font_size.into(), cx.rem_size());

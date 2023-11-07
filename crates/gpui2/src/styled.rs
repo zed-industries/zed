@@ -1,6 +1,7 @@
 use crate::{
-    self as gpui2, hsla, point, px, relative, rems, AlignItems, DefiniteLength, Display, Fill,
-    FlexDirection, Hsla, JustifyContent, Length, Position, Rems, SharedString, StyleRefinement,
+    self as gpui2, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, DefiniteLength,
+    Display, Fill, FlexDirection, Hsla, JustifyContent, Length, Position, SharedString,
+    StyleRefinement,
 };
 use crate::{BoxShadow, TextStyleRefinement};
 use smallvec::smallvec;
@@ -384,7 +385,7 @@ pub trait Styled {
         self
     }
 
-    fn text_size(mut self, size: impl Into<Rems>) -> Self
+    fn text_size(mut self, size: impl Into<AbsoluteLength>) -> Self
     where
         Self: Sized,
     {
@@ -400,7 +401,7 @@ pub trait Styled {
     {
         self.text_style()
             .get_or_insert_with(Default::default)
-            .font_size = Some(rems(0.75));
+            .font_size = Some(rems(0.75).into());
         self
     }
 
@@ -410,7 +411,7 @@ pub trait Styled {
     {
         self.text_style()
             .get_or_insert_with(Default::default)
-            .font_size = Some(rems(0.875));
+            .font_size = Some(rems(0.875).into());
         self
     }
 
@@ -420,7 +421,7 @@ pub trait Styled {
     {
         self.text_style()
             .get_or_insert_with(Default::default)
-            .font_size = Some(rems(1.0));
+            .font_size = Some(rems(1.0).into());
         self
     }
 
@@ -430,7 +431,7 @@ pub trait Styled {
     {
         self.text_style()
             .get_or_insert_with(Default::default)
-            .font_size = Some(rems(1.125));
+            .font_size = Some(rems(1.125).into());
         self
     }
 
@@ -440,7 +441,7 @@ pub trait Styled {
     {
         self.text_style()
             .get_or_insert_with(Default::default)
-            .font_size = Some(rems(1.25));
+            .font_size = Some(rems(1.25).into());
         self
     }
 
@@ -450,7 +451,7 @@ pub trait Styled {
     {
         self.text_style()
             .get_or_insert_with(Default::default)
-            .font_size = Some(rems(1.5));
+            .font_size = Some(rems(1.5).into());
         self
     }
 
@@ -460,7 +461,7 @@ pub trait Styled {
     {
         self.text_style()
             .get_or_insert_with(Default::default)
-            .font_size = Some(rems(1.875));
+            .font_size = Some(rems(1.875).into());
         self
     }
 

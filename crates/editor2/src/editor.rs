@@ -37,8 +37,8 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     div, px, AnyElement, AppContext, BackgroundExecutor, Context, Div, Element, EventEmitter,
-    FocusHandle, Hsla, Model, Pixels, Render, Styled, Subscription, Task, TextStyle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    FocusHandle, FontStyle, FontWeight, Hsla, Model, Pixels, Render, Styled, Subscription, Task,
+    TextStyle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -81,7 +81,7 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::Rope;
-use theme::{ActiveTheme, PlayerColor, ThemeColors, ThemeVariant};
+use theme::{ActiveTheme, PlayerColor, ThemeColors, ThemeSettings, ThemeVariant};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, SplitDirection, ViewId, Workspace};
 
@@ -1882,7 +1882,7 @@ impl Editor {
     ) -> Self {
         // let editor_view_id = cx.view_id();
         let style = cx.text_style();
-        let font_size = style.font_size * cx.rem_size();
+        let font_size = style.font_size.to_pixels(cx.rem_size());
         let display_map = cx.build_model(|cx| {
             // todo!()
             // let settings = settings::get::<ThemeSettings>(cx);
@@ -9325,11 +9325,22 @@ impl Render for Editor {
     type Element = EditorElement;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_features: settings.buffer_font.features,
+            font_size: settings.buffer_font_size.into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: Default::default(),
+            underline: None,
+        };
         EditorElement::new(EditorStyle {
             background: cx.theme().colors().editor,
             local_player: cx.theme().players().local(),
-            text: cx.text_style(),
-            line_height_scalar: 1.,
+            text: text_style,
+            line_height_scalar: settings.buffer_line_height.value(),
             scrollbar_width: px(12.),
         })
     }

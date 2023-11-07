@@ -6,6 +6,8 @@ mod scale;
 mod settings;
 mod syntax;
 
+use std::sync::Arc;
+
 use ::settings::Settings;
 pub use colors::*;
 pub use default_colors::*;
@@ -29,11 +31,11 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub trait ActiveTheme {
-    fn theme(&self) -> &ThemeVariant;
+    fn theme(&self) -> &Arc<ThemeVariant>;
 }
 
 impl ActiveTheme for AppContext {
-    fn theme(&self) -> &ThemeVariant {
+    fn theme(&self) -> &Arc<ThemeVariant> {
         &ThemeSettings::get_global(self).active_theme
     }
 }
