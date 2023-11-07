@@ -43,7 +43,7 @@ impl Default for ThemeRegistry {
         };
 
         this.insert_theme_families([zed_pro_family()]);
-        this.insert_theme_families(crate::all_imported_themes());
+        // this.insert_theme_families(crate::all_imported_themes());
 
         this
     }

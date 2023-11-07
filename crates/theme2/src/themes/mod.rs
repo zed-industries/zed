@@ -22,9 +22,9 @@ pub use rose_pine::*;
 pub use solarized::*;
 pub use synthwave_84::*;
 
-use crate::ThemeFamily;
+use crate::UserThemeFamily;
 
-pub(crate) fn all_imported_themes() -> Vec<ThemeFamily> {
+pub(crate) fn all_imported_themes() -> Vec<UserThemeFamily> {
     vec![
         rose_pine(),
         night_owl(),

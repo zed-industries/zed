@@ -3,7 +3,8 @@ use gpui::{Hsla, Refineable, Rgba};
 use serde::Deserialize;
 use theme::{
     Appearance, GitStatusColors, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme,
-    ThemeColors, ThemeColorsRefinement, ThemeStyles,
+    ThemeColors, ThemeColorsRefinement, ThemeStyles, UserTheme, UserThemeStyles,
+    UserThemeStylesRefinement,
 };
 
 use crate::util::Traverse;
@@ -433,13 +434,8 @@ impl VsCodeThemeConverter {
         }
     }
 
-    pub fn convert(self) -> Result<Theme> {
+    pub fn convert(self) -> Result<UserTheme> {
         let appearance = self.theme_metadata.appearance.into();
-
-        let mut theme_colors = match appearance {
-            Appearance::Light => ThemeColors::default_light(),
-            Appearance::Dark => ThemeColors::default_dark(),
-        };
 
         let vscode_colors = &self.theme.colors;
 
@@ -567,19 +563,11 @@ impl VsCodeThemeConverter {
             ..Default::default()
         };
 
-        theme_colors.refine(&theme_colors_refinements);
-
-        Ok(Theme {
-            id: uuid::Uuid::new_v4().to_string(),
+        Ok(UserTheme {
             name: self.theme_metadata.name.into(),
             appearance,
-            styles: ThemeStyles {
-                system: SystemColors::default(),
-                colors: theme_colors,
-                status: StatusColors::default(),
-                git: GitStatusColors::default(),
-                player: PlayerColors::default(),
-                syntax: SyntaxTheme::default_dark(),
+            styles: UserThemeStylesRefinement {
+                colors: theme_colors_refinements,
             },
         })
     }
