@@ -41,7 +41,7 @@ editor = { package="editor2", path = "../editor2" }
 fs = { package = "fs2", path = "../fs2" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
-# go_to_line = { path = "../go_to_line" }
+go_to_line = { package = "go_to_line2", path = "../go_to_line2" }
 gpui = { package = "gpui2", path = "../gpui2" }
 install_cli = { path = "../install_cli" }
 journal = { package = "journal2", path = "../journal2" }

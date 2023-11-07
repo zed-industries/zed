@@ -3,6 +3,8 @@ use gpui::{HighlightStyle, Hsla};
 #[derive(Clone, Default)]
 pub struct SyntaxTheme {
     pub highlights: Vec<(String, HighlightStyle)>,
+    pub inlay_style: HighlightStyle,
+    pub suggestion_style: HighlightStyle,
 }
 
 impl SyntaxTheme {
@@ -21,6 +23,8 @@ impl SyntaxTheme {
                     )
                 })
                 .collect(),
+            inlay_style: HighlightStyle::default(),
+            suggestion_style: HighlightStyle::default(),
         }
     }
 

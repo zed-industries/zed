@@ -1,0 +1,25 @@
+[package]
+name = "go_to_line2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/go_to_line.rs"
+doctest = false
+
+[dependencies]
+editor = { package = "editor2", path = "../editor2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+menu = { package = "menu2", path = "../menu2" }
+serde.workspace = true
+settings = { package = "settings2", path = "../settings2" }
+text = { package = "text2", path = "../text2" }
+workspace = { package = "workspace2", path = "../workspace2" }
+postage.workspace = true
+theme = { package = "theme2", path = "../theme2" }
+ui = { package = "ui2", path = "../ui2" }
+util = { path = "../util" }
+
+[dev-dependencies]
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }

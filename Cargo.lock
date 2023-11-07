@@ -3530,6 +3530,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "go_to_line2"
+version = "0.1.0"
+dependencies = [
+ "editor2",
+ "gpui2",
+ "menu2",
+ "postage",
+ "serde",
+ "settings2",
+ "text2",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "gpui"
 version = "0.1.0"
 dependencies = [
@@ -11244,6 +11261,7 @@ dependencies = [
  "fsevent",
  "futures 0.3.28",
  "fuzzy",
+ "go_to_line2",
  "gpui2",
  "ignore",
  "image",
