@@ -5,6 +5,7 @@ mod vscode;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
+use std::process::Command;
 use std::str::FromStr;
 
 use anyhow::{anyhow, Context, Result};
@@ -208,5 +209,23 @@ fn main() -> Result<()> {
 
     mod_rs_file.write_all(mod_rs_contents.as_bytes())?;
 
+    println!("Formatting themes...");
+
+    let format_result = format_themes_crate()
+        // We need to format a second time to catch all of the formatting issues.
+        .and_then(|_| format_themes_crate());
+
+    if let Err(err) = format_result {
+        eprintln!("Failed to format themes: {}", err);
+    }
+
+    println!("Done!");
+
     Ok(())
+}
+
+fn format_themes_crate() -> std::io::Result<std::process::Output> {
+    Command::new("cargo")
+        .args(["fmt", "--package", "theme2"])
+        .output()
 }
