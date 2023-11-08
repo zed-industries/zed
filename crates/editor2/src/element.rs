@@ -2335,6 +2335,52 @@ impl EditorElement {
     //         blocks,
     //     )
     // }
+
+    fn paint_mouse_listeners(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        text_bounds: Bounds<Pixels>,
+        gutter_bounds: Bounds<Pixels>,
+        position_map: &Arc<PositionMap>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        cx.on_mouse_event({
+            let position_map = position_map.clone();
+            move |editor, event: &ScrollWheelEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if Self::scroll(editor, event, &position_map, bounds, cx) {
+                    cx.stop_propagation();
+                }
+            }
+        });
+        cx.on_mouse_event({
+            let position_map = position_map.clone();
+            move |editor, event: &MouseMoveEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if Self::mouse_moved(editor, event, &position_map, text_bounds, cx) {
+                    cx.stop_propagation()
+                }
+            }
+        });
+        cx.on_mouse_event({
+            let position_map = position_map.clone();
+            move |editor, event: &MouseDownEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if Self::mouse_down(editor, event, &position_map, text_bounds, gutter_bounds, cx) {
+                    cx.stop_propagation()
+                }
+            }
+        });
+    }
 }
 
 #[derive(Debug)]
@@ -2763,48 +2809,18 @@ impl Element<Editor> for EditorElement {
             size: layout.text_size,
         };
 
-        cx.on_mouse_event({
-            let position_map = layout.position_map.clone();
-            move |editor, event: &ScrollWheelEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
-                }
-
-                if Self::scroll(editor, event, &position_map, bounds, cx) {
-                    cx.stop_propagation();
-                }
-            }
-        });
-        cx.on_mouse_event({
-            let position_map = layout.position_map.clone();
-            move |editor, event: &MouseMoveEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
-                }
-
-                if Self::mouse_moved(editor, event, &position_map, text_bounds, cx) {
-                    cx.stop_propagation()
-                }
-            }
-        });
-        cx.on_mouse_event({
-            let position_map = layout.position_map.clone();
-            move |editor, event: &MouseDownEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
-                }
-
-                if Self::mouse_down(editor, event, &position_map, text_bounds, gutter_bounds, cx) {
-                    cx.stop_propagation()
-                }
-            }
-        });
-
         if editor.focus_handle.is_focused(cx) {
             cx.handle_text_input();
         }
 
         cx.with_content_mask(ContentMask { bounds }, |cx| {
+            self.paint_mouse_listeners(
+                bounds,
+                gutter_bounds,
+                text_bounds,
+                &layout.position_map,
+                cx,
+            );
             self.paint_background(gutter_bounds, text_bounds, &layout, cx);
             if layout.gutter_size.width > Pixels::ZERO {
                 self.paint_gutter(gutter_bounds, &layout, editor, cx);
