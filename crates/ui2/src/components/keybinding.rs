@@ -64,7 +64,7 @@ impl Key {
             .px_2()
             .py_0()
             .rounded_md()
-            .text_sm()
+            .text_ui_sm()
             .text_color(cx.theme().colors().text)
             .bg(cx.theme().colors().element_background)
             .child(self.key.clone())

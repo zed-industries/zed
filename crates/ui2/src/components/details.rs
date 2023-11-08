@@ -31,7 +31,7 @@ impl<V: 'static> Details<V> {
         v_stack()
             .p_1()
             .gap_0p5()
-            .text_xs()
+            .text_ui_sm()
             .text_color(cx.theme().colors().text)
             .size_full()
             .child(self.text)

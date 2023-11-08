@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use gpui::{div, rems, DefiniteLength, Hsla, MouseButton, WindowContext};
+use gpui::{div, DefiniteLength, Hsla, MouseButton, WindowContext};
 
-use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor, LineHeightStyle};
-use crate::{prelude::*, IconButton};
+use crate::{
+    h_stack, prelude::*, Icon, IconButton, IconColor, IconElement, Label, LabelColor,
+    LineHeightStyle,
+};
 
 /// Provides the flexibility to use either a standard
 /// button or an icon button in a given context.
@@ -167,10 +169,10 @@ impl<V: 'static> Button<V> {
         let icon_color = self.icon_color();
 
         let mut button = h_stack()
-            .relative()
             .id(SharedString::from(format!("{}", self.label)))
+            .relative()
             .p_1()
-            .text_size(rems(1.))
+            .text_ui()
             .rounded_md()
             .bg(self.variant.bg_color(cx))
             .hover(|style| style.bg(self.variant.bg_color_hover(cx)))
@@ -217,7 +219,7 @@ impl<V: 'static> ButtonGroup<V> {
     }
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let mut el = h_stack().text_size(rems(1.));
+        let mut el = h_stack().text_ui();
 
         for button in self.buttons {
             el = el.child(button.render(_view, cx));

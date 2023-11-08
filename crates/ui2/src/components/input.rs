@@ -94,7 +94,7 @@ impl Input {
             .active(|style| style.bg(input_active_bg))
             .flex()
             .items_center()
-            .child(div().flex().items_center().text_sm().map(|this| {
+            .child(div().flex().items_center().text_ui_sm().map(|this| {
                 if self.value.is_empty() {
                     this.child(placeholder_label)
                 } else {

@@ -77,7 +77,7 @@ impl CollabPanel {
                     .items_center()
                     .child(
                         div()
-                            .text_sm()
+                            .text_ui_sm()
                             .text_color(cx.theme().colors().text_placeholder)
                             .child("Find..."),
                     ),
