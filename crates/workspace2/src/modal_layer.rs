@@ -1,12 +1,10 @@
-use std::{any::TypeId, sync::Arc};
-
-use gpui::{
-    div, px, AnyView, AppContext, Component, DispatchPhase, Div, ParentElement, Render,
-    StatelessInteractive, Styled, View, ViewContext,
-};
-use ui::v_stack;
-
 use crate::Workspace;
+use gpui::{
+    div, px, AnyView, AppContext, Component, Div, ParentElement, Render, StatelessInteractive,
+    Styled, View, ViewContext,
+};
+use std::{any::TypeId, sync::Arc};
+use ui::v_stack;
 
 pub struct ModalRegistry {
     registered_modals: Vec<(TypeId, Box<dyn Fn(Div<Workspace>) -> Div<Workspace>>)>,
@@ -43,14 +41,7 @@ impl ModalRegistry {
                 let build_view = build_view.clone();
 
                 div.on_action(
-                    move |workspace: &mut Workspace,
-                          event: &A,
-                          phase: DispatchPhase,
-                          cx: &mut ViewContext<Workspace>| {
-                        if phase == DispatchPhase::Capture {
-                            return;
-                        }
-
+                    move |workspace: &mut Workspace, event: &A, cx: &mut ViewContext<Workspace>| {
                         let Some(new_modal) = (build_view)(workspace, cx) else {
                             return;
                         };

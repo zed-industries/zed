@@ -25,13 +25,13 @@ const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
 const TOOLTIP_OFFSET: Point<Pixels> = Point::new(px(10.0), px(8.0));
 
 pub trait StatelessInteractive<V: 'static>: Element<V> {
-    fn stateless_interaction(&mut self) -> &mut StatelessInteraction<V>;
+    fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<V>;
 
     fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
     {
-        self.stateless_interaction().hover_style = f(StyleRefinement::default());
+        self.stateless_interactivity().hover_style = f(StyleRefinement::default());
         self
     }
 
@@ -43,7 +43,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     where
         Self: Sized,
     {
-        self.stateless_interaction().group_hover_style = Some(GroupStyle {
+        self.stateless_interactivity().group_hover_style = Some(GroupStyle {
             group: group_name.into(),
             style: f(StyleRefinement::default()),
         });
@@ -58,7 +58,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     where
         Self: Sized,
     {
-        self.stateless_interaction()
+        self.stateless_interactivity()
             .mouse_down_listeners
             .push(Box::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
@@ -79,7 +79,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     where
         Self: Sized,
     {
-        self.stateless_interaction()
+        self.stateless_interactivity()
             .mouse_up_listeners
             .push(Box::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
@@ -100,7 +100,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     where
         Self: Sized,
     {
-        self.stateless_interaction()
+        self.stateless_interactivity()
             .mouse_down_listeners
             .push(Box::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
@@ -121,7 +121,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     where
         Self: Sized,
     {
-        self.stateless_interaction()
+        self.stateless_interactivity()
             .mouse_up_listeners
             .push(Box::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
@@ -141,7 +141,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     where
         Self: Sized,
     {
-        self.stateless_interaction()
+        self.stateless_interactivity()
             .mouse_move_listeners
             .push(Box::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
@@ -158,7 +158,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     where
         Self: Sized,
     {
-        self.stateless_interaction()
+        self.stateless_interactivity()
             .scroll_wheel_listeners
             .push(Box::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
@@ -174,23 +174,48 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
         C: TryInto<DispatchContext>,
         C::Error: Debug,
     {
-        self.stateless_interaction().dispatch_context =
+        self.stateless_interactivity().dispatch_context =
             context.try_into().expect("invalid dispatch context");
         self
     }
 
-    fn on_action<A: 'static>(
+    /// Capture the given action, fires during the capture phase
+    fn capture_action<A: 'static>(
         mut self,
-        listener: impl Fn(&mut V, &A, DispatchPhase, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&mut V, &A, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
         Self: Sized,
     {
-        self.stateless_interaction().key_listeners.push((
+        self.stateless_interactivity().key_listeners.push((
             TypeId::of::<A>(),
-            Box::new(move |view, event, _, phase, cx| {
-                let event = event.downcast_ref().unwrap();
-                listener(view, event, phase, cx);
+            Box::new(move |view, action, _dipatch_context, phase, cx| {
+                let action = action.downcast_ref().unwrap();
+                if phase == DispatchPhase::Capture {
+                    listener(view, action, cx)
+                }
+                None
+            }),
+        ));
+        self
+    }
+
+    /// Add a listener for the given action, fires during the bubble event phase
+    fn on_action<A: 'static>(
+        mut self,
+        listener: impl Fn(&mut V, &A, &mut ViewContext<V>) + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.stateless_interactivity().key_listeners.push((
+            TypeId::of::<A>(),
+            Box::new(move |view, action, _dispatch_context, phase, cx| {
+                let action = action.downcast_ref().unwrap();
+                if phase == DispatchPhase::Bubble {
+                    listener(view, action, cx)
+                }
+
                 None
             }),
         ));
@@ -204,7 +229,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     where
         Self: Sized,
     {
-        self.stateless_interaction().key_listeners.push((
+        self.stateless_interactivity().key_listeners.push((
             TypeId::of::<KeyDownEvent>(),
             Box::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
@@ -222,7 +247,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     where
         Self: Sized,
     {
-        self.stateless_interaction().key_listeners.push((
+        self.stateless_interactivity().key_listeners.push((
             TypeId::of::<KeyUpEvent>(),
             Box::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
@@ -237,7 +262,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     where
         Self: Sized,
     {
-        self.stateless_interaction()
+        self.stateless_interactivity()
             .drag_over_styles
             .push((TypeId::of::<S>(), f(StyleRefinement::default())));
         self
@@ -251,7 +276,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     where
         Self: Sized,
     {
-        self.stateless_interaction().group_drag_over_styles.push((
+        self.stateless_interactivity().group_drag_over_styles.push((
             TypeId::of::<S>(),
             GroupStyle {
                 group: group_name.into(),
@@ -268,7 +293,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     where
         Self: Sized,
     {
-        self.stateless_interaction().drop_listeners.push((
+        self.stateless_interactivity().drop_listeners.push((
             TypeId::of::<W>(),
             Box::new(move |view, dragged_view, cx| {
                 listener(view, dragged_view.downcast().unwrap(), cx);
@@ -279,13 +304,13 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
 }
 
 pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
-    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<V>;
+    fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<V>;
 
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
     {
-        self.stateful_interaction().active_style = f(StyleRefinement::default());
+        self.stateful_interactivity().active_style = f(StyleRefinement::default());
         self
     }
 
@@ -297,7 +322,7 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
     where
         Self: Sized,
     {
-        self.stateful_interaction().group_active_style = Some(GroupStyle {
+        self.stateful_interactivity().group_active_style = Some(GroupStyle {
             group: group_name.into(),
             style: f(StyleRefinement::default()),
         });
@@ -311,7 +336,7 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
     where
         Self: Sized,
     {
-        self.stateful_interaction()
+        self.stateful_interactivity()
             .click_listeners
             .push(Box::new(move |view, event, cx| listener(view, event, cx)));
         self
@@ -326,10 +351,10 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
         W: 'static + Render,
     {
         debug_assert!(
-            self.stateful_interaction().drag_listener.is_none(),
+            self.stateful_interactivity().drag_listener.is_none(),
             "calling on_drag more than once on the same element is not supported"
         );
-        self.stateful_interaction().drag_listener =
+        self.stateful_interactivity().drag_listener =
             Some(Box::new(move |view_state, cursor_offset, cx| AnyDrag {
                 view: listener(view_state, cx).into(),
                 cursor_offset,
@@ -342,10 +367,10 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
         Self: Sized,
     {
         debug_assert!(
-            self.stateful_interaction().hover_listener.is_none(),
+            self.stateful_interactivity().hover_listener.is_none(),
             "calling on_hover more than once on the same element is not supported"
         );
-        self.stateful_interaction().hover_listener = Some(Box::new(listener));
+        self.stateful_interactivity().hover_listener = Some(Box::new(listener));
         self
     }
 
@@ -358,10 +383,10 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
         W: 'static + Render,
     {
         debug_assert!(
-            self.stateful_interaction().tooltip_builder.is_none(),
+            self.stateful_interactivity().tooltip_builder.is_none(),
             "calling tooltip more than once on the same element is not supported"
         );
-        self.stateful_interaction().tooltip_builder = Some(Arc::new(move |view_state, cx| {
+        self.stateful_interactivity().tooltip_builder = Some(Arc::new(move |view_state, cx| {
             build_tooltip(view_state, cx).into()
         }));
 
@@ -369,11 +394,11 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
     }
 }
 
-pub trait ElementInteraction<V: 'static>: 'static {
-    fn as_stateless(&self) -> &StatelessInteraction<V>;
-    fn as_stateless_mut(&mut self) -> &mut StatelessInteraction<V>;
-    fn as_stateful(&self) -> Option<&StatefulInteraction<V>>;
-    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteraction<V>>;
+pub trait ElementInteractivity<V: 'static>: 'static {
+    fn as_stateless(&self) -> &StatelessInteractivity<V>;
+    fn as_stateless_mut(&mut self) -> &mut StatelessInteractivity<V>;
+    fn as_stateful(&self) -> Option<&StatefulInteractivity<V>>;
+    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>>;
 
     fn initialize<R>(
         &mut self,
@@ -382,6 +407,8 @@ pub trait ElementInteraction<V: 'static>: 'static {
     ) -> R {
         if let Some(stateful) = self.as_stateful_mut() {
             cx.with_element_id(stateful.id.clone(), |global_id, cx| {
+                // In addition to any key down/up listeners registered directly on the element,
+                // we also add a key listener to match actions from the keymap.
                 stateful.key_listeners.push((
                     TypeId::of::<KeyDownEvent>(),
                     Box::new(move |_, key_down, context, phase, cx| {
@@ -736,11 +763,11 @@ pub trait ElementInteraction<V: 'static>: 'static {
 }
 
 #[derive(Deref, DerefMut)]
-pub struct StatefulInteraction<V> {
+pub struct StatefulInteractivity<V> {
     pub id: ElementId,
     #[deref]
     #[deref_mut]
-    stateless: StatelessInteraction<V>,
+    stateless: StatelessInteractivity<V>,
     click_listeners: SmallVec<[ClickListener<V>; 2]>,
     active_style: StyleRefinement,
     group_active_style: Option<GroupStyle>,
@@ -749,42 +776,42 @@ pub struct StatefulInteraction<V> {
     tooltip_builder: Option<TooltipBuilder<V>>,
 }
 
-impl<V: 'static> ElementInteraction<V> for StatefulInteraction<V> {
-    fn as_stateful(&self) -> Option<&StatefulInteraction<V>> {
-        Some(self)
-    }
-
-    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteraction<V>> {
-        Some(self)
-    }
-
-    fn as_stateless(&self) -> &StatelessInteraction<V> {
-        &self.stateless
-    }
-
-    fn as_stateless_mut(&mut self) -> &mut StatelessInteraction<V> {
-        &mut self.stateless
-    }
-}
-
-impl<V> From<ElementId> for StatefulInteraction<V> {
-    fn from(id: ElementId) -> Self {
+impl<V: 'static> StatefulInteractivity<V> {
+    pub fn new(id: ElementId, stateless: StatelessInteractivity<V>) -> Self {
         Self {
             id,
-            stateless: StatelessInteraction::default(),
+            stateless,
             click_listeners: SmallVec::new(),
+            active_style: StyleRefinement::default(),
+            group_active_style: None,
             drag_listener: None,
             hover_listener: None,
             tooltip_builder: None,
-            active_style: StyleRefinement::default(),
-            group_active_style: None,
         }
+    }
+}
+
+impl<V: 'static> ElementInteractivity<V> for StatefulInteractivity<V> {
+    fn as_stateful(&self) -> Option<&StatefulInteractivity<V>> {
+        Some(self)
+    }
+
+    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>> {
+        Some(self)
+    }
+
+    fn as_stateless(&self) -> &StatelessInteractivity<V> {
+        &self.stateless
+    }
+
+    fn as_stateless_mut(&mut self) -> &mut StatelessInteractivity<V> {
+        &mut self.stateless
     }
 }
 
 type DropListener<V> = dyn Fn(&mut V, AnyView, &mut ViewContext<V>) + 'static;
 
-pub struct StatelessInteraction<V> {
+pub struct StatelessInteractivity<V> {
     pub dispatch_context: DispatchContext,
     pub mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
     pub mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
@@ -798,9 +825,9 @@ pub struct StatelessInteraction<V> {
     drop_listeners: SmallVec<[(TypeId, Box<DropListener<V>>); 2]>,
 }
 
-impl<V> StatelessInteraction<V> {
-    pub fn into_stateful(self, id: impl Into<ElementId>) -> StatefulInteraction<V> {
-        StatefulInteraction {
+impl<V> StatelessInteractivity<V> {
+    pub fn into_stateful(self, id: impl Into<ElementId>) -> StatefulInteractivity<V> {
+        StatefulInteractivity {
             id: id.into(),
             stateless: self,
             click_listeners: SmallVec::new(),
@@ -876,9 +903,15 @@ impl InteractiveElementState {
             .as_ref()
             .map(|offset| offset.lock().clone())
     }
+
+    pub fn track_scroll_offset(&mut self) -> Arc<Mutex<Point<Pixels>>> {
+        self.scroll_offset
+            .get_or_insert_with(|| Arc::new(Mutex::new(Default::default())))
+            .clone()
+    }
 }
 
-impl<V> Default for StatelessInteraction<V> {
+impl<V> Default for StatelessInteractivity<V> {
     fn default() -> Self {
         Self {
             dispatch_context: DispatchContext::default(),
@@ -896,20 +929,20 @@ impl<V> Default for StatelessInteraction<V> {
     }
 }
 
-impl<V: 'static> ElementInteraction<V> for StatelessInteraction<V> {
-    fn as_stateful(&self) -> Option<&StatefulInteraction<V>> {
+impl<V: 'static> ElementInteractivity<V> for StatelessInteractivity<V> {
+    fn as_stateful(&self) -> Option<&StatefulInteractivity<V>> {
         None
     }
 
-    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteraction<V>> {
+    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>> {
         None
     }
 
-    fn as_stateless(&self) -> &StatelessInteraction<V> {
+    fn as_stateless(&self) -> &StatelessInteractivity<V> {
         self
     }
 
-    fn as_stateless_mut(&mut self) -> &mut StatelessInteraction<V> {
+    fn as_stateless_mut(&mut self) -> &mut StatelessInteractivity<V> {
         self
     }
 }
@@ -1236,7 +1269,7 @@ pub type KeyListener<V> = Box<
 mod test {
     use crate::{
         self as gpui, div, Div, FocusHandle, KeyBinding, Keystroke, ParentElement, Render,
-        StatefulInteraction, StatelessInteractive, TestAppContext, VisualContext,
+        StatefulInteractivity, StatelessInteractive, TestAppContext, VisualContext,
     };
 
     struct TestView {
@@ -1248,19 +1281,13 @@ mod test {
     actions!(TestAction);
 
     impl Render for TestView {
-        type Element = Div<Self, StatefulInteraction<Self>>;
+        type Element = Div<Self, StatefulInteractivity<Self>>;
 
         fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> Self::Element {
             div().id("testview").child(
                 div()
-                    .on_key_down(|this: &mut TestView, _, _, _| {
-                        dbg!("ola!");
-                        this.saw_key_down = true
-                    })
-                    .on_action(|this: &mut TestView, _: &TestAction, _, _| {
-                        dbg!("ola!");
-                        this.saw_action = true
-                    })
+                    .on_key_down(|this: &mut TestView, _, _, _| this.saw_key_down = true)
+                    .on_action(|this: &mut TestView, _: &TestAction, _| this.saw_action = true)
                     .track_focus(&self.focus_handle),
             )
         }

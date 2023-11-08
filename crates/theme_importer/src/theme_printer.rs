@@ -2,8 +2,8 @@ use std::fmt::{self, Debug};
 
 use gpui::{Hsla, Rgba};
 use theme::{
-    Appearance, GitStatusColors, PlayerColor, PlayerColors, StatusColors, SyntaxTheme,
-    SystemColors, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, PlayerColor, PlayerColors, StatusColors, SyntaxTheme, SystemColors,
+    ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 struct RawSyntaxPrinter<'a>(&'a str);
@@ -266,21 +266,6 @@ impl<'a> Debug for StatusColorsPrinter<'a> {
             .field("renamed", &HslaPrinter(self.0.renamed))
             .field("success", &HslaPrinter(self.0.success))
             .field("warning", &HslaPrinter(self.0.warning))
-            .finish()
-    }
-}
-
-pub struct GitStatusColorsPrinter<'a>(&'a GitStatusColors);
-
-impl<'a> Debug for GitStatusColorsPrinter<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("GitStatusColors")
-            .field("conflict", &HslaPrinter(self.0.conflict))
-            .field("created", &HslaPrinter(self.0.created))
-            .field("deleted", &HslaPrinter(self.0.deleted))
-            .field("ignored", &HslaPrinter(self.0.ignored))
-            .field("modified", &HslaPrinter(self.0.modified))
-            .field("renamed", &HslaPrinter(self.0.renamed))
             .finish()
     }
 }

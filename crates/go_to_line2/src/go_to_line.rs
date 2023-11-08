@@ -12,7 +12,6 @@ use workspace::ModalRegistry;
 actions!(Toggle, Cancel, Confirm);
 
 pub fn init(cx: &mut AppContext) {
-    cx.register_action_type::<Toggle>();
     cx.global_mut::<ModalRegistry>()
         .register_modal(Toggle, |workspace, cx| {
             let editor = workspace

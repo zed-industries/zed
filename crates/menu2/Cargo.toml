@@ -10,3 +10,4 @@ doctest = false
 
 [dependencies]
 gpui = { package = "gpui2", path = "../gpui2" }
+serde = { workspace = true }

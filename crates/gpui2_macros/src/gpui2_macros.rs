@@ -1,12 +1,24 @@
-use proc_macro::TokenStream;
-
+mod action;
 mod derive_component;
+mod register_action;
 mod style_helpers;
 mod test;
+
+use proc_macro::TokenStream;
 
 #[proc_macro]
 pub fn style_helpers(args: TokenStream) -> TokenStream {
     style_helpers::style_helpers(args)
+}
+
+#[proc_macro_attribute]
+pub fn action(attr: TokenStream, item: TokenStream) -> TokenStream {
+    action::action(attr, item)
+}
+
+#[proc_macro_attribute]
+pub fn register_action(attr: TokenStream, item: TokenStream) -> TokenStream {
+    register_action::register_action(attr, item)
 }
 
 #[proc_macro_derive(Component, attributes(component))]

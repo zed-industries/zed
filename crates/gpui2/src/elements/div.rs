@@ -1,28 +1,28 @@
 use crate::{
     point, AnyElement, BorrowWindow, Bounds, Component, Element, ElementFocus, ElementId,
-    ElementInteraction, FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable,
+    ElementInteractivity, FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable,
     GlobalElementId, GroupBounds, InteractiveElementState, LayoutId, Overflow, ParentElement,
-    Pixels, Point, SharedString, StatefulInteraction, StatefulInteractive, StatelessInteraction,
-    StatelessInteractive, Style, StyleRefinement, Styled, ViewContext, Visibility,
+    Pixels, Point, SharedString, StatefulInteractive, StatefulInteractivity, StatelessInteractive,
+    StatelessInteractivity, Style, StyleRefinement, Styled, ViewContext, Visibility,
 };
 use refineable::Refineable;
 use smallvec::SmallVec;
 
 pub struct Div<
     V: 'static,
-    I: ElementInteraction<V> = StatelessInteraction<V>,
+    I: ElementInteractivity<V> = StatelessInteractivity<V>,
     F: ElementFocus<V> = FocusDisabled,
 > {
-    interaction: I,
+    interactivity: I,
     focus: F,
     children: SmallVec<[AnyElement<V>; 2]>,
     group: Option<SharedString>,
     base_style: StyleRefinement,
 }
 
-pub fn div<V: 'static>() -> Div<V, StatelessInteraction<V>, FocusDisabled> {
+pub fn div<V: 'static>() -> Div<V, StatelessInteractivity<V>, FocusDisabled> {
     Div {
-        interaction: StatelessInteraction::default(),
+        interactivity: StatelessInteractivity::default(),
         focus: FocusDisabled,
         children: SmallVec::new(),
         group: None,
@@ -30,14 +30,14 @@ pub fn div<V: 'static>() -> Div<V, StatelessInteraction<V>, FocusDisabled> {
     }
 }
 
-impl<V, F> Div<V, StatelessInteraction<V>, F>
+impl<V, F> Div<V, StatelessInteractivity<V>, F>
 where
     V: 'static,
     F: ElementFocus<V>,
 {
-    pub fn id(self, id: impl Into<ElementId>) -> Div<V, StatefulInteraction<V>, F> {
+    pub fn id(self, id: impl Into<ElementId>) -> Div<V, StatefulInteractivity<V>, F> {
         Div {
-            interaction: id.into().into(),
+            interactivity: StatefulInteractivity::new(id.into(), self.interactivity),
             focus: self.focus,
             children: self.children,
             group: self.group,
@@ -48,7 +48,7 @@ where
 
 impl<V, I, F> Div<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
     pub fn group(mut self, group: impl Into<SharedString>) -> Self {
@@ -98,16 +98,20 @@ where
         let mut computed_style = Style::default();
         computed_style.refine(&self.base_style);
         self.focus.refine_style(&mut computed_style, cx);
-        self.interaction
-            .refine_style(&mut computed_style, bounds, &element_state.interactive, cx);
+        self.interactivity.refine_style(
+            &mut computed_style,
+            bounds,
+            &element_state.interactive,
+            cx,
+        );
         computed_style
     }
 }
 
-impl<V: 'static> Div<V, StatefulInteraction<V>, FocusDisabled> {
-    pub fn focusable(self) -> Div<V, StatefulInteraction<V>, FocusEnabled<V>> {
+impl<V: 'static> Div<V, StatefulInteractivity<V>, FocusDisabled> {
+    pub fn focusable(self) -> Div<V, StatefulInteractivity<V>, FocusEnabled<V>> {
         Div {
-            interaction: self.interaction,
+            interactivity: self.interactivity,
             focus: FocusEnabled::new(),
             children: self.children,
             group: self.group,
@@ -118,9 +122,9 @@ impl<V: 'static> Div<V, StatefulInteraction<V>, FocusDisabled> {
     pub fn track_focus(
         self,
         handle: &FocusHandle,
-    ) -> Div<V, StatefulInteraction<V>, FocusEnabled<V>> {
+    ) -> Div<V, StatefulInteractivity<V>, FocusEnabled<V>> {
         Div {
-            interaction: self.interaction,
+            interactivity: self.interactivity,
             focus: FocusEnabled::tracked(handle),
             children: self.children,
             group: self.group,
@@ -145,13 +149,13 @@ impl<V: 'static> Div<V, StatefulInteraction<V>, FocusDisabled> {
     }
 }
 
-impl<V: 'static> Div<V, StatelessInteraction<V>, FocusDisabled> {
+impl<V: 'static> Div<V, StatelessInteractivity<V>, FocusDisabled> {
     pub fn track_focus(
         self,
         handle: &FocusHandle,
-    ) -> Div<V, StatefulInteraction<V>, FocusEnabled<V>> {
+    ) -> Div<V, StatefulInteractivity<V>, FocusEnabled<V>> {
         Div {
-            interaction: self.interaction.into_stateful(handle),
+            interactivity: self.interactivity.into_stateful(handle),
             focus: handle.clone().into(),
             children: self.children,
             group: self.group,
@@ -163,7 +167,7 @@ impl<V: 'static> Div<V, StatelessInteraction<V>, FocusDisabled> {
 impl<V, I> Focusable<V> for Div<V, I, FocusEnabled<V>>
 where
     V: 'static,
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
 {
     fn focus_listeners(&mut self) -> &mut FocusListeners<V> {
         &mut self.focus.focus_listeners
@@ -191,13 +195,13 @@ pub struct DivState {
 
 impl<V, I, F> Element<V> for Div<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
     type ElementState = DivState;
 
     fn id(&self) -> Option<ElementId> {
-        self.interaction
+        self.interactivity
             .as_stateful()
             .map(|identified| identified.id.clone())
     }
@@ -209,7 +213,7 @@ where
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
         let mut element_state = element_state.unwrap_or_default();
-        self.interaction.initialize(cx, |cx| {
+        self.interactivity.initialize(cx, |cx| {
             self.focus
                 .initialize(element_state.focus_handle.take(), cx, |focus_handle, cx| {
                     element_state.focus_handle = focus_handle;
@@ -281,11 +285,11 @@ where
                 (child_max - child_min).into()
             };
 
-            cx.stack(z_index, |cx| {
-                cx.stack(0, |cx| {
+            cx.with_z_index(z_index, |cx| {
+                cx.with_z_index(0, |cx| {
                     style.paint(bounds, cx);
                     this.focus.paint(bounds, cx);
-                    this.interaction.paint(
+                    this.interactivity.paint(
                         bounds,
                         content_size,
                         style.overflow,
@@ -293,7 +297,7 @@ where
                         cx,
                     );
                 });
-                cx.stack(1, |cx| {
+                cx.with_z_index(1, |cx| {
                     style.apply_text_style(cx, |cx| {
                         style.apply_overflow(bounds, cx, |cx| {
                             let scroll_offset = element_state.interactive.scroll_offset();
@@ -316,7 +320,7 @@ where
 
 impl<V, I, F> Component<V> for Div<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
     fn render(self) -> AnyElement<V> {
@@ -326,7 +330,7 @@ where
 
 impl<V, I, F> ParentElement<V> for Div<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
@@ -336,7 +340,7 @@ where
 
 impl<V, I, F> Styled for Div<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
     fn style(&mut self) -> &mut StyleRefinement {
@@ -346,19 +350,19 @@ where
 
 impl<V, I, F> StatelessInteractive<V> for Div<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
-    fn stateless_interaction(&mut self) -> &mut StatelessInteraction<V> {
-        self.interaction.as_stateless_mut()
+    fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<V> {
+        self.interactivity.as_stateless_mut()
     }
 }
 
-impl<V, F> StatefulInteractive<V> for Div<V, StatefulInteraction<V>, F>
+impl<V, F> StatefulInteractive<V> for Div<V, StatefulInteractivity<V>, F>
 where
     F: ElementFocus<V>,
 {
-    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<V> {
-        &mut self.interaction
+    fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<V> {
+        &mut self.interactivity
     }
 }

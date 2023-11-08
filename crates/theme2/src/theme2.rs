@@ -1,6 +1,7 @@
 mod colors;
 mod default_colors;
 mod default_theme;
+mod players;
 mod registry;
 mod scale;
 mod settings;
@@ -14,6 +15,7 @@ use ::settings::Settings;
 pub use colors::*;
 pub use default_colors::*;
 pub use default_theme::*;
+pub use players::*;
 pub use registry::*;
 pub use scale::*;
 pub use settings::*;
@@ -93,19 +95,13 @@ impl Theme {
         &self.styles.status
     }
 
-    /// Returns the [`GitStatusColors`] for the theme.
-    #[inline(always)]
-    pub fn git(&self) -> &GitStatusColors {
-        &self.styles.git
-    }
-
     /// Returns the color for the syntax node with the given name.
     #[inline(always)]
     pub fn syntax_color(&self, name: &str) -> Hsla {
         self.syntax().color(name)
     }
 
-    /// Returns the [`StatusColors`] for the theme.
+    /// Returns the [`DiagnosticStyle`] for the theme.
     #[inline(always)]
     pub fn diagnostic_style(&self) -> DiagnosticStyle {
         DiagnosticStyle {
@@ -126,3 +122,8 @@ pub struct DiagnosticStyle {
     pub hint: Hsla,
     pub ignored: Hsla,
 }
+
+#[cfg(feature = "stories")]
+mod story;
+#[cfg(feature = "stories")]
+pub use story::*;
