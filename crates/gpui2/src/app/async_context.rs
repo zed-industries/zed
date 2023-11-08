@@ -45,6 +45,19 @@ impl Context for AsyncAppContext {
         Ok(app.update_model(handle, update))
     }
 
+    fn read_model<T, R>(
+        &self,
+        handle: &Model<T>,
+        callback: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        let app = self.app.upgrade().context("app was released")?;
+        let lock = app.borrow();
+        Ok(lock.read_model(handle, callback))
+    }
+
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
         F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
@@ -225,6 +238,17 @@ impl Context for AsyncWindowContext {
         F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
     {
         self.app.update_window(window, update)
+    }
+
+    fn read_model<T, R>(
+        &self,
+        handle: &Model<T>,
+        read: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        self.app.read_model(handle, read)
     }
 }
 

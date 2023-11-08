@@ -1711,6 +1711,78 @@ dependencies = [
 ]
 
 [[package]]
+name = "collab2"
+version = "0.28.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "async-tungstenite",
+ "audio2",
+ "axum",
+ "axum-extra",
+ "base64 0.13.1",
+ "call2",
+ "channel2",
+ "clap 3.2.25",
+ "client2",
+ "clock",
+ "collab_ui",
+ "collections",
+ "ctor",
+ "dashmap",
+ "editor2",
+ "env_logger 0.9.3",
+ "envy",
+ "fs2",
+ "futures 0.3.28",
+ "git3",
+ "gpui2",
+ "hyper",
+ "indoc",
+ "language2",
+ "lazy_static",
+ "lipsum",
+ "live_kit_client2",
+ "live_kit_server",
+ "log",
+ "lsp2",
+ "nanoid",
+ "node_runtime",
+ "parking_lot 0.11.2",
+ "pretty_assertions",
+ "project2",
+ "prometheus",
+ "prost 0.8.0",
+ "rand 0.8.5",
+ "reqwest",
+ "rpc2",
+ "scrypt",
+ "sea-orm",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "sha-1 0.9.8",
+ "smallvec",
+ "sqlx",
+ "text2",
+ "theme2",
+ "time",
+ "tokio",
+ "tokio-tungstenite",
+ "toml 0.5.11",
+ "tonic",
+ "tower",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "unindent",
+ "util",
+ "uuid 1.4.1",
+ "workspace2",
+]
+
+[[package]]
 name = "collab_ui"
 version = "0.1.0"
 dependencies = [
@@ -2262,9 +2334,8 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.1.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d2301688392eb071b0bf1a37be05c469d3cc4dbbd95df672fe28ab021e6a096"
+version = "0.1.20"
+source = "git+https://github.com/zed-industries/rust-ctor?rev=7f824cf6a7943885a649b579f33f9ac53f0d1db6#7f824cf6a7943885a649b579f33f9ac53f0d1db6"
 dependencies = [
  "quote",
  "syn 1.0.109",
@@ -7241,8 +7312,10 @@ dependencies = [
  "rsa 0.4.0",
  "serde",
  "serde_derive",
+ "serde_json",
  "smol",
  "smol-timeout",
+ "strum",
  "tempdir",
  "tracing",
  "util",
