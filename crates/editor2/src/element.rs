@@ -2763,6 +2763,14 @@ impl Element<Editor> for EditorElement {
         cx: &mut gpui::ViewContext<Editor>,
     ) {
         let layout = self.compute_layout(editor, cx, bounds);
+        let gutter_bounds = Bounds {
+            origin: bounds.origin,
+            size: layout.gutter_size,
+        };
+        let text_bounds = Bounds {
+            origin: gutter_bounds.upper_right(),
+            size: layout.text_size,
+        };
 
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
@@ -2783,7 +2791,7 @@ impl Element<Editor> for EditorElement {
                     return;
                 }
 
-                if Self::mouse_moved(editor, event, &position_map, bounds, cx) {
+                if Self::mouse_moved(editor, event, &position_map, text_bounds, cx) {
                     cx.stop_propagation()
                 }
             }
@@ -2794,15 +2802,6 @@ impl Element<Editor> for EditorElement {
         }
 
         cx.with_content_mask(ContentMask { bounds }, |cx| {
-            let gutter_bounds = Bounds {
-                origin: bounds.origin,
-                size: layout.gutter_size,
-            };
-            let text_bounds = Bounds {
-                origin: gutter_bounds.upper_right(),
-                size: layout.text_size,
-            };
-
             self.paint_background(gutter_bounds, text_bounds, &layout, cx);
             if layout.gutter_size.width > Pixels::ZERO {
                 self.paint_gutter(gutter_bounds, &layout, editor, cx);
