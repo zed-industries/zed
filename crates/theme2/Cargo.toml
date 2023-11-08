@@ -5,6 +5,8 @@ edition = "2021"
 publish = false
 
 [features]
+default = ["stories"]
+stories = ["dep:itertools"]
 test-support = [
     "gpui/test-support",
     "fs/test-support",
@@ -28,7 +30,9 @@ serde_derive.workspace = true
 serde_json.workspace = true
 settings = { package = "settings2", path = "../settings2" }
 toml.workspace = true
+uuid.workspace = true
 util = { path = "../util" }
+itertools = { version = "0.11.0", optional = true }
 
 [dev-dependencies]
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }

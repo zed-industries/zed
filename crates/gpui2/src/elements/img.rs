@@ -1,15 +1,15 @@
 use crate::{
     div, AnyElement, BorrowWindow, Bounds, Component, Div, DivState, Element, ElementFocus,
-    ElementId, ElementInteraction, FocusDisabled, FocusEnabled, FocusListeners, Focusable,
-    LayoutId, Pixels, SharedString, StatefulInteraction, StatefulInteractive, StatelessInteraction,
-    StatelessInteractive, StyleRefinement, Styled, ViewContext,
+    ElementId, ElementInteractivity, FocusDisabled, FocusEnabled, FocusListeners, Focusable,
+    LayoutId, Pixels, SharedString, StatefulInteractive, StatefulInteractivity,
+    StatelessInteractive, StatelessInteractivity, StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
 
 pub struct Img<
     V: 'static,
-    I: ElementInteraction<V> = StatelessInteraction<V>,
+    I: ElementInteractivity<V> = StatelessInteractivity<V>,
     F: ElementFocus<V> = FocusDisabled,
 > {
     base: Div<V, I, F>,
@@ -17,7 +17,7 @@ pub struct Img<
     grayscale: bool,
 }
 
-pub fn img<V: 'static>() -> Img<V, StatelessInteraction<V>, FocusDisabled> {
+pub fn img<V: 'static>() -> Img<V, StatelessInteractivity<V>, FocusDisabled> {
     Img {
         base: div(),
         uri: None,
@@ -28,7 +28,7 @@ pub fn img<V: 'static>() -> Img<V, StatelessInteraction<V>, FocusDisabled> {
 impl<V, I, F> Img<V, I, F>
 where
     V: 'static,
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
     pub fn uri(mut self, uri: impl Into<SharedString>) -> Self {
@@ -42,11 +42,11 @@ where
     }
 }
 
-impl<V, F> Img<V, StatelessInteraction<V>, F>
+impl<V, F> Img<V, StatelessInteractivity<V>, F>
 where
     F: ElementFocus<V>,
 {
-    pub fn id(self, id: impl Into<ElementId>) -> Img<V, StatefulInteraction<V>, F> {
+    pub fn id(self, id: impl Into<ElementId>) -> Img<V, StatefulInteractivity<V>, F> {
         Img {
             base: self.base.id(id),
             uri: self.uri,
@@ -57,7 +57,7 @@ where
 
 impl<V, I, F> Component<V> for Img<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
     fn render(self) -> AnyElement<V> {
@@ -67,7 +67,7 @@ where
 
 impl<V, I, F> Element<V> for Img<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
     type ElementState = DivState;
@@ -101,7 +101,7 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) {
-        cx.stack(0, |cx| {
+        cx.with_z_index(0, |cx| {
             self.base.paint(bounds, view, element_state, cx);
         });
 
@@ -118,7 +118,7 @@ where
                 .and_then(ResultExt::log_err)
             {
                 let corner_radii = corner_radii.to_pixels(bounds.size, cx.rem_size());
-                cx.stack(1, |cx| {
+                cx.with_z_index(1, |cx| {
                     cx.paint_image(bounds, corner_radii, data, self.grayscale)
                         .log_err()
                 });
@@ -136,7 +136,7 @@ where
 
 impl<V, I, F> Styled for Img<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
     fn style(&mut self) -> &mut StyleRefinement {
@@ -146,27 +146,27 @@ where
 
 impl<V, I, F> StatelessInteractive<V> for Img<V, I, F>
 where
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
     F: ElementFocus<V>,
 {
-    fn stateless_interaction(&mut self) -> &mut StatelessInteraction<V> {
-        self.base.stateless_interaction()
+    fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<V> {
+        self.base.stateless_interactivity()
     }
 }
 
-impl<V, F> StatefulInteractive<V> for Img<V, StatefulInteraction<V>, F>
+impl<V, F> StatefulInteractive<V> for Img<V, StatefulInteractivity<V>, F>
 where
     F: ElementFocus<V>,
 {
-    fn stateful_interaction(&mut self) -> &mut StatefulInteraction<V> {
-        self.base.stateful_interaction()
+    fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<V> {
+        self.base.stateful_interactivity()
     }
 }
 
 impl<V, I> Focusable<V> for Img<V, I, FocusEnabled<V>>
 where
     V: 'static,
-    I: ElementInteraction<V>,
+    I: ElementInteractivity<V>,
 {
     fn focus_listeners(&mut self) -> &mut FocusListeners<V> {
         self.base.focus_listeners()

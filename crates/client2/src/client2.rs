@@ -15,8 +15,8 @@ use futures::{
     TryStreamExt,
 };
 use gpui::{
-    serde_json, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Model, SemanticVersion, Task,
-    WeakModel,
+    actions, serde_json, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Model,
+    SemanticVersion, Task, WeakModel,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -70,14 +70,7 @@ pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Clone, Default, PartialEq, Deserialize)]
-pub struct SignIn;
-
-#[derive(Clone, Default, PartialEq, Deserialize)]
-pub struct SignOut;
-
-#[derive(Clone, Default, PartialEq, Deserialize)]
-pub struct Reconnect;
+actions!(SignIn, SignOut, Reconnect);
 
 pub fn init_settings(cx: &mut AppContext) {
     TelemetrySettings::register(cx);
@@ -87,7 +80,6 @@ pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
     init_settings(cx);
 
     let client = Arc::downgrade(client);
-    cx.register_action_type::<SignIn>();
     cx.on_action({
         let client = client.clone();
         move |_: &SignIn, cx| {
@@ -100,7 +92,6 @@ pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
         }
     });
 
-    cx.register_action_type::<SignOut>();
     cx.on_action({
         let client = client.clone();
         move |_: &SignOut, cx| {
@@ -113,7 +104,6 @@ pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
         }
     });
 
-    cx.register_action_type::<Reconnect>();
     cx.on_action({
         let client = client.clone();
         move |_: &Reconnect, cx| {

@@ -1,8 +1,8 @@
 use crate::{
     black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
     Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font,
-    FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems,
-    Result, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext, WindowContext,
+    FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Result,
+    Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext, WindowContext,
 };
 use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
@@ -134,7 +134,7 @@ pub struct TextStyle {
     pub color: Hsla,
     pub font_family: SharedString,
     pub font_features: FontFeatures,
-    pub font_size: Rems,
+    pub font_size: AbsoluteLength,
     pub line_height: DefiniteLength,
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
@@ -147,7 +147,7 @@ impl Default for TextStyle {
             color: black(),
             font_family: "Helvetica".into(), // todo!("Get a font we know exists on the system")
             font_features: FontFeatures::default(),
-            font_size: rems(1.),
+            font_size: rems(1.).into(),
             line_height: phi(),
             font_weight: FontWeight::default(),
             font_style: FontStyle::default(),
@@ -187,6 +187,10 @@ impl TextStyle {
             weight: self.font_weight,
             style: self.font_style,
         }
+    }
+
+    pub fn line_height_in_pixels(&self, rem_size: Pixels) -> Pixels {
+        self.line_height.to_pixels(self.font_size, rem_size)
     }
 
     pub fn to_run(&self, len: usize) -> TextRun {
@@ -277,7 +281,7 @@ impl Style {
     pub fn paint<V: 'static>(&self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
         let rem_size = cx.rem_size();
 
-        cx.stack(0, |cx| {
+        cx.with_z_index(0, |cx| {
             cx.paint_shadows(
                 bounds,
                 self.corner_radii.to_pixels(bounds.size, rem_size),
@@ -287,7 +291,7 @@ impl Style {
 
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
-            cx.stack(1, |cx| {
+            cx.with_z_index(1, |cx| {
                 cx.paint_quad(
                     bounds,
                     self.corner_radii.to_pixels(bounds.size, rem_size),

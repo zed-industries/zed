@@ -37,4 +37,3 @@
 
 ((symbol) @comment
  (#match? @comment "^#[cC][iIsS]$"))
-

@@ -1,7 +1,8 @@
 use crate::{
     AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, BackgroundExecutor, Context,
-    EventEmitter, ForegroundExecutor, Model, ModelContext, Render, Result, Task, TestDispatcher,
-    TestPlatform, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
+    EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent, Keystroke, Model, ModelContext,
+    Render, Result, Task, TestDispatcher, TestPlatform, ViewContext, VisualContext, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -158,6 +159,23 @@ impl TestAppContext {
             app: Rc::downgrade(&self.app),
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
+        }
+    }
+
+    pub fn dispatch_keystroke(
+        &mut self,
+        window: AnyWindowHandle,
+        keystroke: Keystroke,
+        is_held: bool,
+    ) {
+        let handled = window
+            .update(self, |_, cx| {
+                cx.dispatch_event(InputEvent::KeyDown(KeyDownEvent { keystroke, is_held }))
+            })
+            .is_ok_and(|handled| handled);
+
+        if !handled {
+            // todo!() simluate input here
         }
     }
 

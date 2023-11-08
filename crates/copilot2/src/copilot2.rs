@@ -7,8 +7,8 @@ use async_tar::Archive;
 use collections::{HashMap, HashSet};
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Model, ModelContext,
-    Task, WeakModel,
+    actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Model,
+    ModelContext, Task, WeakModel,
 };
 use language::{
     language_settings::{all_language_settings, language_settings},
@@ -34,19 +34,11 @@ use util::{
 
 // todo!()
 // const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
-// actions!(copilot_auth, [SignIn, SignOut]);
+actions!(SignIn, SignOut);
 
 // todo!()
 // const COPILOT_NAMESPACE: &'static str = "copilot";
-// actions!(
-//     copilot,
-//     [Suggest, NextSuggestion, PreviousSuggestion, Reinstall]
-// );
-//
-pub struct Suggest;
-pub struct NextSuggestion;
-pub struct PreviousSuggestion;
-pub struct Reinstall;
+actions!(Suggest, NextSuggestion, PreviousSuggestion, Reinstall);
 
 pub fn init(
     new_server_id: LanguageServerId,

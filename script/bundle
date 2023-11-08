@@ -10,6 +10,9 @@ local_only=false
 overwrite_local_app=false
 bundle_name=""
 
+# This must match the team in the provsiioning profile.
+APPLE_NOTORIZATION_TEAM="MQ55VZLNZQ"
+
 # Function for displaying help info
 help_info() {
   echo "
@@ -83,14 +86,8 @@ if [ "$local_arch" = true ]; then
     cargo build ${build_flag} --package zed
     cargo build ${build_flag} --package cli
 else
-    echo "Compiling zed binary for aarch64-apple-darwin"
-    cargo build ${build_flag} --package zed --target aarch64-apple-darwin
-    echo "Compiling zed binary for x86_64-apple-darwin"
-    cargo build ${build_flag} --package zed --target x86_64-apple-darwin
-    echo "Compiling cli binary for aarch64-apple-darwin"
-    cargo build ${build_flag} --package cli --target aarch64-apple-darwin
-    echo "Compiling cli binary for x86_64-apple-darwin"
-    cargo build ${build_flag} --package cli --target x86_64-apple-darwin
+    echo "Compiling zed binaries"
+    cargo build ${build_flag} --package zed --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin
 fi
 
 echo "Creating application bundle"
@@ -228,8 +225,7 @@ else
 
     if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
         echo "Notarizing DMG with Apple"
-        npm install -g notarize-cli
-        npx notarize-cli --file "${dmg_file_path}" --bundle-id dev.zed.Zed --username "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD"
+        "$(xcode-select -p)/usr/bin/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
     fi
 
     if [ "$open_result" = true ]; then

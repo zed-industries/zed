@@ -20,7 +20,8 @@ use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use settings::{
-    default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
+    default_settings, handle_keymap_file_changes, handle_settings_file_changes, watch_config_file,
+    Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -38,6 +39,7 @@ use std::{
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
+use theme::ActiveTheme;
 use util::{
     async_maybe,
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
@@ -75,7 +77,7 @@ fn main() {
         fs.clone(),
         paths::SETTINGS.clone(),
     );
-    let _user_keymap_file_rx = watch_config_file(
+    let user_keymap_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::KEYMAP.clone(),
@@ -115,7 +117,7 @@ fn main() {
             .unwrap();
         cx.set_global(store);
         handle_settings_file_changes(user_settings_file_rx, cx);
-        // handle_keymap_file_changes(user_keymap_file_rx, cx);
+        handle_keymap_file_changes(user_keymap_file_rx, cx);
 
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
@@ -139,17 +141,6 @@ fn main() {
         // command_palette::init(cx);
         language::init(cx);
         editor::init(cx);
-        // go_to_line::init(cx);
-        // file_finder::init(cx);
-        // outline::init(cx);
-        // project_symbols::init(cx);
-        // project_panel::init(Assets, cx);
-        // channel::init(&client, user_store.clone(), cx);
-        // diagnostics::init(cx);
-        // search::init(cx);
-        // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
-        // vim::init(cx);
-        // terminal_view::init(cx);
         copilot::init(
             copilot_language_server_id,
             http.clone(),
@@ -164,7 +155,7 @@ fn main() {
         //     .detach();
         // watch_file_types(fs.clone(), cx);
 
-        // languages.set_theme(theme::current(cx).clone());
+        languages.set_theme(cx.theme().clone());
         // cx.observe_global::<SettingsStore, _>({
         //     let languages = languages.clone();
         //     move |cx| languages.set_theme(theme::current(cx).clone())
@@ -191,6 +182,18 @@ fn main() {
 
         workspace::init(app_state.clone(), cx);
         // recent_projects::init(cx);
+
+        go_to_line::init(cx);
+        // file_finder::init(cx);
+        // outline::init(cx);
+        // project_symbols::init(cx);
+        // project_panel::init(Assets, cx);
+        // channel::init(&client, user_store.clone(), cx);
+        // diagnostics::init(cx);
+        // search::init(cx);
+        // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
+        // vim::init(cx);
+        // terminal_view::init(cx);
 
         // journal2::init(app_state.clone(), cx);
         // language_selector::init(cx);

@@ -4,6 +4,7 @@ mod inlay_map;
 mod tab_map;
 mod wrap_map;
 
+use crate::EditorStyle;
 use crate::{
     link_go_to_definition::InlayHighlight, movement::TextLayoutDetails, Anchor, AnchorRangeExt,
     InlayId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
@@ -11,14 +12,18 @@ use crate::{
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
-use gpui::{Font, FontId, HighlightStyle, Hsla, Line, Model, ModelContext, Pixels};
+use gpui::{
+    Font, FontId, HighlightStyle, Hsla, Line, Model, ModelContext, Pixels, TextRun, UnderlineStyle,
+};
 use inlay_map::InlayMap;
 use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
 };
+use lsp::DiagnosticSeverity;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
+use theme::{SyntaxTheme, Theme};
 use wrap_map::WrapMap;
 
 pub use block_map::{
@@ -34,6 +39,8 @@ pub enum FoldStatus {
     Folded,
     Foldable,
 }
+
+const UNNECESSARY_CODE_FADE: f32 = 0.3;
 
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
@@ -496,63 +503,63 @@ impl DisplaySnapshot {
         )
     }
 
-    // pub fn highlighted_chunks<'a>(
-    //     &'a self,
-    //     display_rows: Range<u32>,
-    //     language_aware: bool,
-    //     style: &'a EditorStyle,
-    // ) -> impl Iterator<Item = HighlightedChunk<'a>> {
-    //     self.chunks(
-    //         display_rows,
-    //         language_aware,
-    //         Some(style.theme.hint),
-    //         Some(style.theme.suggestion),
-    //     )
-    //     .map(|chunk| {
-    //         let mut highlight_style = chunk
-    //             .syntax_highlight_id
-    //             .and_then(|id| id.style(&style.syntax));
+    pub fn highlighted_chunks<'a>(
+        &'a self,
+        display_rows: Range<u32>,
+        language_aware: bool,
+        editor_style: &'a EditorStyle,
+    ) -> impl Iterator<Item = HighlightedChunk<'a>> {
+        self.chunks(
+            display_rows,
+            language_aware,
+            Some(editor_style.syntax.inlay_style),
+            Some(editor_style.syntax.suggestion_style),
+        )
+        .map(|chunk| {
+            let mut highlight_style = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(&editor_style.syntax));
 
-    //         if let Some(chunk_highlight) = chunk.highlight_style {
-    //             if let Some(highlight_style) = highlight_style.as_mut() {
-    //                 highlight_style.highlight(chunk_highlight);
-    //             } else {
-    //                 highlight_style = Some(chunk_highlight);
-    //             }
-    //         }
+            if let Some(chunk_highlight) = chunk.highlight_style {
+                if let Some(highlight_style) = highlight_style.as_mut() {
+                    highlight_style.highlight(chunk_highlight);
+                } else {
+                    highlight_style = Some(chunk_highlight);
+                }
+            }
 
-    //         let mut diagnostic_highlight = HighlightStyle::default();
+            let mut diagnostic_highlight = HighlightStyle::default();
 
-    //         if chunk.is_unnecessary {
-    //             diagnostic_highlight.fade_out = Some(style.unnecessary_code_fade);
-    //         }
+            if chunk.is_unnecessary {
+                diagnostic_highlight.fade_out = Some(UNNECESSARY_CODE_FADE);
+            }
 
-    //         if let Some(severity) = chunk.diagnostic_severity {
-    //             // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
-    //             if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
-    //                 todo!()
-    //                 // let diagnostic_style = super::diagnostic_style(severity, true, style);
-    //                 // diagnostic_highlight.underline = Some(UnderlineStyle {
-    //                 //     color: Some(diagnostic_style.message.text.color),
-    //                 //     thickness: 1.0.into(),
-    //                 //     wavy: true,
-    //                 // });
-    //             }
-    //         }
+            if let Some(severity) = chunk.diagnostic_severity {
+                // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
+                if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
+                    let diagnostic_color =
+                        super::diagnostic_style(severity, true, &editor_style.diagnostic_style);
+                    diagnostic_highlight.underline = Some(UnderlineStyle {
+                        color: Some(diagnostic_color),
+                        thickness: 1.0.into(),
+                        wavy: true,
+                    });
+                }
+            }
 
-    //         if let Some(highlight_style) = highlight_style.as_mut() {
-    //             highlight_style.highlight(diagnostic_highlight);
-    //         } else {
-    //             highlight_style = Some(diagnostic_highlight);
-    //         }
+            if let Some(highlight_style) = highlight_style.as_mut() {
+                highlight_style.highlight(diagnostic_highlight);
+            } else {
+                highlight_style = Some(diagnostic_highlight);
+            }
 
-    //         HighlightedChunk {
-    //             chunk: chunk.text,
-    //             style: highlight_style,
-    //             is_tab: chunk.is_tab,
-    //         }
-    //     })
-    // }
+            HighlightedChunk {
+                chunk: chunk.text,
+                style: highlight_style,
+                is_tab: chunk.is_tab,
+            }
+        })
+    }
 
     pub fn lay_out_line_for_row(
         &self,
@@ -560,53 +567,46 @@ impl DisplaySnapshot {
         TextLayoutDetails {
             text_system,
             editor_style,
+            rem_size,
         }: &TextLayoutDetails,
     ) -> Line {
-        todo!()
-        // let mut styles = Vec::new();
-        // let mut line = String::new();
-        // let mut ended_in_newline = false;
+        let mut runs = Vec::new();
+        let mut line = String::new();
+        let mut ended_in_newline = false;
 
-        // let range = display_row..display_row + 1;
-        // for chunk in self.highlighted_chunks(range, false, editor_style) {
-        //     line.push_str(chunk.chunk);
+        let range = display_row..display_row + 1;
+        for chunk in self.highlighted_chunks(range, false, &editor_style) {
+            line.push_str(chunk.chunk);
 
-        //     let text_style = if let Some(style) = chunk.style {
-        //         editor_style
-        //             .text
-        //             .clone()
-        //             .highlight(style, text_system)
-        //             .map(Cow::Owned)
-        //             .unwrap_or_else(|_| Cow::Borrowed(&editor_style.text))
-        //     } else {
-        //         Cow::Borrowed(&editor_style.text)
-        //     };
-        //     ended_in_newline = chunk.chunk.ends_with("\n");
+            let text_style = if let Some(style) = chunk.style {
+                editor_style
+                    .text
+                    .clone()
+                    .highlight(style)
+                    .map(Cow::Owned)
+                    .unwrap_or_else(|_| Cow::Borrowed(&editor_style.text))
+            } else {
+                Cow::Borrowed(&editor_style.text)
+            };
+            ended_in_newline = chunk.chunk.ends_with("\n");
 
-        //     styles.push(
-        //         todo!(), // len: chunk.chunk.len(),
-        //                  // font_id: text_style.font_id,
-        //                  // color: text_style.color,
-        //                  // underline: text_style.underline,
-        //     );
-        // }
+            runs.push(text_style.to_run(chunk.chunk.len()))
+        }
 
-        // // our pixel positioning logic assumes each line ends in \n,
-        // // this is almost always true except for the last line which
-        // // may have no trailing newline.
-        // if !ended_in_newline && display_row == self.max_point().row() {
-        //     line.push_str("\n");
+        // our pixel positioning logic assumes each line ends in \n,
+        // this is almost always true except for the last line which
+        // may have no trailing newline.
+        if !ended_in_newline && display_row == self.max_point().row() {
+            line.push_str("\n");
+            runs.push(editor_style.text.to_run("\n".len()));
+        }
 
-        //     todo!();
-        //     // styles.push(RunStyle {
-        //     //     len: "\n".len(),
-        //     //     font_id: editor_style.text.font_id,
-        //     //     color: editor_style.text_color,
-        //     //     underline: editor_style.text.underline,
-        //     // });
-        // }
-
-        // text_system.layout_text(&line, editor_style.text.font_size, &styles, None)
+        let font_size = editor_style.text.font_size.to_pixels(*rem_size);
+        text_system
+            .layout_text(&line, font_size, &runs, None)
+            .unwrap()
+            .pop()
+            .unwrap()
     }
 
     pub fn x_for_point(

@@ -71,7 +71,8 @@ impl<T> Future for Task<T> {
         }
     }
 }
-
+type AnyLocalFuture<R> = Pin<Box<dyn 'static + Future<Output = R>>>;
+type AnyFuture<R> = Pin<Box<dyn 'static + Send + Future<Output = R>>>;
 impl BackgroundExecutor {
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         Self { dispatcher }
@@ -84,10 +85,16 @@ impl BackgroundExecutor {
         R: Send + 'static,
     {
         let dispatcher = self.dispatcher.clone();
-        let (runnable, task) =
-            async_task::spawn(future, move |runnable| dispatcher.dispatch(runnable));
-        runnable.schedule();
-        Task::Spawned(task)
+        fn inner<R: Send + 'static>(
+            dispatcher: Arc<dyn PlatformDispatcher>,
+            future: AnyFuture<R>,
+        ) -> Task<R> {
+            let (runnable, task) =
+                async_task::spawn(future, move |runnable| dispatcher.dispatch(runnable));
+            runnable.schedule();
+            Task::Spawned(task)
+        }
+        inner::<R>(dispatcher, Box::pin(future))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -251,11 +258,17 @@ impl ForegroundExecutor {
         R: 'static,
     {
         let dispatcher = self.dispatcher.clone();
-        let (runnable, task) = async_task::spawn_local(future, move |runnable| {
-            dispatcher.dispatch_on_main_thread(runnable)
-        });
-        runnable.schedule();
-        Task::Spawned(task)
+        fn inner<R: 'static>(
+            dispatcher: Arc<dyn PlatformDispatcher>,
+            future: AnyLocalFuture<R>,
+        ) -> Task<R> {
+            let (runnable, task) = async_task::spawn_local(future, move |runnable| {
+                dispatcher.dispatch_on_main_thread(runnable)
+            });
+            runnable.schedule();
+            Task::Spawned(task)
+        }
+        inner::<R>(dispatcher, Box::pin(future))
     }
 }
 

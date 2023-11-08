@@ -10,6 +10,7 @@ mod persistence;
 pub mod searchable;
 // todo!()
 // pub mod shared_screen;
+mod modal_layer;
 mod status_bar;
 mod toolbar;
 mod workspace_settings;
@@ -45,6 +46,8 @@ use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings,
 use itertools::Itertools;
 use language2::LanguageRegistry;
 use lazy_static::lazy_static;
+pub use modal_layer::ModalRegistry;
+use modal_layer::{init_modal_registry, ModalLayer};
 use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
@@ -80,26 +83,6 @@ lazy_static! {
         .as_deref()
         .and_then(parse_pixel_position_env_var);
 }
-
-// pub trait Modal: View {
-//     fn has_focus(&self) -> bool;
-//     fn dismiss_on_event(event: &Self::Event) -> bool;
-// }
-
-// trait ModalHandle {
-//     fn as_any(&self) -> &AnyViewHandle;
-//     fn has_focus(&self, cx: &WindowContext) -> bool;
-// }
-
-// impl<T: Modal> ModalHandle for View<T> {
-//     fn as_any(&self) -> &AnyViewHandle {
-//         self
-//     }
-
-//     fn has_focus(&self, cx: &WindowContext) -> bool {
-//         self.read(cx).has_focus()
-//     }
-// }
 
 // #[derive(Clone, PartialEq)]
 // pub struct RemoveWorktreeFromProject(pub WorktreeId);
@@ -243,6 +226,7 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
+    init_modal_registry(cx);
     pane::init(cx);
     notifications::init(cx);
 
@@ -550,7 +534,6 @@ pub enum Event {
 pub struct Workspace {
     weak_self: WeakView<Self>,
     focus_handle: FocusHandle,
-    //     modal: Option<ActiveModal>,
     zoomed: Option<AnyWeakView>,
     zoomed_position: Option<DockPosition>,
     center: PaneGroup,
@@ -563,6 +546,7 @@ pub struct Workspace {
     last_active_center_pane: Option<WeakView<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
     status_bar: View<StatusBar>,
+    modal_layer: View<ModalLayer>,
     //     titlebar_item: Option<AnyViewHandle>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
@@ -579,11 +563,6 @@ pub struct Workspace {
     _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
 }
-
-// struct ActiveModal {
-//     view: Box<dyn ModalHandle>,
-//     previously_focused_view_id: Option<usize>,
-// }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ViewId {
@@ -718,6 +697,8 @@ impl Workspace {
             status_bar
         });
 
+        let modal_layer = cx.build_view(|cx| ModalLayer::new());
+
         // todo!()
         // cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
         //     drag_and_drop.register_container(weak_handle.clone());
@@ -769,7 +750,6 @@ impl Workspace {
         Workspace {
             weak_self: weak_handle.clone(),
             focus_handle: cx.focus_handle(),
-            // modal: None,
             zoomed: None,
             zoomed_position: None,
             center: PaneGroup::new(center_pane.clone()),
@@ -779,6 +759,7 @@ impl Workspace {
             last_active_center_pane: Some(center_pane.downgrade()),
             last_active_view_id: None,
             status_bar,
+            modal_layer,
             // titlebar_item: None,
             notifications: Default::default(),
             left_dock,
@@ -1619,63 +1600,6 @@ impl Workspace {
             ))
         })
     }
-
-    //     /// Returns the modal that was toggled closed if it was open.
-    //     pub fn toggle_modal<V, F>(
-    //         &mut self,
-    //         cx: &mut ViewContext<Self>,
-    //         build_view: F,
-    //     ) -> Option<View<V>>
-    //     where
-    //         V: 'static + Modal,
-    //         F: FnOnce(&mut Self, &mut ViewContext<Self>) -> View<V>,
-    //     {
-    //         cx.notify();
-    //         // Whatever modal was visible is getting clobbered. If its the same type as V, then return
-    //         // it. Otherwise, create a new modal and set it as active.
-    //         if let Some(already_open_modal) = self
-    //             .dismiss_modal(cx)
-    //             .and_then(|modal| modal.downcast::<V>())
-    //         {
-    //             cx.focus_self();
-    //             Some(already_open_modal)
-    //         } else {
-    //             let modal = build_view(self, cx);
-    //             cx.subscribe(&modal, |this, _, event, cx| {
-    //                 if V::dismiss_on_event(event) {
-    //                     this.dismiss_modal(cx);
-    //                 }
-    //             })
-    //             .detach();
-    //             let previously_focused_view_id = cx.focused_view_id();
-    //             cx.focus(&modal);
-    //             self.modal = Some(ActiveModal {
-    //                 view: Box::new(modal),
-    //                 previously_focused_view_id,
-    //             });
-    //             None
-    //         }
-    //     }
-
-    //     pub fn modal<V: 'static + View>(&self) -> Option<View<V>> {
-    //         self.modal
-    //             .as_ref()
-    //             .and_then(|modal| modal.view.as_any().clone().downcast::<V>())
-    //     }
-
-    //     pub fn dismiss_modal(&mut self, cx: &mut ViewContext<Self>) -> Option<AnyViewHandle> {
-    //         if let Some(modal) = self.modal.take() {
-    //             if let Some(previously_focused_view_id) = modal.previously_focused_view_id {
-    //                 if modal.view.has_focus(cx) {
-    //                     cx.window_context().focus(Some(previously_focused_view_id));
-    //                 }
-    //             }
-    //             cx.notify();
-    //             Some(modal.view.as_any().clone())
-    //         } else {
-    //             None
-    //         }
-    //     }
 
     pub fn items<'a>(
         &'a self,
@@ -2770,7 +2694,7 @@ impl Workspace {
                 .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
         if is_edited != self.window_edited {
             self.window_edited = is_edited;
-            todo!()
+            // todo!()
             // cx.set_window_edited(self.window_edited)
         }
     }
@@ -3783,7 +3707,9 @@ impl Render for Workspace {
             .bg(cx.theme().colors().background)
             .child(self.render_titlebar(cx))
             .child(
-                div()
+                self.modal_layer
+                    .read(cx)
+                    .render(self, cx)
                     .flex_1()
                     .w_full()
                     .flex()

@@ -1121,8 +1121,7 @@ impl Terminal {
                     None => return,
                 };
 
-                let scroll_lines =
-                    (scroll_delta / self.last_content.size.line_height).as_isize() as i32;
+                let scroll_lines = (scroll_delta / self.last_content.size.line_height) as i32;
 
                 self.events
                     .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
@@ -1280,11 +1279,11 @@ impl Terminal {
             }
             /* Calculate the appropriate scroll lines */
             TouchPhase::Moved => {
-                let old_offset = (self.scroll_px / line_height).as_isize() as i32;
+                let old_offset = (self.scroll_px / line_height) as i32;
 
                 self.scroll_px += e.delta.pixel_delta(line_height).y * scroll_multiplier;
 
-                let new_offset = (self.scroll_px / line_height).as_isize() as i32;
+                let new_offset = (self.scroll_px / line_height) as i32;
 
                 // Whenever we hit the edges, reset our stored scroll to 0
                 // so we can respond to changes in direction quickly
@@ -1396,9 +1395,9 @@ fn all_search_matches<'a, T>(
 }
 
 fn content_index_for_mouse(pos: Point<Pixels>, size: &TerminalSize) -> usize {
-    let col = (pos.x / size.cell_width()).round().as_usize();
+    let col = (pos.x / size.cell_width()).round() as usize;
     let clamped_col = min(col, size.columns() - 1);
-    let row = (pos.y / size.line_height()).round().as_usize();
+    let row = (pos.y / size.line_height()).round() as usize;
     let clamped_row = min(row, size.screen_lines() - 1);
     clamped_row * size.columns() + clamped_col
 }

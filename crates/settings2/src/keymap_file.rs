@@ -1,7 +1,7 @@
 use crate::{settings_store::parse_json_with_comments, SettingsAssets};
 use anyhow::{anyhow, Context, Result};
 use collections::BTreeMap;
-use gpui::{AppContext, KeyBinding, SharedString};
+use gpui::{actions, Action, AppContext, KeyBinding, SharedString};
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
     schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation},
@@ -73,9 +73,9 @@ impl KeymapFile {
                                     "Expected first item in array to be a string."
                                 )));
                             };
-                            cx.build_action(&name, Some(data))
+                            gpui::build_action(&name, Some(data))
                         }
-                        Value::String(name) => cx.build_action(&name, None),
+                        Value::String(name) => gpui::build_action(&name, None),
                         Value::Null => Ok(no_action()),
                         _ => {
                             return Some(Err(anyhow!("Expected two-element array, got {action:?}")))
@@ -137,8 +137,10 @@ impl KeymapFile {
     }
 }
 
+actions!(NoAction);
+
 fn no_action() -> Box<dyn gpui::Action> {
-    todo!()
+    NoAction.boxed_clone()
 }
 
 #[cfg(test)]

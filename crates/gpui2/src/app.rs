@@ -17,9 +17,9 @@ use crate::{
     current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AnyWindowHandle,
     AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
     Entity, EventEmitter, FocusEvent, FocusHandle, FocusId, ForegroundExecutor, KeyBinding, Keymap,
-    LayoutId, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render, SharedString,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem,
-    View, Window, WindowContext, WindowHandle, WindowId,
+    LayoutId, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window,
+    WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -144,7 +144,6 @@ impl App {
     }
 }
 
-type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
 pub(crate) type FrameCallback = Box<dyn FnOnce(&mut AppContext)>;
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
@@ -158,7 +157,7 @@ type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 // }
 
 pub struct AppContext {
-    this: Weak<AppCell>,
+    pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
     app_metadata: AppMetadata,
     text_system: Arc<TextSystem>,
@@ -180,7 +179,6 @@ pub struct AppContext {
     pub(crate) keymap: Arc<Mutex<Keymap>>,
     pub(crate) global_action_listeners:
         HashMap<TypeId, Vec<Box<dyn Fn(&dyn Action, DispatchPhase, &mut Self)>>>,
-    action_builders: HashMap<SharedString, ActionBuilder>,
     pending_effects: VecDeque<Effect>,
     pub(crate) pending_notifications: HashSet<EntityId>,
     pub(crate) pending_global_notifications: HashSet<TypeId>,
@@ -238,7 +236,6 @@ impl AppContext {
                 windows: SlotMap::with_key(),
                 keymap: Arc::new(Mutex::new(Keymap::default())),
                 global_action_listeners: HashMap::default(),
-                action_builders: HashMap::default(),
                 pending_effects: VecDeque::new(),
                 pending_notifications: HashSet::default(),
                 pending_global_notifications: HashSet::default(),
@@ -755,13 +752,17 @@ impl AppContext {
         self.globals_by_type.insert(global_type, Box::new(global));
     }
 
+    #[track_caller]
     pub fn clear_globals(&mut self) {
+        dbg!(core::panic::Location::caller());
         //todo!(notify globals?)
         self.globals_by_type.drain();
     }
 
     /// Set the value of the global of the given type.
+    #[track_caller]
     pub fn remove_global<G: Any>(&mut self) -> G {
+        dbg!(core::panic::Location::caller());
         let global_type = TypeId::of::<G>();
         //todo!(notify globals?)
         *self
@@ -793,10 +794,6 @@ impl AppContext {
                 true
             }),
         )
-    }
-
-    pub fn all_action_names<'a>(&'a self) -> impl Iterator<Item = SharedString> + 'a {
-        self.action_builders.keys().cloned()
     }
 
     /// Move the global of the given type to the stack.
@@ -861,28 +858,20 @@ impl AppContext {
             }));
     }
 
-    /// Register an action type to allow it to be referenced in keymaps.
-    pub fn register_action_type<A: Action>(&mut self) {
-        self.action_builders.insert(A::qualified_name(), A::build);
-    }
-
-    /// Construct an action based on its name and parameters.
-    pub fn build_action(
-        &mut self,
-        name: &str,
-        params: Option<serde_json::Value>,
-    ) -> Result<Box<dyn Action>> {
-        let build = self
-            .action_builders
-            .get(name)
-            .ok_or_else(|| anyhow!("no action type registered for {}", name))?;
-        (build)(params)
-    }
-
-    /// Halt propagation of a mouse event, keyboard event, or action. This prevents listeners
-    /// that have not yet been invoked from receiving the event.
+    /// Event handlers propagate events by default. Call this method to stop dispatching to
+    /// event handlers with a lower z-index (mouse) or higher in the tree (keyboard). This is
+    /// the opposite of [propagate]. It's also possible to cancel a call to [propagate] by
+    /// calling this method before effects are flushed.
     pub fn stop_propagation(&mut self) {
         self.propagate_event = false;
+    }
+
+    /// Action handlers stop propagation by default during the bubble phase of action dispatch
+    /// dispatching to action handlers higher in the element tree. This is the opposite of
+    /// [stop_propagation]. It's also possible to cancel a call to [stop_propagate] by calling
+    /// this method before effects are flushed.
+    pub fn propagate(&mut self) {
+        self.propagate_event = true;
     }
 }
 

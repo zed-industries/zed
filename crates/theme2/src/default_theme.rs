@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use crate::{
-    colors::{GitStatusColors, PlayerColors, StatusColors, SystemColors, ThemeColors, ThemeStyles},
-    default_color_scales, Appearance, SyntaxTheme, ThemeFamily, ThemeVariant,
+    colors::{StatusColors, SystemColors, ThemeColors, ThemeStyles},
+    default_color_scales, Appearance, PlayerColors, SyntaxTheme, Theme, ThemeFamily,
 };
 
-fn zed_pro_daylight() -> ThemeVariant {
-    ThemeVariant {
+fn zed_pro_daylight() -> Theme {
+    Theme {
         id: "zed_pro_daylight".to_string(),
         name: "Zed Pro Daylight".into(),
         appearance: Appearance::Light,
@@ -12,15 +14,14 @@ fn zed_pro_daylight() -> ThemeVariant {
             system: SystemColors::default(),
             colors: ThemeColors::default_light(),
             status: StatusColors::default(),
-            git: GitStatusColors::default(),
-            player: PlayerColors::default(),
-            syntax: SyntaxTheme::default_light(),
+            player: PlayerColors::default_light(),
+            syntax: Arc::new(SyntaxTheme::default_light()),
         },
     }
 }
 
-pub(crate) fn zed_pro_moonlight() -> ThemeVariant {
-    ThemeVariant {
+pub(crate) fn zed_pro_moonlight() -> Theme {
+    Theme {
         id: "zed_pro_moonlight".to_string(),
         name: "Zed Pro Moonlight".into(),
         appearance: Appearance::Dark,
@@ -28,9 +29,8 @@ pub(crate) fn zed_pro_moonlight() -> ThemeVariant {
             system: SystemColors::default(),
             colors: ThemeColors::default_dark(),
             status: StatusColors::default(),
-            git: GitStatusColors::default(),
             player: PlayerColors::default(),
-            syntax: SyntaxTheme::default_dark(),
+            syntax: Arc::new(SyntaxTheme::default_dark()),
         },
     }
 }
@@ -51,7 +51,7 @@ impl Default for ThemeFamily {
     }
 }
 
-impl Default for ThemeVariant {
+impl Default for Theme {
     fn default() -> Self {
         zed_pro_daylight()
     }

@@ -2749,7 +2749,7 @@ dependencies = [
  "env_logger 0.9.3",
  "futures 0.3.28",
  "fuzzy2",
- "git",
+ "git3",
  "gpui2",
  "indoc",
  "itertools 0.10.5",
@@ -3599,6 +3599,23 @@ dependencies = [
  "theme",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "go_to_line2"
+version = "0.1.0"
+dependencies = [
+ "editor2",
+ "gpui2",
+ "menu2",
+ "postage",
+ "serde",
+ "settings2",
+ "text2",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -5042,7 +5059,8 @@ dependencies = [
 name = "menu2"
 version = "0.1.0"
 dependencies = [
- "gpui2",
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -6076,6 +6094,23 @@ dependencies = [
  "theme",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "picker2"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "editor2",
+ "env_logger 0.9.3",
+ "gpui2",
+ "menu2",
+ "parking_lot 0.11.2",
+ "serde_json",
+ "settings2",
+ "theme2",
+ "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -8596,9 +8631,14 @@ dependencies = [
  "backtrace-on-stack-overflow",
  "chrono",
  "clap 4.4.4",
+ "editor2",
+ "fuzzy2",
  "gpui2",
  "itertools 0.11.0",
+ "language2",
  "log",
+ "menu2",
+ "picker2",
  "rust-embed",
  "serde",
  "settings2",
@@ -9062,6 +9102,7 @@ dependencies = [
  "fs2",
  "gpui2",
  "indexmap 1.9.3",
+ "itertools 0.11.0",
  "parking_lot 0.11.2",
  "refineable",
  "schemars",
@@ -9071,6 +9112,22 @@ dependencies = [
  "settings2",
  "toml 0.5.11",
  "util",
+ "uuid 1.4.1",
+]
+
+[[package]]
+name = "theme_importer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "convert_case 0.6.0",
+ "gpui2",
+ "log",
+ "rust-embed",
+ "serde",
+ "simplelog",
+ "theme2",
+ "uuid 1.4.1",
 ]
 
 [[package]]
@@ -11118,7 +11175,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.112.0"
+version = "0.113.0"
 dependencies = [
  "activity_indicator",
  "ai",
@@ -11282,6 +11339,7 @@ dependencies = [
  "fsevent",
  "futures 0.3.28",
  "fuzzy",
+ "go_to_line2",
  "gpui2",
  "ignore",
  "image",

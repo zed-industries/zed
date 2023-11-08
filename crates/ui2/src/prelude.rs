@@ -46,12 +46,12 @@ pub enum GitStatus {
 impl GitStatus {
     pub fn hsla(&self, cx: &WindowContext) -> Hsla {
         match self {
-            Self::None => cx.theme().styles.system.transparent,
-            Self::Created => cx.theme().styles.git.created,
-            Self::Modified => cx.theme().styles.git.modified,
-            Self::Deleted => cx.theme().styles.git.deleted,
-            Self::Conflict => cx.theme().styles.git.conflict,
-            Self::Renamed => cx.theme().styles.git.renamed,
+            Self::None => cx.theme().system().transparent,
+            Self::Created => cx.theme().status().created,
+            Self::Modified => cx.theme().status().modified,
+            Self::Deleted => cx.theme().status().deleted,
+            Self::Conflict => cx.theme().status().conflict,
+            Self::Renamed => cx.theme().status().renamed,
         }
     }
 }

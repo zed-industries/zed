@@ -25,6 +25,10 @@ impl<T: Clone + Debug + Default> Point<T> {
         Self { x, y }
     }
 
+    pub fn zero() -> Self {
+        Self::new(T::default(), T::default())
+    }
+
     pub fn map<U: Clone + Default + Debug>(&self, f: impl Fn(T) -> U) -> Point<U> {
         Point {
             x: f(self.x.clone()),
@@ -119,6 +123,10 @@ where
                 other.y.clone()
             },
         }
+    }
+
+    pub fn clamp(&self, min: &Self, max: &Self) -> Self {
+        self.max(min).min(max)
     }
 }
 
@@ -255,6 +263,24 @@ impl From<Size<Pixels>> for Size<GlobalPixels> {
         Size {
             width: GlobalPixels(size.width.0),
             height: GlobalPixels(size.height.0),
+        }
+    }
+}
+
+impl From<Size<Pixels>> for Size<DefiniteLength> {
+    fn from(size: Size<Pixels>) -> Self {
+        Size {
+            width: size.width.into(),
+            height: size.height.into(),
+        }
+    }
+}
+
+impl From<Size<Pixels>> for Size<AbsoluteLength> {
+    fn from(size: Size<Pixels>) -> Self {
+        Size {
+            width: size.width.into(),
+            height: size.height.into(),
         }
     }
 }
@@ -492,6 +518,15 @@ where
 impl<T: Clone + Default + Debug + Copy> Copy for Edges<T> {}
 
 impl<T: Clone + Default + Debug> Edges<T> {
+    pub fn all(value: T) -> Self {
+        Self {
+            top: value.clone(),
+            right: value.clone(),
+            bottom: value.clone(),
+            left: value,
+        }
+    }
+
     pub fn map<U>(&self, f: impl Fn(&T) -> U) -> Edges<U>
     where
         U: Clone + Default + Debug,
@@ -539,6 +574,15 @@ impl Edges<DefiniteLength> {
             right: px(0.).into(),
             bottom: px(0.).into(),
             left: px(0.).into(),
+        }
+    }
+
+    pub fn to_pixels(&self, parent_size: Size<AbsoluteLength>, rem_size: Pixels) -> Edges<Pixels> {
+        Edges {
+            top: self.top.to_pixels(parent_size.height, rem_size),
+            right: self.right.to_pixels(parent_size.width, rem_size),
+            bottom: self.bottom.to_pixels(parent_size.height, rem_size),
+            left: self.left.to_pixels(parent_size.width, rem_size),
         }
     }
 }
@@ -672,16 +716,16 @@ impl<T> Copy for Corners<T> where T: Copy + Clone + Default + Debug {}
 pub struct Pixels(pub(crate) f32);
 
 impl std::ops::Div for Pixels {
-    type Output = Self;
+    type Output = f32;
 
     fn div(self, rhs: Self) -> Self::Output {
-        Self(self.0 / rhs.0)
+        self.0 / rhs.0
     }
 }
 
 impl std::ops::DivAssign for Pixels {
     fn div_assign(&mut self, rhs: Self) {
-        self.0 /= rhs.0;
+        *self = Self(self.0 / rhs.0);
     }
 }
 
@@ -730,15 +774,8 @@ impl MulAssign<f32> for Pixels {
 }
 
 impl Pixels {
+    pub const ZERO: Pixels = Pixels(0.0);
     pub const MAX: Pixels = Pixels(f32::MAX);
-
-    pub fn as_usize(&self) -> usize {
-        self.0 as usize
-    }
-
-    pub fn as_isize(&self) -> isize {
-        self.0 as isize
-    }
 
     pub fn floor(&self) -> Self {
         Self(self.0.floor())

@@ -32,7 +32,7 @@ use std::{
     },
     time::Duration,
 };
-use theme2::ThemeVariant;
+use theme2::Theme;
 
 #[derive(Deserialize)]
 pub struct ItemSettings {
@@ -184,7 +184,7 @@ pub trait Item: Render + EventEmitter {
         ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(&self, _theme: &ThemeVariant, _cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         None
     }
 
@@ -270,7 +270,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
-    fn breadcrumbs(&self, theme: &ThemeVariant, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
     fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
@@ -603,7 +603,7 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).breadcrumb_location()
     }
 
-    fn breadcrumbs(&self, theme: &ThemeVariant, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         self.read(cx).breadcrumbs(theme, cx)
     }
 

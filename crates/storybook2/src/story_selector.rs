@@ -38,6 +38,7 @@ pub enum ComponentStory {
     Palette,
     Panel,
     ProjectPanel,
+    Players,
     RecentProjects,
     Scroll,
     Tab,
@@ -51,6 +52,7 @@ pub enum ComponentStory {
     TrafficLights,
     Workspace,
     ZIndex,
+    Picker,
 }
 
 impl ComponentStory {
@@ -79,6 +81,7 @@ impl ComponentStory {
             Self::MultiBuffer => cx.build_view(|_| ui::MultiBufferStory).into(),
             Self::NotificationsPanel => cx.build_view(|cx| ui::NotificationsPanelStory).into(),
             Self::Palette => cx.build_view(|cx| ui::PaletteStory).into(),
+            Self::Players => cx.build_view(|_| theme2::PlayerStory).into(),
             Self::Panel => cx.build_view(|cx| ui::PanelStory).into(),
             Self::ProjectPanel => cx.build_view(|_| ui::ProjectPanelStory).into(),
             Self::RecentProjects => cx.build_view(|_| ui::RecentProjectsStory).into(),
@@ -94,6 +97,7 @@ impl ComponentStory {
             Self::TrafficLights => cx.build_view(|_| ui::TrafficLightsStory).into(),
             Self::Workspace => ui::WorkspaceStory::view(cx).into(),
             Self::ZIndex => cx.build_view(|_| ZIndexStory).into(),
+            Self::Picker => PickerStory::new(cx).into(),
         }
     }
 }
