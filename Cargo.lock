@@ -9005,6 +9005,7 @@ dependencies = [
  "fs2",
  "gpui2",
  "indexmap 1.9.3",
+ "itertools 0.11.0",
  "parking_lot 0.11.2",
  "refineable",
  "schemars",

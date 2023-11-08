@@ -153,7 +153,7 @@ type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 // }
 
 pub struct AppContext {
-    this: Weak<AppCell>,
+    pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
     app_metadata: AppMetadata,
     text_system: Arc<TextSystem>,

@@ -8,10 +8,11 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
-    black, hsla, point, px, relative, size, transparent_black, Action, AnyElement, BorrowWindow,
-    Bounds, ContentMask, Corners, DispatchContext, DispatchPhase, Edges, Element, ElementId,
-    Entity, Hsla, KeyDownEvent, KeyListener, KeyMatch, Line, Pixels, ScrollWheelEvent, ShapedGlyph,
-    Size, StatefulInteraction, Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext,
+    black, hsla, point, px, relative, size, transparent_black, Action, AnyElement,
+    BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchContext, DispatchPhase,
+    Edges, Element, ElementId, Entity, Hsla, KeyDownEvent, KeyListener, KeyMatch, Line, Pixels,
+    ScrollWheelEvent, ShapedGlyph, Size, StatefulInteraction, Style, TextRun, TextStyle,
+    TextSystem, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -1594,7 +1595,7 @@ impl EditorElement {
         &mut self,
         editor: &mut Editor,
         cx: &mut ViewContext<'_, Editor>,
-        bounds: Bounds<Pixels>,
+        mut bounds: Bounds<Pixels>,
     ) -> LayoutState {
         // let mut size = constraint.max;
         // if size.x.is_infinite() {
@@ -1605,7 +1606,7 @@ impl EditorElement {
         let style = self.style.clone();
         let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
         let font_size = style.text.font_size.to_pixels(cx.rem_size());
-        let line_height = (font_size * style.line_height_scalar).round();
+        let line_height = style.text.line_height_in_pixels(cx.rem_size());
         let em_width = cx
             .text_system()
             .typographic_bounds(font_id, font_size, 'm')
@@ -1672,8 +1673,7 @@ impl EditorElement {
             //             .min(line_height * max_lines as f32),
             //     )
         } else if let EditorMode::SingleLine = editor_mode {
-            todo!()
-            //     size.set_y(line_height.max(constraint.min_along(Axis::Vertical)))
+            bounds.size.height = line_height.min(bounds.size.height);
         }
         // todo!()
         // else if size.y.is_infinite() {
@@ -2593,7 +2593,11 @@ impl Element<Editor> for EditorElement {
         let rem_size = cx.rem_size();
         let mut style = Style::default();
         style.size.width = relative(1.).into();
-        style.size.height = relative(1.).into();
+        style.size.height = match editor.mode {
+            EditorMode::SingleLine => self.style.text.line_height_in_pixels(cx.rem_size()).into(),
+            EditorMode::AutoHeight { .. } => todo!(),
+            EditorMode::Full => relative(1.).into(),
+        };
         cx.request_layout(&style, None)
     }
 
@@ -2618,6 +2622,10 @@ impl Element<Editor> for EditorElement {
                 }
             }
         });
+
+        if editor.focus_handle.is_focused(cx) {
+            cx.handle_text_input();
+        }
 
         cx.with_content_mask(ContentMask { bounds }, |cx| {
             let gutter_bounds = Bounds {

@@ -24,6 +24,7 @@ mod text_system;
 mod util;
 mod view;
 mod window;
+mod window_input_handler;
 
 mod private {
     /// A mechanism for restricting implementations of a trait to only those in GPUI.
@@ -65,6 +66,7 @@ pub use text_system::*;
 pub use util::arc_cow::ArcCow;
 pub use view::*;
 pub use window::*;
+pub use window_input_handler::*;
 
 use derive_more::{Deref, DerefMut};
 use std::{
