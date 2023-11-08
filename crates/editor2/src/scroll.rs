@@ -288,16 +288,15 @@ impl ScrollManager {
     }
 }
 
-// todo!()
 impl Editor {
-    //     pub fn vertical_scroll_margin(&mut self) -> usize {
-    //         self.scroll_manager.vertical_scroll_margin as usize
-    //     }
+    pub fn vertical_scroll_margin(&mut self) -> usize {
+        self.scroll_manager.vertical_scroll_margin as usize
+    }
 
-    //     pub fn set_vertical_scroll_margin(&mut self, margin_rows: usize, cx: &mut ViewContext<Self>) {
-    //         self.scroll_manager.vertical_scroll_margin = margin_rows as f32;
-    //         cx.notify();
-    //     }
+    pub fn set_vertical_scroll_margin(&mut self, margin_rows: usize, cx: &mut ViewContext<Self>) {
+        self.scroll_manager.vertical_scroll_margin = margin_rows as f32;
+        cx.notify();
+    }
 
     pub fn visible_line_count(&self) -> Option<f32> {
         self.scroll_manager.visible_line_count
@@ -349,11 +348,9 @@ impl Editor {
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
     }
 
-    pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> gpui::Point<Pixels> {
+    pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> gpui::Point<f32> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        // todo!() Should `self.scroll_manager.anchor.scroll_position()` return `Pixels`?
-        // self.scroll_manager.anchor.scroll_position(&display_map)
-        todo!()
+        self.scroll_manager.anchor.scroll_position(&display_map)
     }
 
     pub fn set_scroll_anchor(&mut self, scroll_anchor: ScrollAnchor, cx: &mut ViewContext<Self>) {
@@ -382,50 +379,50 @@ impl Editor {
             .set_anchor(scroll_anchor, top_row, false, false, workspace_id, cx);
     }
 
-    //     pub fn scroll_screen(&mut self, amount: &ScrollAmount, cx: &mut ViewContext<Self>) {
-    //         if matches!(self.mode, EditorMode::SingleLine) {
-    //             cx.propagate_action();
-    //             return;
-    //         }
+    pub fn scroll_screen(&mut self, amount: &ScrollAmount, cx: &mut ViewContext<Self>) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
 
-    //         if self.take_rename(true, cx).is_some() {
-    //             return;
-    //         }
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
 
-    //         let cur_position = self.scroll_position(cx);
-    //         let new_pos = cur_position + point(0., amount.lines(self));
-    //         self.set_scroll_position(new_pos, cx);
-    //     }
+        let cur_position = self.scroll_position(cx);
+        let new_pos = cur_position + point(0., amount.lines(self));
+        self.set_scroll_position(new_pos, cx);
+    }
 
-    //     /// Returns an ordering. The newest selection is:
-    //     ///     Ordering::Equal => on screen
-    //     ///     Ordering::Less => above the screen
-    //     ///     Ordering::Greater => below the screen
-    //     pub fn newest_selection_on_screen(&self, cx: &mut AppContext) -> Ordering {
-    //         let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-    //         let newest_head = self
-    //             .selections
-    //             .newest_anchor()
-    //             .head()
-    //             .to_display_point(&snapshot);
-    //         let screen_top = self
-    //             .scroll_manager
-    //             .anchor
-    //             .anchor
-    //             .to_display_point(&snapshot);
+    /// Returns an ordering. The newest selection is:
+    ///     Ordering::Equal => on screen
+    ///     Ordering::Less => above the screen
+    ///     Ordering::Greater => below the screen
+    pub fn newest_selection_on_screen(&self, cx: &mut AppContext) -> Ordering {
+        let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let newest_head = self
+            .selections
+            .newest_anchor()
+            .head()
+            .to_display_point(&snapshot);
+        let screen_top = self
+            .scroll_manager
+            .anchor
+            .anchor
+            .to_display_point(&snapshot);
 
-    //         if screen_top > newest_head {
-    //             return Ordering::Less;
-    //         }
+        if screen_top > newest_head {
+            return Ordering::Less;
+        }
 
-    //         if let Some(visible_lines) = self.visible_line_count() {
-    //             if newest_head.row() < screen_top.row() + visible_lines as u32 {
-    //                 return Ordering::Equal;
-    //             }
-    //         }
+        if let Some(visible_lines) = self.visible_line_count() {
+            if newest_head.row() < screen_top.row() + visible_lines as u32 {
+                return Ordering::Equal;
+            }
+        }
 
-    //         Ordering::Greater
-    //     }
+        Ordering::Greater
+    }
 
     pub fn read_scroll_position_from_db(
         &mut self,

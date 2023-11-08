@@ -31,20 +31,21 @@ pub fn action(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[derive(gpui::serde::Deserialize, std::cmp::PartialEq, std::clone::Clone, std::default::Default, std::fmt::Debug)]
         #(#attrs)*
     };
+    let visibility = input.vis;
 
     let output = match input.data {
         syn::Data::Struct(ref struct_data) => {
             let fields = &struct_data.fields;
             quote! {
                 #attributes
-                struct #name { #fields }
+                #visibility struct #name #fields
             }
         }
         syn::Data::Enum(ref enum_data) => {
             let variants = &enum_data.variants;
             quote! {
                 #attributes
-                enum #name { #variants }
+                #visibility enum #name { #variants }
             }
         }
         _ => panic!("Expected a struct or an enum."),

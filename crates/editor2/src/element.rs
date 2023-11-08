@@ -2,8 +2,10 @@ use crate::{
     display_map::{BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint},
     editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
+    scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    MoveDown, Point, Selection, SoftWrap, ToPoint, MAX_LINE_LEN,
+    HalfPageDown, HalfPageUp, LineDown, LineUp, MoveDown, PageDown, PageUp, Point, Selection,
+    SoftWrap, ToPoint, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -31,6 +33,7 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
+use util::ResultExt;
 use workspace::item::Item;
 
 enum FoldMarkers {}
@@ -2562,6 +2565,153 @@ impl Element<Editor> for EditorElement {
                         build_action_listener(Editor::move_right),
                         build_action_listener(Editor::move_down),
                         build_action_listener(Editor::move_up),
+                        // build_action_listener(Editor::new_file), todo!()
+                        // build_action_listener(Editor::new_file_in_direction), todo!()
+                        build_action_listener(Editor::cancel),
+                        build_action_listener(Editor::newline),
+                        build_action_listener(Editor::newline_above),
+                        build_action_listener(Editor::newline_below),
+                        build_action_listener(Editor::backspace),
+                        build_action_listener(Editor::delete),
+                        build_action_listener(Editor::tab),
+                        build_action_listener(Editor::tab_prev),
+                        build_action_listener(Editor::indent),
+                        build_action_listener(Editor::outdent),
+                        build_action_listener(Editor::delete_line),
+                        build_action_listener(Editor::join_lines),
+                        build_action_listener(Editor::sort_lines_case_sensitive),
+                        build_action_listener(Editor::sort_lines_case_insensitive),
+                        build_action_listener(Editor::reverse_lines),
+                        build_action_listener(Editor::shuffle_lines),
+                        build_action_listener(Editor::convert_to_upper_case),
+                        build_action_listener(Editor::convert_to_lower_case),
+                        build_action_listener(Editor::convert_to_title_case),
+                        build_action_listener(Editor::convert_to_snake_case),
+                        build_action_listener(Editor::convert_to_kebab_case),
+                        build_action_listener(Editor::convert_to_upper_camel_case),
+                        build_action_listener(Editor::convert_to_lower_camel_case),
+                        build_action_listener(Editor::delete_to_previous_word_start),
+                        build_action_listener(Editor::delete_to_previous_subword_start),
+                        build_action_listener(Editor::delete_to_next_word_end),
+                        build_action_listener(Editor::delete_to_next_subword_end),
+                        build_action_listener(Editor::delete_to_beginning_of_line),
+                        build_action_listener(Editor::delete_to_end_of_line),
+                        build_action_listener(Editor::cut_to_end_of_line),
+                        build_action_listener(Editor::duplicate_line),
+                        build_action_listener(Editor::move_line_up),
+                        build_action_listener(Editor::move_line_down),
+                        build_action_listener(Editor::transpose),
+                        build_action_listener(Editor::cut),
+                        build_action_listener(Editor::copy),
+                        build_action_listener(Editor::paste),
+                        build_action_listener(Editor::undo),
+                        build_action_listener(Editor::redo),
+                        build_action_listener(Editor::move_page_up),
+                        build_action_listener(Editor::move_page_down),
+                        build_action_listener(Editor::next_screen),
+                        build_action_listener(Editor::scroll_cursor_top),
+                        build_action_listener(Editor::scroll_cursor_center),
+                        build_action_listener(Editor::scroll_cursor_bottom),
+                        build_action_listener(|editor, _: &LineDown, cx| {
+                            editor.scroll_screen(&ScrollAmount::Line(1.), cx)
+                        }),
+                        build_action_listener(|editor, _: &LineUp, cx| {
+                            editor.scroll_screen(&ScrollAmount::Line(-1.), cx)
+                        }),
+                        build_action_listener(|editor, _: &HalfPageDown, cx| {
+                            editor.scroll_screen(&ScrollAmount::Page(0.5), cx)
+                        }),
+                        build_action_listener(|editor, _: &HalfPageUp, cx| {
+                            editor.scroll_screen(&ScrollAmount::Page(-0.5), cx)
+                        }),
+                        build_action_listener(|editor, _: &PageDown, cx| {
+                            editor.scroll_screen(&ScrollAmount::Page(1.), cx)
+                        }),
+                        build_action_listener(|editor, _: &PageUp, cx| {
+                            editor.scroll_screen(&ScrollAmount::Page(-1.), cx)
+                        }),
+                        build_action_listener(Editor::move_to_previous_word_start),
+                        build_action_listener(Editor::move_to_previous_subword_start),
+                        build_action_listener(Editor::move_to_next_word_end),
+                        build_action_listener(Editor::move_to_next_subword_end),
+                        build_action_listener(Editor::move_to_beginning_of_line),
+                        build_action_listener(Editor::move_to_end_of_line),
+                        build_action_listener(Editor::move_to_start_of_paragraph),
+                        build_action_listener(Editor::move_to_end_of_paragraph),
+                        build_action_listener(Editor::move_to_beginning),
+                        build_action_listener(Editor::move_to_end),
+                        build_action_listener(Editor::select_up),
+                        build_action_listener(Editor::select_down),
+                        build_action_listener(Editor::select_left),
+                        build_action_listener(Editor::select_right),
+                        build_action_listener(Editor::select_to_previous_word_start),
+                        build_action_listener(Editor::select_to_previous_subword_start),
+                        build_action_listener(Editor::select_to_next_word_end),
+                        build_action_listener(Editor::select_to_next_subword_end),
+                        build_action_listener(Editor::select_to_beginning_of_line),
+                        build_action_listener(Editor::select_to_end_of_line),
+                        build_action_listener(Editor::select_to_start_of_paragraph),
+                        build_action_listener(Editor::select_to_end_of_paragraph),
+                        build_action_listener(Editor::select_to_beginning),
+                        build_action_listener(Editor::select_to_end),
+                        build_action_listener(Editor::select_all),
+                        build_action_listener(|editor, action, cx| {
+                            editor.select_all_matches(action, cx).log_err();
+                        }),
+                        build_action_listener(Editor::select_line),
+                        build_action_listener(Editor::split_selection_into_lines),
+                        build_action_listener(Editor::add_selection_above),
+                        build_action_listener(Editor::add_selection_below),
+                        build_action_listener(|editor, action, cx| {
+                            editor.select_next(action, cx).log_err();
+                        }),
+                        build_action_listener(|editor, action, cx| {
+                            editor.select_previous(action, cx).log_err();
+                        }),
+                        build_action_listener(Editor::toggle_comments),
+                        build_action_listener(Editor::select_larger_syntax_node),
+                        build_action_listener(Editor::select_smaller_syntax_node),
+                        build_action_listener(Editor::move_to_enclosing_bracket),
+                        build_action_listener(Editor::undo_selection),
+                        build_action_listener(Editor::redo_selection),
+                        build_action_listener(Editor::go_to_diagnostic),
+                        build_action_listener(Editor::go_to_prev_diagnostic),
+                        build_action_listener(Editor::go_to_hunk),
+                        build_action_listener(Editor::go_to_prev_hunk),
+                        build_action_listener(Editor::go_to_definition),
+                        build_action_listener(Editor::go_to_definition_split),
+                        build_action_listener(Editor::go_to_type_definition),
+                        build_action_listener(Editor::go_to_type_definition_split),
+                        build_action_listener(Editor::fold),
+                        build_action_listener(Editor::fold_at),
+                        build_action_listener(Editor::unfold_lines),
+                        build_action_listener(Editor::unfold_at),
+                        // build_action_listener(Editor::gutter_hover), todo!()
+                        build_action_listener(Editor::fold_selected_ranges),
+                        build_action_listener(Editor::show_completions),
+                        // build_action_listener(Editor::toggle_code_actions), todo!()
+                        // build_action_listener(Editor::open_excerpts), todo!()
+                        build_action_listener(Editor::toggle_soft_wrap),
+                        build_action_listener(Editor::toggle_inlay_hints),
+                        build_action_listener(Editor::reveal_in_finder),
+                        build_action_listener(Editor::copy_path),
+                        build_action_listener(Editor::copy_relative_path),
+                        build_action_listener(Editor::copy_highlight_json),
+                        build_action_listener(|editor, action, cx| {
+                            editor
+                                .format(action, cx)
+                                .map(|task| task.detach_and_log_err(cx));
+                        }),
+                        build_action_listener(Editor::restart_language_server),
+                        build_action_listener(Editor::show_character_palette),
+                        // build_action_listener(Editor::confirm_completion), todo!()
+                        // build_action_listener(Editor::confirm_code_action), todo!()
+                        // build_action_listener(Editor::rename), todo!()
+                        // build_action_listener(Editor::confirm_rename), todo!()
+                        // build_action_listener(Editor::find_all_references), todo!()
+                        build_action_listener(Editor::next_copilot_suggestion),
+                        build_action_listener(Editor::previous_copilot_suggestion),
+                        build_action_listener(Editor::copilot_suggest),
                         build_key_listener(
                             move |editor, key_down: &KeyDownEvent, dispatch_context, phase, cx| {
                                 if phase == DispatchPhase::Bubble {

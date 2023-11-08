@@ -302,39 +302,39 @@ impl SelectionsCollection {
             .collect()
     }
 
-    // pub fn build_columnar_selection(
-    //     &mut self,
-    //     display_map: &DisplaySnapshot,
-    //     row: u32,
-    //     positions: &Range<Pixels>,
-    //     reversed: bool,
-    //     text_layout_details: &TextLayoutDetails,
-    // ) -> Option<Selection<Point>> {
-    //     let is_empty = positions.start == positions.end;
-    //     let line_len = display_map.line_len(row);
+    pub fn build_columnar_selection(
+        &mut self,
+        display_map: &DisplaySnapshot,
+        row: u32,
+        positions: &Range<Pixels>,
+        reversed: bool,
+        text_layout_details: &TextLayoutDetails,
+    ) -> Option<Selection<Point>> {
+        let is_empty = positions.start == positions.end;
+        let line_len = display_map.line_len(row);
 
-    //     let layed_out_line = display_map.lay_out_line_for_row(row, &text_layout_details);
+        let layed_out_line = display_map.lay_out_line_for_row(row, &text_layout_details);
 
-    //     let start_col = layed_out_line.closest_index_for_x(positions.start) as u32;
-    //     if start_col < line_len || (is_empty && positions.start == layed_out_line.width()) {
-    //         let start = DisplayPoint::new(row, start_col);
-    //         let end_col = layed_out_line.closest_index_for_x(positions.end) as u32;
-    //         let end = DisplayPoint::new(row, end_col);
+        let start_col = layed_out_line.closest_index_for_x(positions.start) as u32;
+        if start_col < line_len || (is_empty && positions.start == layed_out_line.width) {
+            let start = DisplayPoint::new(row, start_col);
+            let end_col = layed_out_line.closest_index_for_x(positions.end) as u32;
+            let end = DisplayPoint::new(row, end_col);
 
-    //         Some(Selection {
-    //             id: post_inc(&mut self.next_selection_id),
-    //             start: start.to_point(display_map),
-    //             end: end.to_point(display_map),
-    //             reversed,
-    //             goal: SelectionGoal::HorizontalRange {
-    //                 start: positions.start,
-    //                 end: positions.end,
-    //             },
-    //         })
-    //     } else {
-    //         None
-    //     }
-    // }
+            Some(Selection {
+                id: post_inc(&mut self.next_selection_id),
+                start: start.to_point(display_map),
+                end: end.to_point(display_map),
+                reversed,
+                goal: SelectionGoal::HorizontalRange {
+                    start: positions.start.into(),
+                    end: positions.end.into(),
+                },
+            })
+        } else {
+            None
+        }
+    }
 
     pub(crate) fn change_with<R>(
         &mut self,
