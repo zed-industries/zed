@@ -40,7 +40,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{ActiveTheme, Story};
-    use gpui::{div, Div, ParentElement, Render, Styled, ViewContext};
+    use gpui::{div, img, px, Div, ParentElement, Render, Styled, ViewContext};
 
     pub struct PlayerStory;
 
@@ -48,39 +48,123 @@ mod stories {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            Story::container(cx)
-                .child(Story::title_for::<_, PlayerColors>(cx))
-                .child(Story::label(cx, "Player Colors"))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
-                            div().flex().gap_1().children(
-                                cx.theme()
-                                    .players()
-                                    .0
-                                    .clone()
-                                    .iter_mut()
-                                    .map(|color| div().w_8().h_8().rounded_md().bg(color.cursor)),
-                            ),
-                        )
-                        .child(
-                            div().flex().gap_1().children(
-                                cx.theme().players().0.clone().iter_mut().map(|color| {
-                                    div().w_8().h_8().rounded_md().bg(color.background)
+            Story::container(cx).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(Story::title_for::<_, PlayerColors>(cx))
+                    .child(Story::label(cx, "Player Colors"))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div().flex().gap_1().children(
+                                    cx.theme().players().0.clone().iter_mut().map(|player| {
+                                        div().w_8().h_8().rounded_md().bg(player.cursor)
+                                    }),
+                                ),
+                            )
+                            .child(div().flex().gap_1().children(
+                                cx.theme().players().0.clone().iter_mut().map(|player| {
+                                    div().w_8().h_8().rounded_md().bg(player.background)
                                 }),
-                            ),
-                        )
-                        .child(
-                            div().flex().gap_1().children(
-                                cx.theme().players().0.clone().iter_mut().map(|color| {
-                                    div().w_8().h_8().rounded_md().bg(color.selection)
+                            ))
+                            .child(div().flex().gap_1().children(
+                                cx.theme().players().0.clone().iter_mut().map(|player| {
+                                    div().w_8().h_8().rounded_md().bg(player.selection)
                                 }),
+                            )),
+                    )
+                    .child(Story::label(cx, "Avatar Rings"))
+                    .child(div().flex().gap_1().children(
+                        cx.theme().players().0.clone().iter_mut().map(|player| {
+                            div()
+                                .my_1()
+                                .rounded_full()
+                                .border_2()
+                                .border_color(player.cursor)
+                                .child(
+                                    img()
+                                        .rounded_full()
+                                        .uri("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                        .size_6()
+                                        .bg(gpui::red()),
+                                )
+                        }),
+                    ))
+                    .child(Story::label(cx, "Player Backgrounds"))
+                    .child(div().flex().gap_1().children(
+                        cx.theme().players().0.clone().iter_mut().map(|player| {
+                            div()
+                                .my_1()
+                                .rounded_xl()
+                                .flex()
+                                .items_center()
+                                .h_8()
+                                .py_0p5()
+                                .px_1p5()
+                                .bg(player.background)
+                                .child(
+                                div().relative().neg_mx_1().rounded_full().z_index(3)
+                                    .border_2()
+                                    .border_color(player.background)
+                                    .size(px(28.))
+                                    .child(
+                                    img()
+                                        .rounded_full()
+                                        .uri("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                        .size(px(24.))
+                                        .bg(gpui::red()),
+                                ),
+                            ).child(
+                            div().relative().neg_mx_1().rounded_full().z_index(2)
+                                .border_2()
+                                .border_color(player.background)
+                                .size(px(28.))
+                                .child(
+                                img()
+                                    .rounded_full()
+                                    .uri("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                    .size(px(24.))
+                                    .bg(gpui::red()),
                             ),
+                        ).child(
+                        div().relative().neg_mx_1().rounded_full().z_index(1)
+                            .border_2()
+                            .border_color(player.background)
+                            .size(px(28.))
+                            .child(
+                            img()
+                                .rounded_full()
+                                .uri("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                .size(px(24.))
+                                .bg(gpui::red()),
                         ),
-                )
+                    )
+                        }),
+                    ))
+                    .child(Story::label(cx, "Player Selections"))
+                    .child(div().flex().flex_col().gap_px().children(
+                        cx.theme().players().0.clone().iter_mut().map(|player| {
+                            div()
+                                .flex()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_none()
+                                        .rounded_sm()
+                                        .px_0p5()
+                                        .text_color(cx.theme().colors().text)
+                                        .bg(player.selection)
+                                        .child("The brown fox jumped over the lazy dog."),
+                                )
+                                .child(div().flex_1())
+                        }),
+                    )),
+            )
         }
     }
 }
