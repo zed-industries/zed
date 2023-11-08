@@ -30,7 +30,7 @@ impl Breadcrumb {
         h_stack()
             .id("breadcrumb")
             .px_1()
-            .text_sm()
+            .text_ui_sm()
             .text_color(cx.theme().colors().text_muted)
             .rounded_md()
             .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
