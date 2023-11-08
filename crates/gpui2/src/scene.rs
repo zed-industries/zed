@@ -43,10 +43,6 @@ impl Default for SceneBuilder {
 }
 
 impl SceneBuilder {
-    pub fn new() -> SceneBuilder {
-        SceneBuilder::default()
-    }
-
     pub fn build(&mut self) -> Scene {
         // Map each layer id to a float between 0. and 1., with 1. closer to the viewer.
         let mut layer_z_values = vec![0.; self.layers_by_order.len()];
