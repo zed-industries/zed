@@ -6,8 +6,8 @@ use gpui::SharedString;
 use refineable::Refineable;
 
 use crate::{
-    zed_pro_family, Appearance, GitStatusColors, PlayerColors, StatusColors, SyntaxTheme,
-    SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles, UserTheme, UserThemeFamily,
+    zed_pro_family, Appearance, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme,
+    ThemeColors, ThemeFamily, ThemeStyles, UserTheme, UserThemeFamily,
 };
 
 pub struct ThemeRegistry {
@@ -50,7 +50,6 @@ impl ThemeRegistry {
                     system: SystemColors::default(),
                     colors: theme_colors,
                     status: StatusColors::default(),
-                    git: GitStatusColors::default(),
                     player: PlayerColors::default(),
                     syntax: match user_theme.appearance {
                         Appearance::Light => Arc::new(SyntaxTheme::default_light()),
