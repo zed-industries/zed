@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    actions, div, AppContext, Div, EventEmitter, ParentElement, Render, SharedString, Styled, View,
-    ViewContext, VisualContext,
+    actions, div, AppContext, Div, EventEmitter, ParentElement, Render, SharedString,
+    StatelessInteractive, Styled, View, ViewContext, VisualContext,
 };
 use text::Point;
 use theme::ActiveTheme;
@@ -9,7 +9,7 @@ use ui::{h_stack, modal, v_stack, Label, LabelColor};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::ModalRegistry;
 
-actions!(Toggle, Cancel, Confirm);
+actions!(Toggle);
 
 pub fn init(cx: &mut AppContext) {
     cx.global_mut::<ModalRegistry>()
@@ -20,10 +20,6 @@ pub fn init(cx: &mut AppContext) {
 
             Some(cx.build_view(|cx| GoToLine::new(editor, cx)))
         });
-
-    // cx.add_action(GoToLine::toggle);
-    // cx.add_action(GoToLine::confirm);
-    // cx.add_action(GoToLine::cancel);
 }
 
 pub struct GoToLine {
@@ -37,7 +33,7 @@ pub enum Event {
 }
 
 impl EventEmitter for GoToLine {
-    type Event = Event;
+    type Event = ModalEvent;
 }
 
 impl GoToLine {
@@ -45,6 +41,7 @@ impl GoToLine {
         let line_editor = cx.build_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Find something", cx);
+            editor.focus(cx);
             editor
         });
         cx.subscribe(&line_editor, Self::on_line_editor_event)
@@ -98,23 +95,24 @@ impl GoToLine {
         ))
     }
 
-    // fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-    //     cx.emit(Event::Dismissed);
-    // }
+    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        println!("CANCLE");
+        cx.emit(Event::Dismissed);
+    }
 
-    // fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-    //     if let Some(point) = self.point_from_query(cx) {
-    //         self.active_editor.update(cx, |active_editor, cx| {
-    //             let snapshot = active_editor.snapshot(cx).display_snapshot;
-    //             let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-    //             active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-    //                 s.select_ranges([point..point])
-    //             });
-    //         });
-    //     }
+    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+        // // if let Some(point) = self.point_from_query(cx) {
+        // //     self.active_editor.update(cx, |active_editor, cx| {
+        // //         let snapshot = active_editor.snapshot(cx).display_snapshot;
+        // //         let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
+        // //         active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+        // //             s.select_ranges([point..point])
+        // //         });
+        // //     });
+        // // }
 
-    //     cx.emit(Event::Dismissed);
-    // }
+        // cx.emit(Event::Dismissed);
+    }
 
     fn status_text(&self) -> SharedString {
         "Default text".into()
@@ -125,31 +123,35 @@ impl Render for GoToLine {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        modal(cx).w_96().child(
-            v_stack()
-                .px_1()
-                .pt_0p5()
-                .gap_px()
-                .child(
-                    v_stack()
-                        .py_0p5()
-                        .px_1()
-                        .child(div().px_1().py_0p5().child(self.line_editor.clone())),
-                )
-                .child(
-                    div()
-                        .h_px()
-                        .w_full()
-                        .bg(cx.theme().colors().element_background),
-                )
-                .child(
-                    h_stack()
-                        .justify_between()
-                        .px_2()
-                        .py_1()
-                        .child(Label::new(self.status_text()).color(LabelColor::Muted)),
-                ),
-        )
+        modal(cx)
+            .w_96()
+            .on_action(Self::cancel)
+            .on_action(Self::confirm)
+            .child(
+                v_stack()
+                    .px_1()
+                    .pt_0p5()
+                    .gap_px()
+                    .child(
+                        v_stack()
+                            .py_0p5()
+                            .px_1()
+                            .child(div().px_1().py_0p5().child(self.line_editor.clone())),
+                    )
+                    .child(
+                        div()
+                            .h_px()
+                            .w_full()
+                            .bg(cx.theme().colors().element_background),
+                    )
+                    .child(
+                        h_stack()
+                            .justify_between()
+                            .px_2()
+                            .py_1()
+                            .child(Label::new(self.status_text()).color(LabelColor::Muted)),
+                    ),
+            )
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::Workspace;
 use gpui::{
     div, px, AnyView, AppContext, Component, Div, ParentElement, Render, StatelessInteractive,
-    Styled, View, ViewContext,
+    Styled, View, ViewContext, EventEmitter,
 };
 use std::{any::TypeId, sync::Arc};
 use ui::v_stack;
@@ -27,10 +27,18 @@ struct ToggleModal {
     name: String,
 }
 
+pub enum ModalEvents {
+    Dismissed
+}
+
+trait Modal: EventEmitter + Render {
+    fn to_modal_events(&Self::Event) -> Option<ModalEvents>;
+}
+
 impl ModalRegistry {
     pub fn register_modal<A: 'static, V, B>(&mut self, action: A, build_view: B)
     where
-        V: Render,
+        V: Modal,
         B: Fn(&Workspace, &mut ViewContext<Workspace>) -> Option<View<V>> + 'static,
     {
         let build_view = Arc::new(build_view);
@@ -45,10 +53,15 @@ impl ModalRegistry {
                         let Some(new_modal) = (build_view)(workspace, cx) else {
                             return;
                         };
-
                         workspace.modal_layer.update(cx, |modal_layer, _| {
                             modal_layer.open_modal = Some(new_modal.into());
                         });
+                        cx.subscribe(new_modal, |e, modal, cx| {
+                            match modal.to_modal_events(e) {
+                                Some(Dismissed) =>
+                                dismissed -> whatever
+                            }
+                        })
 
                         cx.notify();
                     },
