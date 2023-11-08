@@ -1,6 +1,7 @@
 mod colors;
 mod default_colors;
 mod default_theme;
+mod players;
 mod registry;
 mod scale;
 mod settings;
@@ -14,6 +15,7 @@ use ::settings::Settings;
 pub use colors::*;
 pub use default_colors::*;
 pub use default_theme::*;
+pub use players::*;
 pub use registry::*;
 pub use scale::*;
 pub use settings::*;
@@ -120,3 +122,8 @@ pub struct DiagnosticStyle {
     pub hint: Hsla,
     pub ignored: Hsla,
 }
+
+#[cfg(feature = "stories")]
+mod story;
+#[cfg(feature = "stories")]
+pub use story::*;
