@@ -2,12 +2,10 @@ use std::num::ParseIntError;
 
 use gpui::{hsla, Hsla, Rgba};
 
-use crate::{
-    colors::{GitStatusColors, StatusColors, SystemColors, ThemeColors},
-    scale::{ColorScaleSet, ColorScales},
-    syntax::SyntaxTheme,
-    ColorScale, PlayerColor, PlayerColors,
-};
+use crate::colors::{StatusColors, SystemColors, ThemeColors};
+use crate::scale::{ColorScaleSet, ColorScales};
+use crate::syntax::SyntaxTheme;
+use crate::{ColorScale, PlayerColor, PlayerColors};
 
 impl Default for PlayerColors {
     fn default() -> Self {
@@ -132,19 +130,6 @@ impl Default for StatusColors {
             renamed: blue().dark().step_9(),
             success: grass().dark().step_9(),
             warning: yellow().dark().step_9(),
-        }
-    }
-}
-
-impl Default for GitStatusColors {
-    fn default() -> Self {
-        Self {
-            conflict: orange().dark().step_9(),
-            created: grass().dark().step_9(),
-            deleted: red().dark().step_9(),
-            ignored: neutral().dark().step_9(),
-            modified: yellow().dark().step_9(),
-            renamed: blue().dark().step_9(),
         }
     }
 }

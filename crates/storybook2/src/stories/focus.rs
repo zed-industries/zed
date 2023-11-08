@@ -25,12 +25,12 @@ impl Render for FocusStory {
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let theme = cx.theme();
-        let color_1 = theme.styles.git.created;
-        let color_2 = theme.styles.git.modified;
-        let color_3 = theme.styles.git.deleted;
-        let color_4 = theme.styles.git.conflict;
-        let color_5 = theme.styles.git.ignored;
-        let color_6 = theme.styles.git.renamed;
+        let color_1 = theme.status().created;
+        let color_2 = theme.status().modified;
+        let color_3 = theme.status().deleted;
+        let color_4 = theme.status().conflict;
+        let color_5 = theme.status().ignored;
+        let color_6 = theme.status().renamed;
         let child_1 = cx.focus_handle();
         let child_2 = cx.focus_handle();
 

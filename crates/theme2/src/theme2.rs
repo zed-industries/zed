@@ -65,6 +65,12 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// Returns the [`SystemColors`] for the theme.
+    #[inline(always)]
+    pub fn system(&self) -> &SystemColors {
+        &self.styles.system
+    }
+
     /// Returns the [`ThemeColors`] for the theme.
     #[inline(always)]
     pub fn players(&self) -> &PlayerColors {
@@ -89,19 +95,13 @@ impl Theme {
         &self.styles.status
     }
 
-    /// Returns the [`GitStatusColors`] for the theme.
-    #[inline(always)]
-    pub fn git(&self) -> &GitStatusColors {
-        &self.styles.git
-    }
-
     /// Returns the color for the syntax node with the given name.
     #[inline(always)]
     pub fn syntax_color(&self, name: &str) -> Hsla {
         self.syntax().color(name)
     }
 
-    /// Returns the [`StatusColors`] for the theme.
+    /// Returns the [`DiagnosticStyle`] for the theme.
     #[inline(always)]
     pub fn diagnostic_style(&self) -> DiagnosticStyle {
         DiagnosticStyle {

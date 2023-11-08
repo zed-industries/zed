@@ -30,17 +30,6 @@ pub struct StatusColors {
 }
 
 #[derive(Refineable, Clone, Debug)]
-#[refineable(debug)]
-pub struct GitStatusColors {
-    pub conflict: Hsla,
-    pub created: Hsla,
-    pub deleted: Hsla,
-    pub ignored: Hsla,
-    pub modified: Hsla,
-    pub renamed: Hsla,
-}
-
-#[derive(Refineable, Clone, Debug)]
 #[refineable(debug, deserialize)]
 pub struct ThemeColors {
     pub border: Hsla,
@@ -260,7 +249,6 @@ pub struct ThemeStyles {
     #[refineable]
     pub colors: ThemeColors,
     pub status: StatusColors,
-    pub git: GitStatusColors,
     pub player: PlayerColors,
     pub syntax: Arc<SyntaxTheme>,
 }
