@@ -388,6 +388,7 @@ async fn test_channel_buffer_disconnect(
         .update(cx_a, |store, cx| store.open_channel_buffer(channel_id, cx))
         .await
         .unwrap();
+
     let channel_buffer_b = client_b
         .channel_store()
         .update(cx_b, |store, cx| store.open_channel_buffer(channel_id, cx))

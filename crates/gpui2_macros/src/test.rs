@@ -110,6 +110,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 );
                             ));
                             cx_teardowns.extend(quote!(
+                                dispatcher.run_until_parked();
                                 #cx_varname.quit();
                                 dispatcher.run_until_parked();
                             ));
@@ -174,6 +175,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 ));
                                 inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
                                 cx_teardowns.extend(quote!(
+                                    dispatcher.run_until_parked();
                                     #cx_varname_lock.quit();
                                     drop(#cx_varname_lock);
                                     dispatcher.run_until_parked();
@@ -188,6 +190,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                     );
                                 ));
                                 cx_teardowns.extend(quote!(
+                                    dispatcher.run_until_parked();
                                     #cx_varname.quit();
                                     dispatcher.run_until_parked();
                                 ));

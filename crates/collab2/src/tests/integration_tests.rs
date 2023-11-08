@@ -4086,6 +4086,7 @@ async fn test_formatting_buffer(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
+    executor.allow_parking();
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;

@@ -752,19 +752,16 @@ impl AppContext {
         self.globals_by_type.insert(global_type, Box::new(global));
     }
 
-    #[track_caller]
+    /// Clear all stored globals. Does not notify global observers.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn clear_globals(&mut self) {
-        dbg!(core::panic::Location::caller());
-        //todo!(notify globals?)
         self.globals_by_type.drain();
     }
 
-    /// Set the value of the global of the given type.
-    #[track_caller]
+    /// Remove the global of the given type from the app context. Does not notify global observers.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn remove_global<G: Any>(&mut self) -> G {
-        dbg!(core::panic::Location::caller());
         let global_type = TypeId::of::<G>();
-        //todo!(notify globals?)
         *self
             .globals_by_type
             .remove(&global_type)

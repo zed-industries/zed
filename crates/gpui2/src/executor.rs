@@ -98,6 +98,7 @@ impl BackgroundExecutor {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    #[track_caller]
     pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
         self.block_internal(false, future)
     }
@@ -106,6 +107,7 @@ impl BackgroundExecutor {
         self.block_internal(true, future)
     }
 
+    #[track_caller]
     pub(crate) fn block_internal<R>(
         &self,
         background_only: bool,
