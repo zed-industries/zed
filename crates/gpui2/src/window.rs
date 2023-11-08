@@ -563,6 +563,12 @@ impl<'a> WindowContext<'a> {
             .request_measured_layout(style, rem_size, measure)
     }
 
+    pub fn compute_layout(&mut self, layout_id: LayoutId, available_space: Size<AvailableSpace>) {
+        self.window
+            .layout_engine
+            .compute_layout(layout_id, available_space)
+    }
+
     /// Obtain the bounds computed for the given LayoutId relative to the window. This method should not
     /// be invoked until the paint phase begins, and will usually be invoked by GPUI itself automatically
     /// in order to pass your element its `Bounds` automatically.
@@ -794,6 +800,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Paint a monochrome (non-emoji) glyph into the scene for the current frame at the current z-index.
+    /// The y component of the origin is the baseline of the glyph.
     pub fn paint_glyph(
         &mut self,
         origin: Point<Pixels>,
@@ -847,6 +854,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Paint an emoji glyph into the scene for the current frame at the current z-index.
+    /// The y component of the origin is the baseline of the glyph.
     pub fn paint_emoji(
         &mut self,
         origin: Point<Pixels>,
@@ -1707,8 +1715,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &mut self.window_cx
     }
 
-    pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.z_index_stack.push(order);
+    pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.window.z_index_stack.push(z_index);
         let result = f(self);
         self.window.z_index_stack.pop();
         result

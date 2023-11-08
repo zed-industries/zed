@@ -1,6 +1,6 @@
 use gpui::{
     actions, div, Div, FocusEnabled, Focusable, KeyBinding, ParentElement, Render,
-    StatefulInteraction, StatelessInteractive, Styled, View, VisualContext, WindowContext,
+    StatefulInteractivity, StatelessInteractive, Styled, View, VisualContext, WindowContext,
 };
 use theme2::ActiveTheme;
 
@@ -21,7 +21,7 @@ impl FocusStory {
 }
 
 impl Render for FocusStory {
-    type Element = Div<Self, StatefulInteraction<Self>, FocusEnabled<Self>>;
+    type Element = Div<Self, StatefulInteractivity<Self>, FocusEnabled<Self>>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let theme = cx.theme();
@@ -38,20 +38,18 @@ impl Render for FocusStory {
             .id("parent")
             .focusable()
             .context("parent")
-            .on_action(|_, action: &ActionA, phase, cx| {
-                println!("Action A dispatched on parent during {:?}", phase);
+            .on_action(|_, action: &ActionA, cx| {
+                println!("Action A dispatched on parent during");
             })
-            .on_action(|_, action: &ActionB, phase, cx| {
-                println!("Action B dispatched on parent during {:?}", phase);
+            .on_action(|_, action: &ActionB, cx| {
+                println!("Action B dispatched on parent during");
             })
             .on_focus(|_, _, _| println!("Parent focused"))
             .on_blur(|_, _, _| println!("Parent blurred"))
             .on_focus_in(|_, _, _| println!("Parent focus_in"))
             .on_focus_out(|_, _, _| println!("Parent focus_out"))
-            .on_key_down(|_, event, phase, _| {
-                println!("Key down on parent {:?} {:?}", phase, event)
-            })
-            .on_key_up(|_, event, phase, _| println!("Key up on parent {:?} {:?}", phase, event))
+            .on_key_down(|_, event, phase, _| println!("Key down on parent {:?}", event))
+            .on_key_up(|_, event, phase, _| println!("Key up on parent {:?}", event))
             .size_full()
             .bg(color_1)
             .focus(|style| style.bg(color_2))
@@ -60,8 +58,8 @@ impl Render for FocusStory {
                 div()
                     .track_focus(&child_1)
                     .context("child-1")
-                    .on_action(|_, action: &ActionB, phase, cx| {
-                        println!("Action B dispatched on child 1 during {:?}", phase);
+                    .on_action(|_, action: &ActionB, cx| {
+                        println!("Action B dispatched on child 1 during");
                     })
                     .w_full()
                     .h_6()
@@ -72,20 +70,16 @@ impl Render for FocusStory {
                     .on_blur(|_, _, _| println!("Child 1 blurred"))
                     .on_focus_in(|_, _, _| println!("Child 1 focus_in"))
                     .on_focus_out(|_, _, _| println!("Child 1 focus_out"))
-                    .on_key_down(|_, event, phase, _| {
-                        println!("Key down on child 1 {:?} {:?}", phase, event)
-                    })
-                    .on_key_up(|_, event, phase, _| {
-                        println!("Key up on child 1 {:?} {:?}", phase, event)
-                    })
+                    .on_key_down(|_, event, phase, _| println!("Key down on child 1 {:?}", event))
+                    .on_key_up(|_, event, phase, _| println!("Key up on child 1 {:?}", event))
                     .child("Child 1"),
             )
             .child(
                 div()
                     .track_focus(&child_2)
                     .context("child-2")
-                    .on_action(|_, action: &ActionC, phase, cx| {
-                        println!("Action C dispatched on child 2 during {:?}", phase);
+                    .on_action(|_, action: &ActionC, cx| {
+                        println!("Action C dispatched on child 2 during");
                     })
                     .w_full()
                     .h_6()
@@ -94,12 +88,8 @@ impl Render for FocusStory {
                     .on_blur(|_, _, _| println!("Child 2 blurred"))
                     .on_focus_in(|_, _, _| println!("Child 2 focus_in"))
                     .on_focus_out(|_, _, _| println!("Child 2 focus_out"))
-                    .on_key_down(|_, event, phase, _| {
-                        println!("Key down on child 2 {:?} {:?}", phase, event)
-                    })
-                    .on_key_up(|_, event, phase, _| {
-                        println!("Key up on child 2 {:?} {:?}", phase, event)
-                    })
+                    .on_key_down(|_, event, phase, _| println!("Key down on child 2 {:?}", event))
+                    .on_key_up(|_, event, phase, _| println!("Key up on child 2 {:?}", event))
                     .child("Child 2"),
             )
     }

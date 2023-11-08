@@ -281,7 +281,7 @@ impl Style {
     pub fn paint<V: 'static>(&self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
         let rem_size = cx.rem_size();
 
-        cx.stack(0, |cx| {
+        cx.with_z_index(0, |cx| {
             cx.paint_shadows(
                 bounds,
                 self.corner_radii.to_pixels(bounds.size, rem_size),
@@ -291,7 +291,7 @@ impl Style {
 
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
-            cx.stack(1, |cx| {
+            cx.with_z_index(1, |cx| {
                 cx.paint_quad(
                     bounds,
                     self.corner_radii.to_pixels(bounds.size, rem_size),

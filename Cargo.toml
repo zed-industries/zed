@@ -68,6 +68,7 @@ members = [
     "crates/notifications",
     "crates/outline",
     "crates/picker",
+    "crates/picker2",
     "crates/plugin",
     "crates/plugin_macros",
     "crates/plugin_runtime",

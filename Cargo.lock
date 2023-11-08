@@ -4987,7 +4987,8 @@ dependencies = [
 name = "menu2"
 version = "0.1.0"
 dependencies = [
- "gpui2",
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -6021,6 +6022,23 @@ dependencies = [
  "theme",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "picker2"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "editor2",
+ "env_logger 0.9.3",
+ "gpui2",
+ "menu2",
+ "parking_lot 0.11.2",
+ "serde_json",
+ "settings2",
+ "theme2",
+ "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -8539,9 +8557,14 @@ dependencies = [
  "backtrace-on-stack-overflow",
  "chrono",
  "clap 4.4.4",
+ "editor2",
+ "fuzzy2",
  "gpui2",
  "itertools 0.11.0",
+ "language2",
  "log",
+ "menu2",
+ "picker2",
  "rust-embed",
  "serde",
  "settings2",

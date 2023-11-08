@@ -9192,7 +9192,7 @@ impl Editor {
         supports
     }
 
-    fn focus(&self, cx: &mut WindowContext) {
+    pub fn focus(&self, cx: &mut WindowContext) {
         cx.focus(&self.focus_handle)
     }
 }

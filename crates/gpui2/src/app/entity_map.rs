@@ -13,6 +13,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc, Weak,
     },
+    thread::panicking,
 };
 
 slotmap::new_key_type! { pub struct EntityId; }
@@ -140,9 +141,8 @@ impl<'a, T: 'static> core::ops::DerefMut for Lease<'a, T> {
 
 impl<'a, T> Drop for Lease<'a, T> {
     fn drop(&mut self) {
-        if self.entity.is_some() {
-            // We don't panic here, because other panics can cause us to drop the lease without ending it cleanly.
-            log::error!("Leases must be ended with EntityMap::end_lease")
+        if self.entity.is_some() && !panicking() {
+            panic!("Leases must be ended with EntityMap::end_lease")
         }
     }
 }

@@ -19,8 +19,8 @@ use gpui::{
     BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchContext, DispatchPhase,
     Edges, Element, ElementId, Entity, GlobalElementId, Hsla, KeyDownEvent, KeyListener, KeyMatch,
     Line, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    ScrollWheelEvent, ShapedGlyph, Size, StatefulInteraction, Style, TextRun, TextStyle,
-    TextSystem, ViewContext, WindowContext,
+    ScrollWheelEvent, ShapedGlyph, Size, Style, TextRun, TextStyle, TextSystem, ViewContext,
+    WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -3220,7 +3220,7 @@ impl PositionMap {
         let previous_valid = self.snapshot.clip_point(exact_unclipped, Bias::Left);
         let next_valid = self.snapshot.clip_point(exact_unclipped, Bias::Right);
 
-        let column_overshoot_after_line_end = (x_overshoot_after_line_end / self.em_advance).into();
+        let column_overshoot_after_line_end = (x_overshoot_after_line_end / self.em_advance) as u32;
         *exact_unclipped.column_mut() += column_overshoot_after_line_end;
         PointForPosition {
             previous_valid,

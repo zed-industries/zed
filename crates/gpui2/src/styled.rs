@@ -1,13 +1,18 @@
 use crate::{
     self as gpui, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, Hsla, JustifyContent, Length, Position,
-    SharedString, StyleRefinement, Visibility,
+    SharedString, Style, StyleRefinement, Visibility,
 };
 use crate::{BoxShadow, TextStyleRefinement};
+use refineable::Refineable;
 use smallvec::smallvec;
 
 pub trait Styled {
     fn style(&mut self) -> &mut StyleRefinement;
+
+    fn computed_style(&mut self) -> Style {
+        Style::default().refined(self.style().clone())
+    }
 
     gpui2_macros::style_helpers!();
 
