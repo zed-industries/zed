@@ -36,7 +36,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    div, point, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
+    div, point, rems, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, Component, Div, Entity, EntityId, EventEmitter, FocusHandle,
     GlobalPixels, Model, ModelContext, ParentElement, Point, Render, Size, StatefulInteractive,
     Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds,
@@ -69,6 +69,7 @@ use std::{
 };
 use theme2::ActiveTheme;
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
+use ui::{h_stack, Label};
 use util::ResultExt;
 use uuid::Uuid;
 use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -2620,19 +2621,23 @@ impl Workspace {
     //     }
 
     fn render_titlebar(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
-        div()
+        h_stack()
+            .id("titlebar")
+            .justify_between()
+            .w_full()
+            .h(rems(1.75))
             .bg(cx.theme().colors().title_bar_background)
             .when(
                 !matches!(cx.window_bounds(), WindowBounds::Fullscreen),
                 |s| s.pl_20(),
             )
-            .id("titlebar")
             .on_click(|_, event, cx| {
                 if event.up.click_count == 2 {
                     cx.zoom_window();
                 }
             })
-            .child("Collab title bar Item") // self.titlebar_item
+            .child(h_stack().child(Label::new("Left side titlebar item"))) // self.titlebar_item
+            .child(h_stack().child(Label::new("Right side titlebar item")))
     }
 
     fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
