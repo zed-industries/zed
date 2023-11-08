@@ -17,9 +17,9 @@ use crate::{
     current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AnyWindowHandle,
     AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
     Entity, FocusEvent, FocusHandle, FocusId, ForegroundExecutor, KeyBinding, Keymap, LayoutId,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render, SharedString,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem,
-    View, Window, WindowContext, WindowHandle, WindowId,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window,
+    WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -140,7 +140,6 @@ impl App {
     }
 }
 
-type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
 pub(crate) type FrameCallback = Box<dyn FnOnce(&mut AppContext)>;
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
@@ -176,7 +175,6 @@ pub struct AppContext {
     pub(crate) keymap: Arc<Mutex<Keymap>>,
     pub(crate) global_action_listeners:
         HashMap<TypeId, Vec<Box<dyn Fn(&dyn Action, DispatchPhase, &mut Self)>>>,
-    action_builders: HashMap<SharedString, ActionBuilder>,
     pending_effects: VecDeque<Effect>,
     pub(crate) pending_notifications: HashSet<EntityId>,
     pub(crate) pending_global_notifications: HashSet<TypeId>,
@@ -234,7 +232,6 @@ impl AppContext {
                 windows: SlotMap::with_key(),
                 keymap: Arc::new(Mutex::new(Keymap::default())),
                 global_action_listeners: HashMap::default(),
-                action_builders: HashMap::default(),
                 pending_effects: VecDeque::new(),
                 pending_notifications: HashSet::default(),
                 pending_global_notifications: HashSet::default(),
@@ -695,10 +692,6 @@ impl AppContext {
         )
     }
 
-    pub fn all_action_names<'a>(&'a self) -> impl Iterator<Item = SharedString> + 'a {
-        self.action_builders.keys().cloned()
-    }
-
     /// Move the global of the given type to the stack.
     pub(crate) fn lease_global<G: 'static>(&mut self) -> GlobalLease<G> {
         GlobalLease::new(
@@ -759,24 +752,6 @@ impl AppContext {
                     listener(action, cx)
                 }
             }));
-    }
-
-    /// Register an action type to allow it to be referenced in keymaps.
-    pub fn register_action_type<A: Action>(&mut self) {
-        self.action_builders.insert(A::qualified_name(), A::build);
-    }
-
-    /// Construct an action based on its name and parameters.
-    pub fn build_action(
-        &mut self,
-        name: &str,
-        params: Option<serde_json::Value>,
-    ) -> Result<Box<dyn Action>> {
-        let build = self
-            .action_builders
-            .get(name)
-            .ok_or_else(|| anyhow!("no action type registered for {}", name))?;
-        (build)(params)
     }
 
     /// Event handlers propagate events by default. Call this method to stop dispatching to

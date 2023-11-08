@@ -1,14 +1,14 @@
 // Input:
 //
-// struct Foo {}
+// struct FooBar {}
 
 // Output:
 //
-// struct Foo {}
+// struct FooBar {}
 //
 // #[allow(non_snake_case)]
 // #[gpui2::ctor]
-// fn register_Foo_builder() {
+// fn register_foobar_builder() {
 //     gpui2::register_action_builder::<Foo>()
 // }
 use proc_macro::TokenStream;

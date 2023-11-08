@@ -1,8 +1,8 @@
 use crate::SharedString;
 use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
-use ctor::ctor;
-use parking_lot::Mutex;
+use lazy_static::lazy_static;
+use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use serde::Deserialize;
 use std::any::{type_name, Any};
 
@@ -21,21 +21,39 @@ pub trait Action: std::fmt::Debug + 'static {
 
 type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
 
-#[ctor]
-static ACTION_BUILDERS: Mutex<HashMap<SharedString, ActionBuilder>> = Mutex::default();
+lazy_static! {
+    static ref ACTION_REGISTRY: RwLock<ActionRegistry> = RwLock::default();
+}
+
+#[derive(Default)]
+struct ActionRegistry {
+    builders_by_name: HashMap<SharedString, ActionBuilder>,
+    all_names: Vec<SharedString>, // So we can return a static slice.
+}
 
 /// Register an action type to allow it to be referenced in keymaps.
 pub fn register_action<A: Action>() {
-    ACTION_BUILDERS.lock().insert(A::qualified_name(), A::build);
+    let name = A::qualified_name();
+    let mut lock = ACTION_REGISTRY.write();
+    lock.builders_by_name.insert(name.clone(), A::build);
+    lock.all_names.push(name);
 }
 
 /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
 pub fn build_action(name: &str, params: Option<serde_json::Value>) -> Result<Box<dyn Action>> {
-    let lock = &ACTION_BUILDERS.lock();
+    let lock = ACTION_REGISTRY.read();
     let build_action = lock
+        .builders_by_name
         .get(name)
         .ok_or_else(|| anyhow!("no action type registered for {}", name))?;
     (build_action)(params)
+}
+
+pub fn all_action_names() -> MappedRwLockReadGuard<'static, [SharedString]> {
+    let lock = ACTION_REGISTRY.read();
+    RwLockReadGuard::map(lock, |registry: &ActionRegistry| {
+        registry.all_names.as_slice()
+    })
 }
 
 // actions defines structs that can be used as actions.
