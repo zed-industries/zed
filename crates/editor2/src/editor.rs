@@ -57,6 +57,7 @@ use language::{
     Diagnostic, IndentKind, IndentSize, Language, LanguageRegistry, LanguageServerName,
     OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
+use lazy_static::lazy_static;
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
 use lsp::{DiagnosticSeverity, Documentation, LanguageServerId};
 use movement::TextLayoutDetails;
@@ -66,7 +67,7 @@ pub use multi_buffer::{
     ToPoint,
 };
 use ordered_float::OrderedFloat;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use project::{FormatTrigger, Location, Project};
 use rand::prelude::*;
 use rpc::proto::*;

@@ -1411,7 +1411,7 @@ impl VisualContext for WindowContext<'_> {
         build_view_state: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static,
+        V: 'static + Render,
     {
         let slot = self.app.entities.reserve();
         let view = View {
@@ -1419,7 +1419,16 @@ impl VisualContext for WindowContext<'_> {
         };
         let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
         let entity = build_view_state(&mut cx);
-        self.entities.insert(slot, entity);
+        cx.entities.insert(slot, entity);
+
+        cx.new_view_observers
+            .clone()
+            .retain(&TypeId::of::<V>(), |observer| {
+                let any_view = AnyView::from(view.clone());
+                (observer)(any_view, self);
+                true
+            });
+
         view
     }
 
@@ -2102,7 +2111,7 @@ impl<V> Context for ViewContext<'_, V> {
 }
 
 impl<V: 'static> VisualContext for ViewContext<'_, V> {
-    fn build_view<W: 'static>(
+    fn build_view<W: Render + 'static>(
         &mut self,
         build_view_state: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>> {

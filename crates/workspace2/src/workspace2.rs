@@ -37,10 +37,10 @@ use futures::{
 };
 use gpui::{
     div, point, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
-    AsyncWindowContext, Bounds, Component, Div, Entity, EntityId, EventEmitter, FocusHandle,
-    GlobalPixels, Model, ModelContext, ParentElement, Point, Render, Size, StatefulInteractive,
-    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds,
-    WindowContext, WindowHandle, WindowOptions,
+    AsyncWindowContext, Bounds, Component, Context, Div, Entity, EntityId, EventEmitter,
+    FocusHandle, GlobalPixels, Model, ModelContext, ParentElement, Point, Render, Size,
+    StatefulInteractive, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -225,7 +225,6 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
-    init_modal_registry(cx);
     pane::init(cx);
     notifications::init(cx);
 
@@ -545,7 +544,7 @@ pub struct Workspace {
     last_active_center_pane: Option<WeakView<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
     status_bar: View<StatusBar>,
-    modal_layer: View<ModalLayer>,
+    modal_layer: ModalLayer,
     //     titlebar_item: Option<AnyViewHandle>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
@@ -697,7 +696,7 @@ impl Workspace {
         });
 
         let workspace_handle = cx.view().downgrade();
-        let modal_layer = cx.build_view(|cx| ModalLayer::new(workspace_handle));
+        let modal_layer = ModalLayer::new();
 
         // todo!()
         // cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
@@ -779,6 +778,10 @@ impl Workspace {
             subscriptions,
             pane_history_timestamp,
         }
+    }
+
+    pub fn modal_layer(&mut self) -> &mut ModalLayer {
+        &mut self.modal_layer
     }
 
     fn new_local(
@@ -3707,9 +3710,9 @@ impl Render for Workspace {
             .bg(cx.theme().colors().background)
             .child(self.render_titlebar(cx))
             .child(
+                // todo! should this be a component a view?
                 self.modal_layer
-                    .read(cx)
-                    .render(cx)
+                    .wrapper_element(cx)
                     .relative()
                     .flex_1()
                     .w_full()

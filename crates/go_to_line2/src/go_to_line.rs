@@ -1,25 +1,55 @@
 use editor::Editor;
 use gpui::{
     actions, div, AppContext, Div, EventEmitter, ParentElement, Render, SharedString,
-    StatelessInteractive, Styled, View, ViewContext, VisualContext,
+    StatefulInteractivity, StatelessInteractive, Styled, View, ViewContext, VisualContext,
 };
 use text::Point;
 use theme::ActiveTheme;
 use ui::{h_stack, modal, v_stack, Label, LabelColor};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{ModalRegistry, Modal, ModalEvent};
+use workspace::{Modal, ModalEvent, Workspace};
 
 actions!(Toggle);
 
 pub fn init(cx: &mut AppContext) {
-    cx.global_mut::<ModalRegistry>()
-        .register_modal(Toggle, |workspace, cx| {
-            let editor = workspace
-                .active_item(cx)
-                .and_then(|active_item| active_item.downcast::<Editor>())?;
+    cx.observe_new_views(
+        |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
+            workspace
+                .modal_layer()
+                .register_modal(Toggle, |workspace, cx| {
+                    let editor = workspace
+                        .active_item(cx)
+                        .and_then(|active_item| active_item.downcast::<Editor>())?;
 
-            Some(cx.build_view(|cx| GoToLine::new(editor, cx)))
-        });
+                    Some(cx.build_view(|cx| GoToLine::new(editor, cx)))
+                });
+            dbg!("hey!");
+        },
+    )
+    .detach();
+
+    // // cx.window_global()
+    // // cx.window_global::<Workspace>
+    // // cx.window_global::<ActiveEditor>()
+    // Workspace::on_init(|workspace, cx| {
+    //     workspace.on_open_item()
+    // });
+
+    // Editor::on_init(|editor, cx|{
+
+    // })
+
+    // Editor::register_action(|_editor, _: &Toggle, cx| {
+    //     dbg!("HEY!");
+    //     // let editor = cx.view();
+    //     // cx.update_window(cx.window().handle(), |cx, view| {
+    //     //     let workspace = view.downcast::<Workspace>();
+    //     // })
+    //     // workspace.show_modal(cx.build_view(|cx| GoToLine::new(editor, cx)))
+    // })
+    // cx.global_mut::<ModalRegistry>()
+    //     .register_modal(Toggle, |workspace, cx| {
+    //     });
 }
 
 pub struct GoToLine {
@@ -128,13 +158,14 @@ impl Modal for GoToLine {
 }
 
 impl Render for GoToLine {
-    type Element = Div<Self>;
+    type Element = Div<Self, StatefulInteractivity<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         modal(cx)
-            .w_96()
+            .id("go to line")
             .on_action(Self::cancel)
             .on_action(Self::confirm)
+            .w_96()
             .child(
                 v_stack()
                     .px_1()

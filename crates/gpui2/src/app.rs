@@ -18,8 +18,8 @@ use crate::{
     AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
     Entity, EventEmitter, FocusEvent, FocusHandle, FocusId, ForegroundExecutor, KeyBinding, Keymap,
     LayoutId, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window,
-    WindowContext, WindowHandle, WindowId,
+    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext,
+    Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -167,6 +167,7 @@ type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
+type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
 
 // struct FrameConsumer {
 //     next_frame_callbacks: Vec<FrameCallback>,
@@ -193,6 +194,7 @@ pub struct AppContext {
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) globals_by_type: HashMap<TypeId, AnyBox>,
     pub(crate) entities: EntityMap,
+    pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) keymap: Arc<Mutex<Keymap>>,
     pub(crate) global_action_listeners:
@@ -251,6 +253,7 @@ impl AppContext {
                 text_style_stack: Vec::new(),
                 globals_by_type: HashMap::default(),
                 entities,
+                new_view_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
                 keymap: Arc::new(Mutex::new(Keymap::default())),
                 global_action_listeners: HashMap::default(),
@@ -599,6 +602,7 @@ impl AppContext {
 
     fn apply_notify_effect(&mut self, emitter: EntityId) {
         self.pending_notifications.remove(&emitter);
+
         self.observers
             .clone()
             .retain(&emitter, |handler| handler(self));
@@ -826,6 +830,23 @@ impl AppContext {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, lease.global);
+    }
+
+    pub fn observe_new_views<V: 'static>(
+        &mut self,
+        on_new: impl 'static + Fn(&mut V, &mut ViewContext<V>),
+    ) -> Subscription {
+        self.new_view_observers.insert(
+            TypeId::of::<V>(),
+            Box::new(move |any_view: AnyView, cx: &mut WindowContext| {
+                any_view
+                    .downcast::<V>()
+                    .unwrap()
+                    .update(cx, |view_state, cx| {
+                        on_new(view_state, cx);
+                    })
+            }),
+        )
     }
 
     pub fn observe_release<E, T>(
