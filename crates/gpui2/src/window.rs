@@ -1170,7 +1170,6 @@ impl<'a> WindowContext<'a> {
                     .insert(any_mouse_event.type_id(), handlers);
             }
         } else if let Some(any_key_event) = event.keyboard_event() {
-            let mut did_handle_action = false;
             let key_dispatch_stack = mem::take(&mut self.window.key_dispatch_stack);
             let key_event_type = any_key_event.type_id();
             let mut context_stack = SmallVec::<[&DispatchContext; 16]>::new();
@@ -1191,7 +1190,6 @@ impl<'a> WindowContext<'a> {
                                 self.dispatch_action(action, &key_dispatch_stack[..ix]);
                             }
                             if !self.app.propagate_event {
-                                did_handle_action = true;
                                 break;
                             }
                         }
@@ -1220,7 +1218,6 @@ impl<'a> WindowContext<'a> {
                                 }
 
                                 if !self.app.propagate_event {
-                                    did_handle_action = true;
                                     break;
                                 }
                             }
@@ -1234,10 +1231,9 @@ impl<'a> WindowContext<'a> {
 
             drop(context_stack);
             self.window.key_dispatch_stack = key_dispatch_stack;
-            return did_handle_action;
         }
 
-        true
+        !self.app.propagate_event
     }
 
     /// Attempt to map a keystroke to an action based on the keymap.

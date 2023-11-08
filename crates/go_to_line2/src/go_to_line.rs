@@ -27,7 +27,6 @@ impl Render for GoToLine {
     type Element = Div<Self>;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        dbg!("rendering GoToLine");
         div().bg(red()).w(px(100.0)).h(px(100.0))
     }
 }
