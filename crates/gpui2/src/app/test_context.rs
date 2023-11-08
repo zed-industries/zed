@@ -1,7 +1,8 @@
 use crate::{
     AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, BackgroundExecutor, Context,
     EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent, Keystroke, Model, ModelContext,
-    Result, Task, TestDispatcher, TestPlatform, WindowContext,
+    Render, Result, Task, TestDispatcher, TestPlatform, ViewContext, VisualContext, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -12,6 +13,7 @@ pub struct TestAppContext {
     pub app: Rc<AppCell>,
     pub background_executor: BackgroundExecutor,
     pub foreground_executor: ForegroundExecutor,
+    pub dispatcher: TestDispatcher,
 }
 
 impl Context for TestAppContext {
@@ -44,13 +46,25 @@ impl Context for TestAppContext {
         let mut lock = self.app.borrow_mut();
         lock.update_window(window, f)
     }
+
+    fn read_model<T, R>(
+        &self,
+        handle: &Model<T>,
+        read: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        let app = self.app.borrow();
+        app.read_model(handle, read)
+    }
 }
 
 impl TestAppContext {
     pub fn new(dispatcher: TestDispatcher) -> Self {
-        let dispatcher = Arc::new(dispatcher);
-        let background_executor = BackgroundExecutor::new(dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(dispatcher);
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
         let platform = Rc::new(TestPlatform::new(
             background_executor.clone(),
             foreground_executor.clone(),
@@ -61,7 +75,12 @@ impl TestAppContext {
             app: AppContext::new(platform, asset_source, http_client),
             background_executor,
             foreground_executor,
+            dispatcher: dispatcher.clone(),
         }
+    }
+
+    pub fn new_app(&self) -> TestAppContext {
+        Self::new(self.dispatcher.clone())
     }
 
     pub fn quit(&self) {
@@ -85,6 +104,20 @@ impl TestAppContext {
     pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> R {
         let mut cx = self.app.borrow_mut();
         cx.update(f)
+    }
+
+    pub fn read<R>(&self, f: impl FnOnce(&AppContext) -> R) -> R {
+        let cx = self.app.borrow();
+        f(&*cx)
+    }
+
+    pub fn add_window<F, V>(&mut self, build_window: F) -> WindowHandle<V>
+    where
+        F: FnOnce(&mut ViewContext<V>) -> V,
+        V: Render,
+    {
+        let mut cx = self.app.borrow_mut();
+        cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window))
     }
 
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>

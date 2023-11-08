@@ -1,7 +1,6 @@
 use crate::{
     call_settings::CallSettings,
     participant::{LocalParticipant, ParticipantLocation, RemoteParticipant},
-    IncomingCall,
 };
 use anyhow::{anyhow, Result};
 use audio::{Audio, Sound};
@@ -284,37 +283,32 @@ impl Room {
         })
     }
 
-    pub(crate) fn join_channel(
+    pub(crate) async fn join_channel(
         channel_id: u64,
         client: Arc<Client>,
         user_store: Model<UserStore>,
-        cx: &mut AppContext,
-    ) -> Task<Result<Model<Self>>> {
-        cx.spawn(move |cx| async move {
-            Self::from_join_response(
-                client.request(proto::JoinChannel { channel_id }).await?,
-                client,
-                user_store,
-                cx,
-            )
-        })
+        cx: AsyncAppContext,
+    ) -> Result<Model<Self>> {
+        Self::from_join_response(
+            client.request(proto::JoinChannel { channel_id }).await?,
+            client,
+            user_store,
+            cx,
+        )
     }
 
-    pub(crate) fn join(
-        call: &IncomingCall,
+    pub(crate) async fn join(
+        room_id: u64,
         client: Arc<Client>,
         user_store: Model<UserStore>,
-        cx: &mut AppContext,
-    ) -> Task<Result<Model<Self>>> {
-        let id = call.room_id;
-        cx.spawn(move |cx| async move {
-            Self::from_join_response(
-                client.request(proto::JoinRoom { id }).await?,
-                client,
-                user_store,
-                cx,
-            )
-        })
+        cx: AsyncAppContext,
+    ) -> Result<Model<Self>> {
+        Self::from_join_response(
+            client.request(proto::JoinRoom { id: room_id }).await?,
+            client,
+            user_store,
+            cx,
+        )
     }
 
     fn released(&mut self, cx: &mut AppContext) {

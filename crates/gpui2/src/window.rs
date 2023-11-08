@@ -1391,6 +1391,18 @@ impl Context for WindowContext<'_> {
             window.update(self.app, update)
         }
     }
+
+    fn read_model<T, R>(
+        &self,
+        handle: &Model<T>,
+        read: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        let entity = self.entities.read(handle);
+        read(&*entity, &*self.app)
+    }
 }
 
 impl VisualContext for WindowContext<'_> {
@@ -2075,6 +2087,17 @@ impl<V> Context for ViewContext<'_, V> {
         F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
     {
         self.window_cx.update_window(window, update)
+    }
+
+    fn read_model<T, R>(
+        &self,
+        handle: &Model<T>,
+        read: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        self.window_cx.read_model(handle, read)
     }
 }
 

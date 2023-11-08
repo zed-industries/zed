@@ -325,6 +325,14 @@ impl<T: 'static> Model<T> {
         cx.entities.read(self)
     }
 
+    pub fn read_with<'a, R, C: Context>(
+        &self,
+        cx: &'a C,
+        f: impl FnOnce(&T, &AppContext) -> R,
+    ) -> C::Result<R> {
+        cx.read_model(self, f)
+    }
+
     /// Update the entity referenced by this model with the given function.
     ///
     /// The update function receives a context appropriate for its environment.

@@ -124,6 +124,7 @@ impl TestServer {
             if cx.has_global::<SettingsStore>() {
                 panic!("Same cx used to create two test clients")
             }
+
             cx.set_global(SettingsStore::test(cx));
         });
 

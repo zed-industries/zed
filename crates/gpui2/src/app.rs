@@ -16,8 +16,8 @@ pub use test_context::*;
 use crate::{
     current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AnyWindowHandle,
     AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
-    Entity, FocusEvent, FocusHandle, FocusId, ForegroundExecutor, KeyBinding, Keymap, LayoutId,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render, SubscriberSet,
+    Entity, EventEmitter, FocusEvent, FocusHandle, FocusId, ForegroundExecutor, KeyBinding, Keymap,
+    LayoutId, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render, SubscriberSet,
     Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window,
     WindowContext, WindowHandle, WindowId,
 };
@@ -48,15 +48,19 @@ pub struct AppCell {
 impl AppCell {
     #[track_caller]
     pub fn borrow(&self) -> AppRef {
-        // let thread_id = std::thread::current().id();
-        // eprintln!("borrowed {thread_id:?}");
+        if let Some(_) = option_env!("TRACK_THREAD_BORROWS") {
+            let thread_id = std::thread::current().id();
+            eprintln!("borrowed {thread_id:?}");
+        }
         AppRef(self.app.borrow())
     }
 
     #[track_caller]
     pub fn borrow_mut(&self) -> AppRefMut {
-        // let thread_id = std::thread::current().id();
-        // eprintln!("borrowed {thread_id:?}");
+        if let Some(_) = option_env!("TRACK_THREAD_BORROWS") {
+            let thread_id = std::thread::current().id();
+            eprintln!("borrowed {thread_id:?}");
+        }
         AppRefMut(self.app.borrow_mut())
     }
 }
@@ -64,8 +68,26 @@ impl AppCell {
 #[derive(Deref, DerefMut)]
 pub struct AppRef<'a>(Ref<'a, AppContext>);
 
+impl<'a> Drop for AppRef<'a> {
+    fn drop(&mut self) {
+        if let Some(_) = option_env!("TRACK_THREAD_BORROWS") {
+            let thread_id = std::thread::current().id();
+            eprintln!("dropped borrow from {thread_id:?}");
+        }
+    }
+}
+
 #[derive(Deref, DerefMut)]
 pub struct AppRefMut<'a>(RefMut<'a, AppContext>);
+
+impl<'a> Drop for AppRefMut<'a> {
+    fn drop(&mut self) {
+        if let Some(_) = option_env!("TRACK_THREAD_BORROWS") {
+            let thread_id = std::thread::current().id();
+            eprintln!("dropped {thread_id:?}");
+        }
+    }
+}
 
 pub struct App(Rc<AppCell>);
 
@@ -289,6 +311,83 @@ impl AppContext {
         }
         self.pending_updates -= 1;
         result
+    }
+
+    pub fn observe<W, E>(
+        &mut self,
+        entity: &E,
+        mut on_notify: impl FnMut(E, &mut AppContext) + 'static,
+    ) -> Subscription
+    where
+        W: 'static,
+        E: Entity<W>,
+    {
+        self.observe_internal(entity, move |e, cx| {
+            on_notify(e, cx);
+            true
+        })
+    }
+
+    pub fn observe_internal<W, E>(
+        &mut self,
+        entity: &E,
+        mut on_notify: impl FnMut(E, &mut AppContext) -> bool + 'static,
+    ) -> Subscription
+    where
+        W: 'static,
+        E: Entity<W>,
+    {
+        let entity_id = entity.entity_id();
+        let handle = entity.downgrade();
+        self.observers.insert(
+            entity_id,
+            Box::new(move |cx| {
+                if let Some(handle) = E::upgrade_from(&handle) {
+                    on_notify(handle, cx)
+                } else {
+                    false
+                }
+            }),
+        )
+    }
+
+    pub fn subscribe<T, E>(
+        &mut self,
+        entity: &E,
+        mut on_event: impl FnMut(E, &T::Event, &mut AppContext) + 'static,
+    ) -> Subscription
+    where
+        T: 'static + EventEmitter,
+        E: Entity<T>,
+    {
+        self.subscribe_internal(entity, move |entity, event, cx| {
+            on_event(entity, event, cx);
+            true
+        })
+    }
+
+    pub(crate) fn subscribe_internal<T, E>(
+        &mut self,
+        entity: &E,
+        mut on_event: impl FnMut(E, &T::Event, &mut AppContext) -> bool + 'static,
+    ) -> Subscription
+    where
+        T: 'static + EventEmitter,
+        E: Entity<T>,
+    {
+        let entity_id = entity.entity_id();
+        let entity = entity.downgrade();
+        self.event_listeners.insert(
+            entity_id,
+            Box::new(move |event, cx| {
+                let event: &T::Event = event.downcast_ref().expect("invalid event type");
+                if let Some(handle) = E::upgrade_from(&entity) {
+                    on_event(handle, event, cx)
+                } else {
+                    false
+                }
+            }),
+        )
     }
 
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
@@ -624,6 +723,7 @@ impl AppContext {
     }
 
     /// Access the global of the given type. Panics if a global for that type has not been assigned.
+    #[track_caller]
     pub fn global<G: 'static>(&self) -> &G {
         self.globals_by_type
             .get(&TypeId::of::<G>())
@@ -640,6 +740,7 @@ impl AppContext {
     }
 
     /// Access the global of the given type mutably. Panics if a global for that type has not been assigned.
+    #[track_caller]
     pub fn global_mut<G: 'static>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
@@ -667,6 +768,24 @@ impl AppContext {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, Box::new(global));
+    }
+
+    /// Clear all stored globals. Does not notify global observers.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn clear_globals(&mut self) {
+        self.globals_by_type.drain();
+    }
+
+    /// Remove the global of the given type from the app context. Does not notify global observers.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn remove_global<G: Any>(&mut self) -> G {
+        let global_type = TypeId::of::<G>();
+        *self
+            .globals_by_type
+            .remove(&global_type)
+            .unwrap_or_else(|| panic!("no global added for {}", std::any::type_name::<G>()))
+            .downcast()
+            .unwrap()
     }
 
     /// Update the global of the given type with a closure. Unlike `global_mut`, this method provides
@@ -827,6 +946,18 @@ impl Context for AppContext {
 
             Ok(result)
         })
+    }
+
+    fn read_model<T, R>(
+        &self,
+        handle: &Model<T>,
+        read: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        let entity = self.entities.read(handle);
+        read(entity, self)
     }
 }
 

@@ -127,6 +127,10 @@ impl TestDispatcher {
             b
         })
     }
+
+    pub fn rng(&self) -> StdRng {
+        self.state.lock().random.clone()
+    }
 }
 
 impl Clone for TestDispatcher {
