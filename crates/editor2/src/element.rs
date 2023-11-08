@@ -4,7 +4,8 @@ use crate::{
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::hover_at,
     link_go_to_definition::{
-        update_go_to_definition_link, update_inlay_link_and_hover_points, GoToDefinitionTrigger,
+        go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
+        update_inlay_link_and_hover_points, GoToDefinitionTrigger,
     },
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
@@ -17,9 +18,9 @@ use gpui::{
     black, hsla, point, px, relative, size, transparent_black, Action, AnyElement,
     BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchContext, DispatchPhase,
     Edges, Element, ElementId, Entity, GlobalElementId, Hsla, KeyDownEvent, KeyListener, KeyMatch,
-    Line, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, ScrollWheelEvent,
-    ShapedGlyph, Size, StatefulInteraction, Style, TextRun, TextStyle, TextSystem, ViewContext,
-    WindowContext,
+    Line, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    ScrollWheelEvent, ShapedGlyph, Size, StatefulInteraction, Style, TextRun, TextStyle,
+    TextSystem, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -312,37 +313,38 @@ impl EditorElement {
     //     true
     // }
 
-    // fn mouse_up(
-    //     editor: &mut Editor,
-    //     position: gpui::Point<Pixels>,
-    //     cmd: bool,
-    //     shift: bool,
-    //     alt: bool,
-    //     position_map: &PositionMap,
-    //     text_bounds: Bounds<Pixels>,
-    //     cx: &mut EventContext<Editor>,
-    // ) -> bool {
-    //     let end_selection = editor.has_pending_selection();
-    //     let pending_nonempty_selections = editor.has_pending_nonempty_selection();
+    fn mouse_up(
+        editor: &mut Editor,
+        event: &MouseUpEvent,
+        position_map: &PositionMap,
+        text_bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let end_selection = editor.has_pending_selection();
+        let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
-    //     if end_selection {
-    //         editor.select(SelectPhase::End, cx);
-    //     }
+        if end_selection {
+            editor.select(SelectPhase::End, cx);
+        }
 
-    //     if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
-    //         let point = position_map.point_for_position(text_bounds, position);
-    //         let could_be_inlay = point.as_valid().is_none();
-    //         if shift || could_be_inlay {
-    //             go_to_fetched_type_definition(editor, point, alt, cx);
-    //         } else {
-    //             go_to_fetched_definition(editor, point, alt, cx);
-    //         }
+        if !pending_nonempty_selections
+            && event.modifiers.command
+            && text_bounds.contains_point(&event.position)
+        {
+            let point = position_map.point_for_position(text_bounds, event.position);
+            let could_be_inlay = point.as_valid().is_none();
+            let split = event.modifiers.alt;
+            if event.modifiers.shift || could_be_inlay {
+                go_to_fetched_type_definition(editor, point, split, cx);
+            } else {
+                go_to_fetched_definition(editor, point, split, cx);
+            }
 
-    //         return true;
-    //     }
+            return true;
+        }
 
-    //     end_selection
-    // }
+        end_selection
+    }
 
     fn mouse_moved(
         editor: &mut Editor,
@@ -2317,24 +2319,37 @@ impl EditorElement {
         });
         cx.on_mouse_event({
             let position_map = position_map.clone();
-            move |editor, event: &MouseMoveEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
-                }
-
-                if Self::mouse_moved(editor, event, &position_map, text_bounds, cx) {
-                    cx.stop_propagation()
-                }
-            }
-        });
-        cx.on_mouse_event({
-            let position_map = position_map.clone();
             move |editor, event: &MouseDownEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
 
                 if Self::mouse_down(editor, event, &position_map, text_bounds, gutter_bounds, cx) {
+                    cx.stop_propagation()
+                }
+            }
+        });
+        cx.on_mouse_event({
+            let position_map = position_map.clone();
+            move |editor, event: &MouseUpEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if Self::mouse_up(editor, event, &position_map, text_bounds, cx) {
+                    cx.stop_propagation()
+                }
+            }
+        });
+
+        cx.on_mouse_event({
+            let position_map = position_map.clone();
+            move |editor, event: &MouseMoveEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if Self::mouse_moved(editor, event, &position_map, text_bounds, cx) {
                     cx.stop_propagation()
                 }
             }
