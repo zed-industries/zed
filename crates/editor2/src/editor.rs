@@ -448,13 +448,12 @@ pub fn init(cx: &mut AppContext) {
     // cx.register_action_type(Editor::paste);
     // cx.register_action_type(Editor::undo);
     // cx.register_action_type(Editor::redo);
-    cx.register_action_type::<MoveUp>();
     // cx.register_action_type(Editor::move_page_up);
-    cx.register_action_type::<MoveDown>();
+    // cx.register_action_type::<MoveDown>();
     // cx.register_action_type(Editor::move_page_down);
     // cx.register_action_type(Editor::next_screen);
-    cx.register_action_type::<MoveLeft>();
-    cx.register_action_type::<MoveRight>();
+    // cx.register_action_type::<MoveLeft>();
+    // cx.register_action_type::<MoveRight>();
     // cx.register_action_type(Editor::move_to_previous_word_start);
     // cx.register_action_type(Editor::move_to_previous_subword_start);
     // cx.register_action_type(Editor::move_to_next_word_end);

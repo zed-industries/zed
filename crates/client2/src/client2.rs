@@ -80,7 +80,6 @@ pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
     init_settings(cx);
 
     let client = Arc::downgrade(client);
-    cx.register_action_type::<SignIn>();
     cx.on_action({
         let client = client.clone();
         move |_: &SignIn, cx| {
@@ -93,7 +92,6 @@ pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
         }
     });
 
-    cx.register_action_type::<SignOut>();
     cx.on_action({
         let client = client.clone();
         move |_: &SignOut, cx| {
@@ -106,7 +104,6 @@ pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
         }
     });
 
-    cx.register_action_type::<Reconnect>();
     cx.on_action({
         let client = client.clone();
         move |_: &Reconnect, cx| {
