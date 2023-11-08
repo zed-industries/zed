@@ -2694,7 +2694,7 @@ impl Workspace {
                 .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
         if is_edited != self.window_edited {
             self.window_edited = is_edited;
-            todo!()
+            // todo!()
             // cx.set_window_edited(self.window_edited)
         }
     }

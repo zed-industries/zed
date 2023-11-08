@@ -2,13 +2,14 @@ use crate::{
     px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     Bounds, BoxShadow, Context, Corners, CursorStyle, DevicePixels, DispatchContext, DisplayId,
     Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId,
-    GlobalElementId, GlyphId, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch,
-    KeyMatcher, Keystroke, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
-    Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
-    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    GlobalElementId, GlyphId, Hsla, ImageData, InputEvent, InputHandler, IsZero, KeyListener,
+    KeyMatch, KeyMatcher, Keystroke, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel,
+    Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
+    SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
+    WindowBounds, WindowInputHandler, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -191,6 +192,7 @@ pub struct Window {
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     requested_cursor_style: Option<CursorStyle>,
+    requested_input_handler: Option<Box<dyn PlatformInputHandler>>,
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
@@ -253,7 +255,7 @@ impl Window {
                 handle
                     .update(&mut cx, |_, cx| cx.dispatch_event(event))
                     .log_err()
-                    .unwrap_or(true)
+                    .unwrap_or(false)
             })
         });
 
@@ -285,6 +287,7 @@ impl Window {
             default_prevented: true,
             mouse_position,
             requested_cursor_style: None,
+            requested_input_handler: None,
             scale_factor,
             bounds,
             bounds_observers: SubscriberSet::new(),
@@ -1016,6 +1019,9 @@ impl<'a> WindowContext<'a> {
             .take()
             .unwrap_or(CursorStyle::Arrow);
         self.platform.set_cursor_style(cursor_style);
+        if let Some(handler) = self.window.requested_input_handler.take() {
+            self.window.platform_window.set_input_handler(handler);
+        }
 
         self.window.dirty = false;
     }
@@ -1160,6 +1166,7 @@ impl<'a> WindowContext<'a> {
                     .insert(any_mouse_event.type_id(), handlers);
             }
         } else if let Some(any_key_event) = event.keyboard_event() {
+            let mut did_handle_action = false;
             let key_dispatch_stack = mem::take(&mut self.window.key_dispatch_stack);
             let key_event_type = any_key_event.type_id();
             let mut context_stack = SmallVec::<[&DispatchContext; 16]>::new();
@@ -1180,6 +1187,7 @@ impl<'a> WindowContext<'a> {
                                 self.dispatch_action(action, &key_dispatch_stack[..ix]);
                             }
                             if !self.app.propagate_event {
+                                did_handle_action = true;
                                 break;
                             }
                         }
@@ -1208,6 +1216,7 @@ impl<'a> WindowContext<'a> {
                                 }
 
                                 if !self.app.propagate_event {
+                                    did_handle_action = true;
                                     break;
                                 }
                             }
@@ -1221,6 +1230,7 @@ impl<'a> WindowContext<'a> {
 
             drop(context_stack);
             self.window.key_dispatch_stack = key_dispatch_stack;
+            return did_handle_action;
         }
 
         true
@@ -2000,6 +2010,19 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 handler(view, event, phase, cx);
             })
         });
+    }
+}
+
+impl<V> ViewContext<'_, V>
+where
+    V: InputHandler + 'static,
+{
+    pub fn handle_text_input(&mut self) {
+        self.window.requested_input_handler = Some(Box::new(WindowInputHandler {
+            cx: self.app.this.clone(),
+            window: self.window_handle(),
+            handler: self.view().downgrade(),
+        }));
     }
 }
 
