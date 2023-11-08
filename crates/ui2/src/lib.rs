@@ -19,12 +19,14 @@ mod elevation;
 pub mod prelude;
 pub mod settings;
 mod static_data;
+mod styled_ext;
 mod to_extract;
 pub mod utils;
 
 pub use components::*;
 pub use prelude::*;
 pub use static_data::*;
+pub use styled_ext::*;
 pub use to_extract::*;
 
 // This needs to be fully qualified with `crate::` otherwise we get a panic
