@@ -8,8 +8,8 @@ use crate::{
     },
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    HalfPageDown, HalfPageUp, LineDown, LineUp, MoveDown, PageDown, PageUp, Point, Selection,
-    SoftWrap, ToPoint, MAX_LINE_LEN,
+    HalfPageDown, HalfPageUp, LineDown, LineUp, MoveDown, PageDown, PageUp, Point, SelectPhase,
+    Selection, SoftWrap, ToPoint, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -17,8 +17,8 @@ use gpui::{
     black, hsla, point, px, relative, size, transparent_black, Action, AnyElement,
     BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchContext, DispatchPhase,
     Edges, Element, ElementId, Entity, Hsla, KeyDownEvent, KeyListener, KeyMatch, Line, Modifiers,
-    MouseMoveEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size, StatefulInteraction, Style,
-    TextRun, TextStyle, TextSystem, ViewContext, WindowContext,
+    MouseDownEvent, MouseMoveEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size,
+    StatefulInteraction, Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -242,63 +242,54 @@ impl EditorElement {
     //     )
     // }
 
-    // fn mouse_down(
-    //     editor: &mut Editor,
-    //     MouseButtonEvent {
-    //         position,
-    //         modifiers:
-    //             Modifiers {
-    //                 shift,
-    //                 ctrl,
-    //                 alt,
-    //                 cmd,
-    //                 ..
-    //             },
-    //         mut click_count,
-    //         ..
-    //     }: MouseButtonEvent,
-    //     position_map: &PositionMap,
-    //     text_bounds: Bounds<Pixels>,
-    //     gutter_bounds: Bounds<Pixels>,
-    //     cx: &mut EventContext<Editor>,
-    // ) -> bool {
-    //     if gutter_bounds.contains_point(position) {
-    //         click_count = 3; // Simulate triple-click when clicking the gutter to select lines
-    //     } else if !text_bounds.contains_point(position) {
-    //         return false;
-    //     }
+    fn mouse_down(
+        editor: &mut Editor,
+        event: &MouseDownEvent,
+        position_map: &PositionMap,
+        text_bounds: Bounds<Pixels>,
+        gutter_bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let mut click_count = event.click_count;
+        let modifiers = event.modifiers;
 
-    //     let point_for_position = position_map.point_for_position(text_bounds, position);
-    //     let position = point_for_position.previous_valid;
-    //     if shift && alt {
-    //         editor.select(
-    //             SelectPhase::BeginColumnar {
-    //                 position,
-    //                 goal_column: point_for_position.exact_unclipped.column(),
-    //             },
-    //             cx,
-    //         );
-    //     } else if shift && !ctrl && !alt && !cmd {
-    //         editor.select(
-    //             SelectPhase::Extend {
-    //                 position,
-    //                 click_count,
-    //             },
-    //             cx,
-    //         );
-    //     } else {
-    //         editor.select(
-    //             SelectPhase::Begin {
-    //                 position,
-    //                 add: alt,
-    //                 click_count,
-    //             },
-    //             cx,
-    //         );
-    //     }
+        if gutter_bounds.contains_point(&event.position) {
+            click_count = 3; // Simulate triple-click when clicking the gutter to select lines
+        } else if !text_bounds.contains_point(&event.position) {
+            return false;
+        }
 
-    //     true
-    // }
+        let point_for_position = position_map.point_for_position(text_bounds, event.position);
+        let position = point_for_position.previous_valid;
+        if modifiers.shift && modifiers.alt {
+            editor.select(
+                SelectPhase::BeginColumnar {
+                    position,
+                    goal_column: point_for_position.exact_unclipped.column(),
+                },
+                cx,
+            );
+        } else if modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.command {
+            editor.select(
+                SelectPhase::Extend {
+                    position,
+                    click_count,
+                },
+                cx,
+            );
+        } else {
+            editor.select(
+                SelectPhase::Begin {
+                    position,
+                    add: modifiers.alt,
+                    click_count,
+                },
+                cx,
+            );
+        }
+
+        true
+    }
 
     // fn mouse_right_down(
     //     editor: &mut Editor,
@@ -2792,6 +2783,18 @@ impl Element<Editor> for EditorElement {
                 }
 
                 if Self::mouse_moved(editor, event, &position_map, text_bounds, cx) {
+                    cx.stop_propagation()
+                }
+            }
+        });
+        cx.on_mouse_event({
+            let position_map = layout.position_map.clone();
+            move |editor, event: &MouseDownEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if Self::mouse_down(editor, event, &position_map, text_bounds, gutter_bounds, cx) {
                     cx.stop_propagation()
                 }
             }
