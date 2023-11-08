@@ -614,6 +614,10 @@ impl<'a> WindowContext<'a> {
             .find(|display| display.id() == self.window.display_id)
     }
 
+    pub fn show_character_palette(&self) {
+        self.window.platform_window.show_character_palette();
+    }
+
     /// The scale factor of the display associated with the window. For example, it could
     /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
     /// be rendered as two pixels on screen.

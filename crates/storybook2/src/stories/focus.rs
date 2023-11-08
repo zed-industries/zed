@@ -15,8 +15,6 @@ impl FocusStory {
             KeyBinding::new("cmd-a", ActionB, Some("child-1")),
             KeyBinding::new("cmd-c", ActionC, None),
         ]);
-        cx.register_action_type::<ActionA>();
-        cx.register_action_type::<ActionB>();
 
         cx.build_view(move |cx| Self {})
     }

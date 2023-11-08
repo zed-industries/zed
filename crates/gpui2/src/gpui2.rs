@@ -37,6 +37,7 @@ pub use anyhow::Result;
 pub use app::*;
 pub use assets::*;
 pub use color::*;
+pub use ctor::ctor;
 pub use element::*;
 pub use elements::*;
 pub use executor::*;

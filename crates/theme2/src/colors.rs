@@ -3,7 +3,7 @@ use std::sync::Arc;
 use gpui::Hsla;
 use refineable::Refineable;
 
-use crate::SyntaxTheme;
+use crate::{PlayerColors, SyntaxTheme};
 
 #[derive(Clone)]
 pub struct SystemColors {
@@ -11,33 +11,6 @@ pub struct SystemColors {
     pub mac_os_traffic_light_red: Hsla,
     pub mac_os_traffic_light_yellow: Hsla,
     pub mac_os_traffic_light_green: Hsla,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PlayerColor {
-    pub cursor: Hsla,
-    pub background: Hsla,
-    pub selection: Hsla,
-}
-
-#[derive(Clone)]
-pub struct PlayerColors(pub Vec<PlayerColor>);
-
-impl PlayerColors {
-    pub fn local(&self) -> PlayerColor {
-        // todo!("use a valid color");
-        *self.0.first().unwrap()
-    }
-
-    pub fn absent(&self) -> PlayerColor {
-        // todo!("use a valid color");
-        *self.0.last().unwrap()
-    }
-
-    pub fn color_for_participant(&self, participant_index: u32) -> PlayerColor {
-        let len = self.0.len() - 1;
-        self.0[(participant_index as usize % len) + 1]
-    }
 }
 
 #[derive(Refineable, Clone, Debug)]
