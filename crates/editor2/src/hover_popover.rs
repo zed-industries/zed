@@ -325,23 +325,22 @@ fn show_hover(
             };
 
             this.update(&mut cx, |this, cx| {
-                todo!();
-                // if let Some(symbol_range) = hover_popover
-                //     .as_ref()
-                //     .and_then(|hover_popover| hover_popover.symbol_range.as_text_range())
-                // {
-                //     // Highlight the selected symbol using a background highlight
-                //     this.highlight_background::<HoverState>(
-                //         vec![symbol_range],
-                //         |theme| theme.editor.hover_popover.highlight,
-                //         cx,
-                //     );
-                // } else {
-                //     this.clear_background_highlights::<HoverState>(cx);
-                // }
-                //
-                // this.hover_state.info_popover = hover_popover;
-                // cx.notify();
+                if let Some(symbol_range) = hover_popover
+                    .as_ref()
+                    .and_then(|hover_popover| hover_popover.symbol_range.as_text_range())
+                {
+                    // Highlight the selected symbol using a background highlight
+                    this.highlight_background::<HoverState>(
+                        vec![symbol_range],
+                        |theme| theme.element_hover, // todo! update theme
+                        cx,
+                    );
+                } else {
+                    this.clear_background_highlights::<HoverState>(cx);
+                }
+
+                this.hover_state.info_popover = hover_popover;
+                cx.notify();
             })?;
 
             Ok::<_, anyhow::Error>(())
