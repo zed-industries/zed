@@ -249,11 +249,6 @@ pub struct UnfoldAt {
     pub buffer_row: u32,
 }
 
-#[action]
-pub struct GutterHover {
-    pub hovered: bool,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InlayId {
     Suggestion(usize),
@@ -8309,15 +8304,12 @@ impl Editor {
         }
     }
 
-    //     todo!()
-    //     pub fn gutter_hover(
-    //         &mut self,
-    //         GutterHover { hovered }: &GutterHover,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.gutter_hovered = *hovered;
-    //         cx.notify();
-    //     }
+    pub fn set_gutter_hovered(&mut self, hovered: bool, cx: &mut ViewContext<Self>) {
+        if hovered != self.gutter_hovered {
+            self.gutter_hovered = hovered;
+            cx.notify();
+        }
+    }
 
     pub fn insert_blocks(
         &mut self,

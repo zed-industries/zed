@@ -351,6 +351,7 @@ impl EditorElement {
         event: &MouseMoveEvent,
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
+        gutter_bounds: Bounds<Pixels>,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         let modifiers = event.modifiers;
@@ -388,9 +389,12 @@ impl EditorElement {
             );
         }
 
-        // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
+        let text_hovered = text_bounds.contains_point(&event.position);
+        let gutter_hovered = gutter_bounds.contains_point(&event.position);
+        editor.set_gutter_hovered(gutter_hovered, cx);
+
         // Don't trigger hover popover if mouse is hovering over context menu
-        if text_bounds.contains_point(&event.position) {
+        if text_hovered {
             let point_for_position = position_map.point_for_position(text_bounds, event.position);
 
             match point_for_position.as_valid() {
@@ -420,7 +424,7 @@ impl EditorElement {
         } else {
             update_go_to_definition_link(editor, None, modifiers.command, modifiers.shift, cx);
             hover_at(editor, None, cx);
-            false
+            gutter_hovered
         }
     }
 
@@ -2349,7 +2353,7 @@ impl EditorElement {
                     return;
                 }
 
-                if Self::mouse_moved(editor, event, &position_map, text_bounds, cx) {
+                if Self::mouse_moved(editor, event, &position_map, text_bounds, gutter_bounds, cx) {
                     cx.stop_propagation()
                 }
             }
