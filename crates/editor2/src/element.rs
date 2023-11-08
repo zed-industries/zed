@@ -2,17 +2,23 @@ use crate::{
     display_map::{BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint},
     editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
+    hover_popover::hover_at,
+    link_go_to_definition::{
+        go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
+        update_inlay_link_and_hover_points, GoToDefinitionTrigger,
+    },
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    HalfPageDown, HalfPageUp, LineDown, LineUp, MoveDown, PageDown, PageUp, Point, Selection,
-    SoftWrap, ToPoint, MAX_LINE_LEN,
+    HalfPageDown, HalfPageUp, LineDown, LineUp, MoveDown, PageDown, PageUp, Point, SelectPhase,
+    Selection, SoftWrap, ToPoint, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
     black, hsla, point, px, relative, size, transparent_black, Action, AnyElement,
     BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchContext, DispatchPhase,
-    Edges, Element, ElementId, Entity, Hsla, KeyDownEvent, KeyListener, KeyMatch, Line, Pixels,
+    Edges, Element, ElementId, Entity, GlobalElementId, Hsla, KeyDownEvent, KeyListener, KeyMatch,
+    Line, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     ScrollWheelEvent, ShapedGlyph, Size, StatefulInteraction, Style, TextRun, TextStyle,
     TextSystem, ViewContext, WindowContext,
 };
@@ -107,194 +113,54 @@ impl EditorElement {
         Self { style }
     }
 
-    // fn attach_mouse_handlers(
-    //     position_map: &Arc<PositionMap>,
-    //     has_popovers: bool,
-    //     visible_bounds: Bounds<Pixels>,
-    //     text_bounds: Bounds<Pixels>,
-    //     gutter_bounds: Bounds<Pixels>,
-    //     bounds: Bounds<Pixels>,
-    //     cx: &mut ViewContext<Editor>,
-    // ) {
-    //     enum EditorElementMouseHandlers {}
-    //     let view_id = cx.view_id();
-    //     cx.scene().push_mouse_region(
-    //         MouseRegion::new::<EditorElementMouseHandlers>(view_id, view_id, visible_bounds)
-    //             .on_down(MouseButton::Left, {
-    //                 let position_map = position_map.clone();
-    //                 move |event, editor, cx| {
-    //                     if !Self::mouse_down(
-    //                         editor,
-    //                         event.platform_event,
-    //                         position_map.as_ref(),
-    //                         text_bounds,
-    //                         gutter_bounds,
-    //                         cx,
-    //                     ) {
-    //                         cx.propagate_event();
-    //                     }
-    //                 }
-    //             })
-    //             .on_down(MouseButton::Right, {
-    //                 let position_map = position_map.clone();
-    //                 move |event, editor, cx| {
-    //                     if !Self::mouse_right_down(
-    //                         editor,
-    //                         event.position,
-    //                         position_map.as_ref(),
-    //                         text_bounds,
-    //                         cx,
-    //                     ) {
-    //                         cx.propagate_event();
-    //                     }
-    //                 }
-    //             })
-    //             .on_up(MouseButton::Left, {
-    //                 let position_map = position_map.clone();
-    //                 move |event, editor, cx| {
-    //                     if !Self::mouse_up(
-    //                         editor,
-    //                         event.position,
-    //                         event.cmd,
-    //                         event.shift,
-    //                         event.alt,
-    //                         position_map.as_ref(),
-    //                         text_bounds,
-    //                         cx,
-    //                     ) {
-    //                         cx.propagate_event()
-    //                     }
-    //                 }
-    //             })
-    //             .on_drag(MouseButton::Left, {
-    //                 let position_map = position_map.clone();
-    //                 move |event, editor, cx| {
-    //                     if event.end {
-    //                         return;
-    //                     }
+    fn mouse_down(
+        editor: &mut Editor,
+        event: &MouseDownEvent,
+        position_map: &PositionMap,
+        text_bounds: Bounds<Pixels>,
+        gutter_bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let mut click_count = event.click_count;
+        let modifiers = event.modifiers;
 
-    //                     if !Self::mouse_dragged(
-    //                         editor,
-    //                         event.platform_event,
-    //                         position_map.as_ref(),
-    //                         text_bounds,
-    //                         cx,
-    //                     ) {
-    //                         cx.propagate_event()
-    //                     }
-    //                 }
-    //             })
-    //             .on_move({
-    //                 let position_map = position_map.clone();
-    //                 move |event, editor, cx| {
-    //                     if !Self::mouse_moved(
-    //                         editor,
-    //                         event.platform_event,
-    //                         &position_map,
-    //                         text_bounds,
-    //                         cx,
-    //                     ) {
-    //                         cx.propagate_event()
-    //                     }
-    //                 }
-    //             })
-    //             .on_move_out(move |_, editor: &mut Editor, cx| {
-    //                 if has_popovers {
-    //                     hide_hover(editor, cx);
-    //                 }
-    //             })
-    //             .on_scroll({
-    //                 let position_map = position_map.clone();
-    //                 move |event, editor, cx| {
-    //                     if !Self::scroll(
-    //                         editor,
-    //                         event.position,
-    //                         *event.delta.raw(),
-    //                         event.delta.precise(),
-    //                         &position_map,
-    //                         bounds,
-    //                         cx,
-    //                     ) {
-    //                         cx.propagate_event()
-    //                     }
-    //                 }
-    //             }),
-    //     );
+        if gutter_bounds.contains_point(&event.position) {
+            click_count = 3; // Simulate triple-click when clicking the gutter to select lines
+        } else if !text_bounds.contains_point(&event.position) {
+            return false;
+        }
 
-    //     enum GutterHandlers {}
-    //     let view_id = cx.view_id();
-    //     let region_id = cx.view_id() + 1;
-    //     cx.scene().push_mouse_region(
-    //         MouseRegion::new::<GutterHandlers>(view_id, region_id, gutter_bounds).on_hover(
-    //             |hover, editor: &mut Editor, cx| {
-    //                 editor.gutter_hover(
-    //                     &GutterHover {
-    //                         hovered: hover.started,
-    //                     },
-    //                     cx,
-    //                 );
-    //             },
-    //         ),
-    //     )
-    // }
+        let point_for_position = position_map.point_for_position(text_bounds, event.position);
+        let position = point_for_position.previous_valid;
+        if modifiers.shift && modifiers.alt {
+            editor.select(
+                SelectPhase::BeginColumnar {
+                    position,
+                    goal_column: point_for_position.exact_unclipped.column(),
+                },
+                cx,
+            );
+        } else if modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.command {
+            editor.select(
+                SelectPhase::Extend {
+                    position,
+                    click_count,
+                },
+                cx,
+            );
+        } else {
+            editor.select(
+                SelectPhase::Begin {
+                    position,
+                    add: modifiers.alt,
+                    click_count,
+                },
+                cx,
+            );
+        }
 
-    // fn mouse_down(
-    //     editor: &mut Editor,
-    //     MouseButtonEvent {
-    //         position,
-    //         modifiers:
-    //             Modifiers {
-    //                 shift,
-    //                 ctrl,
-    //                 alt,
-    //                 cmd,
-    //                 ..
-    //             },
-    //         mut click_count,
-    //         ..
-    //     }: MouseButtonEvent,
-    //     position_map: &PositionMap,
-    //     text_bounds: Bounds<Pixels>,
-    //     gutter_bounds: Bounds<Pixels>,
-    //     cx: &mut EventContext<Editor>,
-    // ) -> bool {
-    //     if gutter_bounds.contains_point(position) {
-    //         click_count = 3; // Simulate triple-click when clicking the gutter to select lines
-    //     } else if !text_bounds.contains_point(position) {
-    //         return false;
-    //     }
-
-    //     let point_for_position = position_map.point_for_position(text_bounds, position);
-    //     let position = point_for_position.previous_valid;
-    //     if shift && alt {
-    //         editor.select(
-    //             SelectPhase::BeginColumnar {
-    //                 position,
-    //                 goal_column: point_for_position.exact_unclipped.column(),
-    //             },
-    //             cx,
-    //         );
-    //     } else if shift && !ctrl && !alt && !cmd {
-    //         editor.select(
-    //             SelectPhase::Extend {
-    //                 position,
-    //                 click_count,
-    //             },
-    //             cx,
-    //         );
-    //     } else {
-    //         editor.select(
-    //             SelectPhase::Begin {
-    //                 position,
-    //                 add: alt,
-    //                 click_count,
-    //             },
-    //             cx,
-    //         );
-    //     }
-
-    //     true
-    // }
+        true
+    }
 
     // fn mouse_right_down(
     //     editor: &mut Editor,
@@ -316,157 +182,120 @@ impl EditorElement {
     //     true
     // }
 
-    // fn mouse_up(
-    //     editor: &mut Editor,
-    //     position: gpui::Point<Pixels>,
-    //     cmd: bool,
-    //     shift: bool,
-    //     alt: bool,
-    //     position_map: &PositionMap,
-    //     text_bounds: Bounds<Pixels>,
-    //     cx: &mut EventContext<Editor>,
-    // ) -> bool {
-    //     let end_selection = editor.has_pending_selection();
-    //     let pending_nonempty_selections = editor.has_pending_nonempty_selection();
+    fn mouse_up(
+        editor: &mut Editor,
+        event: &MouseUpEvent,
+        position_map: &PositionMap,
+        text_bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let end_selection = editor.has_pending_selection();
+        let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
-    //     if end_selection {
-    //         editor.select(SelectPhase::End, cx);
-    //     }
+        if end_selection {
+            editor.select(SelectPhase::End, cx);
+        }
 
-    //     if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
-    //         let point = position_map.point_for_position(text_bounds, position);
-    //         let could_be_inlay = point.as_valid().is_none();
-    //         if shift || could_be_inlay {
-    //             go_to_fetched_type_definition(editor, point, alt, cx);
-    //         } else {
-    //             go_to_fetched_definition(editor, point, alt, cx);
-    //         }
+        if !pending_nonempty_selections
+            && event.modifiers.command
+            && text_bounds.contains_point(&event.position)
+        {
+            let point = position_map.point_for_position(text_bounds, event.position);
+            let could_be_inlay = point.as_valid().is_none();
+            let split = event.modifiers.alt;
+            if event.modifiers.shift || could_be_inlay {
+                go_to_fetched_type_definition(editor, point, split, cx);
+            } else {
+                go_to_fetched_definition(editor, point, split, cx);
+            }
 
-    //         return true;
-    //     }
+            return true;
+        }
 
-    //     end_selection
-    // }
+        end_selection
+    }
 
-    // fn mouse_dragged(
-    //     editor: &mut Editor,
-    //     MouseMovedEvent {
-    //         modifiers: Modifiers { cmd, shift, .. },
-    //         position,
-    //         ..
-    //     }: MouseMovedEvent,
-    //     position_map: &PositionMap,
-    //     text_bounds: Bounds<Pixels>,
-    //     cx: &mut EventContext<Editor>,
-    // ) -> bool {
-    //     // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
-    //     // Don't trigger hover popover if mouse is hovering over context menu
-    //     let point = if text_bounds.contains_point(position) {
-    //         position_map
-    //             .point_for_position(text_bounds, position)
-    //             .as_valid()
-    //     } else {
-    //         None
-    //     };
+    fn mouse_moved(
+        editor: &mut Editor,
+        event: &MouseMoveEvent,
+        position_map: &PositionMap,
+        text_bounds: Bounds<Pixels>,
+        gutter_bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let modifiers = event.modifiers;
+        if editor.has_pending_selection() && event.pressed_button == Some(MouseButton::Left) {
+            let point_for_position = position_map.point_for_position(text_bounds, event.position);
+            let mut scroll_delta = gpui::Point::<f32>::zero();
+            let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
+            let top = text_bounds.origin.y + vertical_margin;
+            let bottom = text_bounds.lower_left().y - vertical_margin;
+            if event.position.y < top {
+                scroll_delta.y = -scale_vertical_mouse_autoscroll_delta(top - event.position.y);
+            }
+            if event.position.y > bottom {
+                scroll_delta.y = scale_vertical_mouse_autoscroll_delta(event.position.y - bottom);
+            }
 
-    //     update_go_to_definition_link(
-    //         editor,
-    //         point.map(GoToDefinitionTrigger::Text),
-    //         cmd,
-    //         shift,
-    //         cx,
-    //     );
+            let horizontal_margin = position_map.line_height.min(text_bounds.size.width / 3.0);
+            let left = text_bounds.origin.x + horizontal_margin;
+            let right = text_bounds.upper_right().x - horizontal_margin;
+            if event.position.x < left {
+                scroll_delta.x = -scale_horizontal_mouse_autoscroll_delta(left - event.position.x);
+            }
+            if event.position.x > right {
+                scroll_delta.x = scale_horizontal_mouse_autoscroll_delta(event.position.x - right);
+            }
 
-    //     if editor.has_pending_selection() {
-    //         let mut scroll_delta = gpui::Point::<Pixels>::zero();
+            editor.select(
+                SelectPhase::Update {
+                    position: point_for_position.previous_valid,
+                    goal_column: point_for_position.exact_unclipped.column(),
+                    scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
+                        .clamp(&gpui::Point::zero(), &position_map.scroll_max),
+                },
+                cx,
+            );
+        }
 
-    //         let vertical_margin = position_map.line_height.min(text_bounds.height() / 3.0);
-    //         let top = text_bounds.origin.y + vertical_margin;
-    //         let bottom = text_bounds.lower_left().y - vertical_margin;
-    //         if position.y < top {
-    //             scroll_delta.set_y(-scale_vertical_mouse_autoscroll_delta(top - position.y))
-    //         }
-    //         if position.y > bottom {
-    //             scroll_delta.set_y(scale_vertical_mouse_autoscroll_delta(position.y - bottom))
-    //         }
+        let text_hovered = text_bounds.contains_point(&event.position);
+        let gutter_hovered = gutter_bounds.contains_point(&event.position);
+        editor.set_gutter_hovered(gutter_hovered, cx);
 
-    //         let horizontal_margin = position_map.line_height.min(text_bounds.width() / 3.0);
-    //         let left = text_bounds.origin.x + horizontal_margin;
-    //         let right = text_bounds.upper_right().x - horizontal_margin;
-    //         if position.x < left {
-    //             scroll_delta.set_x(-scale_horizontal_mouse_autoscroll_delta(
-    //                 left - position.x,
-    //             ))
-    //         }
-    //         if position.x > right {
-    //             scroll_delta.set_x(scale_horizontal_mouse_autoscroll_delta(
-    //                 position.x - right,
-    //             ))
-    //         }
+        // Don't trigger hover popover if mouse is hovering over context menu
+        if text_hovered {
+            let point_for_position = position_map.point_for_position(text_bounds, event.position);
 
-    //         let point_for_position = position_map.point_for_position(text_bounds, position);
+            match point_for_position.as_valid() {
+                Some(point) => {
+                    update_go_to_definition_link(
+                        editor,
+                        Some(GoToDefinitionTrigger::Text(point)),
+                        modifiers.command,
+                        modifiers.shift,
+                        cx,
+                    );
+                    hover_at(editor, Some(point), cx);
+                }
+                None => {
+                    update_inlay_link_and_hover_points(
+                        &position_map.snapshot,
+                        point_for_position,
+                        editor,
+                        modifiers.command,
+                        modifiers.shift,
+                        cx,
+                    );
+                }
+            }
 
-    //         editor.select(
-    //             SelectPhase::Update {
-    //                 position: point_for_position.previous_valid,
-    //                 goal_column: point_for_position.exact_unclipped.column(),
-    //                 scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
-    //                     .clamp(gpui::Point::<Pixels>::zero(), position_map.scroll_max),
-    //             },
-    //             cx,
-    //         );
-    //         hover_at(editor, point, cx);
-    //         true
-    //     } else {
-    //         hover_at(editor, point, cx);
-    //         false
-    //     }
-    // }
-
-    // fn mouse_moved(
-    //     editor: &mut Editor,
-    //     MouseMovedEvent {
-    //         modifiers: Modifiers { shift, cmd, .. },
-    //         position,
-    //         ..
-    //     }: MouseMovedEvent,
-    //     position_map: &PositionMap,
-    //     text_bounds: Bounds<Pixels>,
-    //     cx: &mut ViewContext<Editor>,
-    // ) -> bool {
-    //     // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
-    //     // Don't trigger hover popover if mouse is hovering over context menu
-    //     if text_bounds.contains_point(position) {
-    //         let point_for_position = position_map.point_for_position(text_bounds, position);
-    //         match point_for_position.as_valid() {
-    //             Some(point) => {
-    //                 update_go_to_definition_link(
-    //                     editor,
-    //                     Some(GoToDefinitionTrigger::Text(point)),
-    //                     cmd,
-    //                     shift,
-    //                     cx,
-    //                 );
-    //                 hover_at(editor, Some(point), cx);
-    //             }
-    //             None => {
-    //                 update_inlay_link_and_hover_points(
-    //                     &position_map.snapshot,
-    //                     point_for_position,
-    //                     editor,
-    //                     cmd,
-    //                     shift,
-    //                     cx,
-    //                 );
-    //             }
-    //         }
-    //     } else {
-    //         update_go_to_definition_link(editor, None, cmd, shift, cx);
-    //         hover_at(editor, None, cx);
-    //     }
-
-    //     true
-    // }
+            true
+        } else {
+            update_go_to_definition_link(editor, None, modifiers.command, modifiers.shift, cx);
+            hover_at(editor, None, cx);
+            gutter_hovered
+        }
+    }
 
     fn scroll(
         editor: &mut Editor,
@@ -2340,6 +2169,79 @@ impl EditorElement {
     //         blocks,
     //     )
     // }
+
+    fn paint_mouse_listeners(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        gutter_bounds: Bounds<Pixels>,
+        text_bounds: Bounds<Pixels>,
+        position_map: &Arc<PositionMap>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        cx.on_mouse_event({
+            let position_map = position_map.clone();
+            move |editor, event: &ScrollWheelEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if Self::scroll(editor, event, &position_map, bounds, cx) {
+                    cx.stop_propagation();
+                }
+            }
+        });
+        cx.on_mouse_event({
+            let position_map = position_map.clone();
+            move |editor, event: &MouseDownEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if Self::mouse_down(editor, event, &position_map, text_bounds, gutter_bounds, cx) {
+                    cx.stop_propagation()
+                }
+            }
+        });
+        cx.on_mouse_event({
+            let position_map = position_map.clone();
+            move |editor, event: &MouseUpEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if Self::mouse_up(editor, event, &position_map, text_bounds, cx) {
+                    cx.stop_propagation()
+                }
+            }
+        });
+        // todo!()
+        // on_down(MouseButton::Right, {
+        //     let position_map = position_map.clone();
+        //     move |event, editor, cx| {
+        //         if !Self::mouse_right_down(
+        //             editor,
+        //             event.position,
+        //             position_map.as_ref(),
+        //             text_bounds,
+        //             cx,
+        //         ) {
+        //             cx.propagate_event();
+        //         }
+        //     }
+        // });
+        cx.on_mouse_event({
+            let position_map = position_map.clone();
+            move |editor, event: &MouseMoveEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if Self::mouse_moved(editor, event, &position_map, text_bounds, gutter_bounds, cx) {
+                    cx.stop_propagation()
+                }
+            }
+        });
+    }
 }
 
 #[derive(Debug)]
@@ -2559,177 +2461,9 @@ impl Element<Editor> for EditorElement {
         let dispatch_context = editor.dispatch_context(cx);
         cx.with_element_id(cx.view().entity_id(), |global_id, cx| {
             cx.with_key_dispatch_context(dispatch_context, |cx| {
-                cx.with_key_listeners(
-                    [
-                        build_action_listener(Editor::move_left),
-                        build_action_listener(Editor::move_right),
-                        build_action_listener(Editor::move_down),
-                        build_action_listener(Editor::move_up),
-                        // build_action_listener(Editor::new_file), todo!()
-                        // build_action_listener(Editor::new_file_in_direction), todo!()
-                        build_action_listener(Editor::cancel),
-                        build_action_listener(Editor::newline),
-                        build_action_listener(Editor::newline_above),
-                        build_action_listener(Editor::newline_below),
-                        build_action_listener(Editor::backspace),
-                        build_action_listener(Editor::delete),
-                        build_action_listener(Editor::tab),
-                        build_action_listener(Editor::tab_prev),
-                        build_action_listener(Editor::indent),
-                        build_action_listener(Editor::outdent),
-                        build_action_listener(Editor::delete_line),
-                        build_action_listener(Editor::join_lines),
-                        build_action_listener(Editor::sort_lines_case_sensitive),
-                        build_action_listener(Editor::sort_lines_case_insensitive),
-                        build_action_listener(Editor::reverse_lines),
-                        build_action_listener(Editor::shuffle_lines),
-                        build_action_listener(Editor::convert_to_upper_case),
-                        build_action_listener(Editor::convert_to_lower_case),
-                        build_action_listener(Editor::convert_to_title_case),
-                        build_action_listener(Editor::convert_to_snake_case),
-                        build_action_listener(Editor::convert_to_kebab_case),
-                        build_action_listener(Editor::convert_to_upper_camel_case),
-                        build_action_listener(Editor::convert_to_lower_camel_case),
-                        build_action_listener(Editor::delete_to_previous_word_start),
-                        build_action_listener(Editor::delete_to_previous_subword_start),
-                        build_action_listener(Editor::delete_to_next_word_end),
-                        build_action_listener(Editor::delete_to_next_subword_end),
-                        build_action_listener(Editor::delete_to_beginning_of_line),
-                        build_action_listener(Editor::delete_to_end_of_line),
-                        build_action_listener(Editor::cut_to_end_of_line),
-                        build_action_listener(Editor::duplicate_line),
-                        build_action_listener(Editor::move_line_up),
-                        build_action_listener(Editor::move_line_down),
-                        build_action_listener(Editor::transpose),
-                        build_action_listener(Editor::cut),
-                        build_action_listener(Editor::copy),
-                        build_action_listener(Editor::paste),
-                        build_action_listener(Editor::undo),
-                        build_action_listener(Editor::redo),
-                        build_action_listener(Editor::move_page_up),
-                        build_action_listener(Editor::move_page_down),
-                        build_action_listener(Editor::next_screen),
-                        build_action_listener(Editor::scroll_cursor_top),
-                        build_action_listener(Editor::scroll_cursor_center),
-                        build_action_listener(Editor::scroll_cursor_bottom),
-                        build_action_listener(|editor, _: &LineDown, cx| {
-                            editor.scroll_screen(&ScrollAmount::Line(1.), cx)
-                        }),
-                        build_action_listener(|editor, _: &LineUp, cx| {
-                            editor.scroll_screen(&ScrollAmount::Line(-1.), cx)
-                        }),
-                        build_action_listener(|editor, _: &HalfPageDown, cx| {
-                            editor.scroll_screen(&ScrollAmount::Page(0.5), cx)
-                        }),
-                        build_action_listener(|editor, _: &HalfPageUp, cx| {
-                            editor.scroll_screen(&ScrollAmount::Page(-0.5), cx)
-                        }),
-                        build_action_listener(|editor, _: &PageDown, cx| {
-                            editor.scroll_screen(&ScrollAmount::Page(1.), cx)
-                        }),
-                        build_action_listener(|editor, _: &PageUp, cx| {
-                            editor.scroll_screen(&ScrollAmount::Page(-1.), cx)
-                        }),
-                        build_action_listener(Editor::move_to_previous_word_start),
-                        build_action_listener(Editor::move_to_previous_subword_start),
-                        build_action_listener(Editor::move_to_next_word_end),
-                        build_action_listener(Editor::move_to_next_subword_end),
-                        build_action_listener(Editor::move_to_beginning_of_line),
-                        build_action_listener(Editor::move_to_end_of_line),
-                        build_action_listener(Editor::move_to_start_of_paragraph),
-                        build_action_listener(Editor::move_to_end_of_paragraph),
-                        build_action_listener(Editor::move_to_beginning),
-                        build_action_listener(Editor::move_to_end),
-                        build_action_listener(Editor::select_up),
-                        build_action_listener(Editor::select_down),
-                        build_action_listener(Editor::select_left),
-                        build_action_listener(Editor::select_right),
-                        build_action_listener(Editor::select_to_previous_word_start),
-                        build_action_listener(Editor::select_to_previous_subword_start),
-                        build_action_listener(Editor::select_to_next_word_end),
-                        build_action_listener(Editor::select_to_next_subword_end),
-                        build_action_listener(Editor::select_to_beginning_of_line),
-                        build_action_listener(Editor::select_to_end_of_line),
-                        build_action_listener(Editor::select_to_start_of_paragraph),
-                        build_action_listener(Editor::select_to_end_of_paragraph),
-                        build_action_listener(Editor::select_to_beginning),
-                        build_action_listener(Editor::select_to_end),
-                        build_action_listener(Editor::select_all),
-                        build_action_listener(|editor, action, cx| {
-                            editor.select_all_matches(action, cx).log_err();
-                        }),
-                        build_action_listener(Editor::select_line),
-                        build_action_listener(Editor::split_selection_into_lines),
-                        build_action_listener(Editor::add_selection_above),
-                        build_action_listener(Editor::add_selection_below),
-                        build_action_listener(|editor, action, cx| {
-                            editor.select_next(action, cx).log_err();
-                        }),
-                        build_action_listener(|editor, action, cx| {
-                            editor.select_previous(action, cx).log_err();
-                        }),
-                        build_action_listener(Editor::toggle_comments),
-                        build_action_listener(Editor::select_larger_syntax_node),
-                        build_action_listener(Editor::select_smaller_syntax_node),
-                        build_action_listener(Editor::move_to_enclosing_bracket),
-                        build_action_listener(Editor::undo_selection),
-                        build_action_listener(Editor::redo_selection),
-                        build_action_listener(Editor::go_to_diagnostic),
-                        build_action_listener(Editor::go_to_prev_diagnostic),
-                        build_action_listener(Editor::go_to_hunk),
-                        build_action_listener(Editor::go_to_prev_hunk),
-                        build_action_listener(Editor::go_to_definition),
-                        build_action_listener(Editor::go_to_definition_split),
-                        build_action_listener(Editor::go_to_type_definition),
-                        build_action_listener(Editor::go_to_type_definition_split),
-                        build_action_listener(Editor::fold),
-                        build_action_listener(Editor::fold_at),
-                        build_action_listener(Editor::unfold_lines),
-                        build_action_listener(Editor::unfold_at),
-                        // build_action_listener(Editor::gutter_hover), todo!()
-                        build_action_listener(Editor::fold_selected_ranges),
-                        build_action_listener(Editor::show_completions),
-                        // build_action_listener(Editor::toggle_code_actions), todo!()
-                        // build_action_listener(Editor::open_excerpts), todo!()
-                        build_action_listener(Editor::toggle_soft_wrap),
-                        build_action_listener(Editor::toggle_inlay_hints),
-                        build_action_listener(Editor::reveal_in_finder),
-                        build_action_listener(Editor::copy_path),
-                        build_action_listener(Editor::copy_relative_path),
-                        build_action_listener(Editor::copy_highlight_json),
-                        build_action_listener(|editor, action, cx| {
-                            editor
-                                .format(action, cx)
-                                .map(|task| task.detach_and_log_err(cx));
-                        }),
-                        build_action_listener(Editor::restart_language_server),
-                        build_action_listener(Editor::show_character_palette),
-                        // build_action_listener(Editor::confirm_completion), todo!()
-                        // build_action_listener(Editor::confirm_code_action), todo!()
-                        // build_action_listener(Editor::rename), todo!()
-                        // build_action_listener(Editor::confirm_rename), todo!()
-                        // build_action_listener(Editor::find_all_references), todo!()
-                        build_action_listener(Editor::next_copilot_suggestion),
-                        build_action_listener(Editor::previous_copilot_suggestion),
-                        build_action_listener(Editor::copilot_suggest),
-                        build_key_listener(
-                            move |editor, key_down: &KeyDownEvent, dispatch_context, phase, cx| {
-                                if phase == DispatchPhase::Bubble {
-                                    if let KeyMatch::Some(action) = cx.match_keystroke(
-                                        &global_id,
-                                        &key_down.keystroke,
-                                        dispatch_context,
-                                    ) {
-                                        return Some(action);
-                                    }
-                                }
-
-                                None
-                            },
-                        ),
-                    ],
-                    |cx| cx.with_focus(editor.focus_handle.clone(), |_| {}),
-                );
+                cx.with_key_listeners(build_key_listeners(global_id), |cx| {
+                    cx.with_focus(editor.focus_handle.clone(), |_| {})
+                });
             })
         });
     }
@@ -2759,34 +2493,27 @@ impl Element<Editor> for EditorElement {
         cx: &mut gpui::ViewContext<Editor>,
     ) {
         let layout = self.compute_layout(editor, cx, bounds);
-
-        cx.on_mouse_event({
-            let position_map = layout.position_map.clone();
-            move |editor, event: &ScrollWheelEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
-                }
-
-                if Self::scroll(editor, event, &position_map, bounds, cx) {
-                    cx.stop_propagation();
-                }
-            }
-        });
+        let gutter_bounds = Bounds {
+            origin: bounds.origin,
+            size: layout.gutter_size,
+        };
+        let text_bounds = Bounds {
+            origin: gutter_bounds.upper_right(),
+            size: layout.text_size,
+        };
 
         if editor.focus_handle.is_focused(cx) {
             cx.handle_text_input();
         }
 
         cx.with_content_mask(ContentMask { bounds }, |cx| {
-            let gutter_bounds = Bounds {
-                origin: bounds.origin,
-                size: layout.gutter_size,
-            };
-            let text_bounds = Bounds {
-                origin: gutter_bounds.upper_right(),
-                size: layout.text_size,
-            };
-
+            self.paint_mouse_listeners(
+                bounds,
+                gutter_bounds,
+                text_bounds,
+                &layout.position_map,
+                cx,
+            );
             self.paint_background(gutter_bounds, text_bounds, &layout, cx);
             if layout.gutter_size.width > Pixels::ZERO {
                 self.paint_gutter(gutter_bounds, &layout, editor, cx);
@@ -3815,12 +3542,12 @@ impl HighlightedRange {
 //     bounds.into_iter()
 // }
 
-pub fn scale_vertical_mouse_autoscroll_delta(delta: f32) -> f32 {
-    delta.powf(1.5) / 100.0
+pub fn scale_vertical_mouse_autoscroll_delta(delta: Pixels) -> f32 {
+    (delta.pow(1.5) / 100.0).into()
 }
 
-fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
-    delta.powf(1.2) / 300.0
+fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
+    (delta.pow(1.2) / 300.0).into()
 }
 
 // #[cfg(test)]
@@ -4265,6 +3992,178 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 //             .collect()
 //     }
 // }
+
+fn build_key_listeners(
+    global_element_id: GlobalElementId,
+) -> impl IntoIterator<Item = (TypeId, KeyListener<Editor>)> {
+    [
+        build_action_listener(Editor::move_left),
+        build_action_listener(Editor::move_right),
+        build_action_listener(Editor::move_down),
+        build_action_listener(Editor::move_up),
+        // build_action_listener(Editor::new_file), todo!()
+        // build_action_listener(Editor::new_file_in_direction), todo!()
+        build_action_listener(Editor::cancel),
+        build_action_listener(Editor::newline),
+        build_action_listener(Editor::newline_above),
+        build_action_listener(Editor::newline_below),
+        build_action_listener(Editor::backspace),
+        build_action_listener(Editor::delete),
+        build_action_listener(Editor::tab),
+        build_action_listener(Editor::tab_prev),
+        build_action_listener(Editor::indent),
+        build_action_listener(Editor::outdent),
+        build_action_listener(Editor::delete_line),
+        build_action_listener(Editor::join_lines),
+        build_action_listener(Editor::sort_lines_case_sensitive),
+        build_action_listener(Editor::sort_lines_case_insensitive),
+        build_action_listener(Editor::reverse_lines),
+        build_action_listener(Editor::shuffle_lines),
+        build_action_listener(Editor::convert_to_upper_case),
+        build_action_listener(Editor::convert_to_lower_case),
+        build_action_listener(Editor::convert_to_title_case),
+        build_action_listener(Editor::convert_to_snake_case),
+        build_action_listener(Editor::convert_to_kebab_case),
+        build_action_listener(Editor::convert_to_upper_camel_case),
+        build_action_listener(Editor::convert_to_lower_camel_case),
+        build_action_listener(Editor::delete_to_previous_word_start),
+        build_action_listener(Editor::delete_to_previous_subword_start),
+        build_action_listener(Editor::delete_to_next_word_end),
+        build_action_listener(Editor::delete_to_next_subword_end),
+        build_action_listener(Editor::delete_to_beginning_of_line),
+        build_action_listener(Editor::delete_to_end_of_line),
+        build_action_listener(Editor::cut_to_end_of_line),
+        build_action_listener(Editor::duplicate_line),
+        build_action_listener(Editor::move_line_up),
+        build_action_listener(Editor::move_line_down),
+        build_action_listener(Editor::transpose),
+        build_action_listener(Editor::cut),
+        build_action_listener(Editor::copy),
+        build_action_listener(Editor::paste),
+        build_action_listener(Editor::undo),
+        build_action_listener(Editor::redo),
+        build_action_listener(Editor::move_page_up),
+        build_action_listener(Editor::move_page_down),
+        build_action_listener(Editor::next_screen),
+        build_action_listener(Editor::scroll_cursor_top),
+        build_action_listener(Editor::scroll_cursor_center),
+        build_action_listener(Editor::scroll_cursor_bottom),
+        build_action_listener(|editor, _: &LineDown, cx| {
+            editor.scroll_screen(&ScrollAmount::Line(1.), cx)
+        }),
+        build_action_listener(|editor, _: &LineUp, cx| {
+            editor.scroll_screen(&ScrollAmount::Line(-1.), cx)
+        }),
+        build_action_listener(|editor, _: &HalfPageDown, cx| {
+            editor.scroll_screen(&ScrollAmount::Page(0.5), cx)
+        }),
+        build_action_listener(|editor, _: &HalfPageUp, cx| {
+            editor.scroll_screen(&ScrollAmount::Page(-0.5), cx)
+        }),
+        build_action_listener(|editor, _: &PageDown, cx| {
+            editor.scroll_screen(&ScrollAmount::Page(1.), cx)
+        }),
+        build_action_listener(|editor, _: &PageUp, cx| {
+            editor.scroll_screen(&ScrollAmount::Page(-1.), cx)
+        }),
+        build_action_listener(Editor::move_to_previous_word_start),
+        build_action_listener(Editor::move_to_previous_subword_start),
+        build_action_listener(Editor::move_to_next_word_end),
+        build_action_listener(Editor::move_to_next_subword_end),
+        build_action_listener(Editor::move_to_beginning_of_line),
+        build_action_listener(Editor::move_to_end_of_line),
+        build_action_listener(Editor::move_to_start_of_paragraph),
+        build_action_listener(Editor::move_to_end_of_paragraph),
+        build_action_listener(Editor::move_to_beginning),
+        build_action_listener(Editor::move_to_end),
+        build_action_listener(Editor::select_up),
+        build_action_listener(Editor::select_down),
+        build_action_listener(Editor::select_left),
+        build_action_listener(Editor::select_right),
+        build_action_listener(Editor::select_to_previous_word_start),
+        build_action_listener(Editor::select_to_previous_subword_start),
+        build_action_listener(Editor::select_to_next_word_end),
+        build_action_listener(Editor::select_to_next_subword_end),
+        build_action_listener(Editor::select_to_beginning_of_line),
+        build_action_listener(Editor::select_to_end_of_line),
+        build_action_listener(Editor::select_to_start_of_paragraph),
+        build_action_listener(Editor::select_to_end_of_paragraph),
+        build_action_listener(Editor::select_to_beginning),
+        build_action_listener(Editor::select_to_end),
+        build_action_listener(Editor::select_all),
+        build_action_listener(|editor, action, cx| {
+            editor.select_all_matches(action, cx).log_err();
+        }),
+        build_action_listener(Editor::select_line),
+        build_action_listener(Editor::split_selection_into_lines),
+        build_action_listener(Editor::add_selection_above),
+        build_action_listener(Editor::add_selection_below),
+        build_action_listener(|editor, action, cx| {
+            editor.select_next(action, cx).log_err();
+        }),
+        build_action_listener(|editor, action, cx| {
+            editor.select_previous(action, cx).log_err();
+        }),
+        build_action_listener(Editor::toggle_comments),
+        build_action_listener(Editor::select_larger_syntax_node),
+        build_action_listener(Editor::select_smaller_syntax_node),
+        build_action_listener(Editor::move_to_enclosing_bracket),
+        build_action_listener(Editor::undo_selection),
+        build_action_listener(Editor::redo_selection),
+        build_action_listener(Editor::go_to_diagnostic),
+        build_action_listener(Editor::go_to_prev_diagnostic),
+        build_action_listener(Editor::go_to_hunk),
+        build_action_listener(Editor::go_to_prev_hunk),
+        build_action_listener(Editor::go_to_definition),
+        build_action_listener(Editor::go_to_definition_split),
+        build_action_listener(Editor::go_to_type_definition),
+        build_action_listener(Editor::go_to_type_definition_split),
+        build_action_listener(Editor::fold),
+        build_action_listener(Editor::fold_at),
+        build_action_listener(Editor::unfold_lines),
+        build_action_listener(Editor::unfold_at),
+        build_action_listener(Editor::fold_selected_ranges),
+        build_action_listener(Editor::show_completions),
+        // build_action_listener(Editor::toggle_code_actions), todo!()
+        // build_action_listener(Editor::open_excerpts), todo!()
+        build_action_listener(Editor::toggle_soft_wrap),
+        build_action_listener(Editor::toggle_inlay_hints),
+        build_action_listener(Editor::reveal_in_finder),
+        build_action_listener(Editor::copy_path),
+        build_action_listener(Editor::copy_relative_path),
+        build_action_listener(Editor::copy_highlight_json),
+        build_action_listener(|editor, action, cx| {
+            editor
+                .format(action, cx)
+                .map(|task| task.detach_and_log_err(cx));
+        }),
+        build_action_listener(Editor::restart_language_server),
+        build_action_listener(Editor::show_character_palette),
+        // build_action_listener(Editor::confirm_completion), todo!()
+        // build_action_listener(Editor::confirm_code_action), todo!()
+        // build_action_listener(Editor::rename), todo!()
+        // build_action_listener(Editor::confirm_rename), todo!()
+        // build_action_listener(Editor::find_all_references), todo!()
+        build_action_listener(Editor::next_copilot_suggestion),
+        build_action_listener(Editor::previous_copilot_suggestion),
+        build_action_listener(Editor::copilot_suggest),
+        build_key_listener(
+            move |editor, key_down: &KeyDownEvent, dispatch_context, phase, cx| {
+                if phase == DispatchPhase::Bubble {
+                    if let KeyMatch::Some(action) = cx.match_keystroke(
+                        &global_element_id,
+                        &key_down.keystroke,
+                        dispatch_context,
+                    ) {
+                        return Some(action);
+                    }
+                }
+
+                None
+            },
+        ),
+    ]
+}
 
 fn build_key_listener<T: 'static>(
     listener: impl Fn(
