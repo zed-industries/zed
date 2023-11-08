@@ -14,8 +14,18 @@ use strum::EnumIter;
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum UITextSize {
+    /// The default size for UI text.
+    ///
+    /// `0.825rem` or `14px` at the default scale of `1rem` = `16px`.
+    ///
+    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     #[default]
     Default,
+    /// The small size for UI text.
+    ///
+    /// `0.75rem` or `12px` at the default scale of `1rem` = `16px`.
+    ///
+    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     Small,
 }
 
@@ -26,24 +36,6 @@ impl UITextSize {
             Self::Small => rems(0.75),
         }
     }
-}
-
-/// The default text size for UI text
-///
-/// At a default 16px per rem, this is 14px.
-///
-/// Use [`ui_text_sm`] for smaller text.
-pub fn ui_text_default() -> Rems {
-    rems(0.875)
-}
-
-/// The small text size for UI text
-///
-/// At a default 16px per rem, this is 12px.
-///
-/// Use [`ui_text_default`] for regular-sized text.
-pub fn ui_text_sm() -> Rems {
-    rems(0.75)
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
