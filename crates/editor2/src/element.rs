@@ -2,6 +2,10 @@ use crate::{
     display_map::{BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint},
     editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
+    hover_popover::hover_at,
+    link_go_to_definition::{
+        update_go_to_definition_link, update_inlay_link_and_hover_points, GoToDefinitionTrigger,
+    },
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
     HalfPageDown, HalfPageUp, LineDown, LineUp, MoveDown, PageDown, PageUp, Point, Selection,
@@ -12,9 +16,9 @@ use collections::{BTreeMap, HashMap};
 use gpui::{
     black, hsla, point, px, relative, size, transparent_black, Action, AnyElement,
     BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchContext, DispatchPhase,
-    Edges, Element, ElementId, Entity, Hsla, KeyDownEvent, KeyListener, KeyMatch, Line, Pixels,
-    ScrollWheelEvent, ShapedGlyph, Size, StatefulInteraction, Style, TextRun, TextStyle,
-    TextSystem, ViewContext, WindowContext,
+    Edges, Element, ElementId, Entity, Hsla, KeyDownEvent, KeyListener, KeyMatch, Line, Modifiers,
+    MouseMoveEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size, StatefulInteraction, Style,
+    TextRun, TextStyle, TextSystem, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -423,50 +427,50 @@ impl EditorElement {
     //     }
     // }
 
-    // fn mouse_moved(
-    //     editor: &mut Editor,
-    //     MouseMovedEvent {
-    //         modifiers: Modifiers { shift, cmd, .. },
-    //         position,
-    //         ..
-    //     }: MouseMovedEvent,
-    //     position_map: &PositionMap,
-    //     text_bounds: Bounds<Pixels>,
-    //     cx: &mut ViewContext<Editor>,
-    // ) -> bool {
-    //     // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
-    //     // Don't trigger hover popover if mouse is hovering over context menu
-    //     if text_bounds.contains_point(position) {
-    //         let point_for_position = position_map.point_for_position(text_bounds, position);
-    //         match point_for_position.as_valid() {
-    //             Some(point) => {
-    //                 update_go_to_definition_link(
-    //                     editor,
-    //                     Some(GoToDefinitionTrigger::Text(point)),
-    //                     cmd,
-    //                     shift,
-    //                     cx,
-    //                 );
-    //                 hover_at(editor, Some(point), cx);
-    //             }
-    //             None => {
-    //                 update_inlay_link_and_hover_points(
-    //                     &position_map.snapshot,
-    //                     point_for_position,
-    //                     editor,
-    //                     cmd,
-    //                     shift,
-    //                     cx,
-    //                 );
-    //             }
-    //         }
-    //     } else {
-    //         update_go_to_definition_link(editor, None, cmd, shift, cx);
-    //         hover_at(editor, None, cx);
-    //     }
+    fn mouse_moved(
+        editor: &mut Editor,
+        MouseMoveEvent {
+            modifiers: Modifiers { shift, command, .. },
+            position,
+            ..
+        }: &MouseMoveEvent,
+        position_map: &PositionMap,
+        text_bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
+        // Don't trigger hover popover if mouse is hovering over context menu
+        if text_bounds.contains_point(position) {
+            let point_for_position = position_map.point_for_position(text_bounds, position.clone());
+            match point_for_position.as_valid() {
+                Some(point) => {
+                    update_go_to_definition_link(
+                        editor,
+                        Some(GoToDefinitionTrigger::Text(point)),
+                        *command,
+                        *shift,
+                        cx,
+                    );
+                    hover_at(editor, Some(point), cx);
+                }
+                None => {
+                    update_inlay_link_and_hover_points(
+                        &position_map.snapshot,
+                        point_for_position,
+                        editor,
+                        *command,
+                        *shift,
+                        cx,
+                    );
+                }
+            }
+        } else {
+            update_go_to_definition_link(editor, None, *command, *shift, cx);
+            hover_at(editor, None, cx);
+        }
 
-    //     true
-    // }
+        true
+    }
 
     fn scroll(
         editor: &mut Editor,
@@ -2769,6 +2773,18 @@ impl Element<Editor> for EditorElement {
 
                 if Self::scroll(editor, event, &position_map, bounds, cx) {
                     cx.stop_propagation();
+                }
+            }
+        });
+        cx.on_mouse_event({
+            let position_map = layout.position_map.clone();
+            move |editor, event: &MouseMoveEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if Self::mouse_moved(editor, event, &position_map, bounds, cx) {
+                    cx.stop_propagation()
                 }
             }
         });
