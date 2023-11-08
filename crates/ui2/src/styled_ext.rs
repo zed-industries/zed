@@ -1,4 +1,4 @@
-use gpui::{Div, Styled};
+use gpui::{Div, ElementFocus, ElementInteractivity, Styled};
 
 use crate::UITextSize;
 
@@ -66,4 +66,9 @@ pub trait StyledExt: Styled {
     }
 }
 
-impl<V: 'static> StyledExt for Div<V> {}
+impl<V, I, F> StyledExt for Div<V, I, F>
+where
+    I: ElementInteractivity<V>,
+    F: ElementFocus<V>,
+{
+}
