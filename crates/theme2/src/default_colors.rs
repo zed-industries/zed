@@ -27,17 +27,17 @@ impl Default for SystemColors {
 impl Default for StatusColors {
     fn default() -> Self {
         Self {
-            conflict: red().dark().step_11(),
-            created: grass().dark().step_11(),
-            deleted: red().dark().step_11(),
-            error: red().dark().step_11(),
-            hidden: neutral().dark().step_11(),
-            ignored: neutral().dark().step_11(),
-            info: blue().dark().step_11(),
-            modified: yellow().dark().step_11(),
-            renamed: blue().dark().step_11(),
-            success: grass().dark().step_11(),
-            warning: yellow().dark().step_11(),
+            conflict: red().dark().step_9(),
+            created: grass().dark().step_9(),
+            deleted: red().dark().step_9(),
+            error: red().dark().step_9(),
+            hidden: neutral().dark().step_9(),
+            ignored: neutral().dark().step_9(),
+            info: blue().dark().step_9(),
+            modified: yellow().dark().step_9(),
+            renamed: blue().dark().step_9(),
+            success: grass().dark().step_9(),
+            warning: yellow().dark().step_9(),
         }
     }
 }
@@ -45,12 +45,12 @@ impl Default for StatusColors {
 impl Default for GitStatusColors {
     fn default() -> Self {
         Self {
-            conflict: orange().dark().step_11(),
-            created: grass().dark().step_11(),
-            deleted: red().dark().step_11(),
-            ignored: neutral().dark().step_11(),
-            modified: yellow().dark().step_11(),
-            renamed: blue().dark().step_11(),
+            conflict: orange().dark().step_9(),
+            created: grass().dark().step_9(),
+            deleted: red().dark().step_9(),
+            ignored: neutral().dark().step_9(),
+            modified: yellow().dark().step_9(),
+            renamed: blue().dark().step_9(),
         }
     }
 }
@@ -59,24 +59,44 @@ impl Default for PlayerColors {
     fn default() -> Self {
         Self(vec![
             PlayerColor {
-                cursor: hsla(0.0, 0.0, 0.0, 1.0),
-                background: hsla(0.0, 0.0, 0.0, 1.0),
-                selection: hsla(0.0, 0.0, 0.0, 1.0),
+                cursor: blue().dark().step_9(),
+                background: blue().dark().step_4(),
+                selection: blue().dark().step_3(),
             },
             PlayerColor {
-                cursor: hsla(0.0, 0.0, 0.0, 1.0),
-                background: hsla(0.0, 0.0, 0.0, 1.0),
-                selection: hsla(0.0, 0.0, 0.0, 1.0),
+                cursor: orange().dark().step_9(),
+                background: orange().dark().step_4(),
+                selection: orange().dark().step_3(),
             },
             PlayerColor {
-                cursor: hsla(0.0, 0.0, 0.0, 1.0),
-                background: hsla(0.0, 0.0, 0.0, 1.0),
-                selection: hsla(0.0, 0.0, 0.0, 1.0),
+                cursor: pink().dark().step_9(),
+                background: pink().dark().step_4(),
+                selection: pink().dark().step_3(),
             },
             PlayerColor {
-                cursor: hsla(0.0, 0.0, 0.0, 1.0),
-                background: hsla(0.0, 0.0, 0.0, 1.0),
-                selection: hsla(0.0, 0.0, 0.0, 1.0),
+                cursor: lime().dark().step_9(),
+                background: lime().dark().step_4(),
+                selection: lime().dark().step_3(),
+            },
+            PlayerColor {
+                cursor: purple().dark().step_9(),
+                background: purple().dark().step_4(),
+                selection: purple().dark().step_3(),
+            },
+            PlayerColor {
+                cursor: amber().dark().step_9(),
+                background: amber().dark().step_4(),
+                selection: amber().dark().step_3(),
+            },
+            PlayerColor {
+                cursor: jade().dark().step_9(),
+                background: jade().dark().step_4(),
+                selection: jade().dark().step_3(),
+            },
+            PlayerColor {
+                cursor: red().dark().step_9(),
+                background: red().dark().step_4(),
+                selection: red().dark().step_3(),
             },
         ])
     }

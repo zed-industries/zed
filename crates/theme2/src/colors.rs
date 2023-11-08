@@ -20,6 +20,12 @@ pub struct PlayerColor {
     pub selection: Hsla,
 }
 
+/// A collection of colors that are used to color players in the editor.
+///
+/// The first color is always the local player's color, usually a blue.
+///
+/// The rest of the default colors crisscross back and forth on the
+/// color wheel so that the colors are as distinct as possible.
 #[derive(Clone)]
 pub struct PlayerColors(pub Vec<PlayerColor>);
 
