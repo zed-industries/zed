@@ -27,8 +27,8 @@ pub(crate) struct SceneBuilder {
     polychrome_sprites: Vec<PolychromeSprite>,
 }
 
-impl SceneBuilder {
-    pub fn new() -> SceneBuilder {
+impl Default for SceneBuilder {
+    fn default() -> Self {
         SceneBuilder {
             layers_by_order: BTreeMap::new(),
             splitter: BspSplitter::new(),
@@ -39,6 +39,12 @@ impl SceneBuilder {
             monochrome_sprites: Vec::new(),
             polychrome_sprites: Vec::new(),
         }
+    }
+}
+
+impl SceneBuilder {
+    pub fn new() -> SceneBuilder {
+        SceneBuilder::default()
     }
 
     pub fn build(&mut self) -> Scene {
