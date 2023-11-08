@@ -119,7 +119,7 @@ async-trait = { version = "0.1" }
 # TODO: Switch back to the published version of `ctor` once:
 #       1. A new version of `ctor` is published with this change: https://github.com/mmastrac/rust-ctor/pull/295
 #       2. We've confirmed it's fine to update to the latest version of `ctor` (we're currently on v0.1.20).
-ctor = { git = "https://github.com/deviant-forks/rust-ctor", rev = "9c03df5c5208fcc3545794168f3bccbb03a82c84" }
+ctor = { git = "https://github.com/zed-industries/rust-ctor", rev = "7f824cf6a7943885a649b579f33f9ac53f0d1db6" }
 derive_more = { version = "0.99.17" }
 env_logger = { version = "0.9" }
 futures = { version = "0.3" }
