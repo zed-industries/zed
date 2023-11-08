@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
     div, uniform_list, Component, Div, FocusEnabled, ParentElement, Render, StatefulInteractivity,
-    StatelessInteractive, Styled, UniformListScrollHandle, View, ViewContext, VisualContext,
+    StatelessInteractive, Styled, Task, UniformListScrollHandle, View, ViewContext, VisualContext,
     WindowContext,
 };
 use std::cmp;
@@ -10,6 +10,7 @@ pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
     scroll_handle: UniformListScrollHandle,
     editor: View<Editor>,
+    pending_update_matches: Option<Task<Option<()>>>,
 }
 
 pub trait PickerDelegate: Sized + 'static {
@@ -20,7 +21,7 @@ pub trait PickerDelegate: Sized + 'static {
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
 
     // fn placeholder_text(&self) -> Arc<str>;
-    // fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
+    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
@@ -35,10 +36,13 @@ pub trait PickerDelegate: Sized + 'static {
 
 impl<D: PickerDelegate> Picker<D> {
     pub fn new(delegate: D, cx: &mut ViewContext<Self>) -> Self {
+        let editor = cx.build_view(|cx| Editor::single_line(cx));
+        cx.subscribe(&editor, Self::on_input_editor_event).detach();
         Self {
             delegate,
             scroll_handle: UniformListScrollHandle::new(),
-            editor: cx.build_view(|cx| Editor::single_line(cx)),
+            pending_update_matches: None,
+            editor,
         }
     }
 
@@ -92,6 +96,37 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
         self.delegate.confirm(true, cx);
+    }
+
+    fn on_input_editor_event(
+        &mut self,
+        _: View<Editor>,
+        event: &editor::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let editor::Event::BufferEdited = event {
+            let query = self.editor.read(cx).text(cx);
+            self.update_matches(query, cx);
+        }
+    }
+
+    pub fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) {
+        let update = self.delegate.update_matches(query, cx);
+        self.matches_updated(cx);
+        self.pending_update_matches = Some(cx.spawn(|this, mut cx| async move {
+            update.await;
+            this.update(&mut cx, |this, cx| {
+                this.matches_updated(cx);
+            })
+            .ok()
+        }));
+    }
+
+    fn matches_updated(&mut self, cx: &mut ViewContext<Self>) {
+        let index = self.delegate.selected_index();
+        self.scroll_handle.scroll_to_item(index);
+        self.pending_update_matches = None;
+        cx.notify();
     }
 }
 

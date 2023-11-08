@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
+use fuzzy::StringMatchCandidate;
 use gpui::{
-    div, Component, Div, KeyBinding, ParentElement, Render, SharedString, StatelessInteractive,
-    Styled, View, VisualContext, WindowContext,
+    div, Component, Div, KeyBinding, ParentElement, Render, StatelessInteractive, Styled, Task,
+    View, VisualContext, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
 use theme2::ActiveTheme;
@@ -10,8 +13,28 @@ pub struct PickerStory {
 }
 
 struct Delegate {
-    candidates: Vec<SharedString>,
+    candidates: Arc<[StringMatchCandidate]>,
+    matches: Vec<usize>,
     selected_ix: usize,
+}
+
+impl Delegate {
+    fn new(strings: &[&str]) -> Self {
+        Self {
+            candidates: strings
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(id, string)| StringMatchCandidate {
+                    id,
+                    char_bag: string.into(),
+                    string: string.into(),
+                })
+                .collect(),
+            matches: vec![],
+            selected_ix: 0,
+        }
+    }
 }
 
 impl PickerDelegate for Delegate {
@@ -28,6 +51,10 @@ impl PickerDelegate for Delegate {
         cx: &mut gpui::ViewContext<Picker<Self>>,
     ) -> Self::ListItem {
         let colors = cx.theme().colors();
+        let Some(candidate_ix) = self.matches.get(ix) else {
+            return div();
+        };
+        let candidate = self.candidates[*candidate_ix].string.clone();
 
         div()
             .text_color(colors.text)
@@ -39,7 +66,7 @@ impl PickerDelegate for Delegate {
                     .bg(colors.element_active)
                     .text_color(colors.text_accent)
             })
-            .child(self.candidates[ix].clone())
+            .child(candidate)
     }
 
     fn selected_index(&self) -> usize {
@@ -52,15 +79,41 @@ impl PickerDelegate for Delegate {
     }
 
     fn confirm(&mut self, secondary: bool, cx: &mut gpui::ViewContext<Picker<Self>>) {
+        let candidate_ix = self.matches[self.selected_ix];
+        let candidate = self.candidates[candidate_ix].string.clone();
+
         if secondary {
-            eprintln!("Secondary confirmed {}", self.candidates[self.selected_ix])
+            eprintln!("Secondary confirmed {}", candidate)
         } else {
-            eprintln!("Confirmed {}", self.candidates[self.selected_ix])
+            eprintln!("Confirmed {}", candidate)
         }
     }
 
     fn dismissed(&mut self, cx: &mut gpui::ViewContext<Picker<Self>>) {
         cx.quit();
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        cx: &mut gpui::ViewContext<Picker<Self>>,
+    ) -> Task<()> {
+        let candidates = self.candidates.clone();
+        self.matches = cx
+            .background_executor()
+            .block(fuzzy::match_strings(
+                &candidates,
+                &query,
+                true,
+                100,
+                &Default::default(),
+                cx.background_executor().clone(),
+            ))
+            .into_iter()
+            .map(|r| r.candidate_id)
+            .collect();
+        self.selected_ix = 0;
+        Task::ready(())
     }
 }
 
@@ -87,63 +140,60 @@ impl PickerStory {
 
             PickerStory {
                 picker: cx.build_view(|cx| {
-                    let picker = Picker::new(
-                        Delegate {
-                            candidates: vec![
-                                "Baguette (France)".into(),
-                                "Baklava (Turkey)".into(),
-                                "Beef Wellington (UK)".into(),
-                                "Biryani (India)".into(),
-                                "Borscht (Ukraine)".into(),
-                                "Bratwurst (Germany)".into(),
-                                "Bulgogi (Korea)".into(),
-                                "Burrito (USA)".into(),
-                                "Ceviche (Peru)".into(),
-                                "Chicken Tikka Masala (India)".into(),
-                                "Churrasco (Brazil)".into(),
-                                "Couscous (North Africa)".into(),
-                                "Croissant (France)".into(),
-                                "Dim Sum (China)".into(),
-                                "Empanada (Argentina)".into(),
-                                "Fajitas (Mexico)".into(),
-                                "Falafel (Middle East)".into(),
-                                "Feijoada (Brazil)".into(),
-                                "Fish and Chips (UK)".into(),
-                                "Fondue (Switzerland)".into(),
-                                "Goulash (Hungary)".into(),
-                                "Haggis (Scotland)".into(),
-                                "Kebab (Middle East)".into(),
-                                "Kimchi (Korea)".into(),
-                                "Lasagna (Italy)".into(),
-                                "Maple Syrup Pancakes (Canada)".into(),
-                                "Moussaka (Greece)".into(),
-                                "Pad Thai (Thailand)".into(),
-                                "Paella (Spain)".into(),
-                                "Pancakes (USA)".into(),
-                                "Pasta Carbonara (Italy)".into(),
-                                "Pavlova (Australia)".into(),
-                                "Peking Duck (China)".into(),
-                                "Pho (Vietnam)".into(),
-                                "Pierogi (Poland)".into(),
-                                "Pizza (Italy)".into(),
-                                "Poutine (Canada)".into(),
-                                "Pretzel (Germany)".into(),
-                                "Ramen (Japan)".into(),
-                                "Rendang (Indonesia)".into(),
-                                "Sashimi (Japan)".into(),
-                                "Satay (Indonesia)".into(),
-                                "Shepherd's Pie (Ireland)".into(),
-                                "Sushi (Japan)".into(),
-                                "Tacos (Mexico)".into(),
-                                "Tandoori Chicken (India)".into(),
-                                "Tortilla (Spain)".into(),
-                                "Tzatziki (Greece)".into(),
-                                "Wiener Schnitzel (Austria)".into(),
-                            ],
-                            selected_ix: 0,
-                        },
-                        cx,
-                    );
+                    let mut delegate = Delegate::new(&[
+                        "Baguette (France)",
+                        "Baklava (Turkey)",
+                        "Beef Wellington (UK)",
+                        "Biryani (India)",
+                        "Borscht (Ukraine)",
+                        "Bratwurst (Germany)",
+                        "Bulgogi (Korea)",
+                        "Burrito (USA)",
+                        "Ceviche (Peru)",
+                        "Chicken Tikka Masala (India)",
+                        "Churrasco (Brazil)",
+                        "Couscous (North Africa)",
+                        "Croissant (France)",
+                        "Dim Sum (China)",
+                        "Empanada (Argentina)",
+                        "Fajitas (Mexico)",
+                        "Falafel (Middle East)",
+                        "Feijoada (Brazil)",
+                        "Fish and Chips (UK)",
+                        "Fondue (Switzerland)",
+                        "Goulash (Hungary)",
+                        "Haggis (Scotland)",
+                        "Kebab (Middle East)",
+                        "Kimchi (Korea)",
+                        "Lasagna (Italy)",
+                        "Maple Syrup Pancakes (Canada)",
+                        "Moussaka (Greece)",
+                        "Pad Thai (Thailand)",
+                        "Paella (Spain)",
+                        "Pancakes (USA)",
+                        "Pasta Carbonara (Italy)",
+                        "Pavlova (Australia)",
+                        "Peking Duck (China)",
+                        "Pho (Vietnam)",
+                        "Pierogi (Poland)",
+                        "Pizza (Italy)",
+                        "Poutine (Canada)",
+                        "Pretzel (Germany)",
+                        "Ramen (Japan)",
+                        "Rendang (Indonesia)",
+                        "Sashimi (Japan)",
+                        "Satay (Indonesia)",
+                        "Shepherd's Pie (Ireland)",
+                        "Sushi (Japan)",
+                        "Tacos (Mexico)",
+                        "Tandoori Chicken (India)",
+                        "Tortilla (Spain)",
+                        "Tzatziki (Greece)",
+                        "Wiener Schnitzel (Austria)",
+                    ]);
+                    delegate.update_matches("".into(), cx).detach();
+
+                    let picker = Picker::new(delegate, cx);
                     picker.focus(cx);
                     picker
                 }),

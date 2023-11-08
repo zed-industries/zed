@@ -15,6 +15,7 @@ backtrace-on-stack-overflow = "0.3.0"
 clap = { version = "4.4", features = ["derive", "string"] }
 editor = { package = "editor2", path = "../editor2" }
 chrono = "0.4"
+fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
 gpui = { package = "gpui2", path = "../gpui2" }
 itertools = "0.11.0"
 language = { package = "language2", path = "../language2" }
