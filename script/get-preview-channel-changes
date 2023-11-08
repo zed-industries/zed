@@ -2,7 +2,7 @@
 
 const { execFileSync } = require("child_process");
 const { GITHUB_ACCESS_TOKEN } = process.env;
-const PR_REGEX = /#\d+/ // Ex: matches on #4241
+const PR_REGEX = /#\d+/; // Ex: matches on #4241
 const FIXES_REGEX = /(fixes|closes|completes) (.+[/#]\d+.*)$/im;
 
 main();
@@ -12,7 +12,7 @@ async function main() {
   const [newTag, oldTag] = execFileSync(
     "git",
     ["tag", "--sort", "-committerdate"],
-    { encoding: "utf8" }
+    { encoding: "utf8" },
   )
     .split("\n")
     .filter((t) => t.startsWith("v") && t.endsWith("-pre"));
@@ -22,13 +22,22 @@ async function main() {
 
   let hasProtocolChanges = false;
   try {
-    execFileSync("git", ["diff", oldTag, newTag, "--exit-code", "--", "crates/rpc"]).status != 0;
+    execFileSync("git", [
+      "diff",
+      oldTag,
+      newTag,
+      "--exit-code",
+      "--",
+      "crates/rpc",
+    ]).status != 0;
   } catch (error) {
     hasProtocolChanges = true;
   }
 
   if (hasProtocolChanges) {
-    console.warn("\033[31;1;4mRPC protocol changes, server should be re-deployed\033[0m\n");
+    console.warn(
+      "\033[31;1;4mRPC protocol changes, server should be re-deployed\033[0m\n",
+    );
   } else {
     console.log("No RPC protocol changes\n");
   }
@@ -37,10 +46,14 @@ async function main() {
   const pullRequestNumbers = getPullRequestNumbers(oldTag, newTag);
 
   // Get the PRs that were cherry-picked between main and the old tag.
-  const existingPullRequestNumbers = new Set(getPullRequestNumbers("main", oldTag));
+  const existingPullRequestNumbers = new Set(
+    getPullRequestNumbers("main", oldTag),
+  );
 
   // Filter out those existing PRs from the set of new PRs.
-  const newPullRequestNumbers = pullRequestNumbers.filter(number => !existingPullRequestNumbers.has(number));
+  const newPullRequestNumbers = pullRequestNumbers.filter(
+    (number) => !existingPullRequestNumbers.has(number),
+  );
 
   // Fetch the pull requests from the GitHub API.
   console.log("Merged Pull requests:");
@@ -56,6 +69,16 @@ async function main() {
 
     // Print the pull request title and URL.
     const pullRequest = await response.json();
+    const releaseNotesHeader = /^\s*(?:Release )?Notes\s*:(.+)/ims;
+
+    let releaseNotes = pullRequest.body || "";
+    const captures = releaseNotesHeader.exec(releaseNotes);
+    const notes = captures ? captures[1] : "MISSING";
+    const skippableNoteRegex = /^\s*-?\s*n\/?a\s*/ims;
+
+    if (skippableNoteRegex.exec(notes) != null) {
+      continue;
+    }
     console.log("*", pullRequest.title);
     console.log("  PR URL:    ", webURL);
 
@@ -66,38 +89,30 @@ async function main() {
       console.log("  Issue URL:    ", fixedIssueURL);
     }
 
-    let releaseNotes = (pullRequest.body || "").split("Release Notes:")[1];
+    releaseNotes = notes.trim().split("\n");
+    console.log("  Release Notes:");
 
-    if (releaseNotes) {
-      releaseNotes = releaseNotes.trim().split("\n")
-      console.log("  Release Notes:");
-
-      for (const line of releaseNotes) {
-        console.log(`    ${line}`);
-      }
+    for (const line of releaseNotes) {
+      console.log(`    ${line}`);
     }
 
-    console.log()
+    console.log();
   }
 }
 
 function getPullRequestNumbers(oldTag, newTag) {
   const pullRequestNumbers = execFileSync(
     "git",
-    [
-      "log",
-      `${oldTag}..${newTag}`,
-      "--oneline"
-    ],
-    { encoding: "utf8" }
+    ["log", `${oldTag}..${newTag}`, "--oneline"],
+    { encoding: "utf8" },
   )
     .split("\n")
-    .filter(line => line.length > 0)
-    .map(line => {
+    .filter((line) => line.length > 0)
+    .map((line) => {
       const match = line.match(/#(\d+)/);
       return match ? match[1] : null;
     })
-    .filter(line => line);
+    .filter((line) => line);
 
   return pullRequestNumbers;
 }
