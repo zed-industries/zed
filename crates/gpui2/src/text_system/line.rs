@@ -74,7 +74,6 @@ impl Line {
                     glyph_origin.y += line_height;
                 }
                 prev_glyph_position = glyph.position;
-                let glyph_origin = glyph_origin + baseline_offset;
 
                 let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
                 if glyph.index >= run_end {
@@ -125,14 +124,14 @@ impl Line {
                 if max_glyph_bounds.intersects(&content_mask.bounds) {
                     if glyph.is_emoji {
                         cx.paint_emoji(
-                            glyph_origin,
+                            glyph_origin + baseline_offset,
                             run.font_id,
                             glyph.id,
                             self.layout.layout.font_size,
                         )?;
                     } else {
                         cx.paint_glyph(
-                            glyph_origin,
+                            glyph_origin + baseline_offset,
                             run.font_id,
                             glyph.id,
                             self.layout.layout.font_size,
