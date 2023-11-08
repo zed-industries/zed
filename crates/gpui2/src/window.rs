@@ -132,7 +132,12 @@ impl FocusHandle {
             if self.id == ancestor_id {
                 return true;
             } else {
-                ancestor = cx.window.focus_parents_by_child.get(&ancestor_id).copied();
+                ancestor = cx
+                    .window
+                    .current_frame
+                    .focus_parents_by_child
+                    .get(&ancestor_id)
+                    .copied();
             }
         }
         false
@@ -175,19 +180,8 @@ pub struct Window {
     pub(crate) layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView>,
     pub(crate) element_id_stack: GlobalElementId,
-    prev_frame_element_states: HashMap<GlobalElementId, AnyBox>,
-    element_states: HashMap<GlobalElementId, AnyBox>,
-    prev_frame_key_matchers: HashMap<GlobalElementId, KeyMatcher>,
-    key_matchers: HashMap<GlobalElementId, KeyMatcher>,
-    z_index_stack: StackingOrder,
-    content_mask_stack: Vec<ContentMask<Pixels>>,
-    element_offset_stack: Vec<Point<Pixels>>,
-    mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyListener)>>,
-    key_dispatch_stack: Vec<KeyDispatchStackFrame>,
-    freeze_key_dispatch_stack: bool,
-    focus_stack: Vec<FocusId>,
-    focus_parents_by_child: HashMap<FocusId, FocusId>,
-    pub(crate) focus_listeners: Vec<AnyFocusListener>,
+    pub(crate) previous_frame: Frame,
+    pub(crate) current_frame: Frame,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
@@ -198,10 +192,25 @@ pub struct Window {
     bounds_observers: SubscriberSet<(), AnyObserver>,
     active: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
-    pub(crate) scene_builder: SceneBuilder,
     pub(crate) dirty: bool,
     pub(crate) last_blur: Option<Option<FocusId>>,
     pub(crate) focus: Option<FocusId>,
+}
+
+#[derive(Default)]
+pub(crate) struct Frame {
+    element_states: HashMap<GlobalElementId, AnyBox>,
+    key_matchers: HashMap<GlobalElementId, KeyMatcher>,
+    mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyListener)>>,
+    pub(crate) focus_listeners: Vec<AnyFocusListener>,
+    key_dispatch_stack: Vec<KeyDispatchStackFrame>,
+    freeze_key_dispatch_stack: bool,
+    focus_parents_by_child: HashMap<FocusId, FocusId>,
+    pub(crate) scene_builder: SceneBuilder,
+    z_index_stack: StackingOrder,
+    content_mask_stack: Vec<ContentMask<Pixels>>,
+    element_offset_stack: Vec<Point<Pixels>>,
+    focus_stack: Vec<FocusId>,
 }
 
 impl Window {
@@ -270,19 +279,8 @@ impl Window {
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             element_id_stack: GlobalElementId::default(),
-            prev_frame_element_states: HashMap::default(),
-            element_states: HashMap::default(),
-            prev_frame_key_matchers: HashMap::default(),
-            key_matchers: HashMap::default(),
-            z_index_stack: StackingOrder(SmallVec::new()),
-            content_mask_stack: Vec::new(),
-            element_offset_stack: Vec::new(),
-            mouse_listeners: HashMap::default(),
-            key_dispatch_stack: Vec::new(),
-            freeze_key_dispatch_stack: false,
-            focus_stack: Vec::new(),
-            focus_parents_by_child: HashMap::default(),
-            focus_listeners: Vec::new(),
+            previous_frame: Frame::default(),
+            current_frame: Frame::default(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             default_prevented: true,
             mouse_position,
@@ -293,7 +291,6 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             active: false,
             activation_observers: SubscriberSet::new(),
-            scene_builder: SceneBuilder::new(),
             dirty: true,
             last_blur: None,
             focus: None,
@@ -667,8 +664,9 @@ impl<'a> WindowContext<'a> {
         &mut self,
         handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let order = self.window.z_index_stack.clone();
+        let order = self.window.current_frame.z_index_stack.clone();
         self.window
+            .current_frame
             .mouse_listeners
             .entry(TypeId::of::<Event>())
             .or_default()
@@ -692,9 +690,9 @@ impl<'a> WindowContext<'a> {
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
     pub fn stack<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.z_index_stack.push(z_index);
+        self.window.current_frame.z_index_stack.push(z_index);
         let result = f(self);
-        self.window.z_index_stack.pop();
+        self.window.current_frame.z_index_stack.pop();
         result
     }
 
@@ -712,8 +710,8 @@ impl<'a> WindowContext<'a> {
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
             shadow_bounds.dilate(shadow.spread_radius);
-            window.scene_builder.insert(
-                &window.z_index_stack,
+            window.current_frame.scene_builder.insert(
+                &window.current_frame.z_index_stack,
                 Shadow {
                     order: 0,
                     bounds: shadow_bounds.scale(scale_factor),
@@ -740,8 +738,8 @@ impl<'a> WindowContext<'a> {
         let content_mask = self.content_mask();
 
         let window = &mut *self.window;
-        window.scene_builder.insert(
-            &window.z_index_stack,
+        window.current_frame.scene_builder.insert(
+            &window.current_frame.z_index_stack,
             Quad {
                 order: 0,
                 bounds: bounds.scale(scale_factor),
@@ -761,9 +759,10 @@ impl<'a> WindowContext<'a> {
         path.content_mask = content_mask;
         path.color = color.into();
         let window = &mut *self.window;
-        window
-            .scene_builder
-            .insert(&window.z_index_stack, path.scale(scale_factor));
+        window.current_frame.scene_builder.insert(
+            &window.current_frame.z_index_stack,
+            path.scale(scale_factor),
+        );
     }
 
     /// Paint an underline into the scene for the current frame at the current z-index.
@@ -785,8 +784,8 @@ impl<'a> WindowContext<'a> {
         };
         let content_mask = self.content_mask();
         let window = &mut *self.window;
-        window.scene_builder.insert(
-            &window.z_index_stack,
+        window.current_frame.scene_builder.insert(
+            &window.current_frame.z_index_stack,
             Underline {
                 order: 0,
                 bounds: bounds.scale(scale_factor),
@@ -839,8 +838,8 @@ impl<'a> WindowContext<'a> {
             };
             let content_mask = self.content_mask().scale(scale_factor);
             let window = &mut *self.window;
-            window.scene_builder.insert(
-                &window.z_index_stack,
+            window.current_frame.scene_builder.insert(
+                &window.current_frame.z_index_stack,
                 MonochromeSprite {
                     order: 0,
                     bounds,
@@ -890,8 +889,8 @@ impl<'a> WindowContext<'a> {
             let content_mask = self.content_mask().scale(scale_factor);
             let window = &mut *self.window;
 
-            window.scene_builder.insert(
-                &window.z_index_stack,
+            window.current_frame.scene_builder.insert(
+                &window.current_frame.z_index_stack,
                 PolychromeSprite {
                     order: 0,
                     bounds,
@@ -932,8 +931,8 @@ impl<'a> WindowContext<'a> {
         let content_mask = self.content_mask().scale(scale_factor);
 
         let window = &mut *self.window;
-        window.scene_builder.insert(
-            &window.z_index_stack,
+        window.current_frame.scene_builder.insert(
+            &window.current_frame.z_index_stack,
             MonochromeSprite {
                 order: 0,
                 bounds,
@@ -968,8 +967,8 @@ impl<'a> WindowContext<'a> {
         let corner_radii = corner_radii.scale(scale_factor);
 
         let window = &mut *self.window;
-        window.scene_builder.insert(
-            &window.z_index_stack,
+        window.current_frame.scene_builder.insert(
+            &window.current_frame.z_index_stack,
             PolychromeSprite {
                 order: 0,
                 bounds,
@@ -1014,7 +1013,7 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.root_view = Some(root_view);
-        let scene = self.window.scene_builder.build();
+        let scene = self.window.current_frame.scene_builder.build();
 
         self.window.platform_window.draw(scene);
         let cursor_style = self
@@ -1030,39 +1029,21 @@ impl<'a> WindowContext<'a> {
         self.window.dirty = false;
     }
 
+    /// Rotate the current frame and the previous frame, then clear the current frame.
+    /// We repopulate all state in the current frame during each paint.
     fn start_frame(&mut self) {
         self.text_system().start_frame();
 
         let window = &mut *self.window;
-
-        // Move the current frame element states to the previous frame.
-        // The new empty element states map will be populated for any element states we
-        // reference during the upcoming frame.
-        mem::swap(
-            &mut window.element_states,
-            &mut window.prev_frame_element_states,
-        );
-        window.element_states.clear();
-
-        // Make the current key matchers the previous, and then clear the current.
-        // An empty key matcher map will be created for every identified element in the
-        // upcoming frame.
-        mem::swap(
-            &mut window.key_matchers,
-            &mut window.prev_frame_key_matchers,
-        );
-        window.key_matchers.clear();
-
-        // Clear mouse event listeners, because elements add new element listeners
-        // when the upcoming frame is painted.
-        window.mouse_listeners.values_mut().for_each(Vec::clear);
-
-        // Clear focus state, because we determine what is focused when the new elements
-        // in the upcoming frame are initialized.
-        window.focus_listeners.clear();
-        window.key_dispatch_stack.clear();
-        window.focus_parents_by_child.clear();
-        window.freeze_key_dispatch_stack = false;
+        mem::swap(&mut window.previous_frame, &mut window.current_frame);
+        let frame = &mut window.current_frame;
+        frame.element_states.clear();
+        frame.key_matchers.clear();
+        frame.mouse_listeners.values_mut().for_each(Vec::clear);
+        frame.focus_listeners.clear();
+        frame.key_dispatch_stack.clear();
+        frame.focus_parents_by_child.clear();
+        frame.freeze_key_dispatch_stack = false;
     }
 
     /// Dispatch a mouse or keyboard event on the window.
@@ -1126,6 +1107,7 @@ impl<'a> WindowContext<'a> {
         if let Some(any_mouse_event) = event.mouse_event() {
             if let Some(mut handlers) = self
                 .window
+                .current_frame
                 .mouse_listeners
                 .remove(&any_mouse_event.type_id())
             {
@@ -1160,18 +1142,19 @@ impl<'a> WindowContext<'a> {
                 // Just in case any handlers added new handlers, which is weird, but possible.
                 handlers.extend(
                     self.window
+                        .current_frame
                         .mouse_listeners
                         .get_mut(&any_mouse_event.type_id())
                         .into_iter()
                         .flat_map(|handlers| handlers.drain(..)),
                 );
                 self.window
+                    .current_frame
                     .mouse_listeners
                     .insert(any_mouse_event.type_id(), handlers);
             }
         } else if let Some(any_key_event) = event.keyboard_event() {
-            let mut did_handle_action = false;
-            let key_dispatch_stack = mem::take(&mut self.window.key_dispatch_stack);
+            let key_dispatch_stack = mem::take(&mut self.window.current_frame.key_dispatch_stack);
             let key_event_type = any_key_event.type_id();
             let mut context_stack = SmallVec::<[&DispatchContext; 16]>::new();
 
@@ -1191,7 +1174,6 @@ impl<'a> WindowContext<'a> {
                                 self.dispatch_action(action, &key_dispatch_stack[..ix]);
                             }
                             if !self.app.propagate_event {
-                                did_handle_action = true;
                                 break;
                             }
                         }
@@ -1220,7 +1202,6 @@ impl<'a> WindowContext<'a> {
                                 }
 
                                 if !self.app.propagate_event {
-                                    did_handle_action = true;
                                     break;
                                 }
                             }
@@ -1233,11 +1214,10 @@ impl<'a> WindowContext<'a> {
             }
 
             drop(context_stack);
-            self.window.key_dispatch_stack = key_dispatch_stack;
-            return did_handle_action;
+            self.window.current_frame.key_dispatch_stack = key_dispatch_stack;
         }
 
-        true
+        !self.app.propagate_event
     }
 
     /// Attempt to map a keystroke to an action based on the keymap.
@@ -1249,13 +1229,14 @@ impl<'a> WindowContext<'a> {
     ) -> KeyMatch {
         let key_match = self
             .window
+            .current_frame
             .key_matchers
             .get_mut(element_id)
             .unwrap()
             .match_keystroke(keystroke, context_stack);
 
         if key_match.is_some() {
-            for matcher in self.window.key_matchers.values_mut() {
+            for matcher in self.window.current_frame.key_matchers.values_mut() {
                 matcher.clear_pending();
             }
         }
@@ -1527,11 +1508,12 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         window.element_id_stack.push(id.into());
         let global_id = window.element_id_stack.clone();
 
-        if window.key_matchers.get(&global_id).is_none() {
-            window.key_matchers.insert(
+        if window.current_frame.key_matchers.get(&global_id).is_none() {
+            window.current_frame.key_matchers.insert(
                 global_id.clone(),
                 window
-                    .prev_frame_key_matchers
+                    .previous_frame
+                    .key_matchers
                     .remove(&global_id)
                     .unwrap_or_else(|| KeyMatcher::new(keymap)),
             );
@@ -1551,9 +1533,12 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         let mask = mask.intersect(&self.content_mask());
-        self.window_mut().content_mask_stack.push(mask);
+        self.window_mut()
+            .current_frame
+            .content_mask_stack
+            .push(mask);
         let result = f(self);
-        self.window_mut().content_mask_stack.pop();
+        self.window_mut().current_frame.content_mask_stack.pop();
         result
     }
 
@@ -1569,15 +1554,19 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         };
 
         let offset = self.element_offset() + offset;
-        self.window_mut().element_offset_stack.push(offset);
+        self.window_mut()
+            .current_frame
+            .element_offset_stack
+            .push(offset);
         let result = f(self);
-        self.window_mut().element_offset_stack.pop();
+        self.window_mut().current_frame.element_offset_stack.pop();
         result
     }
 
     /// Obtain the current element offset.
     fn element_offset(&self) -> Point<Pixels> {
         self.window()
+            .current_frame
             .element_offset_stack
             .last()
             .copied()
@@ -1599,9 +1588,15 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         self.with_element_id(id, |global_id, cx| {
             if let Some(any) = cx
                 .window_mut()
+                .current_frame
                 .element_states
                 .remove(&global_id)
-                .or_else(|| cx.window_mut().prev_frame_element_states.remove(&global_id))
+                .or_else(|| {
+                    cx.window_mut()
+                        .previous_frame
+                        .element_states
+                        .remove(&global_id)
+                })
             {
                 // Using the extra inner option to avoid needing to reallocate a new box.
                 let mut state_box = any
@@ -1612,11 +1607,15 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                     .expect("element state is already on the stack");
                 let (result, state) = f(Some(state), cx);
                 state_box.replace(state);
-                cx.window_mut().element_states.insert(global_id, state_box);
+                cx.window_mut()
+                    .current_frame
+                    .element_states
+                    .insert(global_id, state_box);
                 result
             } else {
                 let (result, state) = f(None, cx);
                 cx.window_mut()
+                    .current_frame
                     .element_states
                     .insert(global_id, Box::new(Some(state)));
                 result
@@ -1644,6 +1643,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     /// Obtain the current content mask.
     fn content_mask(&self) -> ContentMask<Pixels> {
         self.window()
+            .current_frame
             .content_mask_stack
             .last()
             .cloned()
@@ -1728,9 +1728,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.z_index_stack.push(z_index);
+        self.window.current_frame.z_index_stack.push(z_index);
         let result = f(self);
-        self.window.z_index_stack.pop();
+        self.window.current_frame.z_index_stack.pop();
         result
     }
 
@@ -1885,11 +1885,14 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
     ) {
         let handle = self.view().downgrade();
-        self.window.focus_listeners.push(Box::new(move |event, cx| {
-            handle
-                .update(cx, |view, cx| listener(view, event, cx))
-                .log_err();
-        }));
+        self.window
+            .current_frame
+            .focus_listeners
+            .push(Box::new(move |event, cx| {
+                handle
+                    .update(cx, |view, cx| listener(view, event, cx))
+                    .log_err();
+            }));
     }
 
     pub fn with_key_listeners<R>(
@@ -1897,8 +1900,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         key_listeners: impl IntoIterator<Item = (TypeId, KeyListener<V>)>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let old_stack_len = self.window.key_dispatch_stack.len();
-        if !self.window.freeze_key_dispatch_stack {
+        let old_stack_len = self.window.current_frame.key_dispatch_stack.len();
+        if !self.window.current_frame.freeze_key_dispatch_stack {
             for (event_type, listener) in key_listeners {
                 let handle = self.view().downgrade();
                 let listener = Box::new(
@@ -1914,19 +1917,22 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                             .flatten()
                     },
                 );
-                self.window
-                    .key_dispatch_stack
-                    .push(KeyDispatchStackFrame::Listener {
+                self.window.current_frame.key_dispatch_stack.push(
+                    KeyDispatchStackFrame::Listener {
                         event_type,
                         listener,
-                    });
+                    },
+                );
             }
         }
 
         let result = f(self);
 
-        if !self.window.freeze_key_dispatch_stack {
-            self.window.key_dispatch_stack.truncate(old_stack_len);
+        if !self.window.current_frame.freeze_key_dispatch_stack {
+            self.window
+                .current_frame
+                .key_dispatch_stack
+                .truncate(old_stack_len);
         }
 
         result
@@ -1941,16 +1947,17 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             return f(self);
         }
 
-        if !self.window.freeze_key_dispatch_stack {
+        if !self.window.current_frame.freeze_key_dispatch_stack {
             self.window
+                .current_frame
                 .key_dispatch_stack
                 .push(KeyDispatchStackFrame::Context(context));
         }
 
         let result = f(self);
 
-        if !self.window.freeze_key_dispatch_stack {
-            self.window.key_dispatch_stack.pop();
+        if !self.window.previous_frame.freeze_key_dispatch_stack {
+            self.window.previous_frame.key_dispatch_stack.pop();
         }
 
         result
@@ -1961,20 +1968,21 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         focus_handle: FocusHandle,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        if let Some(parent_focus_id) = self.window.focus_stack.last().copied() {
+        if let Some(parent_focus_id) = self.window.current_frame.focus_stack.last().copied() {
             self.window
+                .current_frame
                 .focus_parents_by_child
                 .insert(focus_handle.id, parent_focus_id);
         }
-        self.window.focus_stack.push(focus_handle.id);
+        self.window.current_frame.focus_stack.push(focus_handle.id);
 
         if Some(focus_handle.id) == self.window.focus {
-            self.window.freeze_key_dispatch_stack = true;
+            self.window.current_frame.freeze_key_dispatch_stack = true;
         }
 
         let result = f(self);
 
-        self.window.focus_stack.pop();
+        self.window.current_frame.focus_stack.pop();
         result
     }
 

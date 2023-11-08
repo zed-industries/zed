@@ -27,8 +27,8 @@ pub(crate) struct SceneBuilder {
     polychrome_sprites: Vec<PolychromeSprite>,
 }
 
-impl SceneBuilder {
-    pub fn new() -> SceneBuilder {
+impl Default for SceneBuilder {
+    fn default() -> Self {
         SceneBuilder {
             layers_by_order: BTreeMap::new(),
             splitter: BspSplitter::new(),
@@ -40,7 +40,9 @@ impl SceneBuilder {
             polychrome_sprites: Vec::new(),
         }
     }
+}
 
+impl SceneBuilder {
     pub fn build(&mut self) -> Scene {
         // Map each layer id to a float between 0. and 1., with 1. closer to the viewer.
         let mut layer_z_values = vec![0.; self.layers_by_order.len()];
