@@ -1,4 +1,4 @@
-use collab::{db, executor::Executor};
+use collab2::{db, executor::Executor};
 use db::{ConnectOptions, Database};
 use serde::{de::DeserializeOwned, Deserialize};
 use std::fmt::Write;
