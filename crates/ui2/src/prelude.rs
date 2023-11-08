@@ -1,3 +1,5 @@
+use gpui::rems;
+use gpui::Rems;
 pub use gpui::{
     div, Component, Element, ElementId, ParentElement, SharedString, StatefulInteractive,
     StatelessInteractive, Styled, ViewContext, WindowContext,
@@ -71,6 +73,24 @@ impl std::fmt::Display for GitStatus {
             }
         )
     }
+}
+
+/// The default text size for UI text
+///
+/// At a default 16px per rem, this is 14px.
+///
+/// Use [`ui_text_sm`] for smaller text.
+pub fn ui_text_default() -> Rems {
+    rems(0.875)
+}
+
+/// The small text size for UI text
+///
+/// At a default 16px per rem, this is 12px.
+///
+/// Use [`ui_text_default`] for regular-sized text.
+pub fn ui_text_sm() -> Rems {
+    rems(0.75)
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
