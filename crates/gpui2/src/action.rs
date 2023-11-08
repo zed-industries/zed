@@ -6,6 +6,49 @@ use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use serde::Deserialize;
 use std::any::{type_name, Any};
 
+/// Actions are used to implement keyboard-driven UI.
+/// When you declare an action, you can bind keys to the action in the keymap and
+/// listeners for that action in the element tree.
+///
+/// To declare a list of simple actions, you can use the actions! macro, which defines a simple unit struct
+/// action for each listed action name.
+/// ```rust
+/// actions!(MoveUp, MoveDown, MoveLeft, MoveRight, Newline);
+/// ```
+/// More complex data types can also be actions. If you annotate your type with the `#[action]` proc macro,
+/// it will automatically
+/// ```
+/// #[action]
+/// pub struct SelectNext {
+///     pub replace_newest: bool,
+/// }
+///
+/// Any type A that satisfies the following bounds is automatically an action:
+///
+/// ```
+/// A: for<'a> Deserialize<'a> + PartialEq + Clone + Default + std::fmt::Debug + 'static,
+/// ```
+///
+/// The `#[action]` annotation will derive these implementations for your struct automatically. If you
+/// want to control them manually, you can use the lower-level `#[register_action]` macro, which only
+/// generates the code needed to register your action before `main`. Then you'll need to implement all
+/// the traits manually.
+///
+/// ```
+/// #[gpui::register_action]
+/// #[derive(gpui::serde::Deserialize, std::cmp::PartialEq, std::clone::Clone, std::fmt::Debug)]
+/// pub struct Paste {
+///     pub content: SharedString,
+/// }
+///
+/// impl std::default::Default for Paste {
+///     fn default() -> Self {
+///         Self {
+///             content: SharedString::from("🍝"),
+///         }
+///     }
+/// }
+/// ```
 pub trait Action: std::fmt::Debug + 'static {
     fn qualified_name() -> SharedString
     where
@@ -17,6 +60,44 @@ pub trait Action: std::fmt::Debug + 'static {
     fn partial_eq(&self, action: &dyn Action) -> bool;
     fn boxed_clone(&self) -> Box<dyn Action>;
     fn as_any(&self) -> &dyn Any;
+}
+
+// Types become actions by satisfying a list of trait bounds.
+impl<A> Action for A
+where
+    A: for<'a> Deserialize<'a> + PartialEq + Clone + Default + std::fmt::Debug + 'static,
+{
+    fn qualified_name() -> SharedString {
+        // todo!() remove the 2 replacement when migration is done
+        type_name::<A>().replace("2::", "::").into()
+    }
+
+    fn build(params: Option<serde_json::Value>) -> Result<Box<dyn Action>>
+    where
+        Self: Sized,
+    {
+        let action = if let Some(params) = params {
+            serde_json::from_value(params).context("failed to deserialize action")?
+        } else {
+            Self::default()
+        };
+        Ok(Box::new(action))
+    }
+
+    fn partial_eq(&self, action: &dyn Action) -> bool {
+        action
+            .as_any()
+            .downcast_ref::<Self>()
+            .map_or(false, |a| self == a)
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Action> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
@@ -82,43 +163,6 @@ macro_rules! actions {
         actions!($name { $($token)* });
         actions!($($rest)*);
     };
-}
-
-impl<A> Action for A
-where
-    A: for<'a> Deserialize<'a> + PartialEq + Clone + Default + std::fmt::Debug + 'static,
-{
-    fn qualified_name() -> SharedString {
-        // todo!() remove the 2 replacement when migration is done
-        type_name::<A>().replace("2::", "::").into()
-    }
-
-    fn build(params: Option<serde_json::Value>) -> Result<Box<dyn Action>>
-    where
-        Self: Sized,
-    {
-        let action = if let Some(params) = params {
-            serde_json::from_value(params).context("failed to deserialize action")?
-        } else {
-            Self::default()
-        };
-        Ok(Box::new(action))
-    }
-
-    fn partial_eq(&self, action: &dyn Action) -> bool {
-        action
-            .as_any()
-            .downcast_ref::<Self>()
-            .map_or(false, |a| self == a)
-    }
-
-    fn boxed_clone(&self) -> Box<dyn Action> {
-        Box::new(self.clone())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
