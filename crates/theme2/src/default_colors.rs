@@ -3,11 +3,105 @@ use std::num::ParseIntError;
 use gpui::{hsla, Hsla, Rgba};
 
 use crate::{
-    colors::{GitStatusColors, PlayerColor, PlayerColors, StatusColors, SystemColors, ThemeColors},
+    colors::{GitStatusColors, StatusColors, SystemColors, ThemeColors},
     scale::{ColorScaleSet, ColorScales},
     syntax::SyntaxTheme,
-    ColorScale,
+    ColorScale, PlayerColor, PlayerColors,
 };
+
+impl Default for PlayerColors {
+    fn default() -> Self {
+        Self(vec![
+            PlayerColor {
+                cursor: blue().dark().step_9(),
+                background: blue().dark().step_5(),
+                selection: blue().dark().step_3(),
+            },
+            PlayerColor {
+                cursor: orange().dark().step_9(),
+                background: orange().dark().step_5(),
+                selection: orange().dark().step_3(),
+            },
+            PlayerColor {
+                cursor: pink().dark().step_9(),
+                background: pink().dark().step_5(),
+                selection: pink().dark().step_3(),
+            },
+            PlayerColor {
+                cursor: lime().dark().step_9(),
+                background: lime().dark().step_5(),
+                selection: lime().dark().step_3(),
+            },
+            PlayerColor {
+                cursor: purple().dark().step_9(),
+                background: purple().dark().step_5(),
+                selection: purple().dark().step_3(),
+            },
+            PlayerColor {
+                cursor: amber().dark().step_9(),
+                background: amber().dark().step_5(),
+                selection: amber().dark().step_3(),
+            },
+            PlayerColor {
+                cursor: jade().dark().step_9(),
+                background: jade().dark().step_5(),
+                selection: jade().dark().step_3(),
+            },
+            PlayerColor {
+                cursor: red().dark().step_9(),
+                background: red().dark().step_5(),
+                selection: red().dark().step_3(),
+            },
+        ])
+    }
+}
+
+impl PlayerColors {
+    pub fn default_light() -> Self {
+        Self(vec![
+            PlayerColor {
+                cursor: blue().light().step_9(),
+                background: blue().light().step_4(),
+                selection: blue().light().step_3(),
+            },
+            PlayerColor {
+                cursor: orange().light().step_9(),
+                background: orange().light().step_4(),
+                selection: orange().light().step_3(),
+            },
+            PlayerColor {
+                cursor: pink().light().step_9(),
+                background: pink().light().step_4(),
+                selection: pink().light().step_3(),
+            },
+            PlayerColor {
+                cursor: lime().light().step_9(),
+                background: lime().light().step_4(),
+                selection: lime().light().step_3(),
+            },
+            PlayerColor {
+                cursor: purple().light().step_9(),
+                background: purple().light().step_4(),
+                selection: purple().light().step_3(),
+            },
+            PlayerColor {
+                cursor: amber().light().step_9(),
+                background: amber().light().step_4(),
+                selection: amber().light().step_3(),
+            },
+            PlayerColor {
+                cursor: jade().light().step_9(),
+                background: jade().light().step_4(),
+                selection: jade().light().step_3(),
+            },
+            PlayerColor {
+                cursor: red().light().step_9(),
+                background: red().light().step_4(),
+                selection: red().light().step_3(),
+            },
+        ])
+    }
+}
 
 fn neutral() -> ColorScaleSet {
     slate()
@@ -52,53 +146,6 @@ impl Default for GitStatusColors {
             modified: yellow().dark().step_9(),
             renamed: blue().dark().step_9(),
         }
-    }
-}
-
-impl Default for PlayerColors {
-    fn default() -> Self {
-        Self(vec![
-            PlayerColor {
-                cursor: blue().dark().step_9(),
-                background: blue().dark().step_4(),
-                selection: blue().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: orange().dark().step_9(),
-                background: orange().dark().step_4(),
-                selection: orange().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: pink().dark().step_9(),
-                background: pink().dark().step_4(),
-                selection: pink().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: lime().dark().step_9(),
-                background: lime().dark().step_4(),
-                selection: lime().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: purple().dark().step_9(),
-                background: purple().dark().step_4(),
-                selection: purple().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: amber().dark().step_9(),
-                background: amber().dark().step_4(),
-                selection: amber().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: jade().dark().step_9(),
-                background: jade().dark().step_4(),
-                selection: jade().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: red().dark().step_9(),
-                background: red().dark().step_4(),
-                selection: red().dark().step_3(),
-            },
-        ])
     }
 }
 

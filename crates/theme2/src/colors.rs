@@ -3,7 +3,7 @@ use std::sync::Arc;
 use gpui::Hsla;
 use refineable::Refineable;
 
-use crate::SyntaxTheme;
+use crate::{PlayerColors, SyntaxTheme};
 
 #[derive(Clone)]
 pub struct SystemColors {
@@ -11,39 +11,6 @@ pub struct SystemColors {
     pub mac_os_traffic_light_red: Hsla,
     pub mac_os_traffic_light_yellow: Hsla,
     pub mac_os_traffic_light_green: Hsla,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PlayerColor {
-    pub cursor: Hsla,
-    pub background: Hsla,
-    pub selection: Hsla,
-}
-
-/// A collection of colors that are used to color players in the editor.
-///
-/// The first color is always the local player's color, usually a blue.
-///
-/// The rest of the default colors crisscross back and forth on the
-/// color wheel so that the colors are as distinct as possible.
-#[derive(Clone)]
-pub struct PlayerColors(pub Vec<PlayerColor>);
-
-impl PlayerColors {
-    pub fn local(&self) -> PlayerColor {
-        // todo!("use a valid color");
-        *self.0.first().unwrap()
-    }
-
-    pub fn absent(&self) -> PlayerColor {
-        // todo!("use a valid color");
-        *self.0.last().unwrap()
-    }
-
-    pub fn color_for_participant(&self, participant_index: u32) -> PlayerColor {
-        let len = self.0.len() - 1;
-        self.0[(participant_index as usize % len) + 1]
-    }
 }
 
 #[derive(Refineable, Clone, Debug)]
