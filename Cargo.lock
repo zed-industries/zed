@@ -2263,7 +2263,7 @@ dependencies = [
 [[package]]
 name = "ctor"
 version = "0.1.20"
-source = "git+https://github.com/deviant-forks/rust-ctor?rev=c36b9e8f56571d51802834ba9a16b952f816d26e#c36b9e8f56571d51802834ba9a16b952f816d26e"
+source = "git+https://github.com/deviant-forks/rust-ctor?rev=9c03df5c5208fcc3545794168f3bccbb03a82c84#9c03df5c5208fcc3545794168f3bccbb03a82c84"
 dependencies = [
  "quote",
  "syn 1.0.109",
