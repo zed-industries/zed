@@ -28,5 +28,6 @@ pub fn register_action(_attr: TokenStream, item: TokenStream) -> TokenStream {
             gpui::register_action::<#type_name>()
         }
     };
+
     TokenStream::from(expanded)
 }
