@@ -37,9 +37,9 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, div, px, relative, AnyElement, AppContext, BackgroundExecutor, Context,
-    DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle, FontStyle, FontWeight, Hsla,
-    Model, Pixels, Render, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle, FontStyle, FontWeight,
+    HighlightStyle, Hsla, InputHandler, Model, Pixels, PlatformInputHandler, Render, Styled,
+    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -56,6 +56,7 @@ use language::{
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
 use lsp::{DiagnosticSeverity, Documentation, LanguageServerId};
 use movement::TextLayoutDetails;
+use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
@@ -67,7 +68,7 @@ use rpc::proto::*;
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
-use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
+use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
@@ -82,7 +83,7 @@ use std::{
 };
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
-use text::Rope;
+use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
@@ -2769,197 +2770,197 @@ impl Editor {
     //         cx.propagate();
     //     }
 
-    //     pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-    //         let text: Arc<str> = text.into();
+    pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+        let text: Arc<str> = text.into();
 
-    //         if self.read_only {
-    //             return;
-    //         }
+        if self.read_only {
+            return;
+        }
 
-    //         let selections = self.selections.all_adjusted(cx);
-    //         let mut brace_inserted = false;
-    //         let mut edits = Vec::new();
-    //         let mut new_selections = Vec::with_capacity(selections.len());
-    //         let mut new_autoclose_regions = Vec::new();
-    //         let snapshot = self.buffer.read(cx).read(cx);
+        let selections = self.selections.all_adjusted(cx);
+        let mut brace_inserted = false;
+        let mut edits = Vec::new();
+        let mut new_selections = Vec::with_capacity(selections.len());
+        let mut new_autoclose_regions = Vec::new();
+        let snapshot = self.buffer.read(cx).read(cx);
 
-    //         for (selection, autoclose_region) in
-    //             self.selections_with_autoclose_regions(selections, &snapshot)
-    //         {
-    //             if let Some(scope) = snapshot.language_scope_at(selection.head()) {
-    //                 // Determine if the inserted text matches the opening or closing
-    //                 // bracket of any of this language's bracket pairs.
-    //                 let mut bracket_pair = None;
-    //                 let mut is_bracket_pair_start = false;
-    //                 if !text.is_empty() {
-    //                     // `text` can be empty when an user is using IME (e.g. Chinese Wubi Simplified)
-    //                     //  and they are removing the character that triggered IME popup.
-    //                     for (pair, enabled) in scope.brackets() {
-    //                         if enabled && pair.close && pair.start.ends_with(text.as_ref()) {
-    //                             bracket_pair = Some(pair.clone());
-    //                             is_bracket_pair_start = true;
-    //                             break;
-    //                         } else if pair.end.as_str() == text.as_ref() {
-    //                             bracket_pair = Some(pair.clone());
-    //                             break;
-    //                         }
-    //                     }
-    //                 }
+        for (selection, autoclose_region) in
+            self.selections_with_autoclose_regions(selections, &snapshot)
+        {
+            if let Some(scope) = snapshot.language_scope_at(selection.head()) {
+                // Determine if the inserted text matches the opening or closing
+                // bracket of any of this language's bracket pairs.
+                let mut bracket_pair = None;
+                let mut is_bracket_pair_start = false;
+                if !text.is_empty() {
+                    // `text` can be empty when an user is using IME (e.g. Chinese Wubi Simplified)
+                    //  and they are removing the character that triggered IME popup.
+                    for (pair, enabled) in scope.brackets() {
+                        if enabled && pair.close && pair.start.ends_with(text.as_ref()) {
+                            bracket_pair = Some(pair.clone());
+                            is_bracket_pair_start = true;
+                            break;
+                        } else if pair.end.as_str() == text.as_ref() {
+                            bracket_pair = Some(pair.clone());
+                            break;
+                        }
+                    }
+                }
 
-    //                 if let Some(bracket_pair) = bracket_pair {
-    //                     if selection.is_empty() {
-    //                         if is_bracket_pair_start {
-    //                             let prefix_len = bracket_pair.start.len() - text.len();
+                if let Some(bracket_pair) = bracket_pair {
+                    if selection.is_empty() {
+                        if is_bracket_pair_start {
+                            let prefix_len = bracket_pair.start.len() - text.len();
 
-    //                             // If the inserted text is a suffix of an opening bracket and the
-    //                             // selection is preceded by the rest of the opening bracket, then
-    //                             // insert the closing bracket.
-    //                             let following_text_allows_autoclose = snapshot
-    //                                 .chars_at(selection.start)
-    //                                 .next()
-    //                                 .map_or(true, |c| scope.should_autoclose_before(c));
-    //                             let preceding_text_matches_prefix = prefix_len == 0
-    //                                 || (selection.start.column >= (prefix_len as u32)
-    //                                     && snapshot.contains_str_at(
-    //                                         Point::new(
-    //                                             selection.start.row,
-    //                                             selection.start.column - (prefix_len as u32),
-    //                                         ),
-    //                                         &bracket_pair.start[..prefix_len],
-    //                                     ));
-    //                             if following_text_allows_autoclose && preceding_text_matches_prefix {
-    //                                 let anchor = snapshot.anchor_before(selection.end);
-    //                                 new_selections.push((selection.map(|_| anchor), text.len()));
-    //                                 new_autoclose_regions.push((
-    //                                     anchor,
-    //                                     text.len(),
-    //                                     selection.id,
-    //                                     bracket_pair.clone(),
-    //                                 ));
-    //                                 edits.push((
-    //                                     selection.range(),
-    //                                     format!("{}{}", text, bracket_pair.end).into(),
-    //                                 ));
-    //                                 brace_inserted = true;
-    //                                 continue;
-    //                             }
-    //                         }
+                            // If the inserted text is a suffix of an opening bracket and the
+                            // selection is preceded by the rest of the opening bracket, then
+                            // insert the closing bracket.
+                            let following_text_allows_autoclose = snapshot
+                                .chars_at(selection.start)
+                                .next()
+                                .map_or(true, |c| scope.should_autoclose_before(c));
+                            let preceding_text_matches_prefix = prefix_len == 0
+                                || (selection.start.column >= (prefix_len as u32)
+                                    && snapshot.contains_str_at(
+                                        Point::new(
+                                            selection.start.row,
+                                            selection.start.column - (prefix_len as u32),
+                                        ),
+                                        &bracket_pair.start[..prefix_len],
+                                    ));
+                            if following_text_allows_autoclose && preceding_text_matches_prefix {
+                                let anchor = snapshot.anchor_before(selection.end);
+                                new_selections.push((selection.map(|_| anchor), text.len()));
+                                new_autoclose_regions.push((
+                                    anchor,
+                                    text.len(),
+                                    selection.id,
+                                    bracket_pair.clone(),
+                                ));
+                                edits.push((
+                                    selection.range(),
+                                    format!("{}{}", text, bracket_pair.end).into(),
+                                ));
+                                brace_inserted = true;
+                                continue;
+                            }
+                        }
 
-    //                         if let Some(region) = autoclose_region {
-    //                             // If the selection is followed by an auto-inserted closing bracket,
-    //                             // then don't insert that closing bracket again; just move the selection
-    //                             // past the closing bracket.
-    //                             let should_skip = selection.end == region.range.end.to_point(&snapshot)
-    //                                 && text.as_ref() == region.pair.end.as_str();
-    //                             if should_skip {
-    //                                 let anchor = snapshot.anchor_after(selection.end);
-    //                                 new_selections
-    //                                     .push((selection.map(|_| anchor), region.pair.end.len()));
-    //                                 continue;
-    //                             }
-    //                         }
-    //                     }
-    //                     // If an opening bracket is 1 character long and is typed while
-    //                     // text is selected, then surround that text with the bracket pair.
-    //                     else if is_bracket_pair_start && bracket_pair.start.chars().count() == 1 {
-    //                         edits.push((selection.start..selection.start, text.clone()));
-    //                         edits.push((
-    //                             selection.end..selection.end,
-    //                             bracket_pair.end.as_str().into(),
-    //                         ));
-    //                         brace_inserted = true;
-    //                         new_selections.push((
-    //                             Selection {
-    //                                 id: selection.id,
-    //                                 start: snapshot.anchor_after(selection.start),
-    //                                 end: snapshot.anchor_before(selection.end),
-    //                                 reversed: selection.reversed,
-    //                                 goal: selection.goal,
-    //                             },
-    //                             0,
-    //                         ));
-    //                         continue;
-    //                     }
-    //                 }
-    //             }
+                        if let Some(region) = autoclose_region {
+                            // If the selection is followed by an auto-inserted closing bracket,
+                            // then don't insert that closing bracket again; just move the selection
+                            // past the closing bracket.
+                            let should_skip = selection.end == region.range.end.to_point(&snapshot)
+                                && text.as_ref() == region.pair.end.as_str();
+                            if should_skip {
+                                let anchor = snapshot.anchor_after(selection.end);
+                                new_selections
+                                    .push((selection.map(|_| anchor), region.pair.end.len()));
+                                continue;
+                            }
+                        }
+                    }
+                    // If an opening bracket is 1 character long and is typed while
+                    // text is selected, then surround that text with the bracket pair.
+                    else if is_bracket_pair_start && bracket_pair.start.chars().count() == 1 {
+                        edits.push((selection.start..selection.start, text.clone()));
+                        edits.push((
+                            selection.end..selection.end,
+                            bracket_pair.end.as_str().into(),
+                        ));
+                        brace_inserted = true;
+                        new_selections.push((
+                            Selection {
+                                id: selection.id,
+                                start: snapshot.anchor_after(selection.start),
+                                end: snapshot.anchor_before(selection.end),
+                                reversed: selection.reversed,
+                                goal: selection.goal,
+                            },
+                            0,
+                        ));
+                        continue;
+                    }
+                }
+            }
 
-    //             // If not handling any auto-close operation, then just replace the selected
-    //             // text with the given input and move the selection to the end of the
-    //             // newly inserted text.
-    //             let anchor = snapshot.anchor_after(selection.end);
-    //             new_selections.push((selection.map(|_| anchor), 0));
-    //             edits.push((selection.start..selection.end, text.clone()));
-    //         }
+            // If not handling any auto-close operation, then just replace the selected
+            // text with the given input and move the selection to the end of the
+            // newly inserted text.
+            let anchor = snapshot.anchor_after(selection.end);
+            new_selections.push((selection.map(|_| anchor), 0));
+            edits.push((selection.start..selection.end, text.clone()));
+        }
 
-    //         drop(snapshot);
-    //         self.transact(cx, |this, cx| {
-    //             this.buffer.update(cx, |buffer, cx| {
-    //                 buffer.edit(edits, this.autoindent_mode.clone(), cx);
-    //             });
+        drop(snapshot);
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, this.autoindent_mode.clone(), cx);
+            });
 
-    //             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
-    //             let new_selection_deltas = new_selections.iter().map(|e| e.1);
-    //             let snapshot = this.buffer.read(cx).read(cx);
-    //             let new_selections = resolve_multiple::<usize, _>(new_anchor_selections, &snapshot)
-    //                 .zip(new_selection_deltas)
-    //                 .map(|(selection, delta)| Selection {
-    //                     id: selection.id,
-    //                     start: selection.start + delta,
-    //                     end: selection.end + delta,
-    //                     reversed: selection.reversed,
-    //                     goal: SelectionGoal::None,
-    //                 })
-    //                 .collect::<Vec<_>>();
+            let new_anchor_selections = new_selections.iter().map(|e| &e.0);
+            let new_selection_deltas = new_selections.iter().map(|e| e.1);
+            let snapshot = this.buffer.read(cx).read(cx);
+            let new_selections = resolve_multiple::<usize, _>(new_anchor_selections, &snapshot)
+                .zip(new_selection_deltas)
+                .map(|(selection, delta)| Selection {
+                    id: selection.id,
+                    start: selection.start + delta,
+                    end: selection.end + delta,
+                    reversed: selection.reversed,
+                    goal: SelectionGoal::None,
+                })
+                .collect::<Vec<_>>();
 
-    //             let mut i = 0;
-    //             for (position, delta, selection_id, pair) in new_autoclose_regions {
-    //                 let position = position.to_offset(&snapshot) + delta;
-    //                 let start = snapshot.anchor_before(position);
-    //                 let end = snapshot.anchor_after(position);
-    //                 while let Some(existing_state) = this.autoclose_regions.get(i) {
-    //                     match existing_state.range.start.cmp(&start, &snapshot) {
-    //                         Ordering::Less => i += 1,
-    //                         Ordering::Greater => break,
-    //                         Ordering::Equal => match end.cmp(&existing_state.range.end, &snapshot) {
-    //                             Ordering::Less => i += 1,
-    //                             Ordering::Equal => break,
-    //                             Ordering::Greater => break,
-    //                         },
-    //                     }
-    //                 }
-    //                 this.autoclose_regions.insert(
-    //                     i,
-    //                     AutocloseRegion {
-    //                         selection_id,
-    //                         range: start..end,
-    //                         pair,
-    //                     },
-    //                 );
-    //             }
+            let mut i = 0;
+            for (position, delta, selection_id, pair) in new_autoclose_regions {
+                let position = position.to_offset(&snapshot) + delta;
+                let start = snapshot.anchor_before(position);
+                let end = snapshot.anchor_after(position);
+                while let Some(existing_state) = this.autoclose_regions.get(i) {
+                    match existing_state.range.start.cmp(&start, &snapshot) {
+                        Ordering::Less => i += 1,
+                        Ordering::Greater => break,
+                        Ordering::Equal => match end.cmp(&existing_state.range.end, &snapshot) {
+                            Ordering::Less => i += 1,
+                            Ordering::Equal => break,
+                            Ordering::Greater => break,
+                        },
+                    }
+                }
+                this.autoclose_regions.insert(
+                    i,
+                    AutocloseRegion {
+                        selection_id,
+                        range: start..end,
+                        pair,
+                    },
+                );
+            }
 
-    //             drop(snapshot);
-    //             let had_active_copilot_suggestion = this.has_active_copilot_suggestion(cx);
-    //             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
+            drop(snapshot);
+            let had_active_copilot_suggestion = this.has_active_copilot_suggestion(cx);
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
-    //             if !brace_inserted && EditorSettings>(cx).use_on_type_format {
-    //                 if let Some(on_type_format_task) =
-    //                     this.trigger_on_type_formatting(text.to_string(), cx)
-    //                 {
-    //                     on_type_format_task.detach_and_log_err(cx);
-    //                 }
-    //             }
+            if !brace_inserted && EditorSettings::get_global(cx).use_on_type_format {
+                if let Some(on_type_format_task) =
+                    this.trigger_on_type_formatting(text.to_string(), cx)
+                {
+                    on_type_format_task.detach_and_log_err(cx);
+                }
+            }
 
-    //             if had_active_copilot_suggestion {
-    //                 this.refresh_copilot_suggestions(true, cx);
-    //                 if !this.has_active_copilot_suggestion(cx) {
-    //                     this.trigger_completion_on_input(&text, cx);
-    //                 }
-    //             } else {
-    //                 this.trigger_completion_on_input(&text, cx);
-    //                 this.refresh_copilot_suggestions(true, cx);
-    //             }
-    //         });
-    //     }
+            if had_active_copilot_suggestion {
+                this.refresh_copilot_suggestions(true, cx);
+                if !this.has_active_copilot_suggestion(cx) {
+                    this.trigger_completion_on_input(&text, cx);
+                }
+            } else {
+                this.trigger_completion_on_input(&text, cx);
+                this.refresh_copilot_suggestions(true, cx);
+            }
+        });
+    }
 
     //     pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
     //         self.transact(cx, |this, cx| {
@@ -3259,22 +3260,22 @@ impl Editor {
         });
     }
 
-    //     fn trigger_completion_on_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-    //         if !EditorSettings>(cx).show_completions_on_input {
-    //             return;
-    //         }
+    fn trigger_completion_on_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+        if !EditorSettings::get_global(cx).show_completions_on_input {
+            return;
+        }
 
-    //         let selection = self.selections.newest_anchor();
-    //         if self
-    //             .buffer
-    //             .read(cx)
-    //             .is_completion_trigger(selection.head(), text, cx)
-    //         {
-    //             self.show_completions(&ShowCompletions, cx);
-    //         } else {
-    //             self.hide_context_menu(cx);
-    //         }
-    //     }
+        let selection = self.selections.newest_anchor();
+        if self
+            .buffer
+            .read(cx)
+            .is_completion_trigger(selection.head(), text, cx)
+        {
+            self.show_completions(&ShowCompletions, cx);
+        } else {
+            self.hide_context_menu(cx);
+        }
+    }
 
     //     /// If any empty selections is touching the start of its innermost containing autoclose
     //     /// region, expand it to select the brackets.
@@ -3305,37 +3306,37 @@ impl Editor {
     //         self.change_selections(None, cx, |selections| selections.select(new_selections));
     //     }
 
-    //     /// Iterate the given selections, and for each one, find the smallest surrounding
-    //     /// autoclose region. This uses the ordering of the selections and the autoclose
-    //     /// regions to avoid repeated comparisons.
-    //     fn selections_with_autoclose_regions<'a, D: ToOffset + Clone>(
-    //         &'a self,
-    //         selections: impl IntoIterator<Item = Selection<D>>,
-    //         buffer: &'a MultiBufferSnapshot,
-    //     ) -> impl Iterator<Item = (Selection<D>, Option<&'a AutocloseRegion>)> {
-    //         let mut i = 0;
-    //         let mut regions = self.autoclose_regions.as_slice();
-    //         selections.into_iter().map(move |selection| {
-    //             let range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
+    /// Iterate the given selections, and for each one, find the smallest surrounding
+    /// autoclose region. This uses the ordering of the selections and the autoclose
+    /// regions to avoid repeated comparisons.
+    fn selections_with_autoclose_regions<'a, D: ToOffset + Clone>(
+        &'a self,
+        selections: impl IntoIterator<Item = Selection<D>>,
+        buffer: &'a MultiBufferSnapshot,
+    ) -> impl Iterator<Item = (Selection<D>, Option<&'a AutocloseRegion>)> {
+        let mut i = 0;
+        let mut regions = self.autoclose_regions.as_slice();
+        selections.into_iter().map(move |selection| {
+            let range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
 
-    //             let mut enclosing = None;
-    //             while let Some(pair_state) = regions.get(i) {
-    //                 if pair_state.range.end.to_offset(buffer) < range.start {
-    //                     regions = &regions[i + 1..];
-    //                     i = 0;
-    //                 } else if pair_state.range.start.to_offset(buffer) > range.end {
-    //                     break;
-    //                 } else {
-    //                     if pair_state.selection_id == selection.id {
-    //                         enclosing = Some(pair_state);
-    //                     }
-    //                     i += 1;
-    //                 }
-    //             }
+            let mut enclosing = None;
+            while let Some(pair_state) = regions.get(i) {
+                if pair_state.range.end.to_offset(buffer) < range.start {
+                    regions = &regions[i + 1..];
+                    i = 0;
+                } else if pair_state.range.start.to_offset(buffer) > range.end {
+                    break;
+                } else {
+                    if pair_state.selection_id == selection.id {
+                        enclosing = Some(pair_state);
+                    }
+                    i += 1;
+                }
+            }
 
-    //             (selection.clone(), enclosing)
-    //         })
-    //     }
+            (selection.clone(), enclosing)
+        })
+    }
 
     /// Remove any autoclose regions that no longer contain their selection.
     fn invalidate_autoclose_regions(
@@ -3537,51 +3538,51 @@ impl Editor {
         cx.notify();
     }
 
-    //     fn trigger_on_type_formatting(
-    //         &self,
-    //         input: String,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         if input.len() != 1 {
-    //             return None;
-    //         }
+    fn trigger_on_type_formatting(
+        &self,
+        input: String,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if input.len() != 1 {
+            return None;
+        }
 
-    //         let project = self.project.as_ref()?;
-    //         let position = self.selections.newest_anchor().head();
-    //         let (buffer, buffer_position) = self
-    //             .buffer
-    //             .read(cx)
-    //             .text_anchor_for_position(position.clone(), cx)?;
+        let project = self.project.as_ref()?;
+        let position = self.selections.newest_anchor().head();
+        let (buffer, buffer_position) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(position.clone(), cx)?;
 
-    //         // OnTypeFormatting returns a list of edits, no need to pass them between Zed instances,
-    //         // hence we do LSP request & edit on host side only — add formats to host's history.
-    //         let push_to_lsp_host_history = true;
-    //         // If this is not the host, append its history with new edits.
-    //         let push_to_client_history = project.read(cx).is_remote();
+        // OnTypeFormatting returns a list of edits, no need to pass them between Zed instances,
+        // hence we do LSP request & edit on host side only — add formats to host's history.
+        let push_to_lsp_host_history = true;
+        // If this is not the host, append its history with new edits.
+        let push_to_client_history = project.read(cx).is_remote();
 
-    //         let on_type_formatting = project.update(cx, |project, cx| {
-    //             project.on_type_format(
-    //                 buffer.clone(),
-    //                 buffer_position,
-    //                 input,
-    //                 push_to_lsp_host_history,
-    //                 cx,
-    //             )
-    //         });
-    //         Some(cx.spawn(|editor, mut cx| async move {
-    //             if let Some(transaction) = on_type_formatting.await? {
-    //                 if push_to_client_history {
-    //                     buffer.update(&mut cx, |buffer, _| {
-    //                         buffer.push_transaction(transaction, Instant::now());
-    //                     });
-    //                 }
-    //                 editor.update(&mut cx, |editor, cx| {
-    //                     editor.refresh_document_highlights(cx);
-    //                 })?;
-    //             }
-    //             Ok(())
-    //         }))
-    //     }
+        let on_type_formatting = project.update(cx, |project, cx| {
+            project.on_type_format(
+                buffer.clone(),
+                buffer_position,
+                input,
+                push_to_lsp_host_history,
+                cx,
+            )
+        });
+        Some(cx.spawn(|editor, mut cx| async move {
+            if let Some(transaction) = on_type_formatting.await? {
+                if push_to_client_history {
+                    buffer.update(&mut cx, |buffer, _| {
+                        buffer.push_transaction(transaction, Instant::now());
+                    });
+                }
+                editor.update(&mut cx, |editor, cx| {
+                    editor.refresh_document_highlights(cx);
+                })?;
+            }
+            Ok(())
+        }))
+    }
 
     fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
@@ -8134,15 +8135,14 @@ impl Editor {
     }
 
     fn start_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
-        todo!()
-        // self.end_selection(cx);
-        // if let Some(tx_id) = self
-        //     .buffer
-        //     .update(cx, |buffer, cx| buffer.start_transaction_at(now, cx))
-        // {
-        //     self.selection_history
-        //         .insert_transaction(tx_id, self.selections.disjoint_anchors());
-        // }
+        self.end_selection(cx);
+        if let Some(tx_id) = self
+            .buffer
+            .update(cx, |buffer, cx| buffer.start_transaction_at(now, cx))
+        {
+            self.selection_history
+                .insert_transaction(tx_id, self.selections.disjoint_anchors());
+        }
     }
 
     fn end_transaction_at(
@@ -8150,22 +8150,21 @@ impl Editor {
         now: Instant,
         cx: &mut ViewContext<Self>,
     ) -> Option<TransactionId> {
-        todo!()
-        // if let Some(tx_id) = self
-        //     .buffer
-        //     .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
-        // {
-        //     if let Some((_, end_selections)) = self.selection_history.transaction_mut(tx_id) {
-        //         *end_selections = Some(self.selections.disjoint_anchors());
-        //     } else {
-        //         error!("unexpectedly ended a transaction that wasn't started by this editor");
-        //     }
+        if let Some(tx_id) = self
+            .buffer
+            .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
+        {
+            if let Some((_, end_selections)) = self.selection_history.transaction_mut(tx_id) {
+                *end_selections = Some(self.selections.disjoint_anchors());
+            } else {
+                log::error!("unexpectedly ended a transaction that wasn't started by this editor");
+            }
 
-        //     cx.emit(Event::Edited);
-        //     Some(tx_id)
-        // } else {
-        //     None
-        // }
+            cx.emit(Event::Edited);
+            Some(tx_id)
+        } else {
+            None
+        }
     }
 
     //     pub fn fold(&mut self, _: &Fold, cx: &mut ViewContext<Self>) {
@@ -8688,17 +8687,17 @@ impl Editor {
     //         results
     //     }
 
-    //     pub fn highlight_text<T: 'static>(
-    //         &mut self,
-    //         ranges: Vec<Range<Anchor>>,
-    //         style: HighlightStyle,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.display_map.update(cx, |map, _| {
-    //             map.highlight_text(TypeId::of::<T>(), ranges, style)
-    //         });
-    //         cx.notify();
-    //     }
+    pub fn highlight_text<T: 'static>(
+        &mut self,
+        ranges: Vec<Range<Anchor>>,
+        style: HighlightStyle,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.display_map.update(cx, |map, _| {
+            map.highlight_text(TypeId::of::<T>(), ranges, style)
+        });
+        cx.notify();
+    }
 
     //     pub fn highlight_inlays<T: 'static>(
     //         &mut self,
@@ -8712,12 +8711,12 @@ impl Editor {
     //         cx.notify();
     //     }
 
-    //     pub fn text_highlights<'a, T: 'static>(
-    //         &'a self,
-    //         cx: &'a AppContext,
-    //     ) -> Option<(HighlightStyle, &'a [Range<Anchor>])> {
-    //         self.display_map.read(cx).text_highlights(TypeId::of::<T>())
-    //     }
+    pub fn text_highlights<'a, T: 'static>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> Option<(HighlightStyle, &'a [Range<Anchor>])> {
+        self.display_map.read(cx).text_highlights(TypeId::of::<T>())
+    }
 
     pub fn clear_highlights<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
         let cleared = self
@@ -8934,43 +8933,43 @@ impl Editor {
     //         .detach_and_log_err(cx);
     //     }
 
-    //     fn marked_text_ranges(&self, cx: &AppContext) -> Option<Vec<Range<OffsetUtf16>>> {
-    //         let snapshot = self.buffer.read(cx).read(cx);
-    //         let (_, ranges) = self.text_highlights::<InputComposition>(cx)?;
-    //         Some(
-    //             ranges
-    //                 .iter()
-    //                 .map(move |range| {
-    //                     range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot)
-    //                 })
-    //                 .collect(),
-    //         )
-    //     }
+    fn marked_text_ranges(&self, cx: &AppContext) -> Option<Vec<Range<OffsetUtf16>>> {
+        let snapshot = self.buffer.read(cx).read(cx);
+        let (_, ranges) = self.text_highlights::<InputComposition>(cx)?;
+        Some(
+            ranges
+                .iter()
+                .map(move |range| {
+                    range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot)
+                })
+                .collect(),
+        )
+    }
 
-    //     fn selection_replacement_ranges(
-    //         &self,
-    //         range: Range<OffsetUtf16>,
-    //         cx: &AppContext,
-    //     ) -> Vec<Range<OffsetUtf16>> {
-    //         let selections = self.selections.all::<OffsetUtf16>(cx);
-    //         let newest_selection = selections
-    //             .iter()
-    //             .max_by_key(|selection| selection.id)
-    //             .unwrap();
-    //         let start_delta = range.start.0 as isize - newest_selection.start.0 as isize;
-    //         let end_delta = range.end.0 as isize - newest_selection.end.0 as isize;
-    //         let snapshot = self.buffer.read(cx).read(cx);
-    //         selections
-    //             .into_iter()
-    //             .map(|mut selection| {
-    //                 selection.start.0 =
-    //                     (selection.start.0 as isize).saturating_add(start_delta) as usize;
-    //                 selection.end.0 = (selection.end.0 as isize).saturating_add(end_delta) as usize;
-    //                 snapshot.clip_offset_utf16(selection.start, Bias::Left)
-    //                     ..snapshot.clip_offset_utf16(selection.end, Bias::Right)
-    //             })
-    //             .collect()
-    //     }
+    fn selection_replacement_ranges(
+        &self,
+        range: Range<OffsetUtf16>,
+        cx: &AppContext,
+    ) -> Vec<Range<OffsetUtf16>> {
+        let selections = self.selections.all::<OffsetUtf16>(cx);
+        let newest_selection = selections
+            .iter()
+            .max_by_key(|selection| selection.id)
+            .unwrap();
+        let start_delta = range.start.0 as isize - newest_selection.start.0 as isize;
+        let end_delta = range.end.0 as isize - newest_selection.end.0 as isize;
+        let snapshot = self.buffer.read(cx).read(cx);
+        selections
+            .into_iter()
+            .map(|mut selection| {
+                selection.start.0 =
+                    (selection.start.0 as isize).saturating_add(start_delta) as usize;
+                selection.end.0 = (selection.end.0 as isize).saturating_add(end_delta) as usize;
+                snapshot.clip_offset_utf16(selection.start, Bias::Left)
+                    ..snapshot.clip_offset_utf16(selection.end, Bias::Right)
+            })
+            .collect()
+    }
 
     fn report_copilot_event(
         &self,
@@ -9485,214 +9484,229 @@ impl Render for Editor {
 
 //         false
 //     }
-//
-//     fn text_for_range(&self, range_utf16: Range<usize>, cx: &AppContext) -> Option<String> {
-//         Some(
-//             self.buffer
-//                 .read(cx)
-//                 .read(cx)
-//                 .text_for_range(OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end))
-//                 .collect(),
-//         )
-//     }
 
-//     fn selected_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
-//         // Prevent the IME menu from appearing when holding down an alphabetic key
-//         // while input is disabled.
-//         if !self.input_enabled {
-//             return None;
-//         }
+impl InputHandler for Editor {
+    fn text_for_range(
+        &self,
+        range_utf16: Range<usize>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<String> {
+        Some(
+            self.buffer
+                .read(cx)
+                .read(cx)
+                .text_for_range(OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end))
+                .collect(),
+        )
+    }
 
-//         let range = self.selections.newest::<OffsetUtf16>(cx).range();
-//         Some(range.start.0..range.end.0)
-//     }
+    fn selected_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
+        // Prevent the IME menu from appearing when holding down an alphabetic key
+        // while input is disabled.
+        if !self.input_enabled {
+            return None;
+        }
 
-//     fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
-//         let snapshot = self.buffer.read(cx).read(cx);
-//         let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
-//         Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
-//     }
+        let range = self.selections.newest::<OffsetUtf16>(cx).range();
+        Some(range.start.0..range.end.0)
+    }
 
-//     fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
-//         self.clear_highlights::<InputComposition>(cx);
-//         self.ime_transaction.take();
-//     }
+    fn marked_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
+        let snapshot = self.buffer.read(cx).read(cx);
+        let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
+        Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
+    }
 
-//     fn replace_text_in_range(
-//         &mut self,
-//         range_utf16: Option<Range<usize>>,
-//         text: &str,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         if !self.input_enabled {
-//             cx.emit(Event::InputIgnored { text: text.into() });
-//             return;
-//         }
+    fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
+        self.clear_highlights::<InputComposition>(cx);
+        self.ime_transaction.take();
+    }
 
-//         self.transact(cx, |this, cx| {
-//             let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
-//                 let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
-//                 Some(this.selection_replacement_ranges(range_utf16, cx))
-//             } else {
-//                 this.marked_text_ranges(cx)
-//             };
+    fn replace_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if !self.input_enabled {
+            cx.emit(Event::InputIgnored { text: text.into() });
+            return;
+        }
 
-//             let range_to_replace = new_selected_ranges.as_ref().and_then(|ranges_to_replace| {
-//                 let newest_selection_id = this.selections.newest_anchor().id;
-//                 this.selections
-//                     .all::<OffsetUtf16>(cx)
-//                     .iter()
-//                     .zip(ranges_to_replace.iter())
-//                     .find_map(|(selection, range)| {
-//                         if selection.id == newest_selection_id {
-//                             Some(
-//                                 (range.start.0 as isize - selection.head().0 as isize)
-//                                     ..(range.end.0 as isize - selection.head().0 as isize),
-//                             )
-//                         } else {
-//                             None
-//                         }
-//                     })
-//             });
+        self.transact(cx, |this, cx| {
+            let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
+                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+                Some(this.selection_replacement_ranges(range_utf16, cx))
+            } else {
+                this.marked_text_ranges(cx)
+            };
 
-//             cx.emit(Event::InputHandled {
-//                 utf16_range_to_replace: range_to_replace,
-//                 text: text.into(),
-//             });
+            let range_to_replace = new_selected_ranges.as_ref().and_then(|ranges_to_replace| {
+                let newest_selection_id = this.selections.newest_anchor().id;
+                this.selections
+                    .all::<OffsetUtf16>(cx)
+                    .iter()
+                    .zip(ranges_to_replace.iter())
+                    .find_map(|(selection, range)| {
+                        if selection.id == newest_selection_id {
+                            Some(
+                                (range.start.0 as isize - selection.head().0 as isize)
+                                    ..(range.end.0 as isize - selection.head().0 as isize),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+            });
 
-//             if let Some(new_selected_ranges) = new_selected_ranges {
-//                 this.change_selections(None, cx, |selections| {
-//                     selections.select_ranges(new_selected_ranges)
-//                 });
-//             }
+            cx.emit(Event::InputHandled {
+                utf16_range_to_replace: range_to_replace,
+                text: text.into(),
+            });
 
-//             this.handle_input(text, cx);
-//         });
+            if let Some(new_selected_ranges) = new_selected_ranges {
+                this.change_selections(None, cx, |selections| {
+                    selections.select_ranges(new_selected_ranges)
+                });
+            }
 
-//         if let Some(transaction) = self.ime_transaction {
-//             self.buffer.update(cx, |buffer, cx| {
-//                 buffer.group_until_transaction(transaction, cx);
-//             });
-//         }
+            this.handle_input(text, cx);
+        });
 
-//         self.unmark_text(cx);
-//     }
+        if let Some(transaction) = self.ime_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.group_until_transaction(transaction, cx);
+            });
+        }
 
-//     fn replace_and_mark_text_in_range(
-//         &mut self,
-//         range_utf16: Option<Range<usize>>,
-//         text: &str,
-//         new_selected_range_utf16: Option<Range<usize>>,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         if !self.input_enabled {
-//             cx.emit(Event::InputIgnored { text: text.into() });
-//             return;
-//         }
+        self.unmark_text(cx);
+    }
 
-//         let transaction = self.transact(cx, |this, cx| {
-//             let ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx) {
-//                 let snapshot = this.buffer.read(cx).read(cx);
-//                 if let Some(relative_range_utf16) = range_utf16.as_ref() {
-//                     for marked_range in &mut marked_ranges {
-//                         marked_range.end.0 = marked_range.start.0 + relative_range_utf16.end;
-//                         marked_range.start.0 += relative_range_utf16.start;
-//                         marked_range.start =
-//                             snapshot.clip_offset_utf16(marked_range.start, Bias::Left);
-//                         marked_range.end =
-//                             snapshot.clip_offset_utf16(marked_range.end, Bias::Right);
-//                     }
-//                 }
-//                 Some(marked_ranges)
-//             } else if let Some(range_utf16) = range_utf16 {
-//                 let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
-//                 Some(this.selection_replacement_ranges(range_utf16, cx))
-//             } else {
-//                 None
-//             };
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        new_selected_range_utf16: Option<Range<usize>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if !self.input_enabled {
+            cx.emit(Event::InputIgnored { text: text.into() });
+            return;
+        }
 
-//             let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
-//                 let newest_selection_id = this.selections.newest_anchor().id;
-//                 this.selections
-//                     .all::<OffsetUtf16>(cx)
-//                     .iter()
-//                     .zip(ranges_to_replace.iter())
-//                     .find_map(|(selection, range)| {
-//                         if selection.id == newest_selection_id {
-//                             Some(
-//                                 (range.start.0 as isize - selection.head().0 as isize)
-//                                     ..(range.end.0 as isize - selection.head().0 as isize),
-//                             )
-//                         } else {
-//                             None
-//                         }
-//                     })
-//             });
+        let transaction = self.transact(cx, |this, cx| {
+            let ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx) {
+                let snapshot = this.buffer.read(cx).read(cx);
+                if let Some(relative_range_utf16) = range_utf16.as_ref() {
+                    for marked_range in &mut marked_ranges {
+                        marked_range.end.0 = marked_range.start.0 + relative_range_utf16.end;
+                        marked_range.start.0 += relative_range_utf16.start;
+                        marked_range.start =
+                            snapshot.clip_offset_utf16(marked_range.start, Bias::Left);
+                        marked_range.end =
+                            snapshot.clip_offset_utf16(marked_range.end, Bias::Right);
+                    }
+                }
+                Some(marked_ranges)
+            } else if let Some(range_utf16) = range_utf16 {
+                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+                Some(this.selection_replacement_ranges(range_utf16, cx))
+            } else {
+                None
+            };
 
-//             cx.emit(Event::InputHandled {
-//                 utf16_range_to_replace: range_to_replace,
-//                 text: text.into(),
-//             });
+            let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
+                let newest_selection_id = this.selections.newest_anchor().id;
+                this.selections
+                    .all::<OffsetUtf16>(cx)
+                    .iter()
+                    .zip(ranges_to_replace.iter())
+                    .find_map(|(selection, range)| {
+                        if selection.id == newest_selection_id {
+                            Some(
+                                (range.start.0 as isize - selection.head().0 as isize)
+                                    ..(range.end.0 as isize - selection.head().0 as isize),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+            });
 
-//             if let Some(ranges) = ranges_to_replace {
-//                 this.change_selections(None, cx, |s| s.select_ranges(ranges));
-//             }
+            cx.emit(Event::InputHandled {
+                utf16_range_to_replace: range_to_replace,
+                text: text.into(),
+            });
 
-//             let marked_ranges = {
-//                 let snapshot = this.buffer.read(cx).read(cx);
-//                 this.selections
-//                     .disjoint_anchors()
-//                     .iter()
-//                     .map(|selection| {
-//                         selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
-//                     })
-//                     .collect::<Vec<_>>()
-//             };
+            if let Some(ranges) = ranges_to_replace {
+                this.change_selections(None, cx, |s| s.select_ranges(ranges));
+            }
 
-//             if text.is_empty() {
-//                 this.unmark_text(cx);
-//             } else {
-//                 this.highlight_text::<InputComposition>(
-//                     marked_ranges.clone(),
-//                     this.style(cx).composition_mark,
-//                     cx,
-//                 );
-//             }
+            let marked_ranges = {
+                let snapshot = this.buffer.read(cx).read(cx);
+                this.selections
+                    .disjoint_anchors()
+                    .iter()
+                    .map(|selection| {
+                        selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
+                    })
+                    .collect::<Vec<_>>()
+            };
 
-//             this.handle_input(text, cx);
+            if text.is_empty() {
+                this.unmark_text(cx);
+            } else {
+                this.highlight_text::<InputComposition>(
+                    marked_ranges.clone(),
+                    HighlightStyle::default(), // todo!() this.style(cx).composition_mark,
+                    cx,
+                );
+            }
 
-//             if let Some(new_selected_range) = new_selected_range_utf16 {
-//                 let snapshot = this.buffer.read(cx).read(cx);
-//                 let new_selected_ranges = marked_ranges
-//                     .into_iter()
-//                     .map(|marked_range| {
-//                         let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
-//                         let new_start = OffsetUtf16(new_selected_range.start + insertion_start);
-//                         let new_end = OffsetUtf16(new_selected_range.end + insertion_start);
-//                         snapshot.clip_offset_utf16(new_start, Bias::Left)
-//                             ..snapshot.clip_offset_utf16(new_end, Bias::Right)
-//                     })
-//                     .collect::<Vec<_>>();
+            this.handle_input(text, cx);
 
-//                 drop(snapshot);
-//                 this.change_selections(None, cx, |selections| {
-//                     selections.select_ranges(new_selected_ranges)
-//                 });
-//             }
-//         });
+            if let Some(new_selected_range) = new_selected_range_utf16 {
+                let snapshot = this.buffer.read(cx).read(cx);
+                let new_selected_ranges = marked_ranges
+                    .into_iter()
+                    .map(|marked_range| {
+                        let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
+                        let new_start = OffsetUtf16(new_selected_range.start + insertion_start);
+                        let new_end = OffsetUtf16(new_selected_range.end + insertion_start);
+                        snapshot.clip_offset_utf16(new_start, Bias::Left)
+                            ..snapshot.clip_offset_utf16(new_end, Bias::Right)
+                    })
+                    .collect::<Vec<_>>();
 
-//         self.ime_transaction = self.ime_transaction.or(transaction);
-//         if let Some(transaction) = self.ime_transaction {
-//             self.buffer.update(cx, |buffer, cx| {
-//                 buffer.group_until_transaction(transaction, cx);
-//             });
-//         }
+                drop(snapshot);
+                this.change_selections(None, cx, |selections| {
+                    selections.select_ranges(new_selected_ranges)
+                });
+            }
+        });
 
-//         if self.text_highlights::<InputComposition>(cx).is_none() {
-//             self.ime_transaction.take();
-//         }
-//     }
-// }
+        self.ime_transaction = self.ime_transaction.or(transaction);
+        if let Some(transaction) = self.ime_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.group_until_transaction(transaction, cx);
+            });
+        }
+
+        if self.text_highlights::<InputComposition>(cx).is_none() {
+            self.ime_transaction.take();
+        }
+    }
+
+    fn bounds_for_range(
+        &self,
+        range_utf16: Range<usize>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<gpui::Bounds<f32>> {
+        // todo!()
+        // See how we did it before: `rect_for_range`
+        None
+    }
+}
 
 // fn build_style(
 //     settings: &ThemeSettings,

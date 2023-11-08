@@ -2623,6 +2623,10 @@ impl Element<Editor> for EditorElement {
             }
         });
 
+        if editor.focus_handle.is_focused(cx) {
+            cx.handle_text_input();
+        }
+
         cx.with_content_mask(ContentMask { bounds }, |cx| {
             let gutter_bounds = Bounds {
                 origin: bounds.origin,
