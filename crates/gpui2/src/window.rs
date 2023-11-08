@@ -1949,6 +1949,29 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         )
     }
 
+    /// Register a listener to be called when the given focus handle loses focus.
+    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
+    /// is dropped.
+    pub fn on_blur(
+        &mut self,
+        handle: &FocusHandle,
+        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let focus_id = handle.id;
+        self.window.focus_listeners.insert(
+            (),
+            Box::new(move |event, cx| {
+                view.update(cx, |view, cx| {
+                    if event.blurred.as_ref().map(|blurred| blurred.id) == Some(focus_id) {
+                        listener(view, cx)
+                    }
+                })
+                .is_ok()
+            }),
+        )
+    }
+
     /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
     /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
     /// is dropped.
@@ -1966,7 +1989,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     if event
                         .blurred
                         .as_ref()
-                        .map_or(false, |focused| focus_id.contains(focused.id, cx))
+                        .map_or(false, |blurred| focus_id.contains(blurred.id, cx))
                     {
                         listener(view, cx)
                     }
