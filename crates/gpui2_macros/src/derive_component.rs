@@ -28,9 +28,9 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
     let (_, ty_generics, _) = ast.generics.split_for_impl();
 
     let expanded = quote! {
-        impl #impl_generics gpui2::Component<#view_type> for #name #ty_generics #where_clause {
-            fn render(self) -> gpui2::AnyElement<#view_type> {
-                (move |view_state: &mut #view_type, cx: &mut gpui2::ViewContext<'_, #view_type>| self.render(view_state, cx))
+        impl #impl_generics gpui::Component<#view_type> for #name #ty_generics #where_clause {
+            fn render(self) -> gpui::AnyElement<#view_type> {
+                (move |view_state: &mut #view_type, cx: &mut gpui::ViewContext<'_, #view_type>| self.render(view_state, cx))
                     .render()
             }
         }

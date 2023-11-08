@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui2::{Div, Render, View, VisualContext};
+use gpui::{Div, Render, View, VisualContext};
 
 use crate::prelude::*;
 use crate::{

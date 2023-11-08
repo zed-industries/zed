@@ -1,8 +1,8 @@
 use crate::{
-    div, point, px, Action, AnyDrag, AnyView, AppContext, BorrowWindow, Bounds, Component,
-    DispatchContext, DispatchPhase, Div, Element, ElementId, FocusHandle, KeyMatch, Keystroke,
-    Modifiers, Overflow, Pixels, Point, Render, SharedString, Size, Style, StyleRefinement, View,
-    ViewContext,
+    div, point, px, Action, AnyDrag, AnyTooltip, AnyView, AppContext, BorrowWindow, Bounds,
+    Component, DispatchContext, DispatchPhase, Div, Element, ElementId, FocusHandle, KeyMatch,
+    Keystroke, Modifiers, Overflow, Pixels, Point, Render, SharedString, Size, Style,
+    StyleRefinement, Task, View, ViewContext,
 };
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -17,9 +17,12 @@ use std::{
     ops::Deref,
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 const DRAG_THRESHOLD: f64 = 2.;
+const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
+const TOOLTIP_OFFSET: Point<Pixels> = Point::new(px(10.0), px(8.0));
 
 pub trait StatelessInteractive<V: 'static>: Element<V> {
     fn stateless_interaction(&mut self) -> &mut StatelessInteraction<V>;
@@ -333,6 +336,37 @@ pub trait StatefulInteractive<V: 'static>: StatelessInteractive<V> {
             }));
         self
     }
+
+    fn on_hover(mut self, listener: impl 'static + Fn(&mut V, bool, &mut ViewContext<V>)) -> Self
+    where
+        Self: Sized,
+    {
+        debug_assert!(
+            self.stateful_interaction().hover_listener.is_none(),
+            "calling on_hover more than once on the same element is not supported"
+        );
+        self.stateful_interaction().hover_listener = Some(Box::new(listener));
+        self
+    }
+
+    fn tooltip<W>(
+        mut self,
+        build_tooltip: impl Fn(&mut V, &mut ViewContext<V>) -> View<W> + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+        W: 'static + Render,
+    {
+        debug_assert!(
+            self.stateful_interaction().tooltip_builder.is_none(),
+            "calling tooltip more than once on the same element is not supported"
+        );
+        self.stateful_interaction().tooltip_builder = Some(Arc::new(move |view_state, cx| {
+            build_tooltip(view_state, cx).into()
+        }));
+
+        self
+    }
 }
 
 pub trait ElementInteraction<V: 'static>: 'static {
@@ -568,6 +602,77 @@ pub trait ElementInteraction<V: 'static>: 'static {
                 }
             }
 
+            if let Some(hover_listener) = stateful.hover_listener.take() {
+                let was_hovered = element_state.hover_state.clone();
+                let has_mouse_down = element_state.pending_mouse_down.clone();
+
+                cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
+                    if phase != DispatchPhase::Bubble {
+                        return;
+                    }
+                    let is_hovered =
+                        bounds.contains_point(&event.position) && has_mouse_down.lock().is_none();
+                    let mut was_hovered = was_hovered.lock();
+
+                    if is_hovered != was_hovered.clone() {
+                        *was_hovered = is_hovered;
+                        drop(was_hovered);
+
+                        hover_listener(view_state, is_hovered, cx);
+                    }
+                });
+            }
+
+            if let Some(tooltip_builder) = stateful.tooltip_builder.take() {
+                let active_tooltip = element_state.active_tooltip.clone();
+                let pending_mouse_down = element_state.pending_mouse_down.clone();
+
+                cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
+                    if phase != DispatchPhase::Bubble {
+                        return;
+                    }
+
+                    let is_hovered = bounds.contains_point(&event.position)
+                        && pending_mouse_down.lock().is_none();
+                    if !is_hovered {
+                        active_tooltip.lock().take();
+                        return;
+                    }
+
+                    if active_tooltip.lock().is_none() {
+                        let task = cx.spawn({
+                            let active_tooltip = active_tooltip.clone();
+                            let tooltip_builder = tooltip_builder.clone();
+
+                            move |view, mut cx| async move {
+                                cx.background_executor().timer(TOOLTIP_DELAY).await;
+                                view.update(&mut cx, move |view_state, cx| {
+                                    active_tooltip.lock().replace(ActiveTooltip {
+                                        waiting: None,
+                                        tooltip: Some(AnyTooltip {
+                                            view: tooltip_builder(view_state, cx),
+                                            cursor_offset: cx.mouse_position() + TOOLTIP_OFFSET,
+                                        }),
+                                    });
+                                    cx.notify();
+                                })
+                                .ok();
+                            }
+                        });
+                        active_tooltip.lock().replace(ActiveTooltip {
+                            waiting: Some(task),
+                            tooltip: None,
+                        });
+                    }
+                });
+
+                if let Some(active_tooltip) = element_state.active_tooltip.lock().as_ref() {
+                    if active_tooltip.tooltip.is_some() {
+                        cx.active_tooltip = active_tooltip.tooltip.clone()
+                    }
+                }
+            }
+
             let active_state = element_state.active_state.clone();
             if active_state.lock().is_none() {
                 let active_group_bounds = stateful
@@ -639,6 +744,8 @@ pub struct StatefulInteraction<V> {
     active_style: StyleRefinement,
     group_active_style: Option<GroupStyle>,
     drag_listener: Option<DragListener<V>>,
+    hover_listener: Option<HoverListener<V>>,
+    tooltip_builder: Option<TooltipBuilder<V>>,
 }
 
 impl<V: 'static> ElementInteraction<V> for StatefulInteraction<V> {
@@ -666,6 +773,8 @@ impl<V> From<ElementId> for StatefulInteraction<V> {
             stateless: StatelessInteraction::default(),
             click_listeners: SmallVec::new(),
             drag_listener: None,
+            hover_listener: None,
+            tooltip_builder: None,
             active_style: StyleRefinement::default(),
             group_active_style: None,
         }
@@ -695,6 +804,8 @@ impl<V> StatelessInteraction<V> {
             stateless: self,
             click_listeners: SmallVec::new(),
             drag_listener: None,
+            hover_listener: None,
+            tooltip_builder: None,
             active_style: StyleRefinement::default(),
             group_active_style: None,
         }
@@ -746,8 +857,16 @@ impl ActiveState {
 #[derive(Default)]
 pub struct InteractiveElementState {
     active_state: Arc<Mutex<ActiveState>>,
+    hover_state: Arc<Mutex<bool>>,
     pending_mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
     scroll_offset: Option<Arc<Mutex<Point<Pixels>>>>,
+    active_tooltip: Arc<Mutex<Option<ActiveTooltip>>>,
+}
+
+struct ActiveTooltip {
+    #[allow(unused)] // used to drop the task
+    waiting: Option<Task<()>>,
+    tooltip: Option<AnyTooltip>,
 }
 
 impl InteractiveElementState {
@@ -1096,6 +1215,10 @@ pub type ClickListener<V> = Box<dyn Fn(&mut V, &ClickEvent, &mut ViewContext<V>)
 
 pub(crate) type DragListener<V> =
     Box<dyn Fn(&mut V, Point<Pixels>, &mut ViewContext<V>) -> AnyDrag + 'static>;
+
+pub(crate) type HoverListener<V> = Box<dyn Fn(&mut V, bool, &mut ViewContext<V>) + 'static>;
+
+pub(crate) type TooltipBuilder<V> = Arc<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static>;
 
 pub type KeyListener<V> = Box<
     dyn Fn(

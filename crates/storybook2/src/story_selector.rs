@@ -5,7 +5,7 @@ use crate::stories::*;
 use anyhow::anyhow;
 use clap::builder::PossibleValue;
 use clap::ValueEnum;
-use gpui2::{AnyView, VisualContext};
+use gpui::{AnyView, VisualContext};
 use strum::{EnumIter, EnumString, IntoEnumIterator};
 use ui::prelude::*;
 use ui::{AvatarStory, ButtonStory, DetailsStory, IconStory, InputStory, LabelStory};
@@ -19,6 +19,7 @@ pub enum ComponentStory {
     Buffer,
     Button,
     ChatPanel,
+    Checkbox,
     CollabPanel,
     Colors,
     CommandPalette,
@@ -61,6 +62,7 @@ impl ComponentStory {
             Self::Buffer => cx.build_view(|_| ui::BufferStory).into(),
             Self::Button => cx.build_view(|_| ButtonStory).into(),
             Self::ChatPanel => cx.build_view(|_| ui::ChatPanelStory).into(),
+            Self::Checkbox => cx.build_view(|_| ui::CheckboxStory).into(),
             Self::CollabPanel => cx.build_view(|_| ui::CollabPanelStory).into(),
             Self::Colors => cx.build_view(|_| ColorsStory).into(),
             Self::CommandPalette => cx.build_view(|_| ui::CommandPaletteStory).into(),

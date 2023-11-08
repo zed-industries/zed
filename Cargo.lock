@@ -2531,6 +2531,7 @@ dependencies = [
  "client",
  "collections",
  "editor",
+ "futures 0.3.28",
  "gpui",
  "language",
  "log",
@@ -9802,7 +9803,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-vue"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/tree-sitter-vue?rev=95b2890#95b28908d90e928c308866f7631e73ef6e1d4b5f"
+source = "git+https://github.com/zed-industries/tree-sitter-vue?rev=9b6cb221ccb8d0b956fcb17e9a1efac2feefeb58#9b6cb221ccb8d0b956fcb17e9a1efac2feefeb58"
 dependencies = [
  "cc",
  "tree-sitter",

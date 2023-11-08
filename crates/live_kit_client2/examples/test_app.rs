@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use futures::StreamExt;
-use gpui2::KeyBinding;
+use gpui::KeyBinding;
 use live_kit_client2::{
     LocalAudioTrack, LocalVideoTrack, RemoteAudioTrackUpdate, RemoteVideoTrackUpdate, Room,
 };
@@ -16,7 +16,7 @@ struct Quit;
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui2::App::production(Arc::new(())).run(|cx| {
+    gpui::App::production(Arc::new(())).run(|cx| {
         #[cfg(any(test, feature = "test-support"))]
         println!("USING TEST LIVEKIT");
 
@@ -173,6 +173,6 @@ fn main() {
     });
 }
 
-fn quit(_: &Quit, cx: &mut gpui2::AppContext) {
+fn quit(_: &Quit, cx: &mut gpui::AppContext) {
     cx.quit();
 }

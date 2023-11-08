@@ -1,4 +1,4 @@
-use gpui2::{rems, svg, Hsla};
+use gpui::{rems, svg, Hsla};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -22,6 +22,7 @@ pub enum IconColor {
     Warning,
     Success,
     Info,
+    Selected,
 }
 
 impl IconColor {
@@ -36,6 +37,7 @@ impl IconColor {
             IconColor::Warning => cx.theme().status().warning,
             IconColor::Success => cx.theme().status().success,
             IconColor::Info => cx.theme().status().info,
+            IconColor::Selected => cx.theme().colors().icon_accent,
         }
     }
 }
@@ -55,6 +57,7 @@ pub enum Icon {
     ChevronRight,
     ChevronUp,
     Close,
+    Dash,
     Exit,
     ExclamationTriangle,
     File,
@@ -112,6 +115,7 @@ impl Icon {
             Icon::ChevronRight => "icons/chevron_right.svg",
             Icon::ChevronUp => "icons/chevron_up.svg",
             Icon::Close => "icons/x.svg",
+            Icon::Dash => "icons/dash.svg",
             Icon::Exit => "icons/exit.svg",
             Icon::ExclamationTriangle => "icons/warning.svg",
             Icon::File => "icons/file.svg",
@@ -182,7 +186,6 @@ impl IconElement {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let fill = self.color.color(cx);
         let svg_size = match self.size {
             IconSize::Small => rems(0.75),
             IconSize::Medium => rems(0.9375),
@@ -192,7 +195,7 @@ impl IconElement {
             .size(svg_size)
             .flex_none()
             .path(self.icon.path())
-            .text_color(fill)
+            .text_color(self.color.color(cx))
     }
 }
 
@@ -201,7 +204,7 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
     use strum::IntoEnumIterator;
 
     use crate::Story;

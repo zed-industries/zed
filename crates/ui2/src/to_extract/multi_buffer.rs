@@ -24,7 +24,7 @@ impl MultiBuffer {
                             .items_center()
                             .justify_between()
                             .p_4()
-                            .bg(cx.theme().colors().editor_subheader)
+                            .bg(cx.theme().colors().editor_subheader_background)
                             .child(Label::new("main.rs"))
                             .child(IconButton::new("arrow_up_right", Icon::ArrowUpRight)),
                     )
@@ -40,7 +40,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{hello_world_rust_buffer_example, Story};
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     pub struct MultiBufferStory;
 

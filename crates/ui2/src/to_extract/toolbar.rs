@@ -1,4 +1,4 @@
-use gpui2::AnyElement;
+use gpui::AnyElement;
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -56,7 +56,7 @@ impl<V: 'static> Toolbar<V> {
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         div()
-            .bg(cx.theme().colors().toolbar)
+            .bg(cx.theme().colors().toolbar_background)
             .p_2()
             .flex()
             .justify_between()
@@ -73,7 +73,7 @@ mod stories {
     use std::path::PathBuf;
     use std::str::FromStr;
 
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     use crate::{Breadcrumb, HighlightedText, Icon, IconButton, Story, Symbol};
 

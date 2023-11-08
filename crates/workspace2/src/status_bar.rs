@@ -44,7 +44,8 @@ impl Render for StatusBar {
             .items_center()
             .justify_between()
             .w_full()
-            .bg(cx.theme().colors().status_bar)
+            .h_8()
+            .bg(cx.theme().colors().status_bar_background)
             .child(self.render_left_tools(cx))
             .child(self.render_right_tools(cx))
     }

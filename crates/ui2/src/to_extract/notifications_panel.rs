@@ -1,8 +1,8 @@
 use crate::utils::naive_format_distance_from_now;
 use crate::{
-    h_stack, prelude::*, static_new_notification_items_2, v_stack, Avatar, Button, Icon,
-    IconButton, IconElement, Label, LabelColor, LineHeightStyle, ListHeaderMeta, ListSeparator,
-    UnreadIndicator,
+    h_stack, prelude::*, static_new_notification_items_2, v_stack, Avatar, ButtonOrIconButton,
+    Icon, IconElement, Label, LabelColor, LineHeightStyle, ListHeaderMeta, ListSeparator,
+    PublicPlayer, UnreadIndicator,
 };
 use crate::{ClickHandler, ListHeader};
 
@@ -22,7 +22,7 @@ impl NotificationsPanel {
             .flex()
             .flex_col()
             .size_full()
-            .bg(cx.theme().colors().surface)
+            .bg(cx.theme().colors().surface_background)
             .child(
                 ListHeader::new("Notifications").meta(Some(ListHeaderMeta::Tools(vec![
                     Icon::AtSign,
@@ -43,7 +43,7 @@ impl NotificationsPanel {
                             .p_1()
                             // TODO: Add cursor style
                             // .cursor(Cursor::IBeam)
-                            .bg(cx.theme().colors().element)
+                            .bg(cx.theme().colors().element_background)
                             .border()
                             .border_color(cx.theme().colors().border_variant)
                             .child(
@@ -54,23 +54,6 @@ impl NotificationsPanel {
                     )
                     .child(v_stack().px_1().children(static_new_notification_items_2())),
             )
-    }
-}
-
-pub enum ButtonOrIconButton<V: 'static> {
-    Button(Button<V>),
-    IconButton(IconButton<V>),
-}
-
-impl<V: 'static> From<Button<V>> for ButtonOrIconButton<V> {
-    fn from(value: Button<V>) -> Self {
-        Self::Button(value)
-    }
-}
-
-impl<V: 'static> From<IconButton<V>> for ButtonOrIconButton<V> {
-    fn from(value: IconButton<V>) -> Self {
-        Self::IconButton(value)
     }
 }
 
@@ -102,7 +85,7 @@ impl<V: 'static> NotificationAction<V> {
 }
 
 pub enum ActorOrIcon {
-    Actor(PublicActor),
+    Actor(PublicPlayer),
     Icon(Icon),
 }
 
@@ -171,7 +154,7 @@ impl<V> Notification<V> {
         id: impl Into<ElementId>,
         message: impl Into<SharedString>,
         date_received: NaiveDateTime,
-        actor: PublicActor,
+        actor: PublicPlayer,
         click_action: ClickHandler<V>,
     ) -> Self {
         Self::new(
@@ -210,7 +193,7 @@ impl<V> Notification<V> {
         id: impl Into<ElementId>,
         message: impl Into<SharedString>,
         date_received: NaiveDateTime,
-        actor: PublicActor,
+        actor: PublicPlayer,
         actions: [NotificationAction<V>; 2],
     ) -> Self {
         Self::new(
@@ -362,7 +345,7 @@ impl<V> Notification<V> {
 }
 
 use chrono::NaiveDateTime;
-use gpui2::{px, Styled};
+use gpui::{px, Styled};
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -370,7 +353,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{Panel, Story};
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     pub struct NotificationsPanelStory;
 

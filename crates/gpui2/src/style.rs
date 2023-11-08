@@ -1,8 +1,8 @@
 use crate::{
     black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
-    Corners, CornersRefinement, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures,
-    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems, Result, Rgba,
-    SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext, WindowContext,
+    Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font,
+    FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems,
+    Result, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext, WindowContext,
 };
 use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
@@ -18,6 +18,9 @@ pub type StyleCascade = Cascade<Style>;
 pub struct Style {
     /// What layout strategy should be used?
     pub display: Display,
+
+    /// Should the element be painted on screen?
+    pub visibility: Visibility,
 
     // Overflow properties
     /// How children overflowing their container should affect layout
@@ -98,6 +101,9 @@ pub struct Style {
     /// TEXT
     pub text: TextStyleRefinement,
 
+    /// The mouse cursor style shown when the mouse pointer is over an element.
+    pub mouse_cursor: Option<CursorStyle>,
+
     pub z_index: Option<u32>,
 }
 
@@ -105,6 +111,13 @@ impl Styled for StyleRefinement {
     fn style(&mut self) -> &mut StyleRefinement {
         self
     }
+}
+
+#[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Visibility {
+    #[default]
+    Visible,
+    Hidden,
 }
 
 #[derive(Clone, Debug)]
@@ -297,6 +310,7 @@ impl Default for Style {
     fn default() -> Self {
         Style {
             display: Display::Block,
+            visibility: Visibility::Visible,
             overflow: Point {
                 x: Overflow::Visible,
                 y: Overflow::Visible,
@@ -328,6 +342,7 @@ impl Default for Style {
             corner_radii: Corners::default(),
             box_shadow: Default::default(),
             text: TextStyleRefinement::default(),
+            mouse_cursor: None,
             z_index: None,
         }
     }

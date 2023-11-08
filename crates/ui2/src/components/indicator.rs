@@ -1,4 +1,4 @@
-use gpui2::px;
+use gpui::px;
 
 use crate::prelude::*;
 
@@ -14,7 +14,7 @@ impl UnreadIndicator {
         div()
             .rounded_full()
             .border_2()
-            .border_color(cx.theme().colors().surface)
+            .border_color(cx.theme().colors().surface_background)
             .w(px(9.0))
             .h(px(9.0))
             .z_index(2)

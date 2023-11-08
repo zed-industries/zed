@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::{Icon, IconButton, Label, Panel, PanelSide};
-use gpui2::{rems, AbsoluteLength};
+use gpui::{rems, AbsoluteLength};
 
 #[derive(Component)]
 pub struct AssistantPanel {
@@ -77,7 +77,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
     pub struct AssistantPanelStory;
 
     impl Render for AssistantPanelStory {

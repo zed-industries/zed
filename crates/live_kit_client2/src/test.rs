@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{BTreeMap, HashMap};
 use futures::Stream;
-use gpui2::BackgroundExecutor;
+use gpui::BackgroundExecutor;
 use live_kit_server::token;
 use media::core_video::CVImageBuffer;
 use parking_lot::Mutex;

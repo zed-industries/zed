@@ -1,4 +1,4 @@
-use gpui2::{relative, rems, Size};
+use gpui::{relative, rems, Size};
 
 use crate::prelude::*;
 use crate::{Icon, IconButton, Pane, Tab};
@@ -24,7 +24,7 @@ impl Terminal {
                 div()
                     .w_full()
                     .flex()
-                    .bg(cx.theme().colors().surface)
+                    .bg(cx.theme().colors().surface_background)
                     .child(
                         div().px_1().flex().flex_none().gap_2().child(
                             div()
@@ -83,7 +83,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
     pub struct TerminalStory;
 
     impl Render for TerminalStory {

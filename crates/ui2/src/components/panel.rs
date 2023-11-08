@@ -1,4 +1,4 @@
-use gpui2::{AbsoluteLength, AnyElement};
+use gpui::{AbsoluteLength, AnyElement};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -107,7 +107,7 @@ impl<V: 'static> Panel<V> {
                 PanelSide::Right => this.border_l(),
                 PanelSide::Bottom => this.border_b().w_full().h(current_size),
             })
-            .bg(cx.theme().colors().surface)
+            .bg(cx.theme().colors().surface_background)
             .border_color(cx.theme().colors().border)
             .children(self.children)
     }
@@ -126,7 +126,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{Label, Story};
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     pub struct PanelStory;
 

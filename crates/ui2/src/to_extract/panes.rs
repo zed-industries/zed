@@ -1,4 +1,4 @@
-use gpui2::{hsla, red, AnyElement, ElementId, ExternalPaths, Hsla, Length, Size, View};
+use gpui::{hsla, red, AnyElement, ElementId, ExternalPaths, Hsla, Length, Size, View};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -113,7 +113,7 @@ impl<V: 'static> PaneGroup<V> {
                 .gap_px()
                 .w_full()
                 .h_full()
-                .bg(cx.theme().colors().editor)
+                .bg(cx.theme().colors().editor_background)
                 .children(self.groups.into_iter().map(|group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {

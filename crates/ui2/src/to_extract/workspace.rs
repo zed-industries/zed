@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use chrono::DateTime;
-use gpui2::{px, relative, Div, Render, Size, View, VisualContext};
+use gpui::{px, relative, Div, Render, Size, View, VisualContext};
 use settings2::Settings;
 use theme2::ThemeSettings;
 
 use crate::prelude::*;
 use crate::{
-    static_livestream, v_stack, AssistantPanel, Button, ChatMessage, ChatPanel, CollabPanel,
-    EditorPane, Label, LanguageSelector, NotificationsPanel, Pane, PaneGroup, Panel,
+    static_livestream, v_stack, AssistantPanel, Button, ChatMessage, ChatPanel, Checkbox,
+    CollabPanel, EditorPane, Label, LanguageSelector, NotificationsPanel, Pane, PaneGroup, Panel,
     PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar,
     Toast, ToastOrigin,
 };
@@ -42,6 +42,7 @@ pub struct Workspace {
     show_terminal: bool,
     show_debug: bool,
     show_language_selector: bool,
+    test_checkbox_selection: Selection,
     debug: Gpui2UiDebug,
 }
 
@@ -58,6 +59,7 @@ impl Workspace {
             show_language_selector: false,
             show_debug: false,
             show_notifications_panel: true,
+            test_checkbox_selection: Selection::Unselected,
             debug: Gpui2UiDebug::default(),
         }
     }
@@ -219,6 +221,23 @@ impl Render for Workspace {
             .child(self.title_bar.clone())
             .child(
                 div()
+                    .absolute()
+                    .top_12()
+                    .left_12()
+                    .z_index(99)
+                    .bg(cx.theme().colors().background)
+                    .child(
+                        Checkbox::new("test_checkbox", self.test_checkbox_selection).on_click(
+                            |selection, workspace: &mut Workspace, cx| {
+                                workspace.test_checkbox_selection = selection;
+
+                                cx.notify();
+                            },
+                        ),
+                    ),
+            )
+            .child(
+                div()
                     .flex_1()
                     .w_full()
                     .flex()
@@ -354,7 +373,7 @@ pub use stories::*;
 #[cfg(feature = "stories")]
 mod stories {
     use super::*;
-    use gpui2::VisualContext;
+    use gpui::VisualContext;
 
     pub struct WorkspaceStory {
         workspace: View<Workspace>,

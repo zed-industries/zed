@@ -47,7 +47,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{Button, Story};
-    use gpui2::{Div, Render};
+    use gpui::{Div, Render};
 
     pub struct DetailsStory;
 
