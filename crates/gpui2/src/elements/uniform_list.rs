@@ -30,7 +30,7 @@ where
                 .map(|component| component.render())
                 .collect()
         }),
-        interactivity: id.into(),
+        interactivity: StatefulInteractivity::new(id, StatelessInteractivity::default()),
         scroll_handle: None,
     }
 }

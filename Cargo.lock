@@ -4987,8 +4987,8 @@ dependencies = [
 name = "menu2"
 version = "0.1.0"
 dependencies = [
+ "gpui2",
  "serde",
- "serde_derive",
 ]
 
 [[package]]

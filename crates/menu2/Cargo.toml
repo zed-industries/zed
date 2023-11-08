@@ -9,5 +9,5 @@ path = "src/menu2.rs"
 doctest = false
 
 [dependencies]
-serde.workspace = true
-serde_derive.workspace = true
+gpui = { package = "gpui2", path = "../gpui2" }
+serde = { workspace = true }

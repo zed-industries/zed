@@ -37,7 +37,7 @@ where
 {
     pub fn id(self, id: impl Into<ElementId>) -> Div<V, StatefulInteractivity<V>, F> {
         Div {
-            interactivity: id.into().into(),
+            interactivity: StatefulInteractivity::new(id.into(), self.interactivity),
             focus: self.focus,
             children: self.children,
             group: self.group,
