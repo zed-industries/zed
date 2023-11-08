@@ -1920,9 +1920,15 @@ impl Editor {
             cx,
         );
 
+        let focus_handle = cx.focus_handle();
+        cx.on_focus_in(&focus_handle, Self::handle_focus_in)
+            .detach();
+        cx.on_focus_out(&focus_handle, Self::handle_focus_out)
+            .detach();
+
         let mut this = Self {
             handle: cx.view().downgrade(),
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
             selections,
@@ -9194,6 +9200,45 @@ impl Editor {
 
     pub fn focus(&self, cx: &mut WindowContext) {
         cx.focus(&self.focus_handle)
+    }
+
+    fn handle_focus_in(&mut self, cx: &mut ViewContext<Self>) {
+        if self.focus_handle.is_focused(cx) {
+            // todo!()
+            // let focused_event = EditorFocused(cx.handle());
+            // cx.emit_global(focused_event);
+            cx.emit(Event::Focused);
+        }
+        if let Some(rename) = self.pending_rename.as_ref() {
+            let rename_editor_focus_handle = rename.editor.read(cx).focus_handle.clone();
+            cx.focus(&rename_editor_focus_handle);
+        } else if self.focus_handle.is_focused(cx) {
+            self.blink_manager.update(cx, BlinkManager::enable);
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.finalize_last_transaction(cx);
+                if self.leader_peer_id.is_none() {
+                    buffer.set_active_selections(
+                        &self.selections.disjoint_anchors(),
+                        self.selections.line_mode,
+                        self.cursor_shape,
+                        cx,
+                    );
+                }
+            });
+        }
+    }
+
+    fn handle_focus_out(&mut self, cx: &mut ViewContext<Self>) {
+        // todo!()
+        // let blurred_event = EditorBlurred(cx.handle());
+        // cx.emit_global(blurred_event);
+        self.blink_manager.update(cx, BlinkManager::disable);
+        self.buffer
+            .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
+        self.hide_context_menu(cx);
+        hide_hover(self, cx);
+        cx.emit(Event::Blurred);
+        cx.notify();
     }
 }
 
