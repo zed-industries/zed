@@ -141,8 +141,11 @@ impl<V: 'static> Element<V> for UniformList<V> {
                         scroll_offset: element_state.track_scroll_offset(),
                     });
                 }
-                let visible_item_count =
-                    (padded_bounds.size.height / item_height).ceil() as usize + 1;
+                let visible_item_count = if item_height > px(0.) {
+                    (padded_bounds.size.height / item_height).ceil() as usize + 1
+                } else {
+                    0
+                };
                 let scroll_offset = element_state
                     .scroll_offset()
                     .map_or((0.0).into(), |offset| offset.y);
