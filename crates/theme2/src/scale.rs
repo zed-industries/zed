@@ -7,40 +7,17 @@ use crate::{ActiveTheme, Appearance};
 pub struct ColorScaleStep(usize);
 
 impl ColorScaleStep {
-    /// The first step in a [`ColorScale`].
     pub const ONE: Self = Self(1);
-
-    /// The second step in a [`ColorScale`].
     pub const TWO: Self = Self(2);
-
-    /// The third step in a [`ColorScale`].
     pub const THREE: Self = Self(3);
-
-    /// The fourth step in a [`ColorScale`].
     pub const FOUR: Self = Self(4);
-
-    /// The fifth step in a [`ColorScale`].
     pub const FIVE: Self = Self(5);
-
-    /// The sixth step in a [`ColorScale`].
     pub const SIX: Self = Self(6);
-
-    /// The seventh step in a [`ColorScale`].
     pub const SEVEN: Self = Self(7);
-
-    /// The eighth step in a [`ColorScale`].
     pub const EIGHT: Self = Self(8);
-
-    /// The ninth step in a [`ColorScale`].
     pub const NINE: Self = Self(9);
-
-    /// The tenth step in a [`ColorScale`].
     pub const TEN: Self = Self(10);
-
-    /// The eleventh step in a [`ColorScale`].
     pub const ELEVEN: Self = Self(11);
-
-    /// The twelfth step in a [`ColorScale`].
     pub const TWELVE: Self = Self(12);
 
     /// All of the steps in a [`ColorScale`].
@@ -76,73 +53,93 @@ impl ColorScale {
         self.0[step.0 - 1]
     }
 
-    /// Returns the first step in the [`ColorScale`].
+    /// `Step 1` - Used for main application backgrounds.
+    ///
+    /// This step provides a neutral base for any overlaying components, ideal for applications' main backdrop or empty spaces such as canvas areas.
+    ///
     #[inline]
     pub fn step_1(&self) -> Hsla {
         self.step(ColorScaleStep::ONE)
     }
 
-    /// Returns the second step in the [`ColorScale`].
+    /// `Step 2` - Used for both main application backgrounds and subtle component backgrounds.
+    ///
+    /// Like `Step 1`, this step allows variations in background styles, from striped tables, sidebar backgrounds, to card backgrounds.
     #[inline]
     pub fn step_2(&self) -> Hsla {
         self.step(ColorScaleStep::TWO)
     }
 
-    /// Returns the third step in the [`ColorScale`].
+    /// `Step 3` - Used for UI component backgrounds in their normal states.
+    ///
+    /// This step maintains accessibility by guaranteeing a contrast ratio of 4.5:1 with steps 11 and 12 for text. It could also suit hover states for transparent components.
     #[inline]
     pub fn step_3(&self) -> Hsla {
         self.step(ColorScaleStep::THREE)
     }
 
-    /// Returns the fourth step in the [`ColorScale`].
+    /// `Step 4` - Used for UI component backgrounds in their hover states.
+    ///
+    /// Also suited for pressed or selected states of components with a transparent background.
     #[inline]
     pub fn step_4(&self) -> Hsla {
         self.step(ColorScaleStep::FOUR)
     }
 
-    /// Returns the fifth step in the [`ColorScale`].
+    /// `Step 5` - Used for UI component backgrounds in their pressed or selected states.
     #[inline]
     pub fn step_5(&self) -> Hsla {
         self.step(ColorScaleStep::FIVE)
     }
 
-    /// Returns the sixth step in the [`ColorScale`].
+    /// `Step 6` - Used for subtle borders on non-interactive components.
+    ///
+    /// Its usage spans from sidebars' borders, headers' dividers, cards' outlines, to alerts' edges and separators.
     #[inline]
     pub fn step_6(&self) -> Hsla {
         self.step(ColorScaleStep::SIX)
     }
 
-    /// Returns the seventh step in the [`ColorScale`].
+    /// `Step 7` - Used for subtle borders on interactive components.
+    ///
+    /// This step subtly delineates the boundary of elements users interact with.
     #[inline]
     pub fn step_7(&self) -> Hsla {
         self.step(ColorScaleStep::SEVEN)
     }
 
-    /// Returns the eighth step in the [`ColorScale`].
+    /// `Step 8` - Used for stronger borders on interactive components and focus rings.
+    ///
+    /// It strengthens the visibility and accessibility of active elements and their focus states.
     #[inline]
     pub fn step_8(&self) -> Hsla {
         self.step(ColorScaleStep::EIGHT)
     }
 
-    /// Returns the ninth step in the [`ColorScale`].
+    /// `Step 9` - Used for solid backgrounds.
+    ///
+    /// `Step 9` is the most saturated step, having the least mix of white or black.
+    ///
+    /// Due to its high chroma, `Step 9` is versatile and particularly useful for semantic colors such as
+    /// error, warning, and success indicators.
     #[inline]
     pub fn step_9(&self) -> Hsla {
         self.step(ColorScaleStep::NINE)
     }
 
-    /// Returns the tenth step in the [`ColorScale`].
+    /// `Step 10` - Used for hovered or active solid backgrounds, particularly when `Step 9` is their normal state.
     #[inline]
     pub fn step_10(&self) -> Hsla {
         self.step(ColorScaleStep::TEN)
     }
 
-    /// Returns the eleventh step in the [`ColorScale`].
+    /// `Step 11` - Used for text and icons requiring low contrast or less emphasis.
     #[inline]
     pub fn step_11(&self) -> Hsla {
         self.step(ColorScaleStep::ELEVEN)
     }
 
-    /// Returns the twelfth step in the [`ColorScale`].
+    /// `Step 12` - Used for text and icons requiring high contrast or prominence.
     #[inline]
     pub fn step_12(&self) -> Hsla {
         self.step(ColorScaleStep::TWELVE)
