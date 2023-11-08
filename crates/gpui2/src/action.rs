@@ -137,7 +137,8 @@ pub fn all_action_names() -> MappedRwLockReadGuard<'static, [SharedString]> {
     })
 }
 
-// actions defines structs that can be used as actions.
+/// Defines unit structs that can be used as actions.
+/// To use more complex data types as actions, annotate your type with the #[action] macro.
 #[macro_export]
 macro_rules! actions {
     () => {};
@@ -148,19 +149,8 @@ macro_rules! actions {
         pub struct $name;
     };
 
-    ( $name:ident { $($token:tt)* } ) => {
-        #[gpui::register_action]
-        #[derive(::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq, $crate::serde::Deserialize)]
-        pub struct $name { $($token)* }
-    };
-
     ( $name:ident, $($rest:tt)* ) => {
         actions!($name);
-        actions!($($rest)*);
-    };
-
-    ( $name:ident { $($token:tt)* }, $($rest:tt)* ) => {
-        actions!($name { $($token)* });
         actions!($($rest)*);
     };
 }
@@ -408,17 +398,17 @@ mod tests {
     #[test]
     fn test_actions_definition() {
         {
-            actions!(A, B { field: i32 }, C, D, E, F {}, G);
+            actions!(A, B, C, D, E, F, G);
         }
 
         {
             actions!(
                 A,
-                B { field: i32 },
+                B,
                 C,
                 D,
                 E,
-                F {},
+                F,
                 G, // Don't wrap, test the trailing comma
             );
         }
