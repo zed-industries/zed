@@ -518,8 +518,9 @@ impl AppContext {
     ) {
         window_handle
             .update(self, |_, cx| {
+                // The window might change focus multiple times in an effect cycle.
+                // We only honor effects for the most recently focused handle.
                 if cx.window.focus == focused {
-                    let mut listeners = mem::take(&mut cx.window.current_frame.focus_listeners);
                     let focused = focused
                         .map(|id| FocusHandle::for_id(id, &cx.window.focus_handles).unwrap());
                     let blurred = cx
@@ -528,15 +529,24 @@ impl AppContext {
                         .take()
                         .unwrap()
                         .and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
-                    if focused.is_some() || blurred.is_some() {
-                        let event = FocusEvent { focused, blurred };
-                        for listener in &listeners {
+                    let focus_changed = focused.is_some() || blurred.is_some();
+                    let event = FocusEvent { focused, blurred };
+
+                    let mut listeners = mem::take(&mut cx.window.current_frame.focus_listeners);
+                    if focus_changed {
+                        for listener in &mut listeners {
                             listener(&event, cx);
                         }
                     }
-
                     listeners.extend(cx.window.current_frame.focus_listeners.drain(..));
                     cx.window.current_frame.focus_listeners = listeners;
+
+                    if focus_changed {
+                        cx.window
+                            .focus_listeners
+                            .clone()
+                            .retain(&(), |listener| listener(&event, cx));
+                    }
                 }
             })
             .ok();

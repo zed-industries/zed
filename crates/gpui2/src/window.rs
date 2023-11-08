@@ -60,7 +60,7 @@ pub enum DispatchPhase {
 }
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
-type AnyListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
+type AnyListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 type AnyKeyListener = Box<
     dyn Fn(
             &dyn Any,
@@ -71,8 +71,48 @@ type AnyKeyListener = Box<
         + 'static,
 >;
 type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + 'static>;
+type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
 
 slotmap::new_key_type! { pub struct FocusId; }
+
+impl FocusId {
+    /// Obtains whether the element associated with this handle is currently focused.
+    pub fn is_focused(&self, cx: &WindowContext) -> bool {
+        cx.window.focus == Some(*self)
+    }
+
+    /// Obtains whether the element associated with this handle contains the focused
+    /// element or is itself focused.
+    pub fn contains_focused(&self, cx: &WindowContext) -> bool {
+        cx.focused()
+            .map_or(false, |focused| self.contains(focused.id, cx))
+    }
+
+    /// Obtains whether the element associated with this handle is contained within the
+    /// focused element or is itself focused.
+    pub fn within_focused(&self, cx: &WindowContext) -> bool {
+        let focused = cx.focused();
+        focused.map_or(false, |focused| focused.id.contains(*self, cx))
+    }
+
+    /// Obtains whether this handle contains the given handle in the most recently rendered frame.
+    pub(crate) fn contains(&self, other: Self, cx: &WindowContext) -> bool {
+        let mut ancestor = Some(other);
+        while let Some(ancestor_id) = ancestor {
+            if *self == ancestor_id {
+                return true;
+            } else {
+                ancestor = cx
+                    .window
+                    .current_frame
+                    .focus_parents_by_child
+                    .get(&ancestor_id)
+                    .copied();
+            }
+        }
+        false
+    }
+}
 
 /// A handle which can be used to track and manipulate the focused element in a window.
 pub struct FocusHandle {
@@ -108,39 +148,24 @@ impl FocusHandle {
 
     /// Obtains whether the element associated with this handle is currently focused.
     pub fn is_focused(&self, cx: &WindowContext) -> bool {
-        cx.window.focus == Some(self.id)
+        self.id.is_focused(cx)
     }
 
     /// Obtains whether the element associated with this handle contains the focused
     /// element or is itself focused.
     pub fn contains_focused(&self, cx: &WindowContext) -> bool {
-        cx.focused()
-            .map_or(false, |focused| self.contains(&focused, cx))
+        self.id.contains_focused(cx)
     }
 
     /// Obtains whether the element associated with this handle is contained within the
     /// focused element or is itself focused.
     pub fn within_focused(&self, cx: &WindowContext) -> bool {
-        let focused = cx.focused();
-        focused.map_or(false, |focused| focused.contains(self, cx))
+        self.id.within_focused(cx)
     }
 
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
     pub(crate) fn contains(&self, other: &Self, cx: &WindowContext) -> bool {
-        let mut ancestor = Some(other.id);
-        while let Some(ancestor_id) = ancestor {
-            if self.id == ancestor_id {
-                return true;
-            } else {
-                ancestor = cx
-                    .window
-                    .current_frame
-                    .focus_parents_by_child
-                    .get(&ancestor_id)
-                    .copied();
-            }
-        }
-        false
+        self.id.contains(other.id, cx)
     }
 }
 
@@ -183,6 +208,7 @@ pub struct Window {
     pub(crate) previous_frame: Frame,
     pub(crate) current_frame: Frame,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+    pub(crate) focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     requested_cursor_style: Option<CursorStyle>,
@@ -282,6 +308,7 @@ impl Window {
             previous_frame: Frame::default(),
             current_frame: Frame::default(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
+            focus_listeners: SubscriberSet::new(),
             default_prevented: true,
             mouse_position,
             requested_cursor_style: None,
@@ -1116,7 +1143,7 @@ impl<'a> WindowContext<'a> {
 
                 // Capture phase, events bubble from back to front. Handlers for this phase are used for
                 // special purposes, such as detecting events outside of a given Bounds.
-                for (_, handler) in &handlers {
+                for (_, handler) in &mut handlers {
                     handler(any_mouse_event, DispatchPhase::Capture, self);
                     if !self.app.propagate_event {
                         break;
@@ -1125,7 +1152,7 @@ impl<'a> WindowContext<'a> {
 
                 // Bubble phase, where most normal handlers do their work.
                 if self.app.propagate_event {
-                    for (_, handler) in handlers.iter().rev() {
+                    for (_, handler) in handlers.iter_mut().rev() {
                         handler(any_mouse_event, DispatchPhase::Bubble, self);
                         if !self.app.propagate_event {
                             break;
@@ -1872,6 +1899,87 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         )
     }
 
+    /// Register a listener to be called when the given focus handle receives focus.
+    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
+    /// is dropped.
+    pub fn on_focus(
+        &mut self,
+        handle: &FocusHandle,
+        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let focus_id = handle.id;
+        self.window.focus_listeners.insert(
+            (),
+            Box::new(move |event, cx| {
+                view.update(cx, |view, cx| {
+                    if event.focused.as_ref().map(|focused| focused.id) == Some(focus_id) {
+                        listener(view, cx)
+                    }
+                })
+                .is_ok()
+            }),
+        )
+    }
+
+    /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
+    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
+    /// is dropped.
+    pub fn on_focus_in(
+        &mut self,
+        handle: &FocusHandle,
+        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let focus_id = handle.id;
+        self.window.focus_listeners.insert(
+            (),
+            Box::new(move |event, cx| {
+                view.update(cx, |view, cx| {
+                    if event
+                        .focused
+                        .as_ref()
+                        .map_or(false, |focused| focus_id.contains(focused.id, cx))
+                    {
+                        listener(view, cx)
+                    }
+                })
+                .is_ok()
+            }),
+        )
+    }
+
+    /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
+    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
+    /// is dropped.
+    pub fn on_focus_out(
+        &mut self,
+        handle: &FocusHandle,
+        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let focus_id = handle.id;
+        self.window.focus_listeners.insert(
+            (),
+            Box::new(move |event, cx| {
+                view.update(cx, |view, cx| {
+                    if event
+                        .blurred
+                        .as_ref()
+                        .map_or(false, |focused| focus_id.contains(focused.id, cx))
+                    {
+                        listener(view, cx)
+                    }
+                })
+                .is_ok()
+            }),
+        )
+    }
+
+    /// Register a focus listener for the current frame only. It will be cleared
+    /// on the next frame render. You should use this method only from within elements,
+    /// and we may want to enforce that better via a different context type.
+    // todo!() Move this to `FrameContext` to emphasize its individuality?
     pub fn on_focus_changed(
         &mut self,
         listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
