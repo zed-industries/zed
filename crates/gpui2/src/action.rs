@@ -1,6 +1,8 @@
 use crate::SharedString;
 use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
+use ctor::ctor;
+use parking_lot::Mutex;
 use serde::Deserialize;
 use std::any::{type_name, Any};
 
@@ -17,17 +19,38 @@ pub trait Action: std::fmt::Debug + 'static {
     fn as_any(&self) -> &dyn Any;
 }
 
+type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
+
+#[ctor]
+static ACTION_BUILDERS: Mutex<HashMap<SharedString, ActionBuilder>> = Mutex::default();
+
+/// Register an action type to allow it to be referenced in keymaps.
+pub fn register_action<A: Action>() {
+    ACTION_BUILDERS.lock().insert(A::qualified_name(), A::build);
+}
+
+/// Construct an action based on its name and optional JSON parameters sourced from the keymap.
+pub fn build_action(name: &str, params: Option<serde_json::Value>) -> Result<Box<dyn Action>> {
+    let lock = &ACTION_BUILDERS.lock();
+    let build_action = lock
+        .get(name)
+        .ok_or_else(|| anyhow!("no action type registered for {}", name))?;
+    (build_action)(params)
+}
+
 // actions defines structs that can be used as actions.
 #[macro_export]
 macro_rules! actions {
     () => {};
 
     ( $name:ident ) => {
+        #[gpui::register_action]
         #[derive(::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq, $crate::serde::Deserialize)]
         pub struct $name;
     };
 
     ( $name:ident { $($token:tt)* } ) => {
+        #[gpui::register_action]
         #[derive(::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq, $crate::serde::Deserialize)]
         pub struct $name { $($token)* }
     };
@@ -317,6 +340,7 @@ fn skip_whitespace(source: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate as gpui;
     use DispatchContextPredicate::*;
 
     #[test]
