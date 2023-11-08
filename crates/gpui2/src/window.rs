@@ -255,7 +255,7 @@ impl Window {
                 handle
                     .update(&mut cx, |_, cx| cx.dispatch_event(event))
                     .log_err()
-                    .unwrap_or(true)
+                    .unwrap_or(false)
             })
         });
 
@@ -1011,6 +1011,9 @@ impl<'a> WindowContext<'a> {
             .take()
             .unwrap_or(CursorStyle::Arrow);
         self.platform.set_cursor_style(cursor_style);
+        if let Some(handler) = self.window.requested_input_handler.take() {
+            self.window.platform_window.set_input_handler(handler);
+        }
 
         self.window.dirty = false;
     }
@@ -1155,6 +1158,7 @@ impl<'a> WindowContext<'a> {
                     .insert(any_mouse_event.type_id(), handlers);
             }
         } else if let Some(any_key_event) = event.keyboard_event() {
+            let mut did_handle_action = false;
             let key_dispatch_stack = mem::take(&mut self.window.key_dispatch_stack);
             let key_event_type = any_key_event.type_id();
             let mut context_stack = SmallVec::<[&DispatchContext; 16]>::new();
@@ -1175,6 +1179,7 @@ impl<'a> WindowContext<'a> {
                                 self.dispatch_action(action, &key_dispatch_stack[..ix]);
                             }
                             if !self.app.propagate_event {
+                                did_handle_action = true;
                                 break;
                             }
                         }
@@ -1203,6 +1208,7 @@ impl<'a> WindowContext<'a> {
                                 }
 
                                 if !self.app.propagate_event {
+                                    did_handle_action = true;
                                     break;
                                 }
                             }
@@ -1216,6 +1222,7 @@ impl<'a> WindowContext<'a> {
 
             drop(context_stack);
             self.window.key_dispatch_stack = key_dispatch_stack;
+            return did_handle_action;
         }
 
         true
@@ -2007,7 +2014,7 @@ where
             cx: self.app.this.clone(),
             window: self.window_handle(),
             handler: self.view().downgrade(),
-        }))
+        }));
     }
 }
 
