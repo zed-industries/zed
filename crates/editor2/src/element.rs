@@ -17,7 +17,7 @@ use gpui::{
     black, hsla, point, px, relative, size, transparent_black, Action, AnyElement,
     BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchContext, DispatchPhase,
     Edges, Element, ElementId, Entity, Hsla, KeyDownEvent, KeyListener, KeyMatch, Line, Modifiers,
-    MouseDownEvent, MouseMoveEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size,
+    MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size,
     StatefulInteraction, Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext,
 };
 use itertools::Itertools;
@@ -343,103 +343,60 @@ impl EditorElement {
     //     end_selection
     // }
 
-    // fn mouse_dragged(
-    //     editor: &mut Editor,
-    //     MouseMovedEvent {
-    //         modifiers: Modifiers { cmd, shift, .. },
-    //         position,
-    //         ..
-    //     }: MouseMovedEvent,
-    //     position_map: &PositionMap,
-    //     text_bounds: Bounds<Pixels>,
-    //     cx: &mut EventContext<Editor>,
-    // ) -> bool {
-    //     // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
-    //     // Don't trigger hover popover if mouse is hovering over context menu
-    //     let point = if text_bounds.contains_point(position) {
-    //         position_map
-    //             .point_for_position(text_bounds, position)
-    //             .as_valid()
-    //     } else {
-    //         None
-    //     };
-
-    //     update_go_to_definition_link(
-    //         editor,
-    //         point.map(GoToDefinitionTrigger::Text),
-    //         cmd,
-    //         shift,
-    //         cx,
-    //     );
-
-    //     if editor.has_pending_selection() {
-    //         let mut scroll_delta = gpui::Point::<Pixels>::zero();
-
-    //         let vertical_margin = position_map.line_height.min(text_bounds.height() / 3.0);
-    //         let top = text_bounds.origin.y + vertical_margin;
-    //         let bottom = text_bounds.lower_left().y - vertical_margin;
-    //         if position.y < top {
-    //             scroll_delta.set_y(-scale_vertical_mouse_autoscroll_delta(top - position.y))
-    //         }
-    //         if position.y > bottom {
-    //             scroll_delta.set_y(scale_vertical_mouse_autoscroll_delta(position.y - bottom))
-    //         }
-
-    //         let horizontal_margin = position_map.line_height.min(text_bounds.width() / 3.0);
-    //         let left = text_bounds.origin.x + horizontal_margin;
-    //         let right = text_bounds.upper_right().x - horizontal_margin;
-    //         if position.x < left {
-    //             scroll_delta.set_x(-scale_horizontal_mouse_autoscroll_delta(
-    //                 left - position.x,
-    //             ))
-    //         }
-    //         if position.x > right {
-    //             scroll_delta.set_x(scale_horizontal_mouse_autoscroll_delta(
-    //                 position.x - right,
-    //             ))
-    //         }
-
-    //         let point_for_position = position_map.point_for_position(text_bounds, position);
-
-    //         editor.select(
-    //             SelectPhase::Update {
-    //                 position: point_for_position.previous_valid,
-    //                 goal_column: point_for_position.exact_unclipped.column(),
-    //                 scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
-    //                     .clamp(gpui::Point::<Pixels>::zero(), position_map.scroll_max),
-    //             },
-    //             cx,
-    //         );
-    //         hover_at(editor, point, cx);
-    //         true
-    //     } else {
-    //         hover_at(editor, point, cx);
-    //         false
-    //     }
-    // }
-
     fn mouse_moved(
         editor: &mut Editor,
-        MouseMoveEvent {
-            modifiers: Modifiers { shift, command, .. },
-            position,
-            ..
-        }: &MouseMoveEvent,
+        event: &MouseMoveEvent,
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
+        let modifiers = event.modifiers;
+        if editor.has_pending_selection() && event.pressed_button == Some(MouseButton::Left) {
+            let point_for_position = position_map.point_for_position(text_bounds, event.position);
+            let mut scroll_delta = gpui::Point::<f32>::zero();
+            let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
+            let top = text_bounds.origin.y + vertical_margin;
+            let bottom = text_bounds.lower_left().y - vertical_margin;
+            if event.position.y < top {
+                scroll_delta.y = -scale_vertical_mouse_autoscroll_delta(top - event.position.y);
+            }
+            if event.position.y > bottom {
+                scroll_delta.y = scale_vertical_mouse_autoscroll_delta(event.position.y - bottom);
+            }
+
+            let horizontal_margin = position_map.line_height.min(text_bounds.size.width / 3.0);
+            let left = text_bounds.origin.x + horizontal_margin;
+            let right = text_bounds.upper_right().x - horizontal_margin;
+            if event.position.x < left {
+                scroll_delta.x = -scale_horizontal_mouse_autoscroll_delta(left - event.position.x);
+            }
+            if event.position.x > right {
+                scroll_delta.x = scale_horizontal_mouse_autoscroll_delta(event.position.x - right);
+            }
+
+            editor.select(
+                SelectPhase::Update {
+                    position: point_for_position.previous_valid,
+                    goal_column: point_for_position.exact_unclipped.column(),
+                    scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
+                        .clamp(&gpui::Point::zero(), &position_map.scroll_max),
+                },
+                cx,
+            );
+        }
+
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
-        if text_bounds.contains_point(position) {
-            let point_for_position = position_map.point_for_position(text_bounds, position.clone());
+        if text_bounds.contains_point(&event.position) {
+            let point_for_position = position_map.point_for_position(text_bounds, event.position);
+
             match point_for_position.as_valid() {
                 Some(point) => {
                     update_go_to_definition_link(
                         editor,
                         Some(GoToDefinitionTrigger::Text(point)),
-                        *command,
-                        *shift,
+                        modifiers.command,
+                        modifiers.shift,
                         cx,
                     );
                     hover_at(editor, Some(point), cx);
@@ -449,14 +406,14 @@ impl EditorElement {
                         &position_map.snapshot,
                         point_for_position,
                         editor,
-                        *command,
-                        *shift,
+                        modifiers.command,
+                        modifiers.shift,
                         cx,
                     );
                 }
             }
         } else {
-            update_go_to_definition_link(editor, None, *command, *shift, cx);
+            update_go_to_definition_link(editor, None, modifiers.command, modifiers.shift, cx);
             hover_at(editor, None, cx);
         }
 
@@ -2339,8 +2296,8 @@ impl EditorElement {
     fn paint_mouse_listeners(
         &mut self,
         bounds: Bounds<Pixels>,
-        text_bounds: Bounds<Pixels>,
         gutter_bounds: Bounds<Pixels>,
+        text_bounds: Bounds<Pixels>,
         position_map: &Arc<PositionMap>,
         cx: &mut ViewContext<Editor>,
     ) {
@@ -3849,12 +3806,12 @@ impl HighlightedRange {
 //     bounds.into_iter()
 // }
 
-pub fn scale_vertical_mouse_autoscroll_delta(delta: f32) -> f32 {
-    delta.powf(1.5) / 100.0
+pub fn scale_vertical_mouse_autoscroll_delta(delta: Pixels) -> f32 {
+    (delta.pow(1.5) / 100.0).into()
 }
 
-fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
-    delta.powf(1.2) / 300.0
+fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
+    (delta.pow(1.2) / 300.0).into()
 }
 
 // #[cfg(test)]
