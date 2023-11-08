@@ -116,7 +116,8 @@ resolver = "2"
 [workspace.dependencies]
 anyhow = { version = "1.0.57" }
 async-trait = { version = "0.1" }
-ctor = { version = "0.1" }
+# TODO: Blah
+ctor = { git = "https://github.com/deviant-forks/rust-ctor", rev = "c36b9e8f56571d51802834ba9a16b952f816d26e" }
 derive_more = { version = "0.99.17" }
 env_logger = { version = "0.9" }
 futures = { version = "0.3" }
