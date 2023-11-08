@@ -46,8 +46,7 @@ use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings,
 use itertools::Itertools;
 use language2::LanguageRegistry;
 use lazy_static::lazy_static;
-pub use modal_layer::ModalRegistry;
-use modal_layer::{init_modal_registry, ModalLayer};
+pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
@@ -697,7 +696,8 @@ impl Workspace {
             status_bar
         });
 
-        let modal_layer = cx.build_view(|cx| ModalLayer::new());
+        let workspace_handle = cx.view().downgrade();
+        let modal_layer = cx.build_view(|cx| ModalLayer::new(workspace_handle));
 
         // todo!()
         // cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
@@ -3709,7 +3709,7 @@ impl Render for Workspace {
             .child(
                 self.modal_layer
                     .read(cx)
-                    .render(self, cx)
+                    .render(cx)
                     .relative()
                     .flex_1()
                     .w_full()

@@ -1,7 +1,7 @@
 use crate::Workspace;
 use gpui::{
-    div, px, AnyView, AppContext, Component, Div, ParentElement, Render, StatelessInteractive,
-    Styled, View, ViewContext, EventEmitter,
+    div, px, AnyView, AppContext, Component, Div, EventEmitter, ParentElement, Render,
+    StatelessInteractive, Styled, Subscription, View, ViewContext, WeakView,
 };
 use std::{any::TypeId, sync::Arc};
 use ui::v_stack;
@@ -10,11 +10,10 @@ pub struct ModalRegistry {
     registered_modals: Vec<(TypeId, Box<dyn Fn(Div<Workspace>) -> Div<Workspace>>)>,
 }
 
-pub trait Modal {}
-
-#[derive(Clone)]
 pub struct ModalLayer {
+    workspace: WeakView<Workspace>,
     open_modal: Option<AnyView>,
+    subscription: Option<Subscription>,
 }
 
 pub fn init_modal_registry(cx: &mut AppContext) {
@@ -23,23 +22,19 @@ pub fn init_modal_registry(cx: &mut AppContext) {
     });
 }
 
-struct ToggleModal {
-    name: String,
+pub enum ModalEvent {
+    Dismissed,
 }
 
-pub enum ModalEvents {
-    Dismissed
-}
-
-trait Modal: EventEmitter + Render {
-    fn to_modal_events(&Self::Event) -> Option<ModalEvents>;
+pub trait Modal: EventEmitter + Render {
+    fn to_modal_event(&self, _: &Self::Event) -> Option<ModalEvent>;
 }
 
 impl ModalRegistry {
     pub fn register_modal<A: 'static, V, B>(&mut self, action: A, build_view: B)
     where
         V: Modal,
-        B: Fn(&Workspace, &mut ViewContext<Workspace>) -> Option<View<V>> + 'static,
+        B: Fn(&mut Workspace, &mut ViewContext<Workspace>) -> Option<View<V>> + 'static,
     {
         let build_view = Arc::new(build_view);
 
@@ -48,35 +43,47 @@ impl ModalRegistry {
             Box::new(move |mut div| {
                 let build_view = build_view.clone();
 
-                div.on_action(
-                    move |workspace: &mut Workspace, event: &A, cx: &mut ViewContext<Workspace>| {
-                        let Some(new_modal) = (build_view)(workspace, cx) else {
-                            return;
+                div.on_action(move |workspace, event: &A, cx| {
+                    let Some(new_modal) =
+                        (build_view)(workspace, cx) else {
+                            return
                         };
-                        workspace.modal_layer.update(cx, |modal_layer, _| {
-                            modal_layer.open_modal = Some(new_modal.into());
-                        });
-                        cx.subscribe(new_modal, |e, modal, cx| {
-                            match modal.to_modal_events(e) {
-                                Some(Dismissed) =>
-                                dismissed -> whatever
-                            }
-                        })
-
-                        cx.notify();
-                    },
-                )
+                    workspace.modal_layer.update(cx, |modal_layer, cx| {
+                        modal_layer.show_modal(new_modal, cx);
+                    })
+                })
             }),
         ));
     }
 }
 
 impl ModalLayer {
-    pub fn new() -> Self {
-        Self { open_modal: None }
+    pub fn new(workspace: WeakView<Workspace>) -> Self {
+        Self {
+            workspace,
+            open_modal: None,
+            subscription: None,
+        }
     }
 
-    pub fn render(&self, workspace: &Workspace, cx: &ViewContext<Workspace>) -> Div<Workspace> {
+    pub fn show_modal<V: Modal>(&mut self, new_modal: View<V>, cx: &mut ViewContext<Self>) {
+        self.subscription = Some(cx.subscribe(&new_modal, |this, modal, e, cx| {
+            match modal.read(cx).to_modal_event(e) {
+                Some(ModalEvent::Dismissed) => this.hide_modal(cx),
+                None => {}
+            }
+        }));
+        self.open_modal = Some(new_modal.into());
+        cx.notify();
+    }
+
+    pub fn hide_modal(&mut self, cx: &mut ViewContext<Self>) {
+        self.open_modal.take();
+        self.subscription.take();
+        cx.notify();
+    }
+
+    pub fn render(&self, cx: &ViewContext<Workspace>) -> Div<Workspace> {
         let mut parent = div().relative().size_full();
 
         for (_, action) in cx.global::<ModalRegistry>().registered_modals.iter() {

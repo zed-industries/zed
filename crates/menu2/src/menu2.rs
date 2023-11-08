@@ -1,4 +1,4 @@
-use gpui::{actions, ctor};
+use gpui::actions;
 
 // todo!(remove this)
 // https://github.com/rust-lang/rust/issues/47384

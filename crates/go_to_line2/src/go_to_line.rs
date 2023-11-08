@@ -7,7 +7,7 @@ use text::Point;
 use theme::ActiveTheme;
 use ui::{h_stack, modal, v_stack, Label, LabelColor};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::ModalRegistry;
+use workspace::{ModalRegistry, Modal, ModalEvent};
 
 actions!(Toggle);
 
@@ -33,7 +33,7 @@ pub enum Event {
 }
 
 impl EventEmitter for GoToLine {
-    type Event = ModalEvent;
+    type Event = Event;
 }
 
 impl GoToLine {
@@ -100,7 +100,7 @@ impl GoToLine {
         cx.emit(Event::Dismissed);
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, _cx: &mut ViewContext<Self>) {
         // // if let Some(point) = self.point_from_query(cx) {
         // //     self.active_editor.update(cx, |active_editor, cx| {
         // //         let snapshot = active_editor.snapshot(cx).display_snapshot;
@@ -116,6 +116,14 @@ impl GoToLine {
 
     fn status_text(&self) -> SharedString {
         "Default text".into()
+    }
+}
+
+impl Modal for GoToLine {
+    fn to_modal_event(&self, e: &Self::Event) -> Option<ModalEvent> {
+        match e {
+            Event::Dismissed => Some(ModalEvent::Dismissed),
+        }
     }
 }
 
