@@ -9752,8 +9752,9 @@ impl InputHandler for Editor {
     fn bounds_for_range(
         &self,
         range_utf16: Range<usize>,
+        element_bounds: gpui::Bounds<Pixels>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<gpui::Bounds<f32>> {
+    ) -> Option<gpui::Bounds<Pixels>> {
         // todo!()
         // See how we did it before: `rect_for_range`
         None

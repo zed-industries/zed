@@ -1484,10 +1484,10 @@ extern "C" fn first_rect_for_character_range(
         |bounds| {
             NSRect::new(
                 NSPoint::new(
-                    frame.origin.x + bounds.origin.x as f64,
-                    frame.origin.y + frame.size.height - bounds.origin.y as f64,
+                    frame.origin.x + bounds.origin.x.0 as f64,
+                    frame.origin.y + frame.size.height - bounds.origin.y.0 as f64,
                 ),
-                NSSize::new(bounds.size.width as f64, bounds.size.height as f64),
+                NSSize::new(bounds.size.width.0 as f64, bounds.size.height.0 as f64),
             )
         },
     )

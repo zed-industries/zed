@@ -2,14 +2,14 @@ use crate::{
     px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     Bounds, BoxShadow, Context, Corners, CursorStyle, DevicePixels, DispatchContext, DisplayId,
     Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId,
-    GlobalElementId, GlyphId, Hsla, ImageData, InputEvent, InputHandler, IsZero, KeyListener,
-    KeyMatch, KeyMatcher, Keystroke, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel,
-    Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
-    SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowBounds, WindowInputHandler, WindowOptions, SUBPIXEL_VARIANTS,
+    GlobalElementId, GlyphId, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch,
+    KeyMatcher, Keystroke, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow,
+    SharedString, Size, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline,
+    UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowInputHandler, WindowOptions,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -212,7 +212,7 @@ pub struct Window {
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     requested_cursor_style: Option<CursorStyle>,
-    requested_input_handler: Option<Box<dyn PlatformInputHandler>>,
+    pub(crate) requested_input_handler: Option<Box<dyn PlatformInputHandler>>,
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
@@ -2165,19 +2165,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 handler(view, event, phase, cx);
             })
         });
-    }
-}
-
-impl<V> ViewContext<'_, V>
-where
-    V: InputHandler + 'static,
-{
-    pub fn handle_text_input(&mut self) {
-        self.window.requested_input_handler = Some(Box::new(WindowInputHandler {
-            cx: self.app.this.clone(),
-            window: self.window_handle(),
-            handler: self.view().downgrade(),
-        }));
     }
 }
 
