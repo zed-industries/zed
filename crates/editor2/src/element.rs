@@ -412,12 +412,13 @@ impl EditorElement {
                     );
                 }
             }
+
+            true
         } else {
             update_go_to_definition_link(editor, None, modifiers.command, modifiers.shift, cx);
             hover_at(editor, None, cx);
+            false
         }
-
-        true
     }
 
     fn scroll(

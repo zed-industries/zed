@@ -144,8 +144,7 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
     editor.hover_state.info_task = None;
     editor.hover_state.triggered_from = None;
 
-    // todo!()
-    // editor.clear_background_highlights::<HoverState>(cx);
+    editor.clear_background_highlights::<HoverState>(cx);
 
     if did_hide {
         cx.notify();
