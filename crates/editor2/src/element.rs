@@ -113,137 +113,6 @@ impl EditorElement {
         Self { style }
     }
 
-    // fn attach_mouse_handlers(
-    //     position_map: &Arc<PositionMap>,
-    //     has_popovers: bool,
-    //     visible_bounds: Bounds<Pixels>,
-    //     text_bounds: Bounds<Pixels>,
-    //     gutter_bounds: Bounds<Pixels>,
-    //     bounds: Bounds<Pixels>,
-    //     cx: &mut ViewContext<Editor>,
-    // ) {
-    //     enum EditorElementMouseHandlers {}
-    //     let view_id = cx.view_id();
-    //     cx.scene().push_mouse_region(
-    //         MouseRegion::new::<EditorElementMouseHandlers>(view_id, view_id, visible_bounds)
-    //             .on_down(MouseButton::Left, {
-    //                 let position_map = position_map.clone();
-    //                 move |event, editor, cx| {
-    //                     if !Self::mouse_down(
-    //                         editor,
-    //                         event.platform_event,
-    //                         position_map.as_ref(),
-    //                         text_bounds,
-    //                         gutter_bounds,
-    //                         cx,
-    //                     ) {
-    //                         cx.propagate_event();
-    //                     }
-    //                 }
-    //             })
-    //             .on_down(MouseButton::Right, {
-    //                 let position_map = position_map.clone();
-    //                 move |event, editor, cx| {
-    //                     if !Self::mouse_right_down(
-    //                         editor,
-    //                         event.position,
-    //                         position_map.as_ref(),
-    //                         text_bounds,
-    //                         cx,
-    //                     ) {
-    //                         cx.propagate_event();
-    //                     }
-    //                 }
-    //             })
-    //             .on_up(MouseButton::Left, {
-    //                 let position_map = position_map.clone();
-    //                 move |event, editor, cx| {
-    //                     if !Self::mouse_up(
-    //                         editor,
-    //                         event.position,
-    //                         event.cmd,
-    //                         event.shift,
-    //                         event.alt,
-    //                         position_map.as_ref(),
-    //                         text_bounds,
-    //                         cx,
-    //                     ) {
-    //                         cx.propagate_event()
-    //                     }
-    //                 }
-    //             })
-    //             .on_drag(MouseButton::Left, {
-    //                 let position_map = position_map.clone();
-    //                 move |event, editor, cx| {
-    //                     if event.end {
-    //                         return;
-    //                     }
-
-    //                     if !Self::mouse_dragged(
-    //                         editor,
-    //                         event.platform_event,
-    //                         position_map.as_ref(),
-    //                         text_bounds,
-    //                         cx,
-    //                     ) {
-    //                         cx.propagate_event()
-    //                     }
-    //                 }
-    //             })
-    //             .on_move({
-    //                 let position_map = position_map.clone();
-    //                 move |event, editor, cx| {
-    //                     if !Self::mouse_moved(
-    //                         editor,
-    //                         event.platform_event,
-    //                         &position_map,
-    //                         text_bounds,
-    //                         cx,
-    //                     ) {
-    //                         cx.propagate_event()
-    //                     }
-    //                 }
-    //             })
-    //             .on_move_out(move |_, editor: &mut Editor, cx| {
-    //                 if has_popovers {
-    //                     hide_hover(editor, cx);
-    //                 }
-    //             })
-    //             .on_scroll({
-    //                 let position_map = position_map.clone();
-    //                 move |event, editor, cx| {
-    //                     if !Self::scroll(
-    //                         editor,
-    //                         event.position,
-    //                         *event.delta.raw(),
-    //                         event.delta.precise(),
-    //                         &position_map,
-    //                         bounds,
-    //                         cx,
-    //                     ) {
-    //                         cx.propagate_event()
-    //                     }
-    //                 }
-    //             }),
-    //     );
-
-    //     enum GutterHandlers {}
-    //     let view_id = cx.view_id();
-    //     let region_id = cx.view_id() + 1;
-    //     cx.scene().push_mouse_region(
-    //         MouseRegion::new::<GutterHandlers>(view_id, region_id, gutter_bounds).on_hover(
-    //             |hover, editor: &mut Editor, cx| {
-    //                 editor.gutter_hover(
-    //                     &GutterHover {
-    //                         hovered: hover.started,
-    //                     },
-    //                     cx,
-    //                 );
-    //             },
-    //         ),
-    //     )
-    // }
-
     fn mouse_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
@@ -2345,7 +2214,21 @@ impl EditorElement {
                 }
             }
         });
-
+        // todo!()
+        // on_down(MouseButton::Right, {
+        //     let position_map = position_map.clone();
+        //     move |event, editor, cx| {
+        //         if !Self::mouse_right_down(
+        //             editor,
+        //             event.position,
+        //             position_map.as_ref(),
+        //             text_bounds,
+        //             cx,
+        //         ) {
+        //             cx.propagate_event();
+        //         }
+        //     }
+        // });
         cx.on_mouse_event({
             let position_map = position_map.clone();
             move |editor, event: &MouseMoveEvent, phase, cx| {
@@ -4239,7 +4122,6 @@ fn build_key_listeners(
         build_action_listener(Editor::fold_at),
         build_action_listener(Editor::unfold_lines),
         build_action_listener(Editor::unfold_at),
-        // build_action_listener(Editor::gutter_hover), todo!()
         build_action_listener(Editor::fold_selected_ranges),
         build_action_listener(Editor::show_completions),
         // build_action_listener(Editor::toggle_code_actions), todo!()
