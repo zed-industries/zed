@@ -104,7 +104,17 @@ impl dyn Action {
     pub fn type_id(&self) -> TypeId {
         self.as_any().type_id()
     }
+
+    pub fn name(&self) -> SharedString {
+        ACTION_REGISTRY
+            .read()
+            .names_by_type_id
+            .get(&self.type_id())
+            .expect("type is not a registered action")
+            .clone()
+    }
 }
+
 type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
 
 lazy_static! {
@@ -114,7 +124,7 @@ lazy_static! {
 #[derive(Default)]
 struct ActionRegistry {
     builders_by_name: HashMap<SharedString, ActionBuilder>,
-    builders_by_type_id: HashMap<TypeId, ActionBuilder>,
+    names_by_type_id: HashMap<TypeId, SharedString>,
     all_names: Vec<SharedString>, // So we can return a static slice.
 }
 
@@ -123,20 +133,22 @@ pub fn register_action<A: Action>() {
     let name = A::qualified_name();
     let mut lock = ACTION_REGISTRY.write();
     lock.builders_by_name.insert(name.clone(), A::build);
-    lock.builders_by_type_id.insert(TypeId::of::<A>(), A::build);
+    lock.names_by_type_id
+        .insert(TypeId::of::<A>(), name.clone());
     lock.all_names.push(name);
 }
 
 /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
 pub fn build_action_from_type(type_id: &TypeId) -> Result<Box<dyn Action>> {
     let lock = ACTION_REGISTRY.read();
-
-    let build_action = lock
-        .builders_by_type_id
+    let name = lock
+        .names_by_type_id
         .get(type_id)
-        .ok_or_else(|| anyhow!("no action type registered for {:?}", type_id))?;
+        .ok_or_else(|| anyhow!("no action type registered for {:?}", type_id))?
+        .clone();
+    drop(lock);
 
-    (build_action)(None)
+    build_action(&name, None)
 }
 
 /// Construct an action based on its name and optional JSON parameters sourced from the keymap.

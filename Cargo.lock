@@ -6153,6 +6153,7 @@ dependencies = [
  "serde_json",
  "settings2",
  "theme2",
+ "ui2",
  "util",
 ]
 

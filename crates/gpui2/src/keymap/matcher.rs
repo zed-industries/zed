@@ -46,7 +46,6 @@ impl KeyMatcher {
         keystroke: &Keystroke,
         context_stack: &[&DispatchContext],
     ) -> KeyMatch {
-        dbg!(keystroke, &context_stack);
         let keymap = self.keymap.lock();
         // Clear pending keystrokes if the keymap has changed since the last matched keystroke.
         if keymap.version() != self.keymap_version {

@@ -145,7 +145,7 @@ impl<V> Eq for WeakView<V> {}
 #[derive(Clone, Debug)]
 pub struct AnyView {
     model: AnyModel,
-    initialize: fn(&AnyView, &mut WindowContext) -> AnyBox,
+    pub initialize: fn(&AnyView, &mut WindowContext) -> AnyBox,
     layout: fn(&AnyView, &mut AnyBox, &mut WindowContext) -> LayoutId,
     paint: fn(&AnyView, &mut AnyBox, &mut WindowContext),
 }
@@ -183,6 +183,10 @@ impl AnyView {
             .layout_engine
             .compute_layout(layout_id, available_space);
         (self.paint)(self, &mut rendered_element, cx);
+    }
+
+    pub(crate) fn draw_dispatch_stack(&self, cx: &mut WindowContext) {
+        (self.initialize)(self, cx);
     }
 }
 

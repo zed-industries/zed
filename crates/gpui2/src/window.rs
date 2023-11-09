@@ -228,7 +228,7 @@ pub(crate) struct Frame {
     key_matchers: HashMap<GlobalElementId, KeyMatcher>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyListener)>>,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
-    key_dispatch_stack: Vec<KeyDispatchStackFrame>,
+    pub(crate) key_dispatch_stack: Vec<KeyDispatchStackFrame>,
     freeze_key_dispatch_stack: bool,
     focus_parents_by_child: HashMap<FocusId, FocusId>,
     pub(crate) scene_builder: SceneBuilder,
@@ -327,7 +327,7 @@ impl Window {
 /// find the focused element. We interleave key listeners with dispatch contexts so we can use the
 /// contexts when matching key events against the keymap. A key listener can be either an action
 /// handler or a [KeyDown] / [KeyUp] event listener.
-enum KeyDispatchStackFrame {
+pub(crate) enum KeyDispatchStackFrame {
     Listener {
         event_type: TypeId,
         listener: AnyKeyListener,
@@ -407,6 +407,9 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.focus = Some(handle.id);
+
+        // self.window.current_frame.key_dispatch_stack.clear()
+        // self.window.root_view.initialize()
         self.app.push_effect(Effect::FocusChanged {
             window_handle: self.window.handle,
             focused: Some(handle.id),
@@ -426,6 +429,14 @@ impl<'a> WindowContext<'a> {
             focused: None,
         });
         self.notify();
+    }
+
+    pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
+        self.defer(|cx| {
+            cx.app.propagate_event = true;
+            let stack = cx.dispatch_stack();
+            cx.dispatch_action_internal(action, &stack[..])
+        })
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1055,6 +1066,26 @@ impl<'a> WindowContext<'a> {
         self.window.dirty = false;
     }
 
+    pub(crate) fn dispatch_stack(&mut self) -> Vec<KeyDispatchStackFrame> {
+        let root_view = self.window.root_view.take().unwrap();
+        let window = &mut *self.window;
+        let mut spare_frame = Frame::default();
+        mem::swap(&mut spare_frame, &mut window.previous_frame);
+
+        self.start_frame();
+
+        root_view.draw_dispatch_stack(self);
+
+        let window = &mut *self.window;
+        // restore the old values of current and previous frame,
+        // putting the new frame into spare_frame.
+        mem::swap(&mut window.current_frame, &mut window.previous_frame);
+        mem::swap(&mut spare_frame, &mut window.previous_frame);
+        self.window.root_view = Some(root_view);
+
+        spare_frame.key_dispatch_stack
+    }
+
     /// Rotate the current frame and the previous frame, then clear the current frame.
     /// We repopulate all state in the current frame during each paint.
     fn start_frame(&mut self) {
@@ -1197,7 +1228,7 @@ impl<'a> WindowContext<'a> {
                                 DispatchPhase::Capture,
                                 self,
                             ) {
-                                self.dispatch_action(action, &key_dispatch_stack[..ix]);
+                                self.dispatch_action_internal(action, &key_dispatch_stack[..ix]);
                             }
                             if !self.app.propagate_event {
                                 break;
@@ -1224,7 +1255,10 @@ impl<'a> WindowContext<'a> {
                                     DispatchPhase::Bubble,
                                     self,
                                 ) {
-                                    self.dispatch_action(action, &key_dispatch_stack[..ix]);
+                                    self.dispatch_action_internal(
+                                        action,
+                                        &key_dispatch_stack[..ix],
+                                    );
                                 }
 
                                 if !self.app.propagate_event {
@@ -1296,11 +1330,9 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.prompt(level, msg, answers)
     }
 
-    pub fn available_actions(&mut self) -> Vec<Box<dyn Action>> {
-        let key_dispatch_stack = &self.window.current_frame.key_dispatch_stack;
-        let mut actions = Vec::new();
-        dbg!(key_dispatch_stack.len());
-        for frame in key_dispatch_stack {
+    pub fn available_actions(&self) -> impl Iterator<Item = Box<dyn Action>> + '_ {
+        let key_dispatch_stack = &self.window.previous_frame.key_dispatch_stack;
+        key_dispatch_stack.iter().filter_map(|frame| {
             match frame {
                 // todo!factor out a KeyDispatchStackFrame::Action
                 KeyDispatchStackFrame::Listener {
@@ -1308,21 +1340,19 @@ impl<'a> WindowContext<'a> {
                     listener: _,
                 } => {
                     match build_action_from_type(event_type) {
-                        Ok(action) => {
-                            actions.push(action);
-                        }
+                        Ok(action) => Some(action),
                         Err(err) => {
                             dbg!(err);
+                            None
                         } // we'll hit his if TypeId == KeyDown
                     }
                 }
-                KeyDispatchStackFrame::Context(_) => {}
+                KeyDispatchStackFrame::Context(_) => None,
             }
-        }
-        actions
+        })
     }
 
-    fn dispatch_action(
+    pub(crate) fn dispatch_action_internal(
         &mut self,
         action: Box<dyn Action>,
         dispatch_stack: &[KeyDispatchStackFrame],

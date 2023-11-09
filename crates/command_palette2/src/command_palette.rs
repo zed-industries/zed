@@ -2,13 +2,14 @@ use anyhow::anyhow;
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, Action, AnyElement, AnyWindowHandle, AppContext, BorrowWindow, Div, Element,
-    EventEmitter, FocusHandle, Keystroke, ParentElement, Render, Styled, View, ViewContext,
-    VisualContext, WeakView,
+    actions, div, Action, AnyElement, AnyWindowHandle, AppContext, BorrowWindow, Component, Div,
+    Element, EventEmitter, FocusHandle, Keystroke, ParentElement, Render, StatelessInteractive,
+    Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::cmp::{self, Reverse};
-use ui::modal;
+use theme::ActiveTheme;
+use ui::{modal, Label};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
@@ -19,29 +20,17 @@ use zed_actions::OpenZedURL;
 actions!(Toggle);
 
 pub fn init(cx: &mut AppContext) {
-    dbg!("init");
     cx.set_global(HitCounts::default());
 
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
-            dbg!("new workspace found");
-            workspace
-                .modal_layer()
-                .register_modal(Toggle, |workspace, cx| {
-                    dbg!("hitting cmd-shift-p");
-                    let Some(focus_handle) = cx.focused() else {
-                        return None;
-                    };
+            workspace.modal_layer().register_modal(Toggle, |_, cx| {
+                let Some(previous_focus_handle) = cx.focused() else {
+                    return None;
+                };
 
-                    let available_actions = cx.available_actions();
-                    dbg!(&available_actions);
-
-                    Some(cx.build_view(|cx| {
-                        let delegate =
-                            CommandPaletteDelegate::new(cx.view().downgrade(), focus_handle);
-                        CommandPalette::new(delegate, cx)
-                    }))
-                });
+                Some(cx.build_view(|cx| CommandPalette::new(previous_focus_handle, cx)))
+            });
         },
     )
     .detach();
@@ -52,8 +41,35 @@ pub struct CommandPalette {
 }
 
 impl CommandPalette {
-    fn new(delegate: CommandPaletteDelegate, cx: &mut ViewContext<Self>) -> Self {
-        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+    fn new(previous_focus_handle: FocusHandle, cx: &mut ViewContext<Self>) -> Self {
+        let filter = cx.try_global::<CommandPaletteFilter>();
+
+        let commands = cx
+            .available_actions()
+            .into_iter()
+            .filter_map(|action| {
+                let name = action.name();
+                let namespace = name.split("::").next().unwrap_or("malformed action name");
+                if filter.is_some_and(|f| f.filtered_namespaces.contains(namespace)) {
+                    return None;
+                }
+
+                Some(Command {
+                    name: humanize_action_name(&name),
+                    action,
+                    keystrokes: vec![], // todo!()
+                })
+            })
+            .collect();
+
+        let delegate =
+            CommandPaletteDelegate::new(cx.view().downgrade(), commands, previous_focus_handle, cx);
+
+        let picker = cx.build_view(|cx| {
+            let picker = Picker::new(delegate, cx);
+            picker.focus(cx);
+            picker
+        });
         Self { picker }
     }
 }
@@ -78,19 +94,10 @@ pub struct CommandInterceptResult {
 
 pub struct CommandPaletteDelegate {
     command_palette: WeakView<CommandPalette>,
-    actions: Vec<Command>,
+    commands: Vec<Command>,
     matches: Vec<StringMatch>,
     selected_ix: usize,
-    focus_handle: FocusHandle,
-}
-
-pub enum Event {
-    Dismissed,
-    Confirmed {
-        window: AnyWindowHandle,
-        focused_view_id: usize,
-        action: Box<dyn Action>,
-    },
+    previous_focus_handle: FocusHandle,
 }
 
 struct Command {
@@ -115,10 +122,15 @@ impl Clone for Command {
 struct HitCounts(HashMap<String, usize>);
 
 impl CommandPaletteDelegate {
-    pub fn new(command_palette: WeakView<CommandPalette>, focus_handle: FocusHandle) -> Self {
+    fn new(
+        command_palette: WeakView<CommandPalette>,
+        commands: Vec<Command>,
+        previous_focus_handle: FocusHandle,
+        cx: &ViewContext<CommandPalette>,
+    ) -> Self {
         Self {
             command_palette,
-            actions: Default::default(),
+            commands,
             matches: vec![StringMatch {
                 candidate_id: 0,
                 score: 0.,
@@ -126,7 +138,7 @@ impl CommandPaletteDelegate {
                 string: "Foo my bar".into(),
             }],
             selected_ix: 0,
-            focus_handle,
+            previous_focus_handle,
         }
     }
 }
@@ -151,11 +163,11 @@ impl PickerDelegate for CommandPaletteDelegate {
         query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let view_id = &self.focus_handle;
+        let view_id = &self.previous_focus_handle;
         let window = cx.window();
         cx.spawn(move |picker, mut cx| async move {
             let mut actions = picker
-                .update(&mut cx, |this, _| this.delegate.actions.clone())
+                .update(&mut cx, |this, _| this.delegate.commands.clone())
                 .expect("todo: handle picker no longer being around");
             // _ = window
             //     .available_actions(view_id, &cx)
@@ -276,7 +288,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             picker
                 .update(&mut cx, |picker, _| {
                     let delegate = &mut picker.delegate;
-                    delegate.actions = actions;
+                    delegate.commands = actions;
                     delegate.matches = matches;
                     if delegate.matches.is_empty() {
                         delegate.selected_ix = 0;
@@ -290,32 +302,25 @@ impl PickerDelegate for CommandPaletteDelegate {
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
-        dbg!("dismissed");
         self.command_palette
-            .update(cx, |command_palette, cx| cx.emit(ModalEvent::Dismissed))
+            .update(cx, |_, cx| cx.emit(ModalEvent::Dismissed))
             .log_err();
     }
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
-        // if !self.matches.is_empty() {
-        //     let window = cx.window();
-        //     let focused_view_id = self.focused_view_id;
-        //     let action_ix = self.matches[self.selected_ix].candidate_id;
-        //     let command = self.actions.remove(action_ix);
-        //     cx.update_default_global(|hit_counts: &mut HitCounts, _| {
-        //         *hit_counts.0.entry(command.name).or_default() += 1;
-        //     });
-        //     let action = command.action;
-
-        //     cx.app_context()
-        //         .spawn(move |mut cx| async move {
-        //             window
-        //                 .dispatch_action(focused_view_id, action.as_ref(), &mut cx)
-        //                 .ok_or_else(|| anyhow!("window was closed"))
-        //         })
-        //         .detach_and_log_err(cx);
-        // }
-        self.dismissed(cx)
+        if self.matches.is_empty() {
+            self.dismissed(cx);
+            return;
+        }
+        let action_ix = self.matches[self.selected_ix].candidate_id;
+        let command = self.commands.swap_remove(action_ix);
+        cx.update_global(|hit_counts: &mut HitCounts, _| {
+            *hit_counts.0.entry(command.name).or_default() += 1;
+        });
+        let action = command.action;
+        cx.focus(&self.previous_focus_handle);
+        cx.dispatch_action(action);
+        self.dismissed(cx);
     }
 
     fn render_match(
@@ -324,7 +329,26 @@ impl PickerDelegate for CommandPaletteDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Self::ListItem {
-        div().child("ooh yeah")
+        let colors = cx.theme().colors();
+        let Some(command) = self
+            .matches
+            .get(ix)
+            .and_then(|m| self.commands.get(m.candidate_id))
+        else {
+            return div();
+        };
+
+        div()
+            .text_color(colors.text)
+            .when(selected, |s| {
+                s.border_l_10().border_color(colors.terminal_ansi_yellow)
+            })
+            .hover(|style| {
+                style
+                    .bg(colors.element_active)
+                    .text_color(colors.text_accent)
+            })
+            .child(Label::new(command.name.clone()))
     }
 
     // fn render_match(
