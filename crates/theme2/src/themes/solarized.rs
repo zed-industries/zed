@@ -65,6 +65,7 @@ pub fn solarized() -> UserThemeFamily {
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x657b83ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -72,6 +73,7 @@ pub fn solarized() -> UserThemeFamily {
                                 "something".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x93a1a1ff).into()),
+                                    font_weight: Some(UserFontWeight(700.0)),
                                     ..Default::default()
                                 },
                             ),
@@ -135,6 +137,7 @@ pub fn solarized() -> UserThemeFamily {
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x93a1a1ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),

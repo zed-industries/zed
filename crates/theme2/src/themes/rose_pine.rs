@@ -70,6 +70,7 @@ pub fn rose_pine() -> UserThemeFamily {
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x6e6a86ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -77,6 +78,7 @@ pub fn rose_pine() -> UserThemeFamily {
                                 "something".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xebbcbaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -148,6 +150,7 @@ pub fn rose_pine() -> UserThemeFamily {
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x6e6a86ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -155,6 +158,7 @@ pub fn rose_pine() -> UserThemeFamily {
                                 "something".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xea9a97ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -226,6 +230,7 @@ pub fn rose_pine() -> UserThemeFamily {
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x9893a5ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -233,6 +238,7 @@ pub fn rose_pine() -> UserThemeFamily {
                                 "something".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd7827dff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),

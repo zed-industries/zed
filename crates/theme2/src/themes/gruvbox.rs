@@ -68,6 +68,7 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x928374ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -144,6 +145,7 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x928374ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -220,6 +222,7 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x928374ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -296,6 +299,7 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x928374ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -372,6 +376,7 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x928374ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -448,6 +453,7 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x928374ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),

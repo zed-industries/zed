@@ -364,19 +364,33 @@ pub struct UserHighlightStylePrinter<'a>(&'a UserHighlightStyle);
 
 impl<'a> Debug for UserHighlightStylePrinter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let fields = vec![("color", self.0.color)];
-
         f.write_str("UserHighlightStyle {")?;
 
-        for (field_name, value) in fields {
-            if let Some(color) = value {
-                f.write_str(field_name)?;
-                f.write_str(": ")?;
-                f.write_str("Some(")?;
-                HslaPrinter(color).fmt(f)?;
-                f.write_str(")")?;
-                f.write_str(",")?;
-            }
+        if let Some(color) = self.0.color {
+            f.write_str("color")?;
+            f.write_str(": ")?;
+            f.write_str("Some(")?;
+            HslaPrinter(color).fmt(f)?;
+            f.write_str(")")?;
+            f.write_str(",")?;
+        }
+
+        if let Some(font_style) = self.0.font_style {
+            f.write_str("font_style")?;
+            f.write_str(": ")?;
+            f.write_str("Some(")?;
+            write!(f, "UserFontStyle::{:?}", font_style)?;
+            f.write_str(")")?;
+            f.write_str(",")?;
+        }
+
+        if let Some(font_weight) = self.0.font_weight.as_ref() {
+            f.write_str("font_weight")?;
+            f.write_str(": ")?;
+            f.write_str("Some(")?;
+            write!(f, "UserFontWeight({:?})", font_weight.0)?;
+            f.write_str(")")?;
+            f.write_str(",")?;
         }
 
         f.write_str("..Default::default()")?;

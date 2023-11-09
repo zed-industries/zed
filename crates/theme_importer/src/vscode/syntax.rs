@@ -8,7 +8,7 @@ use serde::Deserialize;
 use theme::UserHighlightStyle;
 
 use crate::util::Traverse;
-use crate::vscode::try_parse_color;
+use crate::vscode::{try_parse_color, try_parse_font_style, try_parse_font_weight};
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -52,6 +52,16 @@ impl VsCodeTokenColor {
                     .foreground
                     .as_ref()
                     .traverse(|color| try_parse_color(&color))?,
+                font_style: self
+                    .settings
+                    .font_style
+                    .as_ref()
+                    .and_then(|style| try_parse_font_style(&style)),
+                font_weight: self
+                    .settings
+                    .font_style
+                    .as_ref()
+                    .and_then(|style| try_parse_font_weight(&style)),
             };
 
             if highlight_style.is_empty() {

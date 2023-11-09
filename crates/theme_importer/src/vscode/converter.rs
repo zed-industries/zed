@@ -2,8 +2,8 @@ use anyhow::Result;
 use gpui::{Hsla, Rgba};
 use indexmap::IndexMap;
 use theme::{
-    StatusColorsRefinement, ThemeColorsRefinement, UserSyntaxTheme, UserTheme,
-    UserThemeStylesRefinement,
+    StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight, UserSyntaxTheme,
+    UserTheme, UserThemeStylesRefinement,
 };
 
 use crate::util::Traverse;
@@ -12,6 +12,21 @@ use crate::ThemeMetadata;
 
 pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
     Ok(Rgba::try_from(color)?.into())
+}
+
+pub(crate) fn try_parse_font_weight(font_style: &str) -> Option<UserFontWeight> {
+    match font_style {
+        style if style.contains("bold") => Some(UserFontWeight::BOLD),
+        _ => None,
+    }
+}
+
+pub(crate) fn try_parse_font_style(font_style: &str) -> Option<UserFontStyle> {
+    match font_style {
+        style if style.contains("italic") => Some(UserFontStyle::Italic),
+        style if style.contains("oblique") => Some(UserFontStyle::Oblique),
+        _ => None,
+    }
 }
 
 pub struct VsCodeThemeConverter {

@@ -55,6 +55,7 @@ pub fn synthwave_84() -> UserThemeFamily {
                             "comment".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x848bbdff).into()),
+                                font_style: Some(UserFontStyle::Italic),
                                 ..Default::default()
                             },
                         ),
