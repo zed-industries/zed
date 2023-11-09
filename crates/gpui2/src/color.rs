@@ -19,7 +19,7 @@ pub fn rgba(hex: u32) -> Rgba {
     Rgba { r, g, b, a }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(PartialEq, Clone, Copy, Default)]
 pub struct Rgba {
     pub r: f32,
     pub g: f32,
@@ -70,20 +70,11 @@ impl<'de> Visitor<'de> for RgbaVisitor {
     }
 
     fn visit_str<E: de::Error>(self, value: &str) -> Result<Rgba, E> {
-        if value.len() == 7 || value.len() == 9 {
-            let r = u8::from_str_radix(&value[1..3], 16).unwrap() as f32 / 255.0;
-            let g = u8::from_str_radix(&value[3..5], 16).unwrap() as f32 / 255.0;
-            let b = u8::from_str_radix(&value[5..7], 16).unwrap() as f32 / 255.0;
-            let a = if value.len() == 9 {
-                u8::from_str_radix(&value[7..9], 16).unwrap() as f32 / 255.0
-            } else {
-                1.0
-            };
-            Ok(Rgba { r, g, b, a })
-        } else {
-            Err(E::custom(
-                "Bad format for RGBA. Expected #rrggbb or #rrggbbaa.",
-            ))
+        match value.len() {
+            4 | 5 | 7 | 9 => Rgba::try_from(value).map_err(E::custom),
+            _ => Err(E::custom(
+                "Bad format for RGBA. Expected #rgb, #rgba, #rrggbb, or #rrggbbaa.",
+            )),
         }
     }
 }
@@ -128,16 +119,47 @@ impl TryFrom<&'_ str> for Rgba {
     type Error = ParseIntError;
 
     fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
-        let r = u8::from_str_radix(&value[1..3], 16)? as f32 / 255.0;
-        let g = u8::from_str_radix(&value[3..5], 16)? as f32 / 255.0;
-        let b = u8::from_str_radix(&value[5..7], 16)? as f32 / 255.0;
-        let a = if value.len() > 7 {
-            u8::from_str_radix(&value[7..9], 16)? as f32 / 255.0
-        } else {
-            1.0
+        const RGB: usize = "rgb".len();
+        const RGBA: usize = "rgba".len();
+        const RRGGBB: usize = "rrggbb".len();
+        const RRGGBBAA: usize = "rrggbbaa".len();
+
+        let Some(("", hex)) = value.split_once('#') else {
+            panic!("invalid color: {value}");
         };
 
-        Ok(Rgba { r, g, b, a })
+        let (r, g, b, a) = match hex.len() {
+            RGB | RGBA => {
+                let r = u8::from_str_radix(&hex[0..1].repeat(2), 16)?;
+                let g = u8::from_str_radix(&hex[1..2].repeat(2), 16)?;
+                let b = u8::from_str_radix(&hex[2..3].repeat(2), 16)?;
+                let a = if hex.len() == RGBA {
+                    u8::from_str_radix(&hex[3..4].repeat(2), 16)?
+                } else {
+                    0xff
+                };
+                (r, g, b, a)
+            }
+            RRGGBB | RRGGBBAA => {
+                let r = u8::from_str_radix(&hex[0..2], 16)?;
+                let g = u8::from_str_radix(&hex[2..4], 16)?;
+                let b = u8::from_str_radix(&hex[4..6], 16)?;
+                let a = if hex.len() == RRGGBBAA {
+                    u8::from_str_radix(&hex[6..8], 16)?
+                } else {
+                    0xff
+                };
+                (r, g, b, a)
+            }
+            _ => panic!("invalid color: {value}"),
+        };
+
+        Ok(Rgba {
+            r: r as f32 / 255.,
+            g: g as f32 / 255.,
+            b: b as f32 / 255.,
+            a: a as f32 / 255.,
+        })
     }
 }
 
@@ -309,5 +331,40 @@ impl<'de> Deserialize<'de> for Hsla {
 
         // Then, use the From<Rgba> for Hsla implementation to convert it
         Ok(Hsla::from(rgba))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn test_deserialize_three_value_hex_to_rgba() {
+        let actual: Rgba = serde_json::from_value(json!("#f09")).unwrap();
+
+        assert_eq!(actual, rgba(0xff0099ff))
+    }
+
+    #[test]
+    fn test_deserialize_four_value_hex_to_rgba() {
+        let actual: Rgba = serde_json::from_value(json!("#f09f")).unwrap();
+
+        assert_eq!(actual, rgba(0xff0099ff))
+    }
+
+    #[test]
+    fn test_deserialize_six_value_hex_to_rgba() {
+        let actual: Rgba = serde_json::from_value(json!("#ff0099")).unwrap();
+
+        assert_eq!(actual, rgba(0xff0099ff))
+    }
+
+    #[test]
+    fn test_deserialize_eight_value_hex_to_rgba() {
+        let actual: Rgba = serde_json::from_value(json!("#ff0099ff")).unwrap();
+
+        assert_eq!(actual, rgba(0xff0099ff))
     }
 }
