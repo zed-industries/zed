@@ -157,7 +157,17 @@ impl VsCodeThemeConverter {
             text: vscode_colors
                 .foreground
                 .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+                .traverse(|color| try_parse_color(&color))?
+                .or_else(|| {
+                    self.theme
+                        .token_colors
+                        .iter()
+                        .find(|token_color| token_color.scope.is_none())
+                        .and_then(|token_color| token_color.settings.foreground.as_ref())
+                        .traverse(|color| try_parse_color(&color))
+                        .ok()
+                        .flatten()
+                }),
             tab_active_background: vscode_colors
                 .tab_active_background
                 .as_ref()
