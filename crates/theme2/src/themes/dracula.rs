@@ -74,16 +74,16 @@ pub fn dracula() -> UserThemeFamily {
                             },
                         ),
                         (
-                            "punctuation".into(),
+                            "something".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xff79c6ff).into()),
+                                color: Some(rgba(0xf8f8f2ff).into()),
                                 ..Default::default()
                             },
                         ),
                         (
-                            "something".into(),
+                            "punctuation".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xf8f8f2ff).into()),
+                                color: Some(rgba(0xff79c6ff).into()),
                                 ..Default::default()
                             },
                         ),

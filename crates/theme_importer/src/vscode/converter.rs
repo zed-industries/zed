@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-
 use anyhow::Result;
 use gpui::{Hsla, Rgba};
+use indexmap::IndexMap;
 use theme::{
     StatusColorsRefinement, ThemeColorsRefinement, UserSyntaxTheme, UserTheme,
     UserThemeStylesRefinement,
@@ -34,7 +33,7 @@ impl VsCodeThemeConverter {
         let status_color_refinements = self.convert_status_colors()?;
         let theme_colors_refinements = self.convert_theme_colors()?;
 
-        let mut highlight_styles = HashMap::new();
+        let mut highlight_styles = IndexMap::new();
 
         for token_color in self.theme.token_colors {
             highlight_styles.extend(token_color.highlight_styles()?);

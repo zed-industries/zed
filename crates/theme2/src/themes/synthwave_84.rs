@@ -59,16 +59,16 @@ pub fn synthwave_84() -> UserThemeFamily {
                             },
                         ),
                         (
-                            "punctuation".into(),
+                            "something".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xfede5cff).into()),
+                                color: Some(rgba(0xfe444fff).into()),
                                 ..Default::default()
                             },
                         ),
                         (
-                            "something".into(),
+                            "punctuation".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xfe444fff).into()),
+                                color: Some(rgba(0xfede5cff).into()),
                                 ..Default::default()
                             },
                         ),

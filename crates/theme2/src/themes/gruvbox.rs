@@ -72,14 +72,14 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "something".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "punctuation".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
@@ -141,13 +141,6 @@ pub fn gruvbox() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "punctuation".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0x83a598ff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x928374ff).into()),
@@ -156,6 +149,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
@@ -217,9 +217,9 @@ pub fn gruvbox() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "punctuation".into(),
+                                "comment".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x83a598ff).into()),
+                                    color: Some(rgba(0x928374ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -231,9 +231,9 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "comment".into(),
+                                "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x928374ff).into()),
+                                    color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -369,16 +369,16 @@ pub fn gruvbox() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "something".into(),
+                                "comment".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x066578ff).into()),
+                                    color: Some(rgba(0x928374ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "comment".into(),
+                                "something".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x928374ff).into()),
+                                    color: Some(rgba(0x066578ff).into()),
                                     ..Default::default()
                                 },
                             ),

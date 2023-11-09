@@ -230,16 +230,16 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "something".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x9893a5ff).into()),
+                                    color: Some(rgba(0xd7827dff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xd7827dff).into()),
+                                    color: Some(rgba(0x9893a5ff).into()),
                                     ..Default::default()
                                 },
                             ),

@@ -66,16 +66,16 @@ pub fn ayu() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "something".into(),
+                                "comment".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xfa8d3eff).into()),
+                                    color: Some(rgba(0x787b8099).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "comment".into(),
+                                "something".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x787b8099).into()),
+                                    color: Some(rgba(0xfa8d3eff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -143,7 +143,7 @@ pub fn ayu() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "punctuation".into(),
+                                "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb8cfe680).into()),
                                     ..Default::default()
@@ -157,7 +157,7 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "comment".into(),
+                                "punctuation".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb8cfe680).into()),
                                     ..Default::default()
@@ -227,16 +227,16 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "something".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xabb5be8c).into()),
+                                    color: Some(rgba(0xff8f3fff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xff8f3fff).into()),
+                                    color: Some(rgba(0xabb5be8c).into()),
                                     ..Default::default()
                                 },
                             ),

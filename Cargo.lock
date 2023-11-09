@@ -9134,6 +9134,7 @@ dependencies = [
  "anyhow",
  "convert_case 0.6.0",
  "gpui2",
+ "indexmap 1.9.3",
  "log",
  "rust-embed",
  "serde",

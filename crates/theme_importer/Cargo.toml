@@ -10,6 +10,7 @@ publish = false
 anyhow.workspace = true
 convert_case = "0.6.0"
 gpui = { package = "gpui2", path = "../gpui2" }
+indexmap = "1.6.2"
 log.workspace = true
 rust-embed.workspace = true
 serde.workspace = true

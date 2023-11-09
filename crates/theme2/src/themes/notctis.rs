@@ -68,6 +68,13 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5888a5ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49ace9ff).into()),
@@ -78,13 +85,6 @@ pub fn notctis() -> UserThemeFamily {
                                 "something".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "comment".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0x5888a5ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -154,16 +154,16 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "something".into(),
+                                "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    color: Some(rgba(0x49ace9ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "something".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49ace9ff).into()),
+                                    color: Some(rgba(0x49e9a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -226,13 +226,6 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "something".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0x00b368ff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8ca6a6ff).into()),
@@ -243,6 +236,13 @@ pub fn notctis() -> UserThemeFamily {
                                 "punctuation".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0094f0ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -305,13 +305,6 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "something".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0x00b368ff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x9995b7ff).into()),
@@ -322,6 +315,13 @@ pub fn notctis() -> UserThemeFamily {
                                 "punctuation".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0094f0ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -384,16 +384,16 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "punctuation".into(),
+                                "comment".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x0094f0ff).into()),
+                                    color: Some(rgba(0x8ca6a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "comment".into(),
+                                "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x8ca6a6ff).into()),
+                                    color: Some(rgba(0x0094f0ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -463,13 +463,6 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "something".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0x72c09fff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x5d7787ff).into()),
@@ -480,6 +473,13 @@ pub fn notctis() -> UserThemeFamily {
                                 "punctuation".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x5897bfff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x72c09fff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -542,13 +542,6 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "something".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0x49e9a6ff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x5b858bff).into()),
@@ -559,6 +552,13 @@ pub fn notctis() -> UserThemeFamily {
                                 "punctuation".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49ace9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -707,16 +707,16 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "something".into(),
+                                "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    color: Some(rgba(0x49ace9ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "something".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49ace9ff).into()),
+                                    color: Some(rgba(0x49e9a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -779,9 +779,9 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "something".into(),
+                                "comment".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    color: Some(rgba(0x716b93ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -793,9 +793,9 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "comment".into(),
+                                "something".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x716b93ff).into()),
+                                    color: Some(rgba(0x49e9a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -865,16 +865,16 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "something".into(),
+                                "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    color: Some(rgba(0x49ace9ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "something".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49ace9ff).into()),
+                                    color: Some(rgba(0x49e9a6ff).into()),
                                     ..Default::default()
                                 },
                             ),

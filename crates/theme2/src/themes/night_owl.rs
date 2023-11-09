@@ -66,13 +66,6 @@ pub fn night_owl() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "punctuation".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0xd3413dff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x637777ff).into()),
@@ -83,6 +76,13 @@ pub fn night_owl() -> UserThemeFamily {
                                 "something".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x7fcac3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3413dff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -144,16 +144,16 @@ pub fn night_owl() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "something".into(),
+                                "comment".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x0b969bff).into()),
+                                    color: Some(rgba(0x989fb1ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "comment".into(),
+                                "something".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x989fb1ff).into()),
+                                    color: Some(rgba(0x0b969bff).into()),
                                     ..Default::default()
                                 },
                             ),

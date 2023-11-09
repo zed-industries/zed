@@ -2,9 +2,8 @@
 // Map tokenColors style to HighlightStyle (fontStyle, foreground, background)
 // Take in the scopes from the tokenColors and try to match each to our HighlightStyles
 
-use std::collections::HashMap;
-
 use anyhow::Result;
+use indexmap::IndexMap;
 use serde::Deserialize;
 use theme::UserHighlightStyle;
 
@@ -33,13 +32,13 @@ pub struct VsCodeTokenColorSettings {
 }
 
 impl VsCodeTokenColor {
-    pub fn highlight_styles(&self) -> Result<HashMap<String, UserHighlightStyle>> {
-        let mut highlight_styles = HashMap::new();
+    pub fn highlight_styles(&self) -> Result<IndexMap<String, UserHighlightStyle>> {
+        let mut highlight_styles = IndexMap::new();
 
         let scope = match self.scope {
             Some(VsCodeTokenScope::One(ref scope)) => vec![scope.clone()],
             Some(VsCodeTokenScope::Many(ref scopes)) => scopes.clone(),
-            None => return Ok(HashMap::new()),
+            None => return Ok(IndexMap::new()),
         };
 
         for scope in &scope {

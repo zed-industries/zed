@@ -67,13 +67,6 @@ pub fn nord() -> UserThemeFamily {
                 syntax: Some(UserSyntaxTheme {
                     highlights: vec![
                         (
-                            "something".into(),
-                            UserHighlightStyle {
-                                color: Some(rgba(0xa3be8cff).into()),
-                                ..Default::default()
-                            },
-                        ),
-                        (
                             "comment".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x606e87ff).into()),
@@ -84,6 +77,13 @@ pub fn nord() -> UserThemeFamily {
                             "punctuation".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x81a1c1ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "something".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xa3be8cff).into()),
                                 ..Default::default()
                             },
                         ),

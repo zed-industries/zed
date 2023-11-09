@@ -143,16 +143,16 @@ pub fn palenight() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "something".into(),
+                                "comment".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x7fcac3ff).into()),
+                                    color: Some(rgba(0x687097ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "comment".into(),
+                                "something".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x687097ff).into()),
+                                    color: Some(rgba(0x7fcac3ff).into()),
                                     ..Default::default()
                                 },
                             ),

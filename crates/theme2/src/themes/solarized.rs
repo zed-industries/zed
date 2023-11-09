@@ -62,13 +62,6 @@ pub fn solarized() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
-                                "punctuation".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0x657b83ff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x657b83ff).into()),
@@ -79,6 +72,13 @@ pub fn solarized() -> UserThemeFamily {
                                 "something".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x93a1a1ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -139,16 +139,16 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "something".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x93a1a1ff).into()),
+                                    color: Some(rgba(0x657b83ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x657b83ff).into()),
+                                    color: Some(rgba(0x93a1a1ff).into()),
                                     ..Default::default()
                                 },
                             ),
