@@ -11,7 +11,7 @@ use crate::util::Traverse;
 use crate::vscode::VsCodeTheme;
 use crate::ThemeMetadata;
 
-use super::{VsCodeTokenScope, ZedSyntaxToken};
+use super::ZedSyntaxToken;
 
 pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
     Ok(Rgba::try_from(color)?.into())
