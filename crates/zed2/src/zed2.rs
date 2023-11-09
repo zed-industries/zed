@@ -55,7 +55,7 @@ pub fn initialize_workspace(
 ) -> Task<Result<()>> {
     cx.spawn(|mut cx| async move {
         workspace_handle.update(&mut cx, |workspace, cx| {
-            let workspace_handle = cx.view();
+            let workspace_handle = cx.view().clone();
             cx.subscribe(&workspace_handle, {
                 move |workspace, _, event, cx| {
                     if let workspace::Event::PaneAdded(pane) = event {
