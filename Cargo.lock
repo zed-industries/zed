@@ -1881,6 +1881,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "command_palette2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "ctor",
+ "editor2",
+ "env_logger 0.9.3",
+ "fuzzy2",
+ "gpui2",
+ "language2",
+ "picker2",
+ "project2",
+ "serde",
+ "serde_json",
+ "settings2",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
+ "zed_actions2",
+]
+
+[[package]]
 name = "component_test"
 version = "0.1.0"
 dependencies = [
@@ -11362,6 +11386,7 @@ dependencies = [
  "cli",
  "client2",
  "collections",
+ "command_palette2",
  "copilot2",
  "ctor",
  "db2",
@@ -11448,6 +11473,15 @@ dependencies = [
  "util",
  "uuid 1.4.1",
  "workspace2",
+ "zed_actions2",
+]
+
+[[package]]
+name = "zed_actions2"
+version = "0.1.0"
+dependencies = [
+ "gpui2",
+ "serde",
 ]
 
 [[package]]

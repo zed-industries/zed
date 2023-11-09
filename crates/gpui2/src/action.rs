@@ -4,7 +4,7 @@ use collections::{HashMap, HashSet};
 use lazy_static::lazy_static;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use serde::Deserialize;
-use std::any::{type_name, Any};
+use std::any::{type_name, Any, TypeId};
 
 /// Actions are used to implement keyboard-driven UI.
 /// When you declare an action, you can bind keys to the action in the keymap and
@@ -100,6 +100,11 @@ where
     }
 }
 
+impl dyn Action {
+    pub fn type_id(&self) -> TypeId {
+        self.as_any().type_id()
+    }
+}
 type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
 
 lazy_static! {

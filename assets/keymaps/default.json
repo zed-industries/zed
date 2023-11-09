@@ -387,7 +387,8 @@
     }
   },
   {
-    "context": "Workspace",
+    // todo!() fix context
+    // "context": "Workspace",
     "bindings": {
       "cmd-1": ["workspace::ActivatePane", 0],
       "cmd-2": ["workspace::ActivatePane", 1],
