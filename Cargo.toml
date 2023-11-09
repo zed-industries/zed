@@ -67,6 +67,7 @@ members = [
     "crates/multi_buffer2",
     "crates/node_runtime",
     "crates/notifications",
+    "crates/notifications2",
     "crates/outline",
     "crates/picker",
     "crates/picker2",

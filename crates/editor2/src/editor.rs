@@ -9580,7 +9580,7 @@ impl Render for Editor {
 
 impl InputHandler for Editor {
     fn text_for_range(
-        &self,
+        &mut self,
         range_utf16: Range<usize>,
         cx: &mut ViewContext<Self>,
     ) -> Option<String> {
@@ -9593,7 +9593,7 @@ impl InputHandler for Editor {
         )
     }
 
-    fn selected_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
+    fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
         // Prevent the IME menu from appearing when holding down an alphabetic key
         // while input is disabled.
         if !self.input_enabled {

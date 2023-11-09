@@ -1128,6 +1128,8 @@ async fn test_channel_link_notifications(
         .await
         .unwrap();
 
+    executor.run_until_parked();
+
     // the members-only channel is still shown for c, but hidden for b
     assert_channels_list_shape(
         client_b.channel_store(),

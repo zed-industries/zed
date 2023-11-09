@@ -72,10 +72,8 @@ fs = { package = "fs2", path = "../fs2", features = ["test-support"] }
 git = { package = "git3", path = "../git3", features = ["test-support"] }
 live_kit_client = { package = "live_kit_client2", path = "../live_kit_client2", features = ["test-support"] }
 lsp = { package = "lsp2", path = "../lsp2", features = ["test-support"] }
-
 node_runtime = { path = "../node_runtime" }
-#todo!(notifications)
-#notifications = { path = "../notifications", features = ["test-support"] }
+notifications = { package = "notifications2", path = "../notifications2", features = ["test-support"] }
 
 project = { package = "project2", path = "../project2", features = ["test-support"] }
 rpc = { package = "rpc2", path = "../rpc2", features = ["test-support"] }

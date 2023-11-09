@@ -1,115 +1,115 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
-use channel::{ChannelChat, ChannelMessageId};
+use channel::{ChannelChat, ChannelMessageId, MessageParams};
 use gpui::{BackgroundExecutor, Model, TestAppContext};
+use rpc::Notification;
 
-// todo!(notifications)
-// #[gpui::test]
-// async fn test_basic_channel_messages(
-//     executor: BackgroundExecutor,
-//     mut cx_a: &mut TestAppContext,
-//     mut cx_b: &mut TestAppContext,
-//     mut cx_c: &mut TestAppContext,
-// ) {
-//     let mut server = TestServer::start(executor.clone()).await;
-//     let client_a = server.create_client(cx_a, "user_a").await;
-//     let client_b = server.create_client(cx_b, "user_b").await;
-//     let client_c = server.create_client(cx_c, "user_c").await;
+#[gpui::test]
+async fn test_basic_channel_messages(
+    executor: BackgroundExecutor,
+    mut cx_a: &mut TestAppContext,
+    mut cx_b: &mut TestAppContext,
+    mut cx_c: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
 
-//     let channel_id = server
-//         .make_channel(
-//             "the-channel",
-//             None,
-//             (&client_a, cx_a),
-//             &mut [(&client_b, cx_b), (&client_c, cx_c)],
-//         )
-//         .await;
+    let channel_id = server
+        .make_channel(
+            "the-channel",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
+        )
+        .await;
 
-//     let channel_chat_a = client_a
-//         .channel_store()
-//         .update(cx_a, |store, cx| store.open_channel_chat(channel_id, cx))
-//         .await
-//         .unwrap();
-//     let channel_chat_b = client_b
-//         .channel_store()
-//         .update(cx_b, |store, cx| store.open_channel_chat(channel_id, cx))
-//         .await
-//         .unwrap();
+    let channel_chat_a = client_a
+        .channel_store()
+        .update(cx_a, |store, cx| store.open_channel_chat(channel_id, cx))
+        .await
+        .unwrap();
+    let channel_chat_b = client_b
+        .channel_store()
+        .update(cx_b, |store, cx| store.open_channel_chat(channel_id, cx))
+        .await
+        .unwrap();
 
-//     let message_id = channel_chat_a
-//         .update(cx_a, |c, cx| {
-//             c.send_message(
-//                 MessageParams {
-//                     text: "hi @user_c!".into(),
-//                     mentions: vec![(3..10, client_c.id())],
-//                 },
-//                 cx,
-//             )
-//             .unwrap()
-//         })
-//         .await
-//         .unwrap();
-//     channel_chat_a
-//         .update(cx_a, |c, cx| c.send_message("two".into(), cx).unwrap())
-//         .await
-//         .unwrap();
+    let message_id = channel_chat_a
+        .update(cx_a, |c, cx| {
+            c.send_message(
+                MessageParams {
+                    text: "hi @user_c!".into(),
+                    mentions: vec![(3..10, client_c.id())],
+                },
+                cx,
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    channel_chat_a
+        .update(cx_a, |c, cx| c.send_message("two".into(), cx).unwrap())
+        .await
+        .unwrap();
 
-//     executor.run_until_parked();
-//     channel_chat_b
-//         .update(cx_b, |c, cx| c.send_message("three".into(), cx).unwrap())
-//         .await
-//         .unwrap();
+    executor.run_until_parked();
+    channel_chat_b
+        .update(cx_b, |c, cx| c.send_message("three".into(), cx).unwrap())
+        .await
+        .unwrap();
 
-//     executor.run_until_parked();
+    executor.run_until_parked();
 
-//     let channel_chat_c = client_c
-//         .channel_store()
-//         .update(cx_c, |store, cx| store.open_channel_chat(channel_id, cx))
-//         .await
-//         .unwrap();
+    let channel_chat_c = client_c
+        .channel_store()
+        .update(cx_c, |store, cx| store.open_channel_chat(channel_id, cx))
+        .await
+        .unwrap();
 
-//     for (chat, cx) in [
-//         (&channel_chat_a, &mut cx_a),
-//         (&channel_chat_b, &mut cx_b),
-//         (&channel_chat_c, &mut cx_c),
-//     ] {
-//         chat.update(*cx, |c, _| {
-//             assert_eq!(
-//                 c.messages()
-//                     .iter()
-//                     .map(|m| (m.body.as_str(), m.mentions.as_slice()))
-//                     .collect::<Vec<_>>(),
-//                 vec![
-//                     ("hi @user_c!", [(3..10, client_c.id())].as_slice()),
-//                     ("two", &[]),
-//                     ("three", &[])
-//                 ],
-//                 "results for user {}",
-//                 c.client().id(),
-//             );
-//         });
-//     }
+    for (chat, cx) in [
+        (&channel_chat_a, &mut cx_a),
+        (&channel_chat_b, &mut cx_b),
+        (&channel_chat_c, &mut cx_c),
+    ] {
+        chat.update(*cx, |c, _| {
+            assert_eq!(
+                c.messages()
+                    .iter()
+                    .map(|m| (m.body.as_str(), m.mentions.as_slice()))
+                    .collect::<Vec<_>>(),
+                vec![
+                    ("hi @user_c!", [(3..10, client_c.id())].as_slice()),
+                    ("two", &[]),
+                    ("three", &[])
+                ],
+                "results for user {}",
+                c.client().id(),
+            );
+        });
+    }
 
-//     client_c.notification_store().update(cx_c, |store, _| {
-//         assert_eq!(store.notification_count(), 2);
-//         assert_eq!(store.unread_notification_count(), 1);
-//         assert_eq!(
-//             store.notification_at(0).unwrap().notification,
-//             Notification::ChannelMessageMention {
-//                 message_id,
-//                 sender_id: client_a.id(),
-//                 channel_id,
-//             }
-//         );
-//         assert_eq!(
-//             store.notification_at(1).unwrap().notification,
-//             Notification::ChannelInvitation {
-//                 channel_id,
-//                 channel_name: "the-channel".to_string(),
-//                 inviter_id: client_a.id()
-//             }
-//         );
-//     });
-// }
+    client_c.notification_store().update(cx_c, |store, _| {
+        assert_eq!(store.notification_count(), 2);
+        assert_eq!(store.unread_notification_count(), 1);
+        assert_eq!(
+            store.notification_at(0).unwrap().notification,
+            Notification::ChannelMessageMention {
+                message_id,
+                sender_id: client_a.id(),
+                channel_id,
+            }
+        );
+        assert_eq!(
+            store.notification_at(1).unwrap().notification,
+            Notification::ChannelInvitation {
+                channel_id,
+                channel_name: "the-channel".to_string(),
+                inviter_id: client_a.id()
+            }
+        );
+    });
+}
 
 #[gpui::test]
 async fn test_rejoin_channel_chat(
