@@ -529,9 +529,9 @@ mod tests {
                     Path::new("/root/work/project/node_modules/expect/build/print.js")
                 )
                 .await,
-                Ok(ControlFlow::Continue(None))
+                Ok(ControlFlow::Break(()))
             ),
-            "Even though it has package.json with prettier in it and no prettier on node_modules along the path, nothing should fail since declared inside node_modules"
+            "Should not format files inside node_modules/"
         );
     }
 
@@ -595,8 +595,8 @@ mod tests {
             )
             .await
             .unwrap(),
-            ControlFlow::Continue(Some(PathBuf::from("/root/web_blog"))),
-            "Should find a preinstalled prettier in the project root even for node_modules files"
+            ControlFlow::Break(()),
+            "Should not allow formatting node_modules/ contents"
         );
     }
 
@@ -608,6 +608,18 @@ mod tests {
             json!({
                 "work": {
                     "web_blog": {
+                        "node_modules": {
+                            "expect": {
+                                "build": {
+                                    "print.js": "// print.js file contents",
+                                },
+                                "package.json": r#"{
+                                    "devDependencies": {
+                                        "prettier": "2.5.1"
+                                    }
+                                }"#,
+                            },
+                        },
                         "pages": {
                             "[slug].tsx": "// [slug].tsx file contents",
                         },
@@ -628,33 +640,55 @@ mod tests {
         )
         .await;
 
-        let path = "/root/work/web_blog/node_modules/pages/[slug].tsx";
         match Prettier::locate_prettier_installation(
             fs.as_ref(),
             &HashSet::default(),
-            Path::new(path)
+            Path::new("/root/work/web_blog/pages/[slug].tsx")
         )
         .await {
             Ok(path) => panic!("Expected to fail for prettier in package.json but not in node_modules found, but got path {path:?}"),
             Err(e) => {
                 let message = e.to_string();
-                assert!(message.contains(path), "Error message should mention which start file was used for location");
-                assert!(message.contains("/root/work/web_blog"), "Error message should mention potential candidates without prettier node_modules contents");
+                assert!(message.contains("/root/work/web_blog"), "Error message should mention which project had prettier defined");
             },
         };
-
         assert_eq!(
             Prettier::locate_prettier_installation(
                 fs.as_ref(),
                 &HashSet::from_iter(
                     [PathBuf::from("/root"), PathBuf::from("/root/work")].into_iter()
                 ),
-                Path::new("/root/work/web_blog/node_modules/pages/[slug].tsx")
+                Path::new("/root/work/web_blog/pages/[slug].tsx")
             )
             .await
             .unwrap(),
             ControlFlow::Continue(Some(PathBuf::from("/root/work"))),
-            "Should return first cached value found without path checks"
+            "Should return closest cached value found without path checks"
+        );
+
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/work/web_blog/node_modules/expect/build/print.js")
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Break(()),
+            "Should not allow formatting files inside node_modules/"
+        );
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::from_iter(
+                    [PathBuf::from("/root"), PathBuf::from("/root/work")].into_iter()
+                ),
+                Path::new("/root/work/web_blog/node_modules/expect/build/print.js")
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Break(()),
+            "Should ignore cache lookup for files inside node_modules/"
         );
     }
 
@@ -678,7 +712,9 @@ mod tests {
                                             },
                                         },
                                     },
-                                    "node_modules": {},
+                                    "node_modules": {
+                                        "test.js": "// test.js contents",
+                                    },
                                     "package.json": r#"{
                                         "devDependencies": {
                                             "prettier": "^3.0.3"
@@ -709,6 +745,29 @@ mod tests {
             ).await.unwrap(),
             ControlFlow::Continue(Some(PathBuf::from("/root/work/full-stack-foundations"))),
             "Should ascend to the multi-workspace root and find the prettier there",
+        );
+
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/work/full-stack-foundations/node_modules/prettier/index.js")
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Break(()),
+            "Should not allow formatting files inside root node_modules/"
+        );
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/work/full-stack-foundations/exercises/03.loading/01.problem.loader/node_modules/test.js")
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Break(()),
+            "Should not allow formatting files inside submodule's node_modules/"
         );
     }
 
