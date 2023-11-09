@@ -47,7 +47,7 @@ pub struct EditorSettingsContent {
     pub use_on_type_format: Option<bool>,
     pub scrollbar: Option<ScrollbarContent>,
     pub relative_line_numbers: Option<bool>,
-    pub seed_search_query_from_selection: Option<SeedQuerySetting>,
+    pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
