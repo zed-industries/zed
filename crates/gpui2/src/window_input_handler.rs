@@ -37,6 +37,32 @@ pub trait InputHandlerView {
     ) -> Option<crate::Bounds<Pixels>>;
 }
 
+pub trait InputHandler: Sized {
+    fn text_for_range(&self, range: Range<usize>, cx: &mut ViewContext<Self>) -> Option<String>;
+    fn selected_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>>;
+    fn marked_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>>;
+    fn unmark_text(&mut self, cx: &mut ViewContext<Self>);
+    fn replace_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        text: &str,
+        cx: &mut ViewContext<Self>,
+    );
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+        cx: &mut ViewContext<Self>,
+    );
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: std::ops::Range<usize>,
+        element_bounds: crate::Bounds<Pixels>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<crate::Bounds<Pixels>>;
+}
+
 impl<V: InputHandler + 'static> InputHandlerView for View<V> {
     fn text_for_range(&self, range: Range<usize>, cx: &mut WindowContext) -> Option<String> {
         self.update(cx, |this, cx| this.text_for_range(range, cx))
@@ -138,30 +164,4 @@ impl WindowInputHandler {
         cx.update_window(self.window, |_, cx| f(&*self.input_handler, cx))
             .ok()
     }
-}
-
-pub trait InputHandler: Sized {
-    fn text_for_range(&self, range: Range<usize>, cx: &mut ViewContext<Self>) -> Option<String>;
-    fn selected_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>>;
-    fn marked_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>>;
-    fn unmark_text(&mut self, cx: &mut ViewContext<Self>);
-    fn replace_text_in_range(
-        &mut self,
-        range: Option<Range<usize>>,
-        text: &str,
-        cx: &mut ViewContext<Self>,
-    );
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        range: Option<Range<usize>>,
-        new_text: &str,
-        new_selected_range: Option<Range<usize>>,
-        cx: &mut ViewContext<Self>,
-    );
-    fn bounds_for_range(
-        &mut self,
-        range_utf16: std::ops::Range<usize>,
-        element_bounds: crate::Bounds<Pixels>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<crate::Bounds<Pixels>>;
 }
