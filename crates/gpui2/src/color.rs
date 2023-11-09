@@ -127,19 +127,22 @@ impl TryFrom<&'_ str> for Rgba {
 
         let (r, g, b, a) = match hex.len() {
             RGB | RGBA => {
-                // There's likely a better way to handle 3 and 4-value hex codes without
-                // needing to use `.repeat` and incur additional allocations.
-                // What we probably want to do is parse the single hex digit and then perform
-                // bit-shifting to "duplicate" the digit.
-                let r = u8::from_str_radix(&hex[0..1].repeat(2), 16)?;
-                let g = u8::from_str_radix(&hex[1..2].repeat(2), 16)?;
-                let b = u8::from_str_radix(&hex[2..3].repeat(2), 16)?;
+                let r = u8::from_str_radix(&hex[0..1], 16)?;
+                let g = u8::from_str_radix(&hex[1..2], 16)?;
+                let b = u8::from_str_radix(&hex[2..3], 16)?;
                 let a = if hex.len() == RGBA {
-                    u8::from_str_radix(&hex[3..4].repeat(2), 16)?
+                    u8::from_str_radix(&hex[3..4], 16)?
                 } else {
-                    0xff
+                    0xf
                 };
-                (r, g, b, a)
+
+                /// Duplicates a given hex digit.
+                /// E.g., `0xf` -> `0xff`.
+                const fn duplicate(value: u8) -> u8 {
+                    value << 4 | value
+                }
+
+                (duplicate(r), duplicate(g), duplicate(b), duplicate(a))
             }
             RRGGBB | RRGGBBAA => {
                 let r = u8::from_str_radix(&hex[0..2], 16)?;
