@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Setting;
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub hover_popover_enabled: bool,
@@ -11,6 +11,15 @@ pub struct EditorSettings {
     pub use_on_type_format: bool,
     pub scrollbar: Scrollbar,
     pub relative_line_numbers: bool,
+    pub seed_search_query_from_cursor: SeedQuerySetting,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SeedQuerySetting {
+    Always,
+    Selection,
+    Never,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -38,6 +47,7 @@ pub struct EditorSettingsContent {
     pub use_on_type_format: Option<bool>,
     pub scrollbar: Option<ScrollbarContent>,
     pub relative_line_numbers: Option<bool>,
+    pub seed_search_query_from_selection: Option<SeedQuerySetting>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

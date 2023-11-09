@@ -102,6 +102,16 @@
     "selections": true
   },
   "relative_line_numbers": false,
+  // When to populate a new search's query based on the text under the cursor.
+  // This setting can take the following three values:
+  //
+  // 1. Always populate the search query with the word under the cursor (default).
+  //    "always"
+  // 2. Only populate the search query when there is text selected
+  //    "selection"
+  // 3. Never populate the search query
+  //    "never"
+  "seed_search_query_from_cursor": "always",
   // Inlay hint related settings
   "inlay_hints": {
     // Global switch to toggle hints on and off, switched off by default.

@@ -1,7 +1,8 @@
 use crate::{
-    link_go_to_definition::hide_link_definition, movement::surrounding_word, persistence::DB,
-    scroll::ScrollAnchor, Anchor, Autoscroll, Editor, Event, ExcerptId, ExcerptRange, MultiBuffer,
-    MultiBufferSnapshot, NavigationData, ToPoint as _,
+    editor_settings::SeedQuerySetting, link_go_to_definition::hide_link_definition,
+    movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
+    EditorSettings, Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot,
+    NavigationData, ToPoint as _,
 };
 use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
@@ -17,6 +18,7 @@ use language::{
 };
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -918,26 +920,28 @@ impl SearchableItem for Editor {
     }
 
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
-        let display_map = self.snapshot(cx).display_snapshot;
+        let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
+        let snapshot = &self.snapshot(cx).buffer_snapshot;
         let selection = self.selections.newest::<usize>(cx);
-        if selection.start == selection.end {
-            let (range, kind) = display_map
-                .buffer_snapshot
-                .surrounding_word(selection.start);
-            if kind != Some(CharKind::Word) {
-                return String::new();
+
+        match setting {
+            SeedQuerySetting::Never => String::new(),
+            SeedQuerySetting::Selection | SeedQuerySetting::Always if !selection.is_empty() => {
+                snapshot
+                    .text_for_range(selection.start..selection.end)
+                    .collect()
             }
-            let text: String = display_map.buffer_snapshot.text_for_range(range).collect();
-            if text.trim().is_empty() {
+            SeedQuerySetting::Selection => String::new(),
+            SeedQuerySetting::Always => {
+                let (range, kind) = snapshot.surrounding_word(selection.start);
+                if kind == Some(CharKind::Word) {
+                    let text: String = snapshot.text_for_range(range).collect();
+                    if !text.trim().is_empty() {
+                        return text;
+                    }
+                }
                 String::new()
-            } else {
-                text
             }
-        } else {
-            display_map
-                .buffer_snapshot
-                .text_for_range(selection.start..selection.end)
-                .collect()
         }
     }
 
