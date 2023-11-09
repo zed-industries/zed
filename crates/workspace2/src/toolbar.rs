@@ -1,6 +1,7 @@
 use crate::ItemHandle;
 use gpui::{
-    AnyView, AppContext, Entity, EntityId, EventEmitter, Render, View, ViewContext, WindowContext,
+    AnyView, AppContext, Div, Entity, EntityId, EventEmitter, Render, View, ViewContext,
+    WindowContext,
 };
 
 pub trait ToolbarItemView: Render + EventEmitter {
@@ -54,6 +55,14 @@ pub struct Toolbar {
     hidden: bool,
     can_navigate: bool,
     items: Vec<(Box<dyn ToolbarItemViewHandle>, ToolbarItemLocation)>,
+}
+
+impl Render for Toolbar {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        todo!()
+    }
 }
 
 // todo!()

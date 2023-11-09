@@ -23,7 +23,7 @@ export default function assistant(): any {
     const theme = useTheme()
 
     const interactive_role = (
-        color: StyleSets
+        color: StyleSets,
     ): Interactive<RoleCycleButton> => {
         return interactive({
             base: {
@@ -94,7 +94,7 @@ export default function assistant(): any {
                     margin: { left: 8, right: 18 },
                     color: foreground(theme.highest, "positive"),
                     width: 12,
-                }
+                },
             },
             retrieve_context: toggleable({
                 base: interactive({
@@ -106,7 +106,8 @@ export default function assistant(): any {
                         background: background(theme.highest, "on"),
                         corner_radius: 2,
                         border: {
-                            width: 1., color: background(theme.highest, "on")
+                            width: 1,
+                            color: background(theme.highest, "on"),
                         },
                         margin: { left: 2 },
                         padding: {
@@ -118,17 +119,45 @@ export default function assistant(): any {
                     },
                     state: {
                         hovered: {
-                            ...text(theme.highest, "mono", "variant", "hovered"),
-                            background: background(theme.highest, "on", "hovered"),
+                            ...text(
+                                theme.highest,
+                                "mono",
+                                "variant",
+                                "hovered",
+                            ),
+                            background: background(
+                                theme.highest,
+                                "on",
+                                "hovered",
+                            ),
                             border: {
-                                width: 1., color: background(theme.highest, "on", "hovered")
+                                width: 1,
+                                color: background(
+                                    theme.highest,
+                                    "on",
+                                    "hovered",
+                                ),
                             },
                         },
                         clicked: {
-                            ...text(theme.highest, "mono", "variant", "pressed"),
-                            background: background(theme.highest, "on", "pressed"),
+                            ...text(
+                                theme.highest,
+                                "mono",
+                                "variant",
+                                "pressed",
+                            ),
+                            background: background(
+                                theme.highest,
+                                "on",
+                                "pressed",
+                            ),
                             border: {
-                                width: 1., color: background(theme.highest, "on", "pressed")
+                                width: 1,
+                                color: background(
+                                    theme.highest,
+                                    "on",
+                                    "pressed",
+                                ),
                             },
                         },
                     },
@@ -143,11 +172,19 @@ export default function assistant(): any {
                             border: border(theme.highest, "accent"),
                         },
                         hovered: {
-                            background: background(theme.highest, "accent", "hovered"),
+                            background: background(
+                                theme.highest,
+                                "accent",
+                                "hovered",
+                            ),
                             border: border(theme.highest, "accent", "hovered"),
                         },
                         clicked: {
-                            background: background(theme.highest, "accent", "pressed"),
+                            background: background(
+                                theme.highest,
+                                "accent",
+                                "pressed",
+                            ),
                             border: border(theme.highest, "accent", "pressed"),
                         },
                     },
@@ -163,7 +200,8 @@ export default function assistant(): any {
                         background: background(theme.highest, "on"),
                         corner_radius: 2,
                         border: {
-                            width: 1., color: background(theme.highest, "on")
+                            width: 1,
+                            color: background(theme.highest, "on"),
                         },
                         padding: {
                             left: 4,
@@ -174,17 +212,45 @@ export default function assistant(): any {
                     },
                     state: {
                         hovered: {
-                            ...text(theme.highest, "mono", "variant", "hovered"),
-                            background: background(theme.highest, "on", "hovered"),
+                            ...text(
+                                theme.highest,
+                                "mono",
+                                "variant",
+                                "hovered",
+                            ),
+                            background: background(
+                                theme.highest,
+                                "on",
+                                "hovered",
+                            ),
                             border: {
-                                width: 1., color: background(theme.highest, "on", "hovered")
+                                width: 1,
+                                color: background(
+                                    theme.highest,
+                                    "on",
+                                    "hovered",
+                                ),
                             },
                         },
                         clicked: {
-                            ...text(theme.highest, "mono", "variant", "pressed"),
-                            background: background(theme.highest, "on", "pressed"),
+                            ...text(
+                                theme.highest,
+                                "mono",
+                                "variant",
+                                "pressed",
+                            ),
+                            background: background(
+                                theme.highest,
+                                "on",
+                                "pressed",
+                            ),
                             border: {
-                                width: 1., color: background(theme.highest, "on", "pressed")
+                                width: 1,
+                                color: background(
+                                    theme.highest,
+                                    "on",
+                                    "pressed",
+                                ),
                             },
                         },
                     },
@@ -199,11 +265,19 @@ export default function assistant(): any {
                             border: border(theme.highest, "accent"),
                         },
                         hovered: {
-                            background: background(theme.highest, "accent", "hovered"),
+                            background: background(
+                                theme.highest,
+                                "accent",
+                                "hovered",
+                            ),
                             border: border(theme.highest, "accent", "hovered"),
                         },
                         clicked: {
-                            background: background(theme.highest, "accent", "pressed"),
+                            background: background(
+                                theme.highest,
+                                "accent",
+                                "pressed",
+                            ),
                             border: border(theme.highest, "accent", "pressed"),
                         },
                     },

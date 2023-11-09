@@ -78,33 +78,33 @@ export default function status_bar(): any {
                     padding: { top: 2, bottom: 2, left: 6, right: 6 },
                 },
                 container_warning: diagnostic_status_container,
-                container_error: diagnostic_status_container
+                container_error: diagnostic_status_container,
             },
             state: {
                 hovered: {
                     icon_color_ok: foreground(layer, "on"),
                     container_ok: {
-                        background: background(layer, "hovered")
+                        background: background(layer, "hovered"),
                     },
                     container_warning: {
-                        background: background(layer, "hovered")
+                        background: background(layer, "hovered"),
                     },
                     container_error: {
-                        background: background(layer, "hovered")
+                        background: background(layer, "hovered"),
                     },
                 },
                 clicked: {
                     icon_color_ok: foreground(layer, "on"),
                     container_ok: {
-                        background: background(layer, "pressed")
+                        background: background(layer, "pressed"),
                     },
                     container_warning: {
-                        background: background(layer, "pressed")
+                        background: background(layer, "pressed"),
                     },
                     container_error: {
-                        background: background(layer, "pressed")
-                    }
-                }
+                        background: background(layer, "pressed"),
+                    },
+                },
             },
         }),
         panel_buttons: {

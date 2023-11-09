@@ -5,7 +5,7 @@ use crate::{
 };
 use crate::{BoxShadow, TextStyleRefinement};
 use refineable::Refineable;
-use smallvec::smallvec;
+use smallvec::{smallvec, SmallVec};
 
 pub trait Styled {
     fn style(&mut self) -> &mut StyleRefinement;
@@ -295,24 +295,11 @@ pub trait Styled {
 
     /// Sets the box shadow of the element.
     /// [Docs](https://tailwindcss.com/docs/box-shadow)
-    fn shadow(mut self) -> Self
+    fn shadow(mut self, shadows: SmallVec<[BoxShadow; 2]>) -> Self
     where
         Self: Sized,
     {
-        self.style().box_shadow = Some(smallvec![
-            BoxShadow {
-                color: hsla(0., 0., 0., 0.1),
-                offset: point(px(0.), px(1.)),
-                blur_radius: px(3.),
-                spread_radius: px(0.),
-            },
-            BoxShadow {
-                color: hsla(0., 0., 0., 0.1),
-                offset: point(px(0.), px(1.)),
-                blur_radius: px(2.),
-                spread_radius: px(-1.),
-            }
-        ]);
+        self.style().box_shadow = Some(shadows);
         self
     }
 

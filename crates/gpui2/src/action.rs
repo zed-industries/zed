@@ -123,6 +123,7 @@ pub fn register_action<A: Action>() {
 /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
 pub fn build_action(name: &str, params: Option<serde_json::Value>) -> Result<Box<dyn Action>> {
     let lock = ACTION_REGISTRY.read();
+
     let build_action = lock
         .builders_by_name
         .get(name)

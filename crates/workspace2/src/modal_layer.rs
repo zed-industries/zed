@@ -1,35 +1,38 @@
 use crate::Workspace;
 use gpui::{
-    div, AnyView, AppContext, Div, ParentElement, Render, StatelessInteractive, View, ViewContext,
+    div, px, AnyView, Component, Div, EventEmitter, ParentElement, Render, StatelessInteractive,
+    Styled, Subscription, View, ViewContext,
 };
 use std::{any::TypeId, sync::Arc};
+use ui::v_stack;
 
-pub struct ModalRegistry {
+pub struct ModalLayer {
+    open_modal: Option<AnyView>,
+    subscription: Option<Subscription>,
     registered_modals: Vec<(TypeId, Box<dyn Fn(Div<Workspace>) -> Div<Workspace>>)>,
 }
 
-pub trait Modal {}
-
-#[derive(Clone)]
-pub struct ModalLayer {
-    open_modal: Option<AnyView>,
+pub enum ModalEvent {
+    Dismissed,
 }
 
-pub fn init_modal_registry(cx: &mut AppContext) {
-    cx.set_global(ModalRegistry {
-        registered_modals: Vec::new(),
-    });
+pub trait Modal: EventEmitter + Render {
+    fn to_modal_event(&self, _: &Self::Event) -> Option<ModalEvent>;
 }
 
-struct ToggleModal {
-    name: String,
-}
+impl ModalLayer {
+    pub fn new() -> Self {
+        Self {
+            open_modal: None,
+            subscription: None,
+            registered_modals: Vec::new(),
+        }
+    }
 
-impl ModalRegistry {
     pub fn register_modal<A: 'static, V, B>(&mut self, action: A, build_view: B)
     where
-        V: Render,
-        B: Fn(&Workspace, &mut ViewContext<Workspace>) -> View<V> + 'static,
+        V: Modal,
+        B: Fn(&mut Workspace, &mut ViewContext<Workspace>) -> Option<View<V>> + 'static,
     {
         let build_view = Arc::new(build_view);
 
@@ -38,42 +41,56 @@ impl ModalRegistry {
             Box::new(move |mut div| {
                 let build_view = build_view.clone();
 
-                div.on_action(
-                    move |workspace: &mut Workspace, event: &A, cx: &mut ViewContext<Workspace>| {
-                        let new_modal = (build_view)(workspace, cx);
-                        workspace.modal_layer.update(cx, |modal_layer, _| {
-                            modal_layer.open_modal = Some(new_modal.into());
-                        });
-
-                        cx.notify();
-                    },
-                )
+                div.on_action(move |workspace, event: &A, cx| {
+                    let Some(new_modal) = (build_view)(workspace, cx) else {
+                        return;
+                    };
+                    workspace.modal_layer().show_modal(new_modal, cx);
+                })
             }),
         ));
     }
-}
 
-impl ModalLayer {
-    pub fn new() -> Self {
-        Self { open_modal: None }
+    pub fn show_modal<V: Modal>(&mut self, new_modal: View<V>, cx: &mut ViewContext<Workspace>) {
+        self.subscription = Some(cx.subscribe(&new_modal, |this, modal, e, cx| {
+            match modal.read(cx).to_modal_event(e) {
+                Some(ModalEvent::Dismissed) => this.modal_layer().hide_modal(cx),
+                None => {}
+            }
+        }));
+        self.open_modal = Some(new_modal.into());
+        cx.notify();
     }
 
-    pub fn render(&self, workspace: &Workspace, cx: &ViewContext<Workspace>) -> Div<Workspace> {
-        let mut div = div();
+    pub fn hide_modal(&mut self, cx: &mut ViewContext<Workspace>) {
+        self.open_modal.take();
+        self.subscription.take();
+        cx.notify();
+    }
 
-        // div, c workspace.toggle_modal()div.on_action()) {
-        //
-        // }
+    pub fn wrapper_element(&self, cx: &ViewContext<Workspace>) -> Div<Workspace> {
+        let mut parent = div().relative().size_full();
 
-        // for (type_id, action) in cx.global::<ModalRegistry>().registered_modals.iter() {
-        //     div = div.useful_on_action(*type_id, action)
-        // }
-
-        for (_, action) in cx.global::<ModalRegistry>().registered_modals.iter() {
-            div = (action)(div);
+        for (_, action) in self.registered_modals.iter() {
+            parent = (action)(parent);
         }
 
-        div.children(self.open_modal.clone())
+        parent.when_some(self.open_modal.as_ref(), |parent, open_modal| {
+            let container1 = div()
+                .absolute()
+                .flex()
+                .flex_col()
+                .items_center()
+                .size_full()
+                .top_0()
+                .left_0()
+                .z_index(400);
+
+            // transparent layer
+            let container2 = v_stack().h(px(0.0)).relative().top_20();
+
+            parent.child(container1.child(container2.child(open_modal.clone())))
+        })
     }
 }
 
