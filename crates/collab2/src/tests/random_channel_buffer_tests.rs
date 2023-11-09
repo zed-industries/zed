@@ -220,14 +220,6 @@ impl RandomizedTest for RandomChannelBufferTest {
         Ok(())
     }
 
-    async fn on_client_added(client: &Rc<TestClient>, cx: &mut TestAppContext) {
-        let channel_store = client.channel_store();
-        while channel_store.read_with(cx, |store, _| store.channel_count() == 0) {
-            // todo!(notifications)
-            // channel_store.next_notification(cx).await;
-        }
-    }
-
     async fn on_quiesce(server: &mut TestServer, clients: &mut [(Rc<TestClient>, TestAppContext)]) {
         let channels = server.app_state.db.all_channels().await.unwrap();
 

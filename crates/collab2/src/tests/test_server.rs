@@ -17,6 +17,7 @@ use gpui::{BackgroundExecutor, Context, Model, TestAppContext, WindowHandle};
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 
+use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
 use rpc::{proto::ChannelRole, RECEIVE_TIMEOUT};
@@ -47,8 +48,7 @@ pub struct TestClient {
     pub username: String,
     pub app_state: Arc<workspace::AppState>,
     channel_store: Model<ChannelStore>,
-    // todo!(notifications)
-    // notification_store: Model<NotificationStore>,
+    notification_store: Model<NotificationStore>,
     state: RefCell<TestClientState>,
 }
 
@@ -234,8 +234,7 @@ impl TestServer {
             audio::init((), cx);
             call::init(client.clone(), user_store.clone(), cx);
             channel::init(&client, user_store.clone(), cx);
-            //todo(notifications)
-            // notifications::init(client.clone(), user_store, cx);
+            notifications::init(client.clone(), user_store, cx);
         });
 
         client
@@ -247,8 +246,7 @@ impl TestServer {
             app_state,
             username: name.to_string(),
             channel_store: cx.read(ChannelStore::global).clone(),
-            // todo!(notifications)
-            // notification_store: cx.read(NotificationStore::global).clone(),
+            notification_store: cx.read(NotificationStore::global).clone(),
             state: Default::default(),
         };
         client.wait_for_current_user(cx).await;
@@ -456,10 +454,9 @@ impl TestClient {
         &self.channel_store
     }
 
-    // todo!(notifications)
-    // pub fn notification_store(&self) -> &Model<NotificationStore> {
-    //     &self.notification_store
-    // }
+    pub fn notification_store(&self) -> &Model<NotificationStore> {
+        &self.notification_store
+    }
 
     pub fn user_store(&self) -> &Model<UserStore> {
         &self.app_state.user_store
