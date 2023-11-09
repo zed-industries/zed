@@ -14,7 +14,7 @@ pub struct SystemColors {
 }
 
 #[derive(Refineable, Clone, Debug)]
-#[refineable(debug)]
+#[refineable(debug, deserialize)]
 pub struct StatusColors {
     pub conflict: Hsla,
     pub created: Hsla,

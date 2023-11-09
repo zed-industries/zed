@@ -15,10 +15,10 @@ use log::LevelFilter;
 use serde::Deserialize;
 use simplelog::SimpleLogger;
 use theme::{Appearance, UserThemeFamily};
-use vscode::VsCodeThemeConverter;
 
 use crate::theme_printer::UserThemeFamilyPrinter;
 use crate::vscode::VsCodeTheme;
+use crate::vscode::VsCodeThemeConverter;
 
 #[derive(Debug, Deserialize)]
 struct FamilyMetadata {
@@ -27,7 +27,7 @@ struct FamilyMetadata {
     pub themes: Vec<ThemeMetadata>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeAppearanceJson {
     Light,
@@ -158,8 +158,10 @@ fn main() -> Result<()> {
 
             use gpui::rgba;
 
+            #[allow(unused)]
             use crate::{{
-                Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+                Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
+                UserTheme, UserThemeFamily, UserThemeStylesRefinement, UserFontWeight, UserFontStyle
             }};
 
             pub fn {theme_family_slug}() -> UserThemeFamily {{

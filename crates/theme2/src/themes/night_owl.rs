@@ -3,8 +3,10 @@
 
 use gpui::rgba;
 
+#[allow(unused)]
 use crate::{
-    Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
+    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn night_owl() -> UserThemeFamily {
@@ -19,7 +21,7 @@ pub fn night_owl() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x5f7e97ff).into()),
                         border_variant: Some(rgba(0x5f7e97ff).into()),
-                        border_focused: Some(rgba(0x5f7e97ff).into()),
+                        border_focused: Some(rgba(0x122d42ff).into()),
                         border_selected: Some(rgba(0x5f7e97ff).into()),
                         border_transparent: Some(rgba(0x5f7e97ff).into()),
                         border_disabled: Some(rgba(0x5f7e97ff).into()),
@@ -27,9 +29,17 @@ pub fn night_owl() -> UserThemeFamily {
                         surface_background: Some(rgba(0x011526ff).into()),
                         background: Some(rgba(0x011526ff).into()),
                         element_background: Some(rgba(0x7d56c1cc).into()),
+                        element_hover: Some(rgba(0x011526ff).into()),
+                        element_selected: Some(rgba(0x234c708c).into()),
+                        drop_target_background: Some(rgba(0x011526ff).into()),
+                        ghost_element_hover: Some(rgba(0x011526ff).into()),
                         text: Some(rgba(0xd6deebff).into()),
                         tab_inactive_background: Some(rgba(0x01101cff).into()),
                         tab_active_background: Some(rgba(0x0a2842ff).into()),
+                        editor_background: Some(rgba(0x011526ff).into()),
+                        editor_gutter_background: Some(rgba(0x011526ff).into()),
+                        editor_line_number: Some(rgba(0x4b6479ff).into()),
+                        editor_active_line_number: Some(rgba(0xd6deebff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x575656ff).into()),
                         terminal_ansi_bright_red: Some(rgba(0xef524fff).into()),
                         terminal_ansi_bright_green: Some(rgba(0x21da6eff).into()),
@@ -48,6 +58,76 @@ pub fn night_owl() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xffffffff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xef524fff).into()),
+                        error: Some(rgba(0xef524fff).into()),
+                        hidden: Some(rgba(0x5f7e97ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5e478ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x637777ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xecc48dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fdbcaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
             UserTheme {
@@ -57,7 +137,7 @@ pub fn night_owl() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xd9d9d9ff).into()),
                         border_variant: Some(rgba(0xd9d9d9ff).into()),
-                        border_focused: Some(rgba(0xd9d9d9ff).into()),
+                        border_focused: Some(rgba(0x93a1a1ff).into()),
                         border_selected: Some(rgba(0xd9d9d9ff).into()),
                         border_transparent: Some(rgba(0xd9d9d9ff).into()),
                         border_disabled: Some(rgba(0xd9d9d9ff).into()),
@@ -65,9 +145,16 @@ pub fn night_owl() -> UserThemeFamily {
                         surface_background: Some(rgba(0xf0f0f0ff).into()),
                         background: Some(rgba(0xfbfbfbff).into()),
                         element_background: Some(rgba(0x29a298ff).into()),
+                        element_hover: Some(rgba(0xd3e7f8ff).into()),
+                        element_selected: Some(rgba(0xd3e7f8ff).into()),
+                        ghost_element_hover: Some(rgba(0xd3e7f8ff).into()),
                         text: Some(rgba(0x403f53ff).into()),
                         tab_inactive_background: Some(rgba(0xf0f0f0ff).into()),
                         tab_active_background: Some(rgba(0xf6f6f6ff).into()),
+                        editor_background: Some(rgba(0xfbfbfbff).into()),
+                        editor_gutter_background: Some(rgba(0xfbfbfbff).into()),
+                        editor_line_number: Some(rgba(0x90a7b2ff).into()),
+                        editor_active_line_number: Some(rgba(0x403f53ff).into()),
                         terminal_background: Some(rgba(0xf6f6f6ff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x403f53ff).into()),
                         terminal_ansi_bright_red: Some(rgba(0xde3c3aff).into()),
@@ -87,6 +174,77 @@ pub fn night_owl() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xf0f0f0ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0x403f53ff).into()),
+                        error: Some(rgba(0x403f53ff).into()),
+                        hidden: Some(rgba(0x403f53ff).into()),
+                        warning: Some(rgba(0xdaa900ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x989fb1ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994bc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994bc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0b969bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
         ],

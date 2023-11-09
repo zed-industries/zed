@@ -3,8 +3,10 @@
 
 use gpui::rgba;
 
+#[allow(unused)]
 use crate::{
-    Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
+    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn gruvbox() -> UserThemeFamily {
@@ -25,9 +27,17 @@ pub fn gruvbox() -> UserThemeFamily {
                         border_disabled: Some(rgba(0x3c3836ff).into()),
                         background: Some(rgba(0x1d2021ff).into()),
                         element_background: Some(rgba(0x44858780).into()),
+                        element_hover: Some(rgba(0x3c383680).into()),
+                        element_selected: Some(rgba(0x3c383680).into()),
+                        drop_target_background: Some(rgba(0x3c3836ff).into()),
+                        ghost_element_hover: Some(rgba(0x3c383680).into()),
                         text: Some(rgba(0xebdbb2ff).into()),
                         tab_inactive_background: Some(rgba(0x1d2021ff).into()),
                         tab_active_background: Some(rgba(0x32302fff).into()),
+                        editor_background: Some(rgba(0x1d2021ff).into()),
+                        editor_gutter_background: Some(rgba(0x1d2021ff).into()),
+                        editor_line_number: Some(rgba(0x665c54ff).into()),
+                        editor_active_line_number: Some(rgba(0xebdbb2ff).into()),
                         terminal_background: Some(rgba(0x1d2021ff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x928374ff).into()),
                         terminal_ansi_bright_red: Some(rgba(0xfb4833ff).into()),
@@ -47,6 +57,80 @@ pub fn gruvbox() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xa89984ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xfb4833ff).into()),
+                        error: Some(rgba(0xfb4833ff).into()),
+                        hidden: Some(rgba(0xa89984ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfb4833ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xa89984ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb8bb25ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfb4833ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
             UserTheme {
@@ -62,9 +146,17 @@ pub fn gruvbox() -> UserThemeFamily {
                         border_disabled: Some(rgba(0x3c3836ff).into()),
                         background: Some(rgba(0x282828ff).into()),
                         element_background: Some(rgba(0x44858780).into()),
+                        element_hover: Some(rgba(0x3c383680).into()),
+                        element_selected: Some(rgba(0x3c383680).into()),
+                        drop_target_background: Some(rgba(0x3c3836ff).into()),
+                        ghost_element_hover: Some(rgba(0x3c383680).into()),
                         text: Some(rgba(0xebdbb2ff).into()),
                         tab_inactive_background: Some(rgba(0x282828ff).into()),
                         tab_active_background: Some(rgba(0x3c3836ff).into()),
+                        editor_background: Some(rgba(0x282828ff).into()),
+                        editor_gutter_background: Some(rgba(0x282828ff).into()),
+                        editor_line_number: Some(rgba(0x665c54ff).into()),
+                        editor_active_line_number: Some(rgba(0xebdbb2ff).into()),
                         terminal_background: Some(rgba(0x282828ff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x928374ff).into()),
                         terminal_ansi_bright_red: Some(rgba(0xfb4833ff).into()),
@@ -84,6 +176,80 @@ pub fn gruvbox() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xa89984ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xfb4833ff).into()),
+                        error: Some(rgba(0xfb4833ff).into()),
+                        hidden: Some(rgba(0xa89984ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfb4833ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xa89984ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb8bb25ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfb4833ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
             UserTheme {
@@ -99,9 +265,17 @@ pub fn gruvbox() -> UserThemeFamily {
                         border_disabled: Some(rgba(0x3c3836ff).into()),
                         background: Some(rgba(0x32302fff).into()),
                         element_background: Some(rgba(0x44858780).into()),
+                        element_hover: Some(rgba(0x3c383680).into()),
+                        element_selected: Some(rgba(0x3c383680).into()),
+                        drop_target_background: Some(rgba(0x3c3836ff).into()),
+                        ghost_element_hover: Some(rgba(0x3c383680).into()),
                         text: Some(rgba(0xebdbb2ff).into()),
                         tab_inactive_background: Some(rgba(0x32302fff).into()),
                         tab_active_background: Some(rgba(0x504945ff).into()),
+                        editor_background: Some(rgba(0x32302fff).into()),
+                        editor_gutter_background: Some(rgba(0x32302fff).into()),
+                        editor_line_number: Some(rgba(0x665c54ff).into()),
+                        editor_active_line_number: Some(rgba(0xebdbb2ff).into()),
                         terminal_background: Some(rgba(0x32302fff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x928374ff).into()),
                         terminal_ansi_bright_red: Some(rgba(0xfb4833ff).into()),
@@ -121,6 +295,80 @@ pub fn gruvbox() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xa89984ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xfb4833ff).into()),
+                        error: Some(rgba(0xfb4833ff).into()),
+                        hidden: Some(rgba(0xa89984ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfb4833ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xa89984ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb8bb25ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfb4833ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
             UserTheme {
@@ -136,9 +384,17 @@ pub fn gruvbox() -> UserThemeFamily {
                         border_disabled: Some(rgba(0xebdbb2ff).into()),
                         background: Some(rgba(0xf9f5d7ff).into()),
                         element_background: Some(rgba(0x44858780).into()),
+                        element_hover: Some(rgba(0xebdbb280).into()),
+                        element_selected: Some(rgba(0xebdbb280).into()),
+                        drop_target_background: Some(rgba(0xebdbb2ff).into()),
+                        ghost_element_hover: Some(rgba(0xebdbb280).into()),
                         text: Some(rgba(0x3c3836ff).into()),
                         tab_inactive_background: Some(rgba(0xf9f5d7ff).into()),
                         tab_active_background: Some(rgba(0xf2e5bcff).into()),
+                        editor_background: Some(rgba(0xf9f5d7ff).into()),
+                        editor_gutter_background: Some(rgba(0xf9f5d7ff).into()),
+                        editor_line_number: Some(rgba(0xbdae93ff).into()),
+                        editor_active_line_number: Some(rgba(0x3c3836ff).into()),
                         terminal_background: Some(rgba(0xf9f5d7ff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x928374ff).into()),
                         terminal_ansi_bright_red: Some(rgba(0x9d0006ff).into()),
@@ -158,6 +414,80 @@ pub fn gruvbox() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0x7c6f64ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0x9d0006ff).into()),
+                        error: Some(rgba(0x9d0006ff).into()),
+                        hidden: Some(rgba(0x7c6f64ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9d0006ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7c6f64ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x79740eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9d0006ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
             UserTheme {
@@ -173,9 +503,17 @@ pub fn gruvbox() -> UserThemeFamily {
                         border_disabled: Some(rgba(0xebdbb2ff).into()),
                         background: Some(rgba(0xfbf1c7ff).into()),
                         element_background: Some(rgba(0x44858780).into()),
+                        element_hover: Some(rgba(0xebdbb280).into()),
+                        element_selected: Some(rgba(0xebdbb280).into()),
+                        drop_target_background: Some(rgba(0xebdbb2ff).into()),
+                        ghost_element_hover: Some(rgba(0xebdbb280).into()),
                         text: Some(rgba(0x3c3836ff).into()),
                         tab_inactive_background: Some(rgba(0xfbf1c7ff).into()),
                         tab_active_background: Some(rgba(0xebdbb2ff).into()),
+                        editor_background: Some(rgba(0xfbf1c7ff).into()),
+                        editor_gutter_background: Some(rgba(0xfbf1c7ff).into()),
+                        editor_line_number: Some(rgba(0xbdae93ff).into()),
+                        editor_active_line_number: Some(rgba(0x3c3836ff).into()),
                         terminal_background: Some(rgba(0xfbf1c7ff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x928374ff).into()),
                         terminal_ansi_bright_red: Some(rgba(0x9d0006ff).into()),
@@ -195,6 +533,80 @@ pub fn gruvbox() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0x7c6f64ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0x9d0006ff).into()),
+                        error: Some(rgba(0x9d0006ff).into()),
+                        hidden: Some(rgba(0x7c6f64ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9d0006ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7c6f64ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x79740eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9d0006ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
             UserTheme {
@@ -210,9 +622,17 @@ pub fn gruvbox() -> UserThemeFamily {
                         border_disabled: Some(rgba(0xebdbb2ff).into()),
                         background: Some(rgba(0xf2e5bcff).into()),
                         element_background: Some(rgba(0x44858780).into()),
+                        element_hover: Some(rgba(0xebdbb280).into()),
+                        element_selected: Some(rgba(0xebdbb280).into()),
+                        drop_target_background: Some(rgba(0xebdbb2ff).into()),
+                        ghost_element_hover: Some(rgba(0xebdbb280).into()),
                         text: Some(rgba(0x3c3836ff).into()),
                         tab_inactive_background: Some(rgba(0xf2e5bcff).into()),
                         tab_active_background: Some(rgba(0xd5c4a1ff).into()),
+                        editor_background: Some(rgba(0xf2e5bcff).into()),
+                        editor_gutter_background: Some(rgba(0xf2e5bcff).into()),
+                        editor_line_number: Some(rgba(0xbdae93ff).into()),
+                        editor_active_line_number: Some(rgba(0x3c3836ff).into()),
                         terminal_background: Some(rgba(0xf2e5bcff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x928374ff).into()),
                         terminal_ansi_bright_red: Some(rgba(0x9d0006ff).into()),
@@ -232,6 +652,80 @@ pub fn gruvbox() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0x7c6f64ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0x9d0006ff).into()),
+                        error: Some(rgba(0x9d0006ff).into()),
+                        hidden: Some(rgba(0x7c6f64ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9d0006ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7c6f64ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x79740eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9d0006ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
         ],

@@ -128,6 +128,8 @@ impl ColorScale {
     }
 
     /// `Step 10` - Used for hovered or active solid backgrounds, particularly when `Step 9` is their normal state.
+    ///
+    /// May also be used for extremely low contrast text. This should be used sparingly, as it may be difficult to read.
     #[inline]
     pub fn step_10(&self) -> Hsla {
         self.step(ColorScaleStep::TEN)
