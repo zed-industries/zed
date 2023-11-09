@@ -439,33 +439,37 @@ impl<'a> WindowContext<'a> {
         });
     }
 
-    pub fn subscribe<Emitter, E>(
+    pub fn subscribe<Emitter, E, Evt>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(E, &Emitter::Event, &mut WindowContext<'_>) + 'static,
+        mut on_event: impl FnMut(E, &Evt, &mut WindowContext<'_>) + 'static,
     ) -> Subscription
     where
-        Emitter: EventEmitter,
+        Emitter: EventEmitter<Evt>,
         E: Entity<Emitter>,
+        Evt: 'static,
     {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
         self.app.event_listeners.insert(
             entity_id,
-            Box::new(move |event, cx| {
-                window_handle
-                    .update(cx, |_, cx| {
-                        if let Some(handle) = E::upgrade_from(&entity) {
-                            let event = event.downcast_ref().expect("invalid event type");
-                            on_event(handle, event, cx);
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false)
-            }),
+            (
+                TypeId::of::<Evt>(),
+                Box::new(move |event, cx| {
+                    window_handle
+                        .update(cx, |_, cx| {
+                            if let Some(handle) = E::upgrade_from(&entity) {
+                                let event = event.downcast_ref().expect("invalid event type");
+                                on_event(handle, event, cx);
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .unwrap_or(false)
+                }),
+            ),
         )
     }
 
@@ -1809,14 +1813,33 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         )
     }
 
-    pub fn subscribe<V2, E>(
+    // Options for simplifying this new event API:
+    //
+    // - Make a new stlye of API which does partial application of the arguments to capture
+    //   the types involved e.g.
+    //      `cx.for_entity(handle).subscribe::<ItemEvents>(..)`
+    //
+    // - Make it so there are less types:
+    //   - Bail on this idea all together, go back to associated types.
+    //      causes our event enums to be a blob of anything that could happen ever, and
+    //      makes applications have some translation boilerplate
+    //
+    //   - Move some of the types into the method names,
+    //      `cx.subscribe_model::<_, ItemEvents>(handle)`
+    //
+    //   - Do something drastic like removing views and models, or removing the multiple
+    //      kind of contexts. (Not going to happen, we already tried this before.)
+    //
+    // - Accept it, and use `cx.subscribe::<_, _, ItemEvents>(handle, ...)`
+    pub fn subscribe<V2, E, Evt>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(&mut V, E, &V2::Event, &mut ViewContext<'_, V>) + 'static,
+        mut on_event: impl FnMut(&mut V, E, &Evt, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription
     where
-        V2: EventEmitter,
+        V2: EventEmitter<Evt>,
         E: Entity<V2>,
+        Evt: 'static,
     {
         let view = self.view().downgrade();
         let entity_id = entity.entity_id();
@@ -1824,19 +1847,22 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let window_handle = self.window.handle;
         self.app.event_listeners.insert(
             entity_id,
-            Box::new(move |event, cx| {
-                window_handle
-                    .update(cx, |_, cx| {
-                        if let Some(handle) = E::upgrade_from(&handle) {
-                            let event = event.downcast_ref().expect("invalid event type");
-                            view.update(cx, |this, cx| on_event(this, handle, event, cx))
-                                .is_ok()
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false)
-            }),
+            (
+                TypeId::of::<Evt>(),
+                Box::new(move |event, cx| {
+                    window_handle
+                        .update(cx, |_, cx| {
+                            if let Some(handle) = E::upgrade_from(&handle) {
+                                let event = event.downcast_ref().expect("invalid event type");
+                                view.update(cx, |this, cx| on_event(this, handle, event, cx))
+                                    .is_ok()
+                            } else {
+                                false
+                            }
+                        })
+                        .unwrap_or(false)
+                }),
+            ),
         )
     }
 
@@ -2181,15 +2207,16 @@ where
     }
 }
 
-impl<V> ViewContext<'_, V>
-where
-    V: EventEmitter,
-    V::Event: 'static,
-{
-    pub fn emit(&mut self, event: V::Event) {
+impl<V> ViewContext<'_, V> {
+    pub fn emit<Evt>(&mut self, event: Evt)
+    where
+        Evt: 'static,
+        V: EventEmitter<Evt>,
+    {
         let emitter = self.view.model.entity_id;
         self.app.push_effect(Effect::Emit {
             emitter,
+            event_type: TypeId::of::<Evt>(),
             event: Box::new(event),
         });
     }

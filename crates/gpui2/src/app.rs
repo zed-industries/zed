@@ -201,7 +201,8 @@ pub struct AppContext {
     pub(crate) pending_notifications: HashSet<EntityId>,
     pub(crate) pending_global_notifications: HashSet<TypeId>,
     pub(crate) observers: SubscriberSet<EntityId, Handler>,
-    pub(crate) event_listeners: SubscriberSet<EntityId, Listener>,
+    // (Entity, Event Type)
+    pub(crate) event_listeners: SubscriberSet<EntityId, (TypeId, Listener)>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -351,14 +352,15 @@ impl AppContext {
         )
     }
 
-    pub fn subscribe<T, E>(
+    pub fn subscribe<T, E, Evt>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(E, &T::Event, &mut AppContext) + 'static,
+        mut on_event: impl FnMut(E, &Evt, &mut AppContext) + 'static,
     ) -> Subscription
     where
-        T: 'static + EventEmitter,
+        T: 'static + EventEmitter<Evt>,
         E: Entity<T>,
+        Evt: 'static,
     {
         self.subscribe_internal(entity, move |entity, event, cx| {
             on_event(entity, event, cx);
@@ -366,27 +368,32 @@ impl AppContext {
         })
     }
 
-    pub(crate) fn subscribe_internal<T, E>(
+    pub(crate) fn subscribe_internal<T, E, Evt>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(E, &T::Event, &mut AppContext) -> bool + 'static,
+        mut on_event: impl FnMut(E, &Evt, &mut AppContext) -> bool + 'static,
     ) -> Subscription
     where
-        T: 'static + EventEmitter,
+        T: 'static + EventEmitter<Evt>,
         E: Entity<T>,
+        Evt: 'static,
     {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
+
         self.event_listeners.insert(
             entity_id,
-            Box::new(move |event, cx| {
-                let event: &T::Event = event.downcast_ref().expect("invalid event type");
-                if let Some(handle) = E::upgrade_from(&entity) {
-                    on_event(handle, event, cx)
-                } else {
-                    false
-                }
-            }),
+            (
+                TypeId::of::<Evt>(),
+                Box::new(move |event, cx| {
+                    let event: &Evt = event.downcast_ref().expect("invalid event type");
+                    if let Some(handle) = E::upgrade_from(&entity) {
+                        on_event(handle, event, cx)
+                    } else {
+                        false
+                    }
+                }),
+            ),
         )
     }
 
@@ -509,7 +516,11 @@ impl AppContext {
                     Effect::Notify { emitter } => {
                         self.apply_notify_effect(emitter);
                     }
-                    Effect::Emit { emitter, event } => self.apply_emit_effect(emitter, event),
+                    Effect::Emit {
+                        emitter,
+                        event_type,
+                        event,
+                    } => self.apply_emit_effect(emitter, event_type, event),
                     Effect::FocusChanged {
                         window_handle,
                         focused,
@@ -604,10 +615,16 @@ impl AppContext {
             .retain(&emitter, |handler| handler(self));
     }
 
-    fn apply_emit_effect(&mut self, emitter: EntityId, event: Box<dyn Any>) {
+    fn apply_emit_effect(&mut self, emitter: EntityId, event_type: TypeId, event: Box<dyn Any>) {
         self.event_listeners
             .clone()
-            .retain(&emitter, |handler| handler(event.as_ref(), self));
+            .retain(&emitter, |(stored_type, handler)| {
+                if *stored_type == event_type {
+                    handler(event.as_ref(), self)
+                } else {
+                    true
+                }
+            });
     }
 
     fn apply_focus_changed_effect(
@@ -978,6 +995,7 @@ pub(crate) enum Effect {
     },
     Emit {
         emitter: EntityId,
+        event_type: TypeId,
         event: Box<dyn Any>,
     },
     FocusChanged {

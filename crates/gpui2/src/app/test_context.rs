@@ -197,12 +197,12 @@ impl TestAppContext {
         rx
     }
 
-    pub fn events<T: 'static + EventEmitter>(
+    pub fn events<Evt, T: 'static + EventEmitter<Evt>>(
         &mut self,
         entity: &Model<T>,
-    ) -> futures::channel::mpsc::UnboundedReceiver<T::Event>
+    ) -> futures::channel::mpsc::UnboundedReceiver<Evt>
     where
-        T::Event: 'static + Clone,
+        Evt: 'static + Clone,
     {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         entity
@@ -240,10 +240,11 @@ impl TestAppContext {
     }
 }
 
-impl<T: Send + EventEmitter> Model<T> {
-    pub fn next_event(&self, cx: &mut TestAppContext) -> T::Event
+impl<T: Send> Model<T> {
+    pub fn next_event<Evt>(&self, cx: &mut TestAppContext) -> Evt
     where
-        T::Event: Send + Clone,
+        Evt: Send + Clone + 'static,
+        T: EventEmitter<Evt>,
     {
         let (tx, mut rx) = futures::channel::mpsc::unbounded();
         let _subscription = self.update(cx, |_, cx| {
