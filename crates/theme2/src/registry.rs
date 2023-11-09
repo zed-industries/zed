@@ -27,12 +27,14 @@ impl ThemeRegistry {
         }
     }
 
+    #[allow(unused)]
     fn insert_user_theme_familes(&mut self, families: impl IntoIterator<Item = UserThemeFamily>) {
         for family in families.into_iter() {
             self.insert_user_themes(family.themes);
         }
     }
 
+    #[allow(unused)]
     fn insert_user_themes(&mut self, themes: impl IntoIterator<Item = UserTheme>) {
         self.insert_themes(themes.into_iter().map(|user_theme| {
             let mut theme_colors = match user_theme.appearance {
