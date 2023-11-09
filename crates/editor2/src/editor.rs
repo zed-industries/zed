@@ -39,11 +39,10 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, px, relative, rems, AnyElement, AppContext, BackgroundExecutor,
-    ClipboardItem, Context, DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle,
-    FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels,
-    PlatformInputHandler, Render, Styled, Subscription, Task, TextStyle, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    action, actions, point, px, relative, rems, size, AnyElement, AppContext, BackgroundExecutor,
+    Bounds, ClipboardItem, Context, DispatchContext, EventEmitter, FocusHandle, FontFeatures,
+    FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, Render, Subscription,
+    Task, TextStyle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -675,6 +674,7 @@ pub struct Editor {
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
+    gutter_width: Pixels,
     style: Option<EditorStyle>,
 }
 
@@ -1985,6 +1985,7 @@ impl Editor {
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
+            gutter_width: Default::default(),
             style: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -9775,13 +9776,35 @@ impl InputHandler for Editor {
     }
 
     fn bounds_for_range(
-        &self,
+        &mut self,
         range_utf16: Range<usize>,
+        element_bounds: gpui::Bounds<Pixels>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<gpui::Bounds<f32>> {
-        // todo!()
-        // See how we did it before: `rect_for_range`
-        None
+    ) -> Option<gpui::Bounds<Pixels>> {
+        let text_layout_details = self.text_layout_details(cx);
+        let style = &text_layout_details.editor_style;
+        let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
+        let font_size = style.text.font_size.to_pixels(cx.rem_size());
+        let line_height = style.text.line_height_in_pixels(cx.rem_size());
+        let em_width = cx
+            .text_system()
+            .typographic_bounds(font_id, font_size, 'm')
+            .unwrap()
+            .size
+            .width;
+
+        let snapshot = self.snapshot(cx);
+        let scroll_position = snapshot.scroll_position();
+        let scroll_left = scroll_position.x * em_width;
+
+        let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
+        let x = snapshot.x_for_point(start, &text_layout_details) - scroll_left + self.gutter_width;
+        let y = line_height * (start.row() as f32 - scroll_position.y);
+
+        Some(Bounds {
+            origin: element_bounds.origin + point(x, y),
+            size: size(em_width, line_height),
+        })
     }
 }
 
