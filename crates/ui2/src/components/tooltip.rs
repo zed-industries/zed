@@ -1,4 +1,4 @@
-use gpui::{div, px, Div, ParentElement, Render, SharedString, Styled, ViewContext};
+use gpui::{div, Div, ParentElement, Render, SharedString, Styled, ViewContext};
 use theme2::ActiveTheme;
 
 #[derive(Clone, Debug)]
@@ -19,7 +19,7 @@ impl Render for TextTooltip {
         let theme = cx.theme();
         div()
             .bg(theme.colors().background)
-            .rounded(px(8.))
+            .rounded_lg()
             .border()
             .font("Zed Sans")
             .border_color(theme.colors().border)

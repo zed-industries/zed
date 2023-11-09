@@ -3,8 +3,10 @@
 
 use gpui::rgba;
 
+#[allow(unused)]
 use crate::{
-    Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
+    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn rose_pine() -> UserThemeFamily {
@@ -19,7 +21,7 @@ pub fn rose_pine() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x000000ff).into()),
                         border_variant: Some(rgba(0x000000ff).into()),
-                        border_focused: Some(rgba(0x000000ff).into()),
+                        border_focused: Some(rgba(0x6e6a8633).into()),
                         border_selected: Some(rgba(0x000000ff).into()),
                         border_transparent: Some(rgba(0x000000ff).into()),
                         border_disabled: Some(rgba(0x000000ff).into()),
@@ -27,9 +29,17 @@ pub fn rose_pine() -> UserThemeFamily {
                         surface_background: Some(rgba(0x1f1d2eff).into()),
                         background: Some(rgba(0x191724ff).into()),
                         element_background: Some(rgba(0xebbcbaff).into()),
+                        element_hover: Some(rgba(0x6e6a861a).into()),
+                        element_selected: Some(rgba(0x6e6a8633).into()),
+                        drop_target_background: Some(rgba(0x1f1d2eff).into()),
+                        ghost_element_hover: Some(rgba(0x6e6a861a).into()),
                         text: Some(rgba(0xe0def4ff).into()),
                         tab_inactive_background: Some(rgba(0x000000ff).into()),
                         tab_active_background: Some(rgba(0x6e6a861a).into()),
+                        editor_background: Some(rgba(0x191724ff).into()),
+                        editor_gutter_background: Some(rgba(0x191724ff).into()),
+                        editor_line_number: Some(rgba(0x908caaff).into()),
+                        editor_active_line_number: Some(rgba(0xe0def4ff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x908caaff).into()),
                         terminal_ansi_bright_red: Some(rgba(0xeb6f92ff).into()),
                         terminal_ansi_bright_green: Some(rgba(0x30738fff).into()),
@@ -48,6 +58,75 @@ pub fn rose_pine() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xe0def4ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xeb6f92ff).into()),
+                        error: Some(rgba(0xeb6f92ff).into()),
+                        hidden: Some(rgba(0x908caaff).into()),
+                        warning: Some(rgba(0xf5c177ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc4a7e7ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xebbcbaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x30738fff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x908caaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf5c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9ccfd8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe0def4ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
             UserTheme {
@@ -57,7 +136,7 @@ pub fn rose_pine() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x000000ff).into()),
                         border_variant: Some(rgba(0x000000ff).into()),
-                        border_focused: Some(rgba(0x000000ff).into()),
+                        border_focused: Some(rgba(0x817c9c26).into()),
                         border_selected: Some(rgba(0x000000ff).into()),
                         border_transparent: Some(rgba(0x000000ff).into()),
                         border_disabled: Some(rgba(0x000000ff).into()),
@@ -65,9 +144,17 @@ pub fn rose_pine() -> UserThemeFamily {
                         surface_background: Some(rgba(0x2a273eff).into()),
                         background: Some(rgba(0x232136ff).into()),
                         element_background: Some(rgba(0xea9a97ff).into()),
+                        element_hover: Some(rgba(0x817c9c14).into()),
+                        element_selected: Some(rgba(0x817c9c26).into()),
+                        drop_target_background: Some(rgba(0x2a273eff).into()),
+                        ghost_element_hover: Some(rgba(0x817c9c14).into()),
                         text: Some(rgba(0xe0def4ff).into()),
                         tab_inactive_background: Some(rgba(0x000000ff).into()),
                         tab_active_background: Some(rgba(0x817c9c14).into()),
+                        editor_background: Some(rgba(0x232136ff).into()),
+                        editor_gutter_background: Some(rgba(0x232136ff).into()),
+                        editor_line_number: Some(rgba(0x908caaff).into()),
+                        editor_active_line_number: Some(rgba(0xe0def4ff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x908caaff).into()),
                         terminal_ansi_bright_red: Some(rgba(0xeb6f92ff).into()),
                         terminal_ansi_bright_green: Some(rgba(0x3d8fb0ff).into()),
@@ -86,6 +173,75 @@ pub fn rose_pine() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xe0def4ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xeb6f92ff).into()),
+                        error: Some(rgba(0xeb6f92ff).into()),
+                        hidden: Some(rgba(0x908caaff).into()),
+                        warning: Some(rgba(0xf5c177ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc4a7e7ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9a97ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x3d8fb0ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x908caaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf5c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9ccfd8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe0def4ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
             UserTheme {
@@ -95,7 +251,7 @@ pub fn rose_pine() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x000000ff).into()),
                         border_variant: Some(rgba(0x000000ff).into()),
-                        border_focused: Some(rgba(0x000000ff).into()),
+                        border_focused: Some(rgba(0x6e6a8614).into()),
                         border_selected: Some(rgba(0x000000ff).into()),
                         border_transparent: Some(rgba(0x000000ff).into()),
                         border_disabled: Some(rgba(0x000000ff).into()),
@@ -103,9 +259,17 @@ pub fn rose_pine() -> UserThemeFamily {
                         surface_background: Some(rgba(0xfffaf3ff).into()),
                         background: Some(rgba(0xfaf4edff).into()),
                         element_background: Some(rgba(0xd7827dff).into()),
+                        element_hover: Some(rgba(0x6e6a860d).into()),
+                        element_selected: Some(rgba(0x6e6a8614).into()),
+                        drop_target_background: Some(rgba(0xfffaf3ff).into()),
+                        ghost_element_hover: Some(rgba(0x6e6a860d).into()),
                         text: Some(rgba(0x575279ff).into()),
                         tab_inactive_background: Some(rgba(0x000000ff).into()),
                         tab_active_background: Some(rgba(0x6e6a860d).into()),
+                        editor_background: Some(rgba(0xfaf4edff).into()),
+                        editor_gutter_background: Some(rgba(0xfaf4edff).into()),
+                        editor_line_number: Some(rgba(0x797593ff).into()),
+                        editor_active_line_number: Some(rgba(0x575279ff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x797593ff).into()),
                         terminal_ansi_bright_red: Some(rgba(0xb3627aff).into()),
                         terminal_ansi_bright_green: Some(rgba(0x276983ff).into()),
@@ -124,6 +288,75 @@ pub fn rose_pine() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0x575279ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xb3627aff).into()),
+                        error: Some(rgba(0xb3627aff).into()),
+                        hidden: Some(rgba(0x797593ff).into()),
+                        warning: Some(rgba(0xea9d34ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9079a9ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd7827dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9893a5ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x276983ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x797593ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9d34ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x55949fff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x575279ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
         ],

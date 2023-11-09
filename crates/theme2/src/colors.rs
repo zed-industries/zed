@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
+use crate::{PlayerColors, SyntaxTheme};
 use gpui::Hsla;
 use refineable::Refineable;
-
-use crate::{PlayerColors, SyntaxTheme};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct SystemColors {
@@ -14,7 +12,7 @@ pub struct SystemColors {
 }
 
 #[derive(Refineable, Clone, Debug)]
-#[refineable(Debug)]
+#[refineable(Debug, serde::Deserialize)]
 pub struct StatusColors {
     pub conflict: Hsla,
     pub created: Hsla,

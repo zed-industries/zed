@@ -3,8 +3,10 @@
 
 use gpui::rgba;
 
+#[allow(unused)]
 use crate::{
-    Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
+    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn palenight() -> UserThemeFamily {
@@ -27,9 +29,17 @@ pub fn palenight() -> UserThemeFamily {
                         surface_background: Some(rgba(0x292c3eff).into()),
                         background: Some(rgba(0x292c3eff).into()),
                         element_background: Some(rgba(0x7d56c1cc).into()),
+                        element_hover: Some(rgba(0x0000001a).into()),
+                        element_selected: Some(rgba(0x7d56c1ff).into()),
+                        drop_target_background: Some(rgba(0x2e3245ff).into()),
+                        ghost_element_hover: Some(rgba(0x0000001a).into()),
                         text: Some(rgba(0xffffffff).into()),
                         tab_inactive_background: Some(rgba(0x31364aff).into()),
                         tab_active_background: Some(rgba(0x292c3eff).into()),
+                        editor_background: Some(rgba(0x292c3eff).into()),
+                        editor_gutter_background: Some(rgba(0x292c3eff).into()),
+                        editor_line_number: Some(rgba(0x4c5374ff).into()),
+                        editor_active_line_number: Some(rgba(0xbfc7d5ff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x676e95ff).into()),
                         terminal_ansi_bright_red: Some(rgba(0xff5571ff).into()),
                         terminal_ansi_bright_green: Some(rgba(0xc3e88dff).into()),
@@ -48,6 +58,73 @@ pub fn palenight() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xffffffff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xef524fff).into()),
+                        error: Some(rgba(0xef524fff).into()),
+                        hidden: Some(rgba(0x9199c8ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffcb6bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x687097ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc3e88dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5571ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
             UserTheme {
@@ -65,9 +142,17 @@ pub fn palenight() -> UserThemeFamily {
                         surface_background: Some(rgba(0x292c3eff).into()),
                         background: Some(rgba(0x292c3eff).into()),
                         element_background: Some(rgba(0x7d56c1cc).into()),
+                        element_hover: Some(rgba(0x0000001a).into()),
+                        element_selected: Some(rgba(0x7d56c1ff).into()),
+                        drop_target_background: Some(rgba(0x2e3245ff).into()),
+                        ghost_element_hover: Some(rgba(0x0000001a).into()),
                         text: Some(rgba(0xffffffff).into()),
                         tab_inactive_background: Some(rgba(0x31364aff).into()),
                         tab_active_background: Some(rgba(0x292c3eff).into()),
+                        editor_background: Some(rgba(0x292c3eff).into()),
+                        editor_gutter_background: Some(rgba(0x292c3eff).into()),
+                        editor_line_number: Some(rgba(0x4c5374ff).into()),
+                        editor_active_line_number: Some(rgba(0xbfc7d5ff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x676e95ff).into()),
                         terminal_ansi_bright_red: Some(rgba(0xff5571ff).into()),
                         terminal_ansi_bright_green: Some(rgba(0xc3e88dff).into()),
@@ -86,6 +171,73 @@ pub fn palenight() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xffffffff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xef524fff).into()),
+                        error: Some(rgba(0xef524fff).into()),
+                        hidden: Some(rgba(0x9199c8ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffcb6bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x687097ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc3e88dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5571ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
             UserTheme {
@@ -103,9 +255,17 @@ pub fn palenight() -> UserThemeFamily {
                         surface_background: Some(rgba(0x25283aff).into()),
                         background: Some(rgba(0x292c3eff).into()),
                         element_background: Some(rgba(0x7d56c1cc).into()),
+                        element_hover: Some(rgba(0x0000001a).into()),
+                        element_selected: Some(rgba(0x7d56c1ff).into()),
+                        drop_target_background: Some(rgba(0x2e3245ff).into()),
+                        ghost_element_hover: Some(rgba(0x0000001a).into()),
                         text: Some(rgba(0xffffffff).into()),
                         tab_inactive_background: Some(rgba(0x31364aff).into()),
                         tab_active_background: Some(rgba(0x25283aff).into()),
+                        editor_background: Some(rgba(0x292c3eff).into()),
+                        editor_gutter_background: Some(rgba(0x292c3eff).into()),
+                        editor_line_number: Some(rgba(0x4c5374ff).into()),
+                        editor_active_line_number: Some(rgba(0xbfc7d5ff).into()),
                         terminal_ansi_bright_black: Some(rgba(0x676e95ff).into()),
                         terminal_ansi_bright_red: Some(rgba(0xff5571ff).into()),
                         terminal_ansi_bright_green: Some(rgba(0xc3e88dff).into()),
@@ -124,6 +284,73 @@ pub fn palenight() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xffffffff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xef524fff).into()),
+                        error: Some(rgba(0xef524fff).into()),
+                        hidden: Some(rgba(0x9199c8ff).into()),
+                        ..Default::default()
+                    },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffcb6bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x687097ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc3e88dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5571ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                        ],
+                    }),
                 },
             },
         ],
