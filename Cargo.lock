@@ -1748,6 +1748,7 @@ dependencies = [
  "lsp2",
  "nanoid",
  "node_runtime",
+ "notifications2",
  "parking_lot 0.11.2",
  "pretty_assertions",
  "project2",
@@ -5480,6 +5481,26 @@ dependencies = [
  "settings",
  "sum_tree",
  "text",
+ "time",
+ "util",
+]
+
+[[package]]
+name = "notifications2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "channel2",
+ "client2",
+ "clock",
+ "collections",
+ "db2",
+ "feature_flags2",
+ "gpui2",
+ "rpc2",
+ "settings2",
+ "sum_tree",
+ "text2",
  "time",
  "util",
 ]

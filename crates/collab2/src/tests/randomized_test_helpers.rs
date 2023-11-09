@@ -115,7 +115,7 @@ pub trait RandomizedTest: 'static + Sized {
 
     async fn initialize(server: &mut TestServer, users: &[UserTestPlan]);
 
-    async fn on_client_added(client: &Rc<TestClient>, cx: &mut TestAppContext);
+    async fn on_client_added(_client: &Rc<TestClient>, _cx: &mut TestAppContext) {}
 
     async fn on_quiesce(server: &mut TestServer, client: &mut [(Rc<TestClient>, TestAppContext)]);
 }
