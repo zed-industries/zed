@@ -305,7 +305,7 @@ pub trait PlatformInputHandler {
         new_selected_range: Option<Range<usize>>,
     );
     fn unmark_text(&mut self);
-    fn bounds_for_range(&self, range_utf16: Range<usize>) -> Option<Bounds<f32>>;
+    fn bounds_for_range(&self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>>;
 }
 
 #[derive(Debug)]

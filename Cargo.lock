@@ -11351,6 +11351,7 @@ dependencies = [
  "libc",
  "log",
  "lsp2",
+ "menu2",
  "node_runtime",
  "num_cpus",
  "parking_lot 0.11.2",

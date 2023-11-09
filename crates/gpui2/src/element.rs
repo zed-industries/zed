@@ -1,4 +1,7 @@
-use crate::{BorrowWindow, Bounds, ElementId, LayoutId, Pixels, ViewContext};
+use crate::{
+    BorrowWindow, Bounds, ElementId, FocusHandle, InputHandlerView, LayoutId, Pixels, ViewContext,
+    WindowInputHandler,
+};
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, mem};
@@ -31,6 +34,14 @@ pub trait Element<V: 'static> {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     );
+
+    fn handle_text_input<'a>(
+        &self,
+        _view_state: &'a mut V,
+        _cx: &mut ViewContext<V>,
+    ) -> Option<(Box<dyn InputHandlerView>, &'a FocusHandle)> {
+        None
+    }
 }
 
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
@@ -154,6 +165,18 @@ where
                 mut frame_state,
             } => {
                 let bounds = cx.layout_bounds(layout_id);
+                if let Some((input_handler, focus_handle)) =
+                    self.element.handle_text_input(view_state, cx)
+                {
+                    if focus_handle.is_focused(cx) {
+                        cx.window.requested_input_handler = Some(Box::new(WindowInputHandler {
+                            cx: cx.app.this.clone(),
+                            window: cx.window_handle(),
+                            input_handler,
+                            element_bounds: bounds,
+                        }));
+                    }
+                }
                 if let Some(id) = self.element.id() {
                     cx.with_element_state(id, |element_state, cx| {
                         let mut element_state = element_state.unwrap();

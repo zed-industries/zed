@@ -418,6 +418,14 @@ impl Dock {
     //     }
 }
 
+impl Render for Dock {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        todo!()
+    }
+}
+
 // todo!()
 // impl View for Dock {
 //     fn ui_name() -> &'static str {

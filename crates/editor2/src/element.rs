@@ -17,10 +17,11 @@ use collections::{BTreeMap, HashMap};
 use gpui::{
     black, hsla, point, px, relative, size, transparent_black, Action, AnyElement,
     BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchContext, DispatchPhase,
-    Edges, Element, ElementId, Entity, GlobalElementId, Hsla, KeyDownEvent, KeyListener, KeyMatch,
-    Line, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    ScrollWheelEvent, ShapedGlyph, Size, Style, TextRun, TextStyle, TextSystem, ViewContext,
-    WindowContext,
+    Edges, Element, ElementId, Entity, FocusHandle, GlobalElementId, Hsla, InputHandler,
+    InputHandlerView, KeyDownEvent, KeyListener, KeyMatch, Line, LineLayout, Modifiers,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent,
+    ShapedGlyph, Size, Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext,
+    WrappedLineLayout,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -1467,6 +1468,7 @@ impl EditorElement {
             gutter_margin = Pixels::ZERO;
         };
 
+        editor.gutter_width = gutter_width;
         let text_width = bounds.size.width - gutter_width;
         let overscroll = size(em_width, px(0.));
         let snapshot = {
@@ -2502,10 +2504,6 @@ impl Element<Editor> for EditorElement {
             size: layout.text_size,
         };
 
-        if editor.focus_handle.is_focused(cx) {
-            cx.handle_text_input();
-        }
-
         cx.with_content_mask(ContentMask { bounds }, |cx| {
             self.paint_mouse_listeners(
                 bounds,
@@ -2520,6 +2518,14 @@ impl Element<Editor> for EditorElement {
             }
             self.paint_text(text_bounds, &layout, editor, cx);
         });
+    }
+
+    fn handle_text_input<'a>(
+        &self,
+        editor: &'a mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<(Box<dyn InputHandlerView>, &'a FocusHandle)> {
+        Some((Box::new(cx.view()), &editor.focus_handle))
     }
 }
 

@@ -39,11 +39,10 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, px, relative, AnyElement, AppContext, BackgroundExecutor, BorrowWindow,
-    ClipboardItem, Context, DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle,
-    FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, PlatformInputHandler,
-    Render, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    action, actions, point, px, relative, rems, size, AnyElement, AppContext, BackgroundExecutor,
+    Bounds, ClipboardItem, Context, DispatchContext, EventEmitter, FocusHandle, FontFeatures,
+    FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, Render, Subscription,
+    Task, TextStyle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -57,6 +56,7 @@ use language::{
     Diagnostic, IndentKind, IndentSize, Language, LanguageRegistry, LanguageServerName,
     OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
+use lazy_static::lazy_static;
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
 use lsp::{DiagnosticSeverity, Documentation, LanguageServerId};
 use movement::TextLayoutDetails;
@@ -66,7 +66,7 @@ pub use multi_buffer::{
     ToPoint,
 };
 use ordered_float::OrderedFloat;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use project::{FormatTrigger, Location, Project};
 use rand::prelude::*;
 use rpc::proto::*;
@@ -676,6 +676,7 @@ pub struct Editor {
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
+    gutter_width: Pixels,
     style: Option<EditorStyle>,
 }
 
@@ -1987,6 +1988,7 @@ impl Editor {
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
+            gutter_width: Default::default(),
             style: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -2181,14 +2183,14 @@ impl Editor {
     //         self.collaboration_hub = Some(hub);
     //     }
 
-    //     pub fn set_placeholder_text(
-    //         &mut self,
-    //         placeholder_text: impl Into<Arc<str>>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.placeholder_text = Some(placeholder_text.into());
-    //         cx.notify();
-    //     }
+    pub fn set_placeholder_text(
+        &mut self,
+        placeholder_text: impl Into<Arc<str>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.placeholder_text = Some(placeholder_text.into());
+        cx.notify();
+    }
 
     //     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
     //         self.cursor_shape = cursor_shape;
@@ -9431,18 +9433,42 @@ impl Render for Editor {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.buffer_font.family.clone(),
-            font_features: settings.buffer_font.features,
-            font_size: settings.buffer_font_size.into(),
-            font_weight: FontWeight::NORMAL,
-            font_style: FontStyle::Normal,
-            line_height: relative(settings.buffer_line_height.value()),
-            underline: None,
+        let text_style = match self.mode {
+            EditorMode::SingleLine => {
+                TextStyle {
+                    color: cx.theme().colors().text,
+                    font_family: "Zed Sans".into(), // todo!()
+                    font_features: FontFeatures::default(),
+                    font_size: rems(1.0).into(),
+                    font_weight: FontWeight::NORMAL,
+                    font_style: FontStyle::Normal,
+                    line_height: relative(1.3).into(), // TODO relative(settings.buffer_line_height.value()),
+                    underline: None,
+                }
+            }
+
+            EditorMode::AutoHeight { max_lines } => todo!(),
+
+            EditorMode::Full => TextStyle {
+                color: cx.theme().colors().text,
+                font_family: settings.buffer_font.family.clone(),
+                font_features: settings.buffer_font.features,
+                font_size: settings.buffer_font_size.into(),
+                font_weight: FontWeight::NORMAL,
+                font_style: FontStyle::Normal,
+                line_height: relative(settings.buffer_line_height.value()),
+                underline: None,
+            },
         };
+
+        let background = match self.mode {
+            EditorMode::SingleLine => cx.theme().system().transparent,
+            EditorMode::AutoHeight { max_lines } => cx.theme().system().transparent,
+            EditorMode::Full => cx.theme().colors().editor_background,
+        };
+
         EditorElement::new(EditorStyle {
-            background: cx.theme().colors().editor_background,
+            background,
             local_player: cx.theme().players().local(),
             text: text_style,
             scrollbar_width: px(12.),
@@ -9765,13 +9791,35 @@ impl InputHandler for Editor {
     }
 
     fn bounds_for_range(
-        &self,
+        &mut self,
         range_utf16: Range<usize>,
+        element_bounds: gpui::Bounds<Pixels>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<gpui::Bounds<f32>> {
-        // todo!()
-        // See how we did it before: `rect_for_range`
-        None
+    ) -> Option<gpui::Bounds<Pixels>> {
+        let text_layout_details = self.text_layout_details(cx);
+        let style = &text_layout_details.editor_style;
+        let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
+        let font_size = style.text.font_size.to_pixels(cx.rem_size());
+        let line_height = style.text.line_height_in_pixels(cx.rem_size());
+        let em_width = cx
+            .text_system()
+            .typographic_bounds(font_id, font_size, 'm')
+            .unwrap()
+            .size
+            .width;
+
+        let snapshot = self.snapshot(cx);
+        let scroll_position = snapshot.scroll_position();
+        let scroll_left = scroll_position.x * em_width;
+
+        let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
+        let x = snapshot.x_for_point(start, &text_layout_details) - scroll_left + self.gutter_width;
+        let y = line_height * (start.row() as f32 - scroll_position.y);
+
+        Some(Bounds {
+            origin: element_bounds.origin + point(x, y),
+            size: size(em_width, line_height),
+        })
     }
 }
 
