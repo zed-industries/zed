@@ -14,7 +14,7 @@ test-support = ["rand"]
 [dependencies]
 clock = { path = "../clock" }
 collections = { path = "../collections" }
-rope = { path = "../rope" }
+rope = { package = "rope2", path = "../rope2" }
 sum_tree = { path = "../sum_tree" }
 util = { path = "../util" }
 

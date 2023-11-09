@@ -85,6 +85,10 @@ impl BlinkManager {
     }
 
     pub fn enable(&mut self, cx: &mut ModelContext<Self>) {
+        if self.enabled {
+            return;
+        }
+
         self.enabled = true;
         // Set cursors as invisible and start blinking: this causes cursors
         // to be visible during the next render.

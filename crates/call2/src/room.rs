@@ -79,9 +79,7 @@ pub struct Room {
     maintain_connection: Option<Task<Option<()>>>,
 }
 
-impl EventEmitter for Room {
-    type Event = Event;
-}
+impl EventEmitter<Event> for Room {}
 
 impl Room {
     pub fn channel_id(&self) -> Option<u64> {

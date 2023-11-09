@@ -2,14 +2,13 @@ use crate::{
     px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     Bounds, BoxShadow, Context, Corners, CursorStyle, DevicePixels, DispatchContext, DisplayId,
     Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId,
-    GlobalElementId, GlyphId, Hsla, ImageData, InputEvent, InputHandler, IsZero, KeyListener,
-    KeyMatch, KeyMatcher, Keystroke, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel,
-    Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
-    SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowBounds, WindowInputHandler, WindowOptions, SUBPIXEL_VARIANTS,
+    GlobalElementId, GlyphId, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch,
+    KeyMatcher, Keystroke, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow,
+    SharedString, Size, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline,
+    UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -60,7 +59,7 @@ pub enum DispatchPhase {
 }
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
-type AnyListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
+type AnyListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 type AnyKeyListener = Box<
     dyn Fn(
             &dyn Any,
@@ -71,8 +70,48 @@ type AnyKeyListener = Box<
         + 'static,
 >;
 type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + 'static>;
+type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
 
 slotmap::new_key_type! { pub struct FocusId; }
+
+impl FocusId {
+    /// Obtains whether the element associated with this handle is currently focused.
+    pub fn is_focused(&self, cx: &WindowContext) -> bool {
+        cx.window.focus == Some(*self)
+    }
+
+    /// Obtains whether the element associated with this handle contains the focused
+    /// element or is itself focused.
+    pub fn contains_focused(&self, cx: &WindowContext) -> bool {
+        cx.focused()
+            .map_or(false, |focused| self.contains(focused.id, cx))
+    }
+
+    /// Obtains whether the element associated with this handle is contained within the
+    /// focused element or is itself focused.
+    pub fn within_focused(&self, cx: &WindowContext) -> bool {
+        let focused = cx.focused();
+        focused.map_or(false, |focused| focused.id.contains(*self, cx))
+    }
+
+    /// Obtains whether this handle contains the given handle in the most recently rendered frame.
+    pub(crate) fn contains(&self, other: Self, cx: &WindowContext) -> bool {
+        let mut ancestor = Some(other);
+        while let Some(ancestor_id) = ancestor {
+            if *self == ancestor_id {
+                return true;
+            } else {
+                ancestor = cx
+                    .window
+                    .current_frame
+                    .focus_parents_by_child
+                    .get(&ancestor_id)
+                    .copied();
+            }
+        }
+        false
+    }
+}
 
 /// A handle which can be used to track and manipulate the focused element in a window.
 pub struct FocusHandle {
@@ -108,39 +147,24 @@ impl FocusHandle {
 
     /// Obtains whether the element associated with this handle is currently focused.
     pub fn is_focused(&self, cx: &WindowContext) -> bool {
-        cx.window.focus == Some(self.id)
+        self.id.is_focused(cx)
     }
 
     /// Obtains whether the element associated with this handle contains the focused
     /// element or is itself focused.
     pub fn contains_focused(&self, cx: &WindowContext) -> bool {
-        cx.focused()
-            .map_or(false, |focused| self.contains(&focused, cx))
+        self.id.contains_focused(cx)
     }
 
     /// Obtains whether the element associated with this handle is contained within the
     /// focused element or is itself focused.
     pub fn within_focused(&self, cx: &WindowContext) -> bool {
-        let focused = cx.focused();
-        focused.map_or(false, |focused| focused.contains(self, cx))
+        self.id.within_focused(cx)
     }
 
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
     pub(crate) fn contains(&self, other: &Self, cx: &WindowContext) -> bool {
-        let mut ancestor = Some(other.id);
-        while let Some(ancestor_id) = ancestor {
-            if self.id == ancestor_id {
-                return true;
-            } else {
-                ancestor = cx
-                    .window
-                    .current_frame
-                    .focus_parents_by_child
-                    .get(&ancestor_id)
-                    .copied();
-            }
-        }
-        false
+        self.id.contains(other.id, cx)
     }
 }
 
@@ -183,10 +207,10 @@ pub struct Window {
     pub(crate) previous_frame: Frame,
     pub(crate) current_frame: Frame,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+    pub(crate) focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     requested_cursor_style: Option<CursorStyle>,
-    requested_input_handler: Option<Box<dyn PlatformInputHandler>>,
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
@@ -282,10 +306,10 @@ impl Window {
             previous_frame: Frame::default(),
             current_frame: Frame::default(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
+            focus_listeners: SubscriberSet::new(),
             default_prevented: true,
             mouse_position,
             requested_cursor_style: None,
-            requested_input_handler: None,
             scale_factor,
             bounds,
             bounds_observers: SubscriberSet::new(),
@@ -412,33 +436,37 @@ impl<'a> WindowContext<'a> {
         });
     }
 
-    pub fn subscribe<Emitter, E>(
+    pub fn subscribe<Emitter, E, Evt>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(E, &Emitter::Event, &mut WindowContext<'_>) + 'static,
+        mut on_event: impl FnMut(E, &Evt, &mut WindowContext<'_>) + 'static,
     ) -> Subscription
     where
-        Emitter: EventEmitter,
+        Emitter: EventEmitter<Evt>,
         E: Entity<Emitter>,
+        Evt: 'static,
     {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
         self.app.event_listeners.insert(
             entity_id,
-            Box::new(move |event, cx| {
-                window_handle
-                    .update(cx, |_, cx| {
-                        if let Some(handle) = E::upgrade_from(&entity) {
-                            let event = event.downcast_ref().expect("invalid event type");
-                            on_event(handle, event, cx);
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false)
-            }),
+            (
+                TypeId::of::<Evt>(),
+                Box::new(move |event, cx| {
+                    window_handle
+                        .update(cx, |_, cx| {
+                            if let Some(handle) = E::upgrade_from(&entity) {
+                                let event = event.downcast_ref().expect("invalid event type");
+                                on_event(handle, event, cx);
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .unwrap_or(false)
+                }),
+            ),
         )
     }
 
@@ -1022,9 +1050,6 @@ impl<'a> WindowContext<'a> {
             .take()
             .unwrap_or(CursorStyle::Arrow);
         self.platform.set_cursor_style(cursor_style);
-        if let Some(handler) = self.window.requested_input_handler.take() {
-            self.window.platform_window.set_input_handler(handler);
-        }
 
         self.window.dirty = false;
     }
@@ -1116,7 +1141,7 @@ impl<'a> WindowContext<'a> {
 
                 // Capture phase, events bubble from back to front. Handlers for this phase are used for
                 // special purposes, such as detecting events outside of a given Bounds.
-                for (_, handler) in &handlers {
+                for (_, handler) in &mut handlers {
                     handler(any_mouse_event, DispatchPhase::Capture, self);
                     if !self.app.propagate_event {
                         break;
@@ -1125,7 +1150,7 @@ impl<'a> WindowContext<'a> {
 
                 // Bubble phase, where most normal handlers do their work.
                 if self.app.propagate_event {
-                    for (_, handler) in handlers.iter().rev() {
+                    for (_, handler) in handlers.iter_mut().rev() {
                         handler(any_mouse_event, DispatchPhase::Bubble, self);
                         if !self.app.propagate_event {
                             break;
@@ -1411,7 +1436,7 @@ impl VisualContext for WindowContext<'_> {
         build_view_state: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static,
+        V: 'static + Render,
     {
         let slot = self.app.entities.reserve();
         let view = View {
@@ -1419,7 +1444,16 @@ impl VisualContext for WindowContext<'_> {
         };
         let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
         let entity = build_view_state(&mut cx);
-        self.entities.insert(slot, entity);
+        cx.entities.insert(slot, entity);
+
+        cx.new_view_observers
+            .clone()
+            .retain(&TypeId::of::<V>(), |observer| {
+                let any_view = AnyView::from(view.clone());
+                (observer)(any_view, self);
+                true
+            });
+
         view
     }
 
@@ -1782,14 +1816,15 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         )
     }
 
-    pub fn subscribe<V2, E>(
+    pub fn subscribe<V2, E, Evt>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(&mut V, E, &V2::Event, &mut ViewContext<'_, V>) + 'static,
+        mut on_event: impl FnMut(&mut V, E, &Evt, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription
     where
-        V2: EventEmitter,
+        V2: EventEmitter<Evt>,
         E: Entity<V2>,
+        Evt: 'static,
     {
         let view = self.view().downgrade();
         let entity_id = entity.entity_id();
@@ -1797,19 +1832,22 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let window_handle = self.window.handle;
         self.app.event_listeners.insert(
             entity_id,
-            Box::new(move |event, cx| {
-                window_handle
-                    .update(cx, |_, cx| {
-                        if let Some(handle) = E::upgrade_from(&handle) {
-                            let event = event.downcast_ref().expect("invalid event type");
-                            view.update(cx, |this, cx| on_event(this, handle, event, cx))
-                                .is_ok()
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false)
-            }),
+            (
+                TypeId::of::<Evt>(),
+                Box::new(move |event, cx| {
+                    window_handle
+                        .update(cx, |_, cx| {
+                            if let Some(handle) = E::upgrade_from(&handle) {
+                                let event = event.downcast_ref().expect("invalid event type");
+                                view.update(cx, |this, cx| on_event(this, handle, event, cx))
+                                    .is_ok()
+                            } else {
+                                false
+                            }
+                        })
+                        .unwrap_or(false)
+                }),
+            ),
         )
     }
 
@@ -1880,6 +1918,110 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         )
     }
 
+    /// Register a listener to be called when the given focus handle receives focus.
+    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
+    /// is dropped.
+    pub fn on_focus(
+        &mut self,
+        handle: &FocusHandle,
+        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let focus_id = handle.id;
+        self.window.focus_listeners.insert(
+            (),
+            Box::new(move |event, cx| {
+                view.update(cx, |view, cx| {
+                    if event.focused.as_ref().map(|focused| focused.id) == Some(focus_id) {
+                        listener(view, cx)
+                    }
+                })
+                .is_ok()
+            }),
+        )
+    }
+
+    /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
+    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
+    /// is dropped.
+    pub fn on_focus_in(
+        &mut self,
+        handle: &FocusHandle,
+        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let focus_id = handle.id;
+        self.window.focus_listeners.insert(
+            (),
+            Box::new(move |event, cx| {
+                view.update(cx, |view, cx| {
+                    if event
+                        .focused
+                        .as_ref()
+                        .map_or(false, |focused| focus_id.contains(focused.id, cx))
+                    {
+                        listener(view, cx)
+                    }
+                })
+                .is_ok()
+            }),
+        )
+    }
+
+    /// Register a listener to be called when the given focus handle loses focus.
+    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
+    /// is dropped.
+    pub fn on_blur(
+        &mut self,
+        handle: &FocusHandle,
+        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let focus_id = handle.id;
+        self.window.focus_listeners.insert(
+            (),
+            Box::new(move |event, cx| {
+                view.update(cx, |view, cx| {
+                    if event.blurred.as_ref().map(|blurred| blurred.id) == Some(focus_id) {
+                        listener(view, cx)
+                    }
+                })
+                .is_ok()
+            }),
+        )
+    }
+
+    /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
+    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
+    /// is dropped.
+    pub fn on_focus_out(
+        &mut self,
+        handle: &FocusHandle,
+        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let focus_id = handle.id;
+        self.window.focus_listeners.insert(
+            (),
+            Box::new(move |event, cx| {
+                view.update(cx, |view, cx| {
+                    if event
+                        .blurred
+                        .as_ref()
+                        .map_or(false, |blurred| focus_id.contains(blurred.id, cx))
+                    {
+                        listener(view, cx)
+                    }
+                })
+                .is_ok()
+            }),
+        )
+    }
+
+    /// Register a focus listener for the current frame only. It will be cleared
+    /// on the next frame render. You should use this method only from within elements,
+    /// and we may want to enforce that better via a different context type.
+    // todo!() Move this to `FrameContext` to emphasize its individuality?
     pub fn on_focus_changed(
         &mut self,
         listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
@@ -2035,30 +2177,33 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             })
         });
     }
-}
 
-impl<V> ViewContext<'_, V>
-where
-    V: InputHandler + 'static,
-{
-    pub fn handle_text_input(&mut self) {
-        self.window.requested_input_handler = Some(Box::new(WindowInputHandler {
-            cx: self.app.this.clone(),
-            window: self.window_handle(),
-            handler: self.view().downgrade(),
-        }));
+    /// Set an input handler, such as [ElementInputHandler], which interfaces with the
+    /// platform to receive textual input with proper integration with concerns such
+    /// as IME interactions.
+    pub fn handle_input(
+        &mut self,
+        focus_handle: &FocusHandle,
+        input_handler: impl PlatformInputHandler,
+    ) {
+        if focus_handle.is_focused(self) {
+            self.window
+                .platform_window
+                .set_input_handler(Box::new(input_handler));
+        }
     }
 }
 
-impl<V> ViewContext<'_, V>
-where
-    V: EventEmitter,
-    V::Event: 'static,
-{
-    pub fn emit(&mut self, event: V::Event) {
+impl<V> ViewContext<'_, V> {
+    pub fn emit<Evt>(&mut self, event: Evt)
+    where
+        Evt: 'static,
+        V: EventEmitter<Evt>,
+    {
         let emitter = self.view.model.entity_id;
         self.app.push_effect(Effect::Emit {
             emitter,
+            event_type: TypeId::of::<Evt>(),
             event: Box::new(event),
         });
     }
@@ -2102,7 +2247,7 @@ impl<V> Context for ViewContext<'_, V> {
 }
 
 impl<V: 'static> VisualContext for ViewContext<'_, V> {
-    fn build_view<W: 'static>(
+    fn build_view<W: Render + 'static>(
         &mut self,
         build_view_state: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>> {

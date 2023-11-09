@@ -36,7 +36,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    div, point, rems, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
+    actions, div, point, rems, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, Component, Div, Entity, EntityId, EventEmitter, FocusHandle,
     GlobalPixels, Model, ModelContext, ParentElement, Point, Render, Size, StatefulInteractive,
     Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds,
@@ -46,8 +46,7 @@ use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings,
 use itertools::Itertools;
 use language2::LanguageRegistry;
 use lazy_static::lazy_static;
-pub use modal_layer::ModalRegistry;
-use modal_layer::{init_modal_registry, ModalLayer};
+pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
@@ -88,35 +87,32 @@ lazy_static! {
 // #[derive(Clone, PartialEq)]
 // pub struct RemoveWorktreeFromProject(pub WorktreeId);
 
-// actions!(
-//     workspace,
-//     [
-//         Open,
-//         NewFile,
-//         NewWindow,
-//         CloseWindow,
-//         CloseInactiveTabsAndPanes,
-//         AddFolderToProject,
-//         Unfollow,
-//         SaveAs,
-//         ReloadActiveItem,
-//         ActivatePreviousPane,
-//         ActivateNextPane,
-//         FollowNextCollaborator,
-//         NewTerminal,
-//         NewCenterTerminal,
-//         ToggleTerminalFocus,
-//         NewSearch,
-//         Feedback,
-//         Restart,
-//         Welcome,
-//         ToggleZoom,
-//         ToggleLeftDock,
-//         ToggleRightDock,
-//         ToggleBottomDock,
-//         CloseAllDocks,
-//     ]
-// );
+actions!(
+    Open,
+    NewFile,
+    NewWindow,
+    CloseWindow,
+    CloseInactiveTabsAndPanes,
+    AddFolderToProject,
+    Unfollow,
+    SaveAs,
+    ReloadActiveItem,
+    ActivatePreviousPane,
+    ActivateNextPane,
+    FollowNextCollaborator,
+    NewTerminal,
+    NewCenterTerminal,
+    ToggleTerminalFocus,
+    NewSearch,
+    Feedback,
+    Restart,
+    Welcome,
+    ToggleZoom,
+    ToggleLeftDock,
+    ToggleRightDock,
+    ToggleBottomDock,
+    CloseAllDocks,
+);
 
 // #[derive(Clone, PartialEq)]
 // pub struct OpenPaths {
@@ -227,7 +223,6 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
-    init_modal_registry(cx);
     pane::init(cx);
     notifications::init(cx);
 
@@ -547,7 +542,7 @@ pub struct Workspace {
     last_active_center_pane: Option<WeakView<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
     status_bar: View<StatusBar>,
-    modal_layer: View<ModalLayer>,
+    modal_layer: ModalLayer,
     //     titlebar_item: Option<AnyViewHandle>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
@@ -698,7 +693,8 @@ impl Workspace {
             status_bar
         });
 
-        let modal_layer = cx.build_view(|cx| ModalLayer::new());
+        let workspace_handle = cx.view().downgrade();
+        let modal_layer = ModalLayer::new();
 
         // todo!()
         // cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
@@ -780,6 +776,10 @@ impl Workspace {
             subscriptions,
             pane_history_timestamp,
         }
+    }
+
+    pub fn modal_layer(&mut self) -> &mut ModalLayer {
+        &mut self.modal_layer
     }
 
     fn new_local(
@@ -964,6 +964,9 @@ impl Workspace {
     //             let mut prev_position = panel.position(cx);
     //             move |this, panel, event, cx| {
     //                 if T::should_change_position_on_event(event) {
+    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
+    //                     See: Dock::add_panel
+    //
     //                     let new_position = panel.read(cx).position(cx);
     //                     let mut was_visible = false;
     //                     dock.update(cx, |dock, cx| {
@@ -994,6 +997,9 @@ impl Workspace {
     //                         }
     //                     });
     //                 } else if T::should_zoom_in_on_event(event) {
+    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
+    //                     See: Dock::add_panel
+    //
     //                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
     //                     if !panel.has_focus(cx) {
     //                         cx.focus(&panel);
@@ -1001,6 +1007,9 @@ impl Workspace {
     //                     this.zoomed = Some(panel.downgrade().into_any());
     //                     this.zoomed_position = Some(panel.read(cx).position(cx));
     //                 } else if T::should_zoom_out_on_event(event) {
+    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
+    //                     See: Dock::add_panel
+    //
     //                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, false, cx));
     //                     if this.zoomed_position == Some(prev_position) {
     //                         this.zoomed = None;
@@ -1008,6 +1017,9 @@ impl Workspace {
     //                     }
     //                     cx.notify();
     //                 } else if T::is_focus_event(event) {
+    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
+    //                     See: Dock::add_panel
+    //
     //                     let position = panel.read(cx).position(cx);
     //                     this.dismiss_zoomed_items_to_reveal(Some(position), cx);
     //                     if panel.is_zoomed(cx) {
@@ -3691,9 +3703,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
         .log_err();
 }
 
-impl EventEmitter for Workspace {
-    type Event = Event;
-}
+impl EventEmitter<Event> for Workspace {}
 
 impl Render for Workspace {
     type Element = Div<Self>;
@@ -3712,13 +3722,13 @@ impl Render for Workspace {
             .bg(cx.theme().colors().background)
             .child(self.render_titlebar(cx))
             .child(
+                // todo! should this be a component a view?
                 self.modal_layer
-                    .read(cx)
-                    .render(self, cx)
+                    .wrapper_element(cx)
+                    .relative()
                     .flex_1()
                     .w_full()
                     .flex()
-                    .flex_row()
                     .overflow_hidden()
                     .border_t()
                     .border_b()
@@ -4133,10 +4143,6 @@ impl WorkspaceStore {
             Ok(())
         })?
     }
-}
-
-impl EventEmitter for WorkspaceStore {
-    type Event = ();
 }
 
 impl ViewId {

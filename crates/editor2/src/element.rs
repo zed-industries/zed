@@ -17,10 +17,10 @@ use collections::{BTreeMap, HashMap};
 use gpui::{
     black, hsla, point, px, relative, size, transparent_black, Action, AnyElement,
     BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchContext, DispatchPhase,
-    Edges, Element, ElementId, Entity, GlobalElementId, Hsla, KeyDownEvent, KeyListener, KeyMatch,
-    Line, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    ScrollWheelEvent, ShapedGlyph, Size, Style, TextRun, TextStyle, TextSystem, ViewContext,
-    WindowContext,
+    Edges, Element, ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, Hsla,
+    InputHandler, KeyDownEvent, KeyListener, KeyMatch, Line, LineLayout, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size,
+    Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext, WrappedLineLayout,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -1467,6 +1467,7 @@ impl EditorElement {
             gutter_margin = Pixels::ZERO;
         };
 
+        editor.gutter_width = gutter_width;
         let text_width = bounds.size.width - gutter_width;
         let overscroll = size(em_width, px(0.));
         let snapshot = {
@@ -2502,10 +2503,6 @@ impl Element<Editor> for EditorElement {
             size: layout.text_size,
         };
 
-        if editor.focus_handle.is_focused(cx) {
-            cx.handle_text_input();
-        }
-
         cx.with_content_mask(ContentMask { bounds }, |cx| {
             self.paint_mouse_listeners(
                 bounds,
@@ -2519,6 +2516,8 @@ impl Element<Editor> for EditorElement {
                 self.paint_gutter(gutter_bounds, &layout, editor, cx);
             }
             self.paint_text(text_bounds, &layout, editor, cx);
+            let input_handler = ElementInputHandler::new(bounds, cx);
+            cx.handle_input(&editor.focus_handle, input_handler);
         });
     }
 }

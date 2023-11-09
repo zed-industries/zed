@@ -1872,9 +1872,7 @@ impl MultiBuffer {
     }
 }
 
-impl EventEmitter for MultiBuffer {
-    type Event = Event;
-}
+impl EventEmitter<Event> for MultiBuffer {}
 
 impl MultiBufferSnapshot {
     pub fn text(&self) -> String {

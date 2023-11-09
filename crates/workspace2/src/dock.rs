@@ -7,7 +7,16 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-pub trait Panel: Render + EventEmitter {
+pub enum PanelEvent {
+    ChangePosition,
+    ZoomIn,
+    ZoomOut,
+    Activate,
+    Close,
+    Focus,
+}
+
+pub trait Panel: Render + EventEmitter<PanelEvent> {
     fn persistent_name(&self) -> &'static str;
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
@@ -19,26 +28,12 @@ pub trait Panel: Render + EventEmitter {
     fn icon_label(&self, _: &WindowContext) -> Option<String> {
         None
     }
-    fn should_change_position_on_event(_: &Self::Event) -> bool;
-    fn should_zoom_in_on_event(_: &Self::Event) -> bool {
-        false
-    }
-    fn should_zoom_out_on_event(_: &Self::Event) -> bool {
-        false
-    }
     fn is_zoomed(&self, _cx: &WindowContext) -> bool {
         false
     }
     fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
-    fn should_activate_on_event(_: &Self::Event) -> bool {
-        false
-    }
-    fn should_close_on_event(_: &Self::Event) -> bool {
-        false
-    }
     fn has_focus(&self, cx: &WindowContext) -> bool;
-    fn is_focus_event(_: &Self::Event) -> bool;
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -268,21 +263,37 @@ impl Dock {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
             cx.subscribe(&panel, |this, panel, event, cx| {
-                if T::should_activate_on_event(event) {
-                    if let Some(ix) = this
-                        .panel_entries
-                        .iter()
-                        .position(|entry| entry.panel.id() == panel.id())
-                    {
-                        this.set_open(true, cx);
-                        this.activate_panel(ix, cx);
-                        // todo!()
-                        // cx.focus(&panel);
+                match event {
+                    PanelEvent::ChangePosition => {
+                        //todo!()
+                        // see: Workspace::add_panel_with_extra_event_handler
                     }
-                } else if T::should_close_on_event(event)
-                    && this.visible_panel().map_or(false, |p| p.id() == panel.id())
-                {
-                    this.set_open(false, cx);
+                    PanelEvent::ZoomIn => {
+                        //todo!()
+                        // see: Workspace::add_panel_with_extra_event_handler
+                    }
+                    PanelEvent::ZoomOut => {
+                        // todo!()
+                        // // see: Workspace::add_panel_with_extra_event_handler
+                    }
+                    PanelEvent::Activate => {
+                        if let Some(ix) = this
+                            .panel_entries
+                            .iter()
+                            .position(|entry| entry.panel.id() == panel.id())
+                        {
+                            this.set_open(true, cx);
+                            this.activate_panel(ix, cx);
+                            //` todo!()
+                            // cx.focus(&panel);
+                        }
+                    }
+                    PanelEvent::Close => {
+                        if this.visible_panel().map_or(false, |p| p.id() == panel.id()) {
+                            this.set_open(false, cx);
+                        }
+                    }
+                    PanelEvent::Focus => todo!(),
                 }
             }),
         ];
@@ -407,6 +418,14 @@ impl Dock {
     //     }
 }
 
+impl Render for Dock {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        todo!()
+    }
+}
+
 // todo!()
 // impl View for Dock {
 //     fn ui_name() -> &'static str {
@@ -450,10 +469,6 @@ impl PanelButtons {
         cx.observe(&dock, |_, _, cx| cx.notify()).detach();
         Self { dock, workspace }
     }
-}
-
-impl EventEmitter for PanelButtons {
-    type Event = ();
 }
 
 // impl Render for PanelButtons {
@@ -625,7 +640,7 @@ impl StatusItemView for PanelButtons {
         _active_pane_item: Option<&dyn crate::ItemHandle>,
         _cx: &mut ViewContext<Self>,
     ) {
-        // todo!(This is empty in the old `workspace::dock`)
+        // Nothing to do, panel buttons don't depend on the active center item
     }
 }
 
@@ -633,16 +648,6 @@ impl StatusItemView for PanelButtons {
 pub mod test {
     use super::*;
     use gpui::{div, Div, ViewContext, WindowContext};
-
-    #[derive(Debug)]
-    pub enum TestPanelEvent {
-        PositionChanged,
-        Activated,
-        Closed,
-        ZoomIn,
-        ZoomOut,
-        Focus,
-    }
 
     pub struct TestPanel {
         pub position: DockPosition,
@@ -652,9 +657,7 @@ pub mod test {
         pub size: f32,
     }
 
-    impl EventEmitter for TestPanel {
-        type Event = TestPanelEvent;
-    }
+    impl EventEmitter<PanelEvent> for TestPanel {}
 
     impl TestPanel {
         pub fn new(position: DockPosition) -> Self {
@@ -691,7 +694,7 @@ pub mod test {
 
         fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
             self.position = position;
-            cx.emit(TestPanelEvent::PositionChanged);
+            cx.emit(PanelEvent::ChangePosition);
         }
 
         fn size(&self, _: &WindowContext) -> f32 {
@@ -710,18 +713,6 @@ pub mod test {
             ("Test Panel".into(), None)
         }
 
-        fn should_change_position_on_event(event: &Self::Event) -> bool {
-            matches!(event, TestPanelEvent::PositionChanged)
-        }
-
-        fn should_zoom_in_on_event(event: &Self::Event) -> bool {
-            matches!(event, TestPanelEvent::ZoomIn)
-        }
-
-        fn should_zoom_out_on_event(event: &Self::Event) -> bool {
-            matches!(event, TestPanelEvent::ZoomOut)
-        }
-
         fn is_zoomed(&self, _: &WindowContext) -> bool {
             self.zoomed
         }
@@ -734,20 +725,8 @@ pub mod test {
             self.active = active;
         }
 
-        fn should_activate_on_event(event: &Self::Event) -> bool {
-            matches!(event, TestPanelEvent::Activated)
-        }
-
-        fn should_close_on_event(event: &Self::Event) -> bool {
-            matches!(event, TestPanelEvent::Closed)
-        }
-
         fn has_focus(&self, _cx: &WindowContext) -> bool {
             self.has_focus
-        }
-
-        fn is_focus_event(event: &Self::Event) -> bool {
-            matches!(event, TestPanelEvent::Focus)
         }
     }
 }

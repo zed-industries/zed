@@ -76,9 +76,7 @@ pub enum ChannelChatEvent {
     },
 }
 
-impl EventEmitter for ChannelChat {
-    type Event = ChannelChatEvent;
-}
+impl EventEmitter<ChannelChatEvent> for ChannelChat {}
 pub fn init(client: &Arc<Client>) {
     client.add_model_message_handler(ChannelChat::handle_message_sent);
     client.add_model_message_handler(ChannelChat::handle_message_removed);

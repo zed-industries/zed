@@ -18,8 +18,8 @@ use crate::{
     AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
     Entity, EventEmitter, FocusEvent, FocusHandle, FocusId, ForegroundExecutor, KeyBinding, Keymap,
     LayoutId, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window,
-    WindowContext, WindowHandle, WindowId,
+    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext,
+    Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -167,6 +167,7 @@ type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
+type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
 
 // struct FrameConsumer {
 //     next_frame_callbacks: Vec<FrameCallback>,
@@ -193,6 +194,7 @@ pub struct AppContext {
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) globals_by_type: HashMap<TypeId, AnyBox>,
     pub(crate) entities: EntityMap,
+    pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) keymap: Arc<Mutex<Keymap>>,
     pub(crate) global_action_listeners:
@@ -201,7 +203,8 @@ pub struct AppContext {
     pub(crate) pending_notifications: HashSet<EntityId>,
     pub(crate) pending_global_notifications: HashSet<TypeId>,
     pub(crate) observers: SubscriberSet<EntityId, Handler>,
-    pub(crate) event_listeners: SubscriberSet<EntityId, Listener>,
+    // TypeId is the type of the event that the listener callback expects
+    pub(crate) event_listeners: SubscriberSet<EntityId, (TypeId, Listener)>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -251,6 +254,7 @@ impl AppContext {
                 text_style_stack: Vec::new(),
                 globals_by_type: HashMap::default(),
                 entities,
+                new_view_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
                 keymap: Arc::new(Mutex::new(Keymap::default())),
                 global_action_listeners: HashMap::default(),
@@ -351,14 +355,15 @@ impl AppContext {
         )
     }
 
-    pub fn subscribe<T, E>(
+    pub fn subscribe<T, E, Evt>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(E, &T::Event, &mut AppContext) + 'static,
+        mut on_event: impl FnMut(E, &Evt, &mut AppContext) + 'static,
     ) -> Subscription
     where
-        T: 'static + EventEmitter,
+        T: 'static + EventEmitter<Evt>,
         E: Entity<T>,
+        Evt: 'static,
     {
         self.subscribe_internal(entity, move |entity, event, cx| {
             on_event(entity, event, cx);
@@ -366,27 +371,32 @@ impl AppContext {
         })
     }
 
-    pub(crate) fn subscribe_internal<T, E>(
+    pub(crate) fn subscribe_internal<T, E, Evt>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(E, &T::Event, &mut AppContext) -> bool + 'static,
+        mut on_event: impl FnMut(E, &Evt, &mut AppContext) -> bool + 'static,
     ) -> Subscription
     where
-        T: 'static + EventEmitter,
+        T: 'static + EventEmitter<Evt>,
         E: Entity<T>,
+        Evt: 'static,
     {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
+
         self.event_listeners.insert(
             entity_id,
-            Box::new(move |event, cx| {
-                let event: &T::Event = event.downcast_ref().expect("invalid event type");
-                if let Some(handle) = E::upgrade_from(&entity) {
-                    on_event(handle, event, cx)
-                } else {
-                    false
-                }
-            }),
+            (
+                TypeId::of::<Evt>(),
+                Box::new(move |event, cx| {
+                    let event: &Evt = event.downcast_ref().expect("invalid event type");
+                    if let Some(handle) = E::upgrade_from(&entity) {
+                        on_event(handle, event, cx)
+                    } else {
+                        false
+                    }
+                }),
+            ),
         )
     }
 
@@ -509,7 +519,11 @@ impl AppContext {
                     Effect::Notify { emitter } => {
                         self.apply_notify_effect(emitter);
                     }
-                    Effect::Emit { emitter, event } => self.apply_emit_effect(emitter, event),
+                    Effect::Emit {
+                        emitter,
+                        event_type,
+                        event,
+                    } => self.apply_emit_effect(emitter, event_type, event),
                     Effect::FocusChanged {
                         window_handle,
                         focused,
@@ -599,15 +613,22 @@ impl AppContext {
 
     fn apply_notify_effect(&mut self, emitter: EntityId) {
         self.pending_notifications.remove(&emitter);
+
         self.observers
             .clone()
             .retain(&emitter, |handler| handler(self));
     }
 
-    fn apply_emit_effect(&mut self, emitter: EntityId, event: Box<dyn Any>) {
+    fn apply_emit_effect(&mut self, emitter: EntityId, event_type: TypeId, event: Box<dyn Any>) {
         self.event_listeners
             .clone()
-            .retain(&emitter, |handler| handler(event.as_ref(), self));
+            .retain(&emitter, |(stored_type, handler)| {
+                if *stored_type == event_type {
+                    handler(event.as_ref(), self)
+                } else {
+                    true
+                }
+            });
     }
 
     fn apply_focus_changed_effect(
@@ -617,8 +638,9 @@ impl AppContext {
     ) {
         window_handle
             .update(self, |_, cx| {
+                // The window might change focus multiple times in an effect cycle.
+                // We only honor effects for the most recently focused handle.
                 if cx.window.focus == focused {
-                    let mut listeners = mem::take(&mut cx.window.current_frame.focus_listeners);
                     let focused = focused
                         .map(|id| FocusHandle::for_id(id, &cx.window.focus_handles).unwrap());
                     let blurred = cx
@@ -627,15 +649,24 @@ impl AppContext {
                         .take()
                         .unwrap()
                         .and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
-                    if focused.is_some() || blurred.is_some() {
-                        let event = FocusEvent { focused, blurred };
-                        for listener in &listeners {
+                    let focus_changed = focused.is_some() || blurred.is_some();
+                    let event = FocusEvent { focused, blurred };
+
+                    let mut listeners = mem::take(&mut cx.window.current_frame.focus_listeners);
+                    if focus_changed {
+                        for listener in &mut listeners {
                             listener(&event, cx);
                         }
                     }
-
                     listeners.extend(cx.window.current_frame.focus_listeners.drain(..));
                     cx.window.current_frame.focus_listeners = listeners;
+
+                    if focus_changed {
+                        cx.window
+                            .focus_listeners
+                            .clone()
+                            .retain(&(), |listener| listener(&event, cx));
+                    }
                 }
             })
             .ok();
@@ -828,6 +859,23 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
+    pub fn observe_new_views<V: 'static>(
+        &mut self,
+        on_new: impl 'static + Fn(&mut V, &mut ViewContext<V>),
+    ) -> Subscription {
+        self.new_view_observers.insert(
+            TypeId::of::<V>(),
+            Box::new(move |any_view: AnyView, cx: &mut WindowContext| {
+                any_view
+                    .downcast::<V>()
+                    .unwrap()
+                    .update(cx, |view_state, cx| {
+                        on_new(view_state, cx);
+                    })
+            }),
+        )
+    }
+
     pub fn observe_release<E, T>(
         &mut self,
         handle: &E,
@@ -968,6 +1016,7 @@ pub(crate) enum Effect {
     },
     Emit {
         emitter: EntityId,
+        event_type: TypeId,
         event: Box<dyn Any>,
     },
     FocusChanged {

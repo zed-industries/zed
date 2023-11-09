@@ -10,49 +10,49 @@ use element::Element;
 use frame::frame;
 use gpui::{
     geometry::{rect::RectF, vector::vec2f},
-    platform::WindowOptions,
+    platform::WindowOptions,aa
 };
-use log::LevelFilter;
+use log::LevelFilter;a
 use simplelog::SimpleLogger;
 use themes::{rose_pine, ThemeColors};
-use view::view;
+use view::view;a
 mod adapter {
     use crate::element::AnyElement;
     use crate::element::{LayoutContext, PaintContext};
-    use gpui::{geometry::rect::RectF, LayoutEngine};
+    use gpui::{geometry::rect::RectF, LayoutEngine};aaaa
     use util::ResultExt;
     pub struct Adapter<V>(pub(crate) AnyElement<V>);
-    impl<V: 'static> gpui::Element<V> for Adapter<V> {
-        type LayoutState = Option<LayoutEngine>;
+    impl<V: 'static> gpui::Element<V> for Adapter<V> {aa
+        type LayoutState = Option<LayaoutEngine>;
         type PaintState = ();
         fn layout(
             &mut self,
             constraint: gpui::SizeConstraint,
             view: &mut V,
-            cx: &mut LayoutContext<V>,
+            cx: &mut LayoutContext<V>,aa
         ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
             cx.push_layout_engine(LayoutEngine::new());
-            let node = self.0.layout(view, cx).log_err();
+            let node = self.0.layout(view, cx).log_err();a
             if let Some(node) = node {
                 let layout_engine = cx.layout_engine().unwrap();
                 layout_engine.compute_layout(node, constraint.max).log_err();
             }
             let layout_engine = cx.pop_layout_engine();
-            if true {
+            if true {a
                 if !layout_engine.is_some() {
                     ::core::panicking::panic("assertion failed: layout_engine.is_some()")
                 }
             }
-            (constraint.max, layout_engine)
+            (constraint.max, layout_engine)a
         }
-        fn paint(
+        fn paint(a
             &mut self,
             scene: &mut gpui::SceneBuilder,
             bounds: RectF,
             visible_bounds: RectF,
             layout_engine: &mut Option<LayoutEngine>,
             view: &mut V,
-            legacy_cx: &mut gpui::PaintContext<V>,
+            legacy_cx: &mut gpui::PaintContext<V>,aaa
         ) -> Self::PaintState {
             legacy_cx.push_layout_engine(layout_engine.take().unwrap());
             let mut cx = PaintContext::new(legacy_cx, scene);

@@ -114,9 +114,7 @@ pub enum ChannelEvent {
     ChannelRenamed(ChannelId),
 }
 
-impl EventEmitter for ChannelStore {
-    type Event = ChannelEvent;
-}
+impl EventEmitter<ChannelEvent> for ChannelStore {}
 
 enum OpenedModelHandle<E> {
     Open(WeakModel<E>),

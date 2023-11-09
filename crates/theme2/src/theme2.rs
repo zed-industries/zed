@@ -71,7 +71,7 @@ impl Theme {
         &self.styles.system
     }
 
-    /// Returns the [`ThemeColors`] for the theme.
+    /// Returns the [`PlayerColors`] for the theme.
     #[inline(always)]
     pub fn players(&self) -> &PlayerColors {
         &self.styles.player

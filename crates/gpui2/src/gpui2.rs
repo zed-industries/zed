@@ -9,6 +9,7 @@ mod executor;
 mod focusable;
 mod geometry;
 mod image_cache;
+mod input;
 mod interactive;
 mod keymap;
 mod platform;
@@ -24,7 +25,6 @@ mod text_system;
 mod util;
 mod view;
 mod window;
-mod window_input_handler;
 
 mod private {
     /// A mechanism for restricting implementations of a trait to only those in GPUI.
@@ -45,6 +45,7 @@ pub use focusable::*;
 pub use geometry::*;
 pub use gpui2_macros::*;
 pub use image_cache::*;
+pub use input::*;
 pub use interactive::*;
 pub use keymap::*;
 pub use platform::*;
@@ -66,7 +67,6 @@ pub use text_system::*;
 pub use util::arc_cow::ArcCow;
 pub use view::*;
 pub use window::*;
-pub use window_input_handler::*;
 
 use derive_more::{Deref, DerefMut};
 use std::{
@@ -112,7 +112,7 @@ pub trait VisualContext: Context {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static;
+        V: 'static + Render;
 
     fn update_view<V: 'static, R>(
         &mut self,
@@ -137,6 +137,8 @@ pub trait Entity<T>: Sealed {
     where
         Self: Sized;
 }
+
+pub trait EventEmitter<E: Any>: 'static {}
 
 pub enum GlobalKey {
     Numeric(usize),
@@ -169,10 +171,6 @@ where
     fn set_global<G: 'static>(&mut self, global: G) {
         self.borrow_mut().set_global(global)
     }
-}
-
-pub trait EventEmitter: 'static {
-    type Event: Any;
 }
 
 pub trait Flatten<T> {

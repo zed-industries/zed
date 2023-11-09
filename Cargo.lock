@@ -3235,7 +3235,7 @@ dependencies = [
  "log",
  "parking_lot 0.11.2",
  "regex",
- "rope",
+ "rope2",
  "serde",
  "serde_derive",
  "serde_json",
@@ -6109,7 +6109,6 @@ dependencies = [
  "settings2",
  "theme2",
  "util",
- "workspace2",
 ]
 
 [[package]]
@@ -7244,6 +7243,20 @@ dependencies = [
  "arrayvec 0.7.4",
  "bromberg_sl2",
  "gpui",
+ "log",
+ "rand 0.8.5",
+ "smallvec",
+ "sum_tree",
+ "util",
+]
+
+[[package]]
+name = "rope2"
+version = "0.1.0"
+dependencies = [
+ "arrayvec 0.7.4",
+ "bromberg_sl2",
+ "gpui2",
  "log",
  "rand 0.8.5",
  "smallvec",
@@ -9063,7 +9076,7 @@ dependencies = [
  "postage",
  "rand 0.8.5",
  "regex",
- "rope",
+ "rope2",
  "smallvec",
  "sum_tree",
  "util",
@@ -11352,6 +11365,7 @@ dependencies = [
  "libc",
  "log",
  "lsp2",
+ "menu2",
  "node_runtime",
  "num_cpus",
  "parking_lot 0.11.2",
@@ -11359,6 +11373,7 @@ dependencies = [
  "project2",
  "rand 0.8.5",
  "regex",
+ "rope2",
  "rpc2",
  "rsa 0.4.0",
  "rust-embed",

@@ -284,9 +284,7 @@ pub enum Event {
     CopilotLanguageServerStarted,
 }
 
-impl EventEmitter for Copilot {
-    type Event = Event;
-}
+impl EventEmitter<Event> for Copilot {}
 
 impl Copilot {
     pub fn global(cx: &AppContext) -> Option<Model<Self>> {

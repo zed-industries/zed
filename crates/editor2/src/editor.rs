@@ -39,11 +39,10 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, px, relative, AnyElement, AppContext, BackgroundExecutor, ClipboardItem,
-    Context, DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, PlatformInputHandler, Render,
-    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    action, actions, point, px, relative, rems, size, AnyElement, AppContext, BackgroundExecutor,
+    Bounds, ClipboardItem, Context, DispatchContext, EventEmitter, FocusHandle, FontFeatures,
+    FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, Render, Subscription,
+    Task, TextStyle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -57,6 +56,7 @@ use language::{
     Diagnostic, IndentKind, IndentSize, Language, LanguageRegistry, LanguageServerName,
     OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
+use lazy_static::lazy_static;
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
 use lsp::{DiagnosticSeverity, Documentation, LanguageServerId};
 use movement::TextLayoutDetails;
@@ -66,7 +66,7 @@ pub use multi_buffer::{
     ToPoint,
 };
 use ordered_float::OrderedFloat;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use project::{FormatTrigger, Location, Project};
 use rand::prelude::*;
 use rpc::proto::*;
@@ -96,7 +96,9 @@ use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, SplitDirection, ViewId, Workspace};
+use workspace::{
+    item::ItemEvent, searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace,
+};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -674,6 +676,7 @@ pub struct Editor {
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
+    gutter_width: Pixels,
     style: Option<EditorStyle>,
 }
 
@@ -1903,7 +1906,8 @@ impl Editor {
             if let Some(project) = project.as_ref() {
                 if buffer.read(cx).is_singleton() {
                     project_subscriptions.push(cx.observe(project, |_, _, cx| {
-                        cx.emit(Event::TitleChanged);
+                        cx.emit(ItemEvent::UpdateTab);
+                        cx.emit(ItemEvent::UpdateBreadcrumbs);
                     }));
                 }
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
@@ -1920,9 +1924,15 @@ impl Editor {
             cx,
         );
 
+        let focus_handle = cx.focus_handle();
+        cx.on_focus_in(&focus_handle, Self::handle_focus_in)
+            .detach();
+        cx.on_focus_out(&focus_handle, Self::handle_focus_out)
+            .detach();
+
         let mut this = Self {
             handle: cx.view().downgrade(),
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
             selections,
@@ -1978,6 +1988,7 @@ impl Editor {
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
+            gutter_width: Default::default(),
             style: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -2172,14 +2183,14 @@ impl Editor {
     //         self.collaboration_hub = Some(hub);
     //     }
 
-    //     pub fn set_placeholder_text(
-    //         &mut self,
-    //         placeholder_text: impl Into<Arc<str>>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.placeholder_text = Some(placeholder_text.into());
-    //         cx.notify();
-    //     }
+    pub fn set_placeholder_text(
+        &mut self,
+        placeholder_text: impl Into<Arc<str>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.placeholder_text = Some(placeholder_text.into());
+        cx.notify();
+    }
 
     //     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
     //         self.cursor_shape = cursor_shape;
@@ -2355,6 +2366,15 @@ impl Editor {
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
         cx.emit(Event::SelectionsChanged { local });
+
+        if self.selections.disjoint_anchors().len() == 1 {
+            cx.emit(SearchEvent::ActiveMatchChanged)
+        }
+
+        if local {
+            cx.emit(ItemEvent::UpdateBreadcrumbs);
+        }
+
         cx.notify();
     }
 
@@ -8754,6 +8774,9 @@ impl Editor {
                     self.update_visible_copilot_suggestion(cx);
                 }
                 cx.emit(Event::BufferEdited);
+                cx.emit(ItemEvent::Edit);
+                cx.emit(ItemEvent::UpdateBreadcrumbs);
+                cx.emit(SearchEvent::MatchesInvalidated);
 
                 if *sigleton_buffer_edited {
                     if let Some(project) = &self.project {
@@ -8800,13 +8823,20 @@ impl Editor {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 cx.emit(Event::ExcerptsRemoved { ids: ids.clone() })
             }
-            multi_buffer::Event::Reparsed => cx.emit(Event::Reparsed),
-            multi_buffer::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
-            multi_buffer::Event::Saved => cx.emit(Event::Saved),
-            multi_buffer::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
-            multi_buffer::Event::Reloaded => cx.emit(Event::TitleChanged),
+            multi_buffer::Event::Reparsed => {
+                cx.emit(ItemEvent::UpdateBreadcrumbs);
+            }
+            multi_buffer::Event::DirtyChanged => {
+                cx.emit(ItemEvent::UpdateTab);
+            }
+            multi_buffer::Event::Saved
+            | multi_buffer::Event::FileHandleChanged
+            | multi_buffer::Event::Reloaded => {
+                cx.emit(ItemEvent::UpdateTab);
+                cx.emit(ItemEvent::UpdateBreadcrumbs);
+            }
             multi_buffer::Event::DiffBaseChanged => cx.emit(Event::DiffBaseChanged),
-            multi_buffer::Event::Closed => cx.emit(Event::Closed),
+            multi_buffer::Event::Closed => cx.emit(ItemEvent::CloseItem),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
             }
@@ -9195,6 +9225,45 @@ impl Editor {
     pub fn focus(&self, cx: &mut WindowContext) {
         cx.focus(&self.focus_handle)
     }
+
+    fn handle_focus_in(&mut self, cx: &mut ViewContext<Self>) {
+        if self.focus_handle.is_focused(cx) {
+            // todo!()
+            // let focused_event = EditorFocused(cx.handle());
+            // cx.emit_global(focused_event);
+            cx.emit(Event::Focused);
+        }
+        if let Some(rename) = self.pending_rename.as_ref() {
+            let rename_editor_focus_handle = rename.editor.read(cx).focus_handle.clone();
+            cx.focus(&rename_editor_focus_handle);
+        } else if self.focus_handle.is_focused(cx) {
+            self.blink_manager.update(cx, BlinkManager::enable);
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.finalize_last_transaction(cx);
+                if self.leader_peer_id.is_none() {
+                    buffer.set_active_selections(
+                        &self.selections.disjoint_anchors(),
+                        self.selections.line_mode,
+                        self.cursor_shape,
+                        cx,
+                    );
+                }
+            });
+        }
+    }
+
+    fn handle_focus_out(&mut self, cx: &mut ViewContext<Self>) {
+        // todo!()
+        // let blurred_event = EditorBlurred(cx.handle());
+        // cx.emit_global(blurred_event);
+        self.blink_manager.update(cx, BlinkManager::disable);
+        self.buffer
+            .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
+        self.hide_context_menu(cx);
+        hide_hover(self, cx);
+        cx.emit(Event::Blurred);
+        cx.notify();
+    }
 }
 
 pub trait CollaborationHub {
@@ -9333,12 +9402,8 @@ pub enum Event {
     },
     BufferEdited,
     Edited,
-    Reparsed,
     Focused,
     Blurred,
-    DirtyChanged,
-    Saved,
-    TitleChanged,
     DiffBaseChanged,
     SelectionsChanged {
         local: bool,
@@ -9347,7 +9412,6 @@ pub enum Event {
         local: bool,
         autoscroll: bool,
     },
-    Closed,
 }
 
 pub struct EditorFocused(pub View<Editor>);
@@ -9362,27 +9426,49 @@ pub struct EditorReleased(pub WeakView<Editor>);
 //     }
 // }
 //
-impl EventEmitter for Editor {
-    type Event = Event;
-}
+impl EventEmitter<Event> for Editor {}
 
 impl Render for Editor {
     type Element = EditorElement;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.buffer_font.family.clone(),
-            font_features: settings.buffer_font.features,
-            font_size: settings.buffer_font_size.into(),
-            font_weight: FontWeight::NORMAL,
-            font_style: FontStyle::Normal,
-            line_height: relative(settings.buffer_line_height.value()),
-            underline: None,
+        let text_style = match self.mode {
+            EditorMode::SingleLine => {
+                TextStyle {
+                    color: cx.theme().colors().text,
+                    font_family: "Zed Sans".into(), // todo!()
+                    font_features: FontFeatures::default(),
+                    font_size: rems(1.0).into(),
+                    font_weight: FontWeight::NORMAL,
+                    font_style: FontStyle::Normal,
+                    line_height: relative(1.3).into(), // TODO relative(settings.buffer_line_height.value()),
+                    underline: None,
+                }
+            }
+
+            EditorMode::AutoHeight { max_lines } => todo!(),
+
+            EditorMode::Full => TextStyle {
+                color: cx.theme().colors().text,
+                font_family: settings.buffer_font.family.clone(),
+                font_features: settings.buffer_font.features,
+                font_size: settings.buffer_font_size.into(),
+                font_weight: FontWeight::NORMAL,
+                font_style: FontStyle::Normal,
+                line_height: relative(settings.buffer_line_height.value()),
+                underline: None,
+            },
         };
+
+        let background = match self.mode {
+            EditorMode::SingleLine => cx.theme().system().transparent,
+            EditorMode::AutoHeight { max_lines } => cx.theme().system().transparent,
+            EditorMode::Full => cx.theme().colors().editor_background,
+        };
+
         EditorElement::new(EditorStyle {
-            background: cx.theme().colors().editor_background,
+            background,
             local_player: cx.theme().players().local(),
             text: text_style,
             scrollbar_width: px(12.),
@@ -9494,7 +9580,7 @@ impl Render for Editor {
 
 impl InputHandler for Editor {
     fn text_for_range(
-        &self,
+        &mut self,
         range_utf16: Range<usize>,
         cx: &mut ViewContext<Self>,
     ) -> Option<String> {
@@ -9507,7 +9593,7 @@ impl InputHandler for Editor {
         )
     }
 
-    fn selected_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
+    fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
         // Prevent the IME menu from appearing when holding down an alphabetic key
         // while input is disabled.
         if !self.input_enabled {
@@ -9705,13 +9791,35 @@ impl InputHandler for Editor {
     }
 
     fn bounds_for_range(
-        &self,
+        &mut self,
         range_utf16: Range<usize>,
+        element_bounds: gpui::Bounds<Pixels>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<gpui::Bounds<f32>> {
-        // todo!()
-        // See how we did it before: `rect_for_range`
-        None
+    ) -> Option<gpui::Bounds<Pixels>> {
+        let text_layout_details = self.text_layout_details(cx);
+        let style = &text_layout_details.editor_style;
+        let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
+        let font_size = style.text.font_size.to_pixels(cx.rem_size());
+        let line_height = style.text.line_height_in_pixels(cx.rem_size());
+        let em_width = cx
+            .text_system()
+            .typographic_bounds(font_id, font_size, 'm')
+            .unwrap()
+            .size
+            .width;
+
+        let snapshot = self.snapshot(cx);
+        let scroll_position = snapshot.scroll_position();
+        let scroll_left = scroll_position.x * em_width;
+
+        let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
+        let x = snapshot.x_for_point(start, &text_layout_details) - scroll_left + self.gutter_width;
+        let y = line_height * (start.row() as f32 - scroll_position.y);
+
+        Some(Bounds {
+            origin: element_bounds.origin + point(x, y),
+            size: size(em_width, line_height),
+        })
     }
 }
 

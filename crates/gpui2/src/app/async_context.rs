@@ -258,7 +258,7 @@ impl VisualContext for AsyncWindowContext {
         build_view_state: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static,
+        V: 'static + Render,
     {
         self.window
             .update(self, |_, cx| cx.build_view(build_view_state))

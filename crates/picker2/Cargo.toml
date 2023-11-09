@@ -15,7 +15,6 @@ menu = { package = "menu2", path = "../menu2" }
 settings = { package = "settings2", path = "../settings2" }
 util = { path = "../util" }
 theme = { package = "theme2", path = "../theme2" }
-workspace = { package = "workspace2", path = "../workspace2" }
 
 parking_lot.workspace = true
 
@@ -23,6 +22,5 @@ parking_lot.workspace = true
 editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 serde_json.workspace = true
-workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true
