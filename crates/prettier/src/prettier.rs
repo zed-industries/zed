@@ -64,6 +64,12 @@ impl Prettier {
             .components()
             .take_while(|component| component.as_os_str().to_string_lossy() != "node_modules")
             .collect::<PathBuf>();
+        if path_to_check != locate_from {
+            log::debug!(
+                "Skipping prettier location for path {path_to_check:?} that is inside node_modules"
+            );
+            return Ok(ControlFlow::Break(()));
+        }
         let path_to_check_metadata = fs
             .metadata(&path_to_check)
             .await

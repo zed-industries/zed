@@ -173,8 +173,7 @@ pub struct Project {
 struct DefaultPrettier {
     instance: Option<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>,
     installation_process: Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>>,
-    // TODO kb uncomment
-    // #[cfg(not(any(test, feature = "test-support")))]
+    #[cfg(not(any(test, feature = "test-support")))]
     installed_plugins: HashSet<&'static str>,
 }
 
@@ -8540,18 +8539,17 @@ impl Project {
         }
     }
 
-    // TODO kb uncomment
-    // #[cfg(any(test, feature = "test-support"))]
-    // fn install_default_formatters(
-    //     &mut self,
-    //     _worktree: Option<WorktreeId>,
-    //     _new_language: &Language,
-    //     _language_settings: &LanguageSettings,
-    //     _cx: &mut ModelContext<Self>,
-    // ) {
-    // }
+    #[cfg(any(test, feature = "test-support"))]
+    fn install_default_formatters(
+        &mut self,
+        _worktree: Option<WorktreeId>,
+        _new_language: &Language,
+        _language_settings: &LanguageSettings,
+        _cx: &mut ModelContext<Self>,
+    ) {
+    }
 
-    // #[cfg(not(any(test, feature = "test-support")))]
+    #[cfg(not(any(test, feature = "test-support")))]
     fn install_default_formatters(
         &mut self,
         worktree: Option<WorktreeId>,
@@ -8714,8 +8712,7 @@ fn start_default_prettier(
                         .get_or_insert_with(|| DefaultPrettier {
                             instance: None,
                             installation_process: None,
-                            // TODO kb uncomment
-                            // #[cfg(not(any(test, feature = "test-support")))]
+                            #[cfg(not(any(test, feature = "test-support")))]
                             installed_plugins: HashSet::default(),
                         })
                         .instance = Some(new_default_prettier.clone());
@@ -8797,8 +8794,7 @@ fn register_new_prettier(
     }
 }
 
-// TODO kb uncomment
-// #[cfg(not(any(test, feature = "test-support")))]
+#[cfg(not(any(test, feature = "test-support")))]
 async fn install_default_prettier(
     plugins_to_install: HashSet<&'static str>,
     node: Arc<dyn NodeRuntime>,
