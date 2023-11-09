@@ -18,7 +18,7 @@ env:
 
 jobs:
   rustfmt:
-    name: Check formatting
+    name: Formatting & Compiling
     runs-on:
       - self-hosted
       - test
@@ -34,11 +34,20 @@ jobs:
           clean: false
           submodules: "recursive"
 
+      - name: Limit target directory size
+        run: script/clear-target-dir-if-larger-than 70
+
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
+      - name: Run check
+        run: cargo check --workspace
+
+      - name: Build all binaries
+        run: cargo build --workspace --bins --all-features
+
   tests:
-    name: Run tests
+    name: Tests
     runs-on:
       - self-hosted
       - test
@@ -67,17 +76,8 @@ jobs:
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 70
 
-      - name: Run check
-        run: cargo check --workspace
-
       - name: Run tests
         run: cargo nextest run --workspace --no-fail-fast
-
-      - name: Build collab
-        run: cargo build -p collab
-
-      - name: Build other binaries
-        run: cargo build --workspace --bins --all-features
 
   bundle:
     name: Bundle app
