@@ -2,8 +2,8 @@ use std::fmt::{self, Debug};
 
 use gpui::{Hsla, Rgba};
 use theme::{
-    Appearance, PlayerColor, PlayerColors, StatusColors, StatusColorsRefinement, SyntaxTheme,
-    SystemColors, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, PlayerColor, PlayerColors, StatusColorsRefinement, SystemColors,
+    ThemeColorsRefinement, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 struct RawSyntaxPrinter<'a>(&'a str);
@@ -27,6 +27,17 @@ struct IntoPrinter<'a, D: Debug>(&'a D);
 impl<'a, D: Debug> Debug for IntoPrinter<'a, D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}.into()", self.0)
+    }
+}
+
+pub struct OptionPrinter<'a, T>(&'a Option<T>);
+
+impl<'a, T: Debug> Debug for OptionPrinter<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(value) => write!(f, "Some({:?})", value),
+            None => write!(f, "None"),
+        }
     }
 }
 
@@ -93,6 +104,16 @@ impl<'a> Debug for UserThemeStylesRefinementPrinter<'a> {
         f.debug_struct("UserThemeStylesRefinement")
             .field("colors", &ThemeColorsRefinementPrinter(&self.0.colors))
             .field("status", &StatusColorsRefinementPrinter(&self.0.status))
+            .field(
+                "syntax",
+                &OptionPrinter(
+                    &self
+                        .0
+                        .syntax
+                        .as_ref()
+                        .map(|syntax| UserSyntaxThemePrinter(syntax)),
+                ),
+            )
             .finish()
     }
 }
@@ -316,11 +337,11 @@ impl<'a> Debug for PlayerColorPrinter<'a> {
     }
 }
 
-pub struct SyntaxThemePrinter<'a>(&'a SyntaxTheme);
+pub struct UserSyntaxThemePrinter<'a>(&'a UserSyntaxTheme);
 
-impl<'a> Debug for SyntaxThemePrinter<'a> {
+impl<'a> Debug for UserSyntaxThemePrinter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SyntaxTheme")
+        f.debug_struct("UserSyntaxTheme")
             .field(
                 "highlights",
                 &VecPrinter(

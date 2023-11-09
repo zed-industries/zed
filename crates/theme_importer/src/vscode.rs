@@ -1,9 +1,13 @@
 use anyhow::Result;
 use gpui::{Hsla, Rgba};
 use serde::Deserialize;
-use theme::{StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeStylesRefinement};
+use theme::{
+    StatusColorsRefinement, ThemeColorsRefinement, UserSyntaxTheme, UserTheme,
+    UserThemeStylesRefinement,
+};
 
 use crate::util::Traverse;
+use crate::vscode_syntax::VsCodeTokenColor;
 use crate::ThemeMetadata;
 
 #[derive(Deserialize, Debug)]
@@ -18,6 +22,8 @@ pub struct VsCodeTheme {
     #[serde(rename = "semanticHighlighting")]
     pub semantic_highlighting: Option<bool>,
     pub colors: VsCodeColors,
+    #[serde(rename = "tokenColors")]
+    pub token_colors: Vec<VsCodeTokenColor>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -413,7 +419,7 @@ pub struct VsCodeColors {
     pub list_filter_widget_no_matches_outline: Option<String>,
 }
 
-fn try_parse_color(color: &str) -> Result<Hsla> {
+pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
     Ok(Rgba::try_from(color)?.into())
 }
 
@@ -618,12 +624,23 @@ impl VsCodeThemeConverter {
             ..Default::default()
         };
 
+        let mut highlight_styles = Vec::new();
+
+        for token_color in self.theme.token_colors {
+            highlight_styles.extend(token_color.highlight_styles()?);
+        }
+
+        let syntax_theme = UserSyntaxTheme {
+            highlights: highlight_styles,
+        };
+
         Ok(UserTheme {
             name: self.theme_metadata.name.into(),
             appearance,
             styles: UserThemeStylesRefinement {
                 colors: theme_colors_refinements,
                 status: status_color_refinements,
+                syntax: Some(syntax_theme),
             },
         })
     }

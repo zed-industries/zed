@@ -1,3 +1,4 @@
+use gpui::Hsla;
 use refineable::Refineable;
 use serde::Deserialize;
 
@@ -24,4 +25,21 @@ pub struct UserThemeStyles {
     pub colors: ThemeColors,
     #[refineable]
     pub status: StatusColors,
+    pub syntax: UserSyntaxTheme,
+}
+
+#[derive(Clone, Default, Deserialize)]
+pub struct UserSyntaxTheme {
+    pub highlights: Vec<(String, UserHighlightStyle)>,
+}
+
+#[derive(Clone, Default, Deserialize)]
+pub struct UserHighlightStyle {
+    pub color: Option<Hsla>,
+}
+
+impl UserHighlightStyle {
+    pub fn is_empty(&self) -> bool {
+        self.color.is_none()
+    }
 }

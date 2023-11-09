@@ -1,6 +1,7 @@
 mod theme_printer;
 mod util;
 mod vscode;
+mod vscode_syntax;
 
 use std::fs::{self, File};
 use std::io::Write;

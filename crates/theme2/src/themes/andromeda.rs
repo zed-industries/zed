@@ -59,6 +59,17 @@ pub fn andromeda() -> UserThemeFamily {
                         hidden: Some(rgba(0x746f77ff).into()),
                         ..Default::default()
                     },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            ("comment".into(), rgba(0x9fa0a6cc).into()),
+                            ("something".into(), rgba(0x00e8c6ff).into()),
+                            ("punctuation".into(), rgba(0xf92571ff).into()),
+                            ("something".into(), rgba(0xc64dedff).into()),
+                            ("something".into(), rgba(0xee5d42ff).into()),
+                            ("something".into(), rgba(0x95e072ff).into()),
+                            ("punctuation".into(), rgba(0x95e072ff).into()),
+                        ],
+                    }),
                 },
             },
             UserTheme {
@@ -107,6 +118,17 @@ pub fn andromeda() -> UserThemeFamily {
                         hidden: Some(rgba(0x746f77ff).into()),
                         ..Default::default()
                     },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            ("comment".into(), rgba(0x9fa0a6cc).into()),
+                            ("something".into(), rgba(0x00e8c6ff).into()),
+                            ("punctuation".into(), rgba(0xf92571ff).into()),
+                            ("something".into(), rgba(0xc64dedff).into()),
+                            ("something".into(), rgba(0xee5d42ff).into()),
+                            ("something".into(), rgba(0x95e072ff).into()),
+                            ("punctuation".into(), rgba(0x95e072ff).into()),
+                        ],
+                    }),
                 },
             },
         ],

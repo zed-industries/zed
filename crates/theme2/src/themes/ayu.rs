@@ -63,6 +63,23 @@ pub fn ayu() -> UserThemeFamily {
                         hidden: Some(rgba(0x8a9199ff).into()),
                         ..Default::default()
                     },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            ("comment".into(), rgba(0x787b8099).into()),
+                            ("something".into(), rgba(0x86b300ff).into()),
+                            ("something".into(), rgba(0x5c6166ff).into()),
+                            ("something".into(), rgba(0xfa8d3eff).into()),
+                            ("punctuation".into(), rgba(0x5c6166b3).into()),
+                            ("punctuation".into(), rgba(0x5c6166ff).into()),
+                            ("punctuation".into(), rgba(0xed9365ff).into()),
+                            ("punctuation".into(), rgba(0xfa8d3eff).into()),
+                            ("punctuation".into(), rgba(0xfa8d3eff).into()),
+                            ("punctuation".into(), rgba(0x55b4d380).into()),
+                            ("punctuation".into(), rgba(0x55b4d380).into()),
+                            ("punctuation".into(), rgba(0x55b4d380).into()),
+                            ("punctuation".into(), rgba(0x787b8099).into()),
+                        ],
+                    }),
                 },
             },
             UserTheme {
@@ -115,6 +132,23 @@ pub fn ayu() -> UserThemeFamily {
                         hidden: Some(rgba(0x707a8cff).into()),
                         ..Default::default()
                     },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            ("comment".into(), rgba(0xb8cfe680).into()),
+                            ("something".into(), rgba(0xd4fe7fff).into()),
+                            ("something".into(), rgba(0xcccac2ff).into()),
+                            ("something".into(), rgba(0xffad65ff).into()),
+                            ("punctuation".into(), rgba(0xcccac2b3).into()),
+                            ("punctuation".into(), rgba(0xcccac2ff).into()),
+                            ("punctuation".into(), rgba(0xf29e74ff).into()),
+                            ("punctuation".into(), rgba(0xffad65ff).into()),
+                            ("punctuation".into(), rgba(0xffad65ff).into()),
+                            ("punctuation".into(), rgba(0x5ccfe680).into()),
+                            ("punctuation".into(), rgba(0x5ccfe680).into()),
+                            ("punctuation".into(), rgba(0x5ccfe680).into()),
+                            ("punctuation".into(), rgba(0xb8cfe680).into()),
+                        ],
+                    }),
                 },
             },
             UserTheme {
@@ -167,6 +201,23 @@ pub fn ayu() -> UserThemeFamily {
                         hidden: Some(rgba(0x565b66ff).into()),
                         ..Default::default()
                     },
+                    syntax: Some(UserSyntaxTheme {
+                        highlights: vec![
+                            ("comment".into(), rgba(0xabb5be8c).into()),
+                            ("something".into(), rgba(0xa9d94bff).into()),
+                            ("something".into(), rgba(0xbfbdb6ff).into()),
+                            ("something".into(), rgba(0xff8f3fff).into()),
+                            ("punctuation".into(), rgba(0xbfbdb6b3).into()),
+                            ("punctuation".into(), rgba(0xbfbdb6ff).into()),
+                            ("punctuation".into(), rgba(0xf29668ff).into()),
+                            ("punctuation".into(), rgba(0xff8f3fff).into()),
+                            ("punctuation".into(), rgba(0xff8f3fff).into()),
+                            ("punctuation".into(), rgba(0x38b9e680).into()),
+                            ("punctuation".into(), rgba(0x38b9e680).into()),
+                            ("punctuation".into(), rgba(0x38b9e680).into()),
+                            ("punctuation".into(), rgba(0xabb5be8c).into()),
+                        ],
+                    }),
                 },
             },
         ],
