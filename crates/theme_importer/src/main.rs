@@ -160,7 +160,8 @@ fn main() -> Result<()> {
             use gpui::rgba;
 
             use crate::{{
-                Appearance, ThemeColorsRefinement, StatusColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+                Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
+                UserTheme, UserThemeFamily, UserThemeStylesRefinement,
             }};
 
             pub fn {theme_family_slug}() -> UserThemeFamily {{

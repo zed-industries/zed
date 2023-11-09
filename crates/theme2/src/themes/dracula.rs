@@ -4,8 +4,8 @@
 use gpui::rgba;
 
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeFamily,
-    UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
+    UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn dracula() -> UserThemeFamily {
@@ -66,9 +66,27 @@ pub fn dracula() -> UserThemeFamily {
                 },
                 syntax: Some(UserSyntaxTheme {
                     highlights: vec![
-                        ("comment".into(), rgba(0x6272a4ff).into()),
-                        ("something".into(), rgba(0xf8f8f2ff).into()),
-                        ("punctuation".into(), rgba(0xff79c6ff).into()),
+                        (
+                            "comment".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x6272a4ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xff79c6ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "something".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf8f8f2ff).into()),
+                                ..Default::default()
+                            },
+                        ),
                     ],
                 }),
             },

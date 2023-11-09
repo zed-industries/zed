@@ -3,7 +3,8 @@ use std::fmt::{self, Debug};
 use gpui::{Hsla, Rgba};
 use theme::{
     Appearance, PlayerColor, PlayerColors, StatusColorsRefinement, SystemColors,
-    ThemeColorsRefinement, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 struct RawSyntaxPrinter<'a>(&'a str);
@@ -350,11 +351,35 @@ impl<'a> Debug for UserSyntaxThemePrinter<'a> {
                         .highlights
                         .iter()
                         .map(|(token, highlight)| {
-                            (IntoPrinter(token), HslaPrinter(highlight.color.unwrap()))
+                            (IntoPrinter(token), UserHighlightStylePrinter(&highlight))
                         })
                         .collect(),
                 ),
             )
             .finish()
+    }
+}
+
+pub struct UserHighlightStylePrinter<'a>(&'a UserHighlightStyle);
+
+impl<'a> Debug for UserHighlightStylePrinter<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let fields = vec![("color", self.0.color)];
+
+        f.write_str("UserHighlightStyle {")?;
+
+        for (field_name, value) in fields {
+            if let Some(color) = value {
+                f.write_str(field_name)?;
+                f.write_str(": ")?;
+                f.write_str("Some(")?;
+                HslaPrinter(color).fmt(f)?;
+                f.write_str(")")?;
+                f.write_str(",")?;
+            }
+        }
+
+        f.write_str("..Default::default()")?;
+        f.write_str("}")
     }
 }

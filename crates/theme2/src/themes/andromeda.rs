@@ -4,8 +4,8 @@
 use gpui::rgba;
 
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeFamily,
-    UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
+    UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn andromeda() -> UserThemeFamily {
@@ -61,9 +61,27 @@ pub fn andromeda() -> UserThemeFamily {
                     },
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
-                            ("comment".into(), rgba(0x9fa0a6cc).into()),
-                            ("something".into(), rgba(0x95e072ff).into()),
-                            ("punctuation".into(), rgba(0x95e072ff).into()),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x95e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x95e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9fa0a6cc).into()),
+                                    ..Default::default()
+                                },
+                            ),
                         ],
                     }),
                 },
@@ -116,9 +134,27 @@ pub fn andromeda() -> UserThemeFamily {
                     },
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
-                            ("punctuation".into(), rgba(0x95e072ff).into()),
-                            ("comment".into(), rgba(0x9fa0a6cc).into()),
-                            ("something".into(), rgba(0x95e072ff).into()),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x95e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x95e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9fa0a6cc).into()),
+                                    ..Default::default()
+                                },
+                            ),
                         ],
                     }),
                 },

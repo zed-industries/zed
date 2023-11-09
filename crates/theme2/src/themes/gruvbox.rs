@@ -4,8 +4,8 @@
 use gpui::rgba;
 
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeFamily,
-    UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
+    UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn gruvbox() -> UserThemeFamily {
@@ -64,9 +64,27 @@ pub fn gruvbox() -> UserThemeFamily {
                     },
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
-                            ("comment".into(), rgba(0x928374ff).into()),
-                            ("something".into(), rgba(0x83a598ff).into()),
-                            ("punctuation".into(), rgba(0x83a598ff).into()),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
                         ],
                     }),
                 },
@@ -122,9 +140,27 @@ pub fn gruvbox() -> UserThemeFamily {
                     },
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
-                            ("something".into(), rgba(0x83a598ff).into()),
-                            ("comment".into(), rgba(0x928374ff).into()),
-                            ("punctuation".into(), rgba(0x83a598ff).into()),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
                         ],
                     }),
                 },
@@ -180,9 +216,27 @@ pub fn gruvbox() -> UserThemeFamily {
                     },
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
-                            ("comment".into(), rgba(0x928374ff).into()),
-                            ("something".into(), rgba(0x83a598ff).into()),
-                            ("punctuation".into(), rgba(0x83a598ff).into()),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
                         ],
                     }),
                 },
@@ -238,9 +292,27 @@ pub fn gruvbox() -> UserThemeFamily {
                     },
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
-                            ("comment".into(), rgba(0x928374ff).into()),
-                            ("something".into(), rgba(0x066578ff).into()),
-                            ("punctuation".into(), rgba(0x066578ff).into()),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x066578ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x066578ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
                         ],
                     }),
                 },
@@ -296,9 +368,27 @@ pub fn gruvbox() -> UserThemeFamily {
                     },
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
-                            ("something".into(), rgba(0x066578ff).into()),
-                            ("comment".into(), rgba(0x928374ff).into()),
-                            ("punctuation".into(), rgba(0x066578ff).into()),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x066578ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x066578ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
                         ],
                     }),
                 },
@@ -354,9 +444,27 @@ pub fn gruvbox() -> UserThemeFamily {
                     },
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
-                            ("something".into(), rgba(0x066578ff).into()),
-                            ("comment".into(), rgba(0x928374ff).into()),
-                            ("punctuation".into(), rgba(0x066578ff).into()),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x066578ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x066578ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
                         ],
                     }),
                 },

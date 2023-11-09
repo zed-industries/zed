@@ -4,8 +4,8 @@
 use gpui::rgba;
 
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeFamily,
-    UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
+    UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn palenight() -> UserThemeFamily {
@@ -65,9 +65,27 @@ pub fn palenight() -> UserThemeFamily {
                     },
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
-                            ("punctuation".into(), rgba(0xd3413dff).into()),
-                            ("something".into(), rgba(0x7fcac3ff).into()),
-                            ("comment".into(), rgba(0x687097ff).into()),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x687097ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fcac3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3413dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
                         ],
                     }),
                 },
@@ -124,9 +142,27 @@ pub fn palenight() -> UserThemeFamily {
                     },
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
-                            ("something".into(), rgba(0x7fcac3ff).into()),
-                            ("comment".into(), rgba(0x687097ff).into()),
-                            ("punctuation".into(), rgba(0xd3413dff).into()),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fcac3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x687097ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3413dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
                         ],
                     }),
                 },
@@ -183,9 +219,27 @@ pub fn palenight() -> UserThemeFamily {
                     },
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
-                            ("something".into(), rgba(0x7fcac3ff).into()),
-                            ("comment".into(), rgba(0x687097ff).into()),
-                            ("punctuation".into(), rgba(0xd3413dff).into()),
+                            (
+                                "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x687097ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "something".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fcac3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3413dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
                         ],
                     }),
                 },

@@ -4,8 +4,8 @@
 use gpui::rgba;
 
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeFamily,
-    UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
+    UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn synthwave_84() -> UserThemeFamily {
@@ -51,9 +51,27 @@ pub fn synthwave_84() -> UserThemeFamily {
                 },
                 syntax: Some(UserSyntaxTheme {
                     highlights: vec![
-                        ("comment".into(), rgba(0x848bbdff).into()),
-                        ("something".into(), rgba(0xfe444fff).into()),
-                        ("punctuation".into(), rgba(0xfede5cff).into()),
+                        (
+                            "comment".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x848bbdff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xfede5cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "something".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xfe444fff).into()),
+                                ..Default::default()
+                            },
+                        ),
                     ],
                 }),
             },
