@@ -96,6 +96,22 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis.strong".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffcb6bff).into()),
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x82aaffff).into()),
@@ -110,6 +126,48 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff869aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff869aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf78b6bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x89ddffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fcac3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc3e88dff).into()),
@@ -117,7 +175,42 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5571ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc3e88dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffcb6bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffcb6bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xff5571ff).into()),
                                     ..Default::default()
@@ -209,6 +302,22 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis.strong".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffcb6bff).into()),
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x82aaffff).into()),
@@ -223,6 +332,48 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff869aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff869aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf78b6bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x89ddffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fcac3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc3e88dff).into()),
@@ -230,7 +381,42 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5571ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc3e88dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffcb6bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffcb6bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xff5571ff).into()),
                                     ..Default::default()
@@ -322,6 +508,22 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis.strong".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffcb6bff).into()),
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x82aaffff).into()),
@@ -336,6 +538,48 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff869aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff869aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf78b6bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x89ddffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fcac3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc3e88dff).into()),
@@ -343,7 +587,42 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5571ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc3e88dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffcb6bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffcb6bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xff5571ff).into()),
                                     ..Default::default()

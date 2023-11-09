@@ -113,6 +113,35 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf78b6bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fdbcaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fcac3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xecc48dff).into()),
@@ -120,7 +149,42 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcaece6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xecc48dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5e478ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5e478ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x7fdbcaff).into()),
                                     ..Default::default()
@@ -230,6 +294,35 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xaa0881ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0b969bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0b969bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994bc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x4876d6ff).into()),
@@ -237,7 +330,42 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994bc3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0b969bff).into()),
                                     ..Default::default()

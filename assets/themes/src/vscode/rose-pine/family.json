@@ -1,21 +1,21 @@
 {
-    "name": "Rose Pine",
-    "author": "Rosé Pine",
-    "themes": [
-        {
-            "name": "Rose Pine",
-            "file_name": "rose-pine.json",
-            "appearance": "dark"
-        },
-        {
-            "name": "Rose Moon",
-            "file_name": "rose-pine-moon.json",
-            "appearance": "dark"
-        },
-        {
-            "name": "Rose Pine Dawn",
-            "file_name": "rose-pine-dawn.json",
-            "appearance": "light"
-        }
-    ]
+  "name": "Rose Pine",
+  "author": "Rosé Pine",
+  "themes": [
+    {
+      "name": "Rose Pine",
+      "file_name": "rose-pine.json",
+      "appearance": "dark"
+    },
+    {
+      "name": "Rose Pine Moon",
+      "file_name": "rose-pine-moon.json",
+      "appearance": "dark"
+    },
+    {
+      "name": "Rose Pine Dawn",
+      "file_name": "rose-pine-dawn.json",
+      "appearance": "light"
+    }
+  ]
 }

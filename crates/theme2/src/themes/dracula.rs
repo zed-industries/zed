@@ -85,7 +85,16 @@ pub fn dracula() -> UserThemeFamily {
                         (
                             "emphasis".into(),
                             UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
                                 font_style: Some(UserFontStyle::Italic),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "emphasis.strong".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xffb76bff).into()),
+                                font_weight: Some(UserFontWeight(700.0)),
                                 ..Default::default()
                             },
                         ),
@@ -104,7 +113,35 @@ pub fn dracula() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "link_text".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x8be9fdff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "link_uri".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x8be9fdff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "string".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "tag".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xff79c6ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "text.literal".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xf1fa8cff).into()),
                                 ..Default::default()
@@ -120,6 +157,14 @@ pub fn dracula() -> UserThemeFamily {
                         ),
                         (
                             "variable".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xbd93f9ff).into()),
+                                font_style: Some(UserFontStyle::Italic),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "variable.special".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xbd93f9ff).into()),
                                 font_style: Some(UserFontStyle::Italic),

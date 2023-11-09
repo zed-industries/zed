@@ -11,7 +11,7 @@ use crate::util::Traverse;
 use crate::vscode::VsCodeTheme;
 use crate::ThemeMetadata;
 
-use super::{VsCodeTokenScope, ZedSyntaxToken};
+use super::ZedSyntaxToken;
 
 pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
     Ok(Rgba::try_from(color)?.into())
@@ -268,19 +268,15 @@ impl VsCodeThemeConverter {
         let mut highlight_styles = IndexMap::new();
 
         for syntax_token in ZedSyntaxToken::iter() {
-            let vscode_scope = syntax_token.to_vscode();
+            let multimatch_scopes = syntax_token.to_vscode();
 
-            let token_color = self
-                .theme
-                .token_colors
-                .iter()
-                .find(|token_color| match token_color.scope {
-                    Some(VsCodeTokenScope::One(ref scope)) => scope == vscode_scope,
-                    Some(VsCodeTokenScope::Many(ref scopes)) => {
-                        scopes.contains(&vscode_scope.to_string())
-                    }
-                    None => false,
-                });
+            let token_color = self.theme.token_colors.iter().find(|token_color| {
+                token_color
+                    .scope
+                    .as_ref()
+                    .map(|scope| scope.multimatch(&multimatch_scopes))
+                    .unwrap_or(false)
+            });
 
             let Some(token_color) = token_color else {
                 continue;

@@ -88,6 +88,14 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis.strong".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfe7f18ff).into()),
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfabd2eff).into()),
@@ -98,6 +106,41 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "keyword".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfb4833ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3869bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3869bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8ec07cff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x679d6aff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -123,9 +166,37 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8ec07cff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb8bb25ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "type".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -207,6 +278,14 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis.strong".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfe7f18ff).into()),
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfabd2eff).into()),
@@ -217,6 +296,41 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "keyword".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfb4833ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3869bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3869bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8ec07cff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x679d6aff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -242,9 +356,37 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8ec07cff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb8bb25ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "type".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -326,6 +468,14 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis.strong".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfe7f18ff).into()),
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfabd2eff).into()),
@@ -336,6 +486,41 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "keyword".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfb4833ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3869bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3869bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8ec07cff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x679d6aff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -361,9 +546,37 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8ec07cff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb8bb25ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "type".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfabd2eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -445,6 +658,14 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis.strong".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xaf3a02ff).into()),
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb57613ff).into()),
@@ -455,6 +676,41 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "keyword".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x9d0006ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8f3e71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8f3e71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x427b58ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x679d6aff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -480,9 +736,37 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x427b58ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x79740eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "type".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x066578ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -564,6 +848,14 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis.strong".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xaf3a02ff).into()),
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb57613ff).into()),
@@ -574,6 +866,41 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "keyword".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x9d0006ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8f3e71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8f3e71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x427b58ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x679d6aff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -599,9 +926,37 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x427b58ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x79740eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "type".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x066578ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -683,6 +1038,14 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis.strong".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xaf3a02ff).into()),
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb57613ff).into()),
@@ -693,6 +1056,41 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "keyword".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x9d0006ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8f3e71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8f3e71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x427b58ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x679d6aff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -718,9 +1116,37 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x427b58ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x79740eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "type".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb57613ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x066578ff).into()),
                                     ..Default::default()
                                 },
                             ),

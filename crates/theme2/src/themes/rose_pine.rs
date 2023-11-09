@@ -91,9 +91,31 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xeb6f92ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "keyword".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x30738fff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xebbcbaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xebbcbaff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -112,6 +134,27 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9ccfd8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf5c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xebbcbaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "type".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x9ccfd8ff).into()),
@@ -120,6 +163,14 @@ pub fn rose_pine() -> UserThemeFamily {
                             ),
                             (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xebbcbaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xe0def4ff).into()),
                                     ..Default::default()
@@ -130,7 +181,7 @@ pub fn rose_pine() -> UserThemeFamily {
                 },
             },
             UserTheme {
-                name: "Rose Moon".into(),
+                name: "Rose Pine Moon".into(),
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
@@ -206,9 +257,31 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xeb6f92ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "keyword".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x3d8fb0ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9a97ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9a97ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -227,6 +300,27 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9ccfd8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf5c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9a97ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "type".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x9ccfd8ff).into()),
@@ -235,6 +329,14 @@ pub fn rose_pine() -> UserThemeFamily {
                             ),
                             (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9a97ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xe0def4ff).into()),
                                     ..Default::default()
@@ -321,9 +423,31 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb3627aff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "keyword".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x276983ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd7827dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd7827dff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -342,6 +466,27 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x55949fff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9d34ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd7827dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "type".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x55949fff).into()),
@@ -350,6 +495,14 @@ pub fn rose_pine() -> UserThemeFamily {
                             ),
                             (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd7827dff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x575279ff).into()),
                                     ..Default::default()

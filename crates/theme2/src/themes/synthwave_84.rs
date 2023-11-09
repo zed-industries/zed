@@ -89,6 +89,69 @@ pub fn synthwave_84() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "label".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xfe444fff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "link_text".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xd50c50ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "link_uri".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xd50c50ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "number".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf97d71ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "operator".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xfede5cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "property".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xff7ddaff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x35f9f5ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "tag".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x71f1b7ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "title".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xfe444fff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "type".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xfe444fff).into()),
@@ -97,6 +160,13 @@ pub fn synthwave_84() -> UserThemeFamily {
                         ),
                         (
                             "variable".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xff7ddaff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "variable.special".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xfe444fff).into()),
                                 font_weight: Some(UserFontWeight(700.0)),

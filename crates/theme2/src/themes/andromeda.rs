@@ -77,6 +77,20 @@ pub fn andromeda() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc64dedff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis.strong".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf39c11ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xffe66dff).into()),
@@ -91,7 +105,35 @@ pub fn andromeda() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf39c11ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xee5d42ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x95e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf92571ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x95e072ff).into()),
                                     ..Default::default()
@@ -101,6 +143,13 @@ pub fn andromeda() -> UserThemeFamily {
                                 "type".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xffe66dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00e8c6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -171,6 +220,20 @@ pub fn andromeda() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc64dedff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis.strong".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf39c11ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xffe66dff).into()),
@@ -185,7 +248,35 @@ pub fn andromeda() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf39c11ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xee5d42ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x95e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf92571ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x95e072ff).into()),
                                     ..Default::default()
@@ -195,6 +286,13 @@ pub fn andromeda() -> UserThemeFamily {
                                 "type".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xffe66dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00e8c6ff).into()),
                                     ..Default::default()
                                 },
                             ),
