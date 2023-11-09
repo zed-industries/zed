@@ -1,3 +1,4 @@
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -58,7 +59,7 @@ impl Prettier {
         fs: &dyn Fs,
         installed_prettiers: &HashSet<PathBuf>,
         locate_from: &Path,
-    ) -> anyhow::Result<Option<PathBuf>> {
+    ) -> anyhow::Result<ControlFlow<(), Option<PathBuf>>> {
         let mut path_to_check = locate_from
             .components()
             .take_while(|component| component.as_os_str().to_string_lossy() != "node_modules")
@@ -76,14 +77,14 @@ impl Prettier {
         loop {
             if installed_prettiers.contains(&path_to_check) {
                 log::debug!("Found prettier path {path_to_check:?} in installed prettiers");
-                return Ok(Some(path_to_check));
+                return Ok(ControlFlow::Continue(Some(path_to_check)));
             } else if let Some(package_json_contents) =
                 read_package_json(fs, &path_to_check).await?
             {
                 if has_prettier_in_package_json(&package_json_contents) {
                     if has_prettier_in_node_modules(fs, &path_to_check).await? {
                         log::debug!("Found prettier path {path_to_check:?} in both package.json and node_modules");
-                        return Ok(Some(path_to_check));
+                        return Ok(ControlFlow::Continue(Some(path_to_check)));
                     } else if project_path_with_prettier_dependency.is_none() {
                         project_path_with_prettier_dependency = Some(path_to_check.clone());
                     }
@@ -109,7 +110,7 @@ impl Prettier {
                                     }) {
                                         anyhow::ensure!(has_prettier_in_node_modules(fs, &path_to_check).await?, "Found prettier path {path_to_check:?} in the workspace root for project in {project_path_with_prettier_dependency:?}, but it's not installed into workspace root's node_modules");
                                         log::info!("Found prettier path {path_to_check:?} in the workspace root for project in {project_path_with_prettier_dependency:?}");
-                                        return Ok(Some(path_to_check));
+                                        return Ok(ControlFlow::Continue(Some(path_to_check)));
                                     } else {
                                         log::warn!("Skipping path {path_to_check:?} that has prettier in its 'node_modules' subdirectory, but is not included in its package.json workspaces {workspaces:?}");
                                     }
@@ -132,7 +133,7 @@ impl Prettier {
                     }
                     None => {
                         log::debug!("Found no prettier in ancestors of {locate_from:?}");
-                        return Ok(None);
+                        return Ok(ControlFlow::Continue(None));
                     }
                 }
             }
@@ -497,36 +498,39 @@ mod tests {
         .await;
 
         assert!(
-            Prettier::locate_prettier_installation(
-                fs.as_ref(),
-                &HashSet::default(),
-                Path::new("/root/.config/zed/settings.json"),
-            )
-            .await
-            .unwrap()
-            .is_none(),
+            matches!(
+                Prettier::locate_prettier_installation(
+                    fs.as_ref(),
+                    &HashSet::default(),
+                    Path::new("/root/.config/zed/settings.json"),
+                )
+                .await,
+                Ok(ControlFlow::Continue(None))
+            ),
             "Should successfully find no prettier for path hierarchy without it"
         );
         assert!(
-            Prettier::locate_prettier_installation(
-                fs.as_ref(),
-                &HashSet::default(),
-                Path::new("/root/work/project/src/index.js")
-            )
-            .await
-            .unwrap()
-            .is_none(),
+            matches!(
+                Prettier::locate_prettier_installation(
+                    fs.as_ref(),
+                    &HashSet::default(),
+                    Path::new("/root/work/project/src/index.js")
+                )
+                .await,
+                Ok(ControlFlow::Continue(None))
+            ),
             "Should successfully find no prettier for path hierarchy that has node_modules with prettier, but no package.json mentions of it"
         );
         assert!(
-            Prettier::locate_prettier_installation(
-                fs.as_ref(),
-                &HashSet::default(),
-                Path::new("/root/work/project/node_modules/expect/build/print.js")
-            )
-            .await
-            .unwrap()
-            .is_none(),
+            matches!(
+                Prettier::locate_prettier_installation(
+                    fs.as_ref(),
+                    &HashSet::default(),
+                    Path::new("/root/work/project/node_modules/expect/build/print.js")
+                )
+                .await,
+                Ok(ControlFlow::Continue(None))
+            ),
             "Even though it has package.json with prettier in it and no prettier on node_modules along the path, nothing should fail since declared inside node_modules"
         );
     }
@@ -580,7 +584,7 @@ mod tests {
             )
             .await
             .unwrap(),
-            Some(PathBuf::from("/root/web_blog")),
+            ControlFlow::Continue(Some(PathBuf::from("/root/web_blog"))),
             "Should find a preinstalled prettier in the project root"
         );
         assert_eq!(
@@ -591,7 +595,7 @@ mod tests {
             )
             .await
             .unwrap(),
-            Some(PathBuf::from("/root/web_blog")),
+            ControlFlow::Continue(Some(PathBuf::from("/root/web_blog"))),
             "Should find a preinstalled prettier in the project root even for node_modules files"
         );
     }
@@ -649,7 +653,7 @@ mod tests {
             )
             .await
             .unwrap(),
-            Some(PathBuf::from("/root/work")),
+            ControlFlow::Continue(Some(PathBuf::from("/root/work"))),
             "Should return first cached value found without path checks"
         );
     }
@@ -703,7 +707,7 @@ mod tests {
                 &HashSet::default(),
                 Path::new("/root/work/full-stack-foundations/exercises/03.loading/01.problem.loader/app/routes/users+/$username_+/notes.tsx"),
             ).await.unwrap(),
-            Some(PathBuf::from("/root/work/full-stack-foundations")),
+            ControlFlow::Continue(Some(PathBuf::from("/root/work/full-stack-foundations"))),
             "Should ascend to the multi-workspace root and find the prettier there",
         );
     }
