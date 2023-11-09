@@ -141,7 +141,7 @@ impl TryFrom<&'_ str> for Rgba {
     }
 }
 
-#[derive(Default, Copy, Clone, Debug, PartialEq)]
+#[derive(Default, Copy, Clone, Debug, PartialEq, PartialOrd)]
 #[repr(C)]
 pub struct Hsla {
     pub h: f32,

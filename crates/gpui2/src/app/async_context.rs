@@ -70,7 +70,7 @@ impl Context for AsyncAppContext {
     fn read_window<T, R>(
         &self,
         window: &WindowHandle<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
+        read: impl FnOnce(View<T>, &AppContext) -> R,
     ) -> Result<R>
     where
         T: 'static,
@@ -267,7 +267,7 @@ impl Context for AsyncWindowContext {
     fn read_window<T, R>(
         &self,
         window: &WindowHandle<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
+        read: impl FnOnce(View<T>, &AppContext) -> R,
     ) -> Result<R>
     where
         T: 'static,

@@ -1011,7 +1011,7 @@ impl Context for AppContext {
     fn read_window<T, R>(
         &self,
         window: &WindowHandle<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
+        read: impl FnOnce(View<T>, &AppContext) -> R,
     ) -> Result<R>
     where
         T: 'static,
@@ -1028,7 +1028,7 @@ impl Context for AppContext {
             .downcast::<T>()
             .map_err(|_| anyhow!("root view's type has changed"))?;
 
-        Ok(read(view.read(self), self))
+        Ok(read(view, self))
     }
 }
 

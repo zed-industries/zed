@@ -1432,7 +1432,7 @@ impl Context for WindowContext<'_> {
     fn read_window<T, R>(
         &self,
         window: &WindowHandle<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
+        read: impl FnOnce(View<T>, &AppContext) -> R,
     ) -> Result<R>
     where
         T: 'static,
@@ -1445,7 +1445,7 @@ impl Context for WindowContext<'_> {
                 .unwrap()
                 .downcast::<T>()
                 .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
-            Ok(read(root_view.read(self), self))
+            Ok(read(root_view, self))
         } else {
             self.app.read_window(window, read)
         }
@@ -1767,6 +1767,10 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             window_cx: WindowContext::new(app, window),
             view,
         }
+    }
+
+    pub fn entity_id(&self) -> EntityId {
+        self.view.entity_id()
     }
 
     pub fn view(&self) -> &View<V> {
@@ -2269,7 +2273,7 @@ impl<V> Context for ViewContext<'_, V> {
     fn read_window<T, R>(
         &self,
         window: &WindowHandle<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
+        read: impl FnOnce(View<T>, &AppContext) -> R,
     ) -> Result<R>
     where
         T: 'static,
@@ -2348,7 +2352,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     }
 
     pub fn update<C, R>(
-        self,
+        &self,
         cx: &mut C,
         update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> Result<R>
@@ -2379,11 +2383,18 @@ impl<V: 'static + Render> WindowHandle<V> {
         Ok(x.read(cx))
     }
 
-    pub fn read_with<C, R>(self, cx: &C, read_with: impl FnOnce(&V, &AppContext) -> R) -> Result<R>
+    pub fn read_with<C, R>(&self, cx: &C, read_with: impl FnOnce(&V, &AppContext) -> R) -> Result<R>
     where
         C: Context,
     {
-        cx.read_window(&self, |root_view: &V, cx| read_with(root_view, cx))
+        cx.read_window(self, |root_view, cx| read_with(root_view.read(cx), cx))
+    }
+
+    pub fn root_view<C>(&self, cx: &C) -> Result<View<V>>
+    where
+        C: Context,
+    {
+        cx.read_window(self, |root_view, _cx| root_view.clone())
     }
 }
 
@@ -2451,7 +2462,7 @@ impl AnyWindowHandle {
         cx.update_window(self, update)
     }
 
-    pub fn read<T, C, R>(self, cx: &C, read: impl FnOnce(&T, &AppContext) -> R) -> Result<R>
+    pub fn read<T, C, R>(self, cx: &C, read: impl FnOnce(View<T>, &AppContext) -> R) -> Result<R>
     where
         C: Context,
         T: 'static,
