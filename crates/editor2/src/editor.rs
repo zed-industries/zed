@@ -9771,11 +9771,14 @@ impl InputHandler for Editor {
         let scroll_position = snapshot.scroll_position();
         let scroll_left = scroll_position.x * em_width;
 
+        // todo!() How do we actually get the gutter margin here?
+        let gutter_margin = px(84.46154);
+
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
         let end = OffsetUtf16(range_utf16.end).to_display_point(&snapshot);
         let start_y = line_height * (start.row() as f32 - scroll_position.y);
         let end_y = line_height * (end.row() as f32 - scroll_position.y);
-        let start_x = snapshot.x_for_point(start, &text_layout_details) - scroll_left;
+        let start_x = snapshot.x_for_point(start, &text_layout_details) - scroll_left + gutter_margin;
         let end_x = snapshot.x_for_point(end, &text_layout_details) - scroll_left;
 
         Some(Bounds::from_corners(
