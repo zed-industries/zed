@@ -1,7 +1,6 @@
 mod theme_printer;
 mod util;
 mod vscode;
-mod vscode_syntax;
 
 use std::fs::{self, File};
 use std::io::Write;
@@ -16,10 +15,10 @@ use log::LevelFilter;
 use serde::Deserialize;
 use simplelog::SimpleLogger;
 use theme::{Appearance, UserThemeFamily};
-use vscode::VsCodeThemeConverter;
 
 use crate::theme_printer::UserThemeFamilyPrinter;
 use crate::vscode::VsCodeTheme;
+use crate::vscode::VsCodeThemeConverter;
 
 #[derive(Debug, Deserialize)]
 struct FamilyMetadata {
