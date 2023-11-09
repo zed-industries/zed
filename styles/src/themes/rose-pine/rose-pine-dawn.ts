@@ -31,7 +31,7 @@ export const theme: ThemeConfig = {
                     color.muted,
                     color.subtle,
                     color.text,
-                ].reverse()
+                ].reverse(),
             )
             .domain([0, 0.35, 0.45, 0.65, 0.7, 0.8, 0.9, 1]),
         red: color_ramp(chroma(color.love)),

@@ -46,8 +46,7 @@ use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings,
 use itertools::Itertools;
 use language2::LanguageRegistry;
 use lazy_static::lazy_static;
-pub use modal_layer::ModalRegistry;
-use modal_layer::{init_modal_registry, ModalLayer};
+pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
@@ -227,7 +226,6 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
-    init_modal_registry(cx);
     pane::init(cx);
     notifications::init(cx);
 
@@ -547,7 +545,7 @@ pub struct Workspace {
     last_active_center_pane: Option<WeakView<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
     status_bar: View<StatusBar>,
-    modal_layer: View<ModalLayer>,
+    modal_layer: ModalLayer,
     //     titlebar_item: Option<AnyViewHandle>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
@@ -698,7 +696,8 @@ impl Workspace {
             status_bar
         });
 
-        let modal_layer = cx.build_view(|cx| ModalLayer::new());
+        let workspace_handle = cx.view().downgrade();
+        let modal_layer = ModalLayer::new();
 
         // todo!()
         // cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
@@ -780,6 +779,10 @@ impl Workspace {
             subscriptions,
             pane_history_timestamp,
         }
+    }
+
+    pub fn modal_layer(&mut self) -> &mut ModalLayer {
+        &mut self.modal_layer
     }
 
     fn new_local(
@@ -3712,13 +3715,13 @@ impl Render for Workspace {
             .bg(cx.theme().colors().background)
             .child(self.render_titlebar(cx))
             .child(
+                // todo! should this be a component a view?
                 self.modal_layer
-                    .read(cx)
-                    .render(self, cx)
+                    .wrapper_element(cx)
+                    .relative()
                     .flex_1()
                     .w_full()
                     .flex()
-                    .flex_row()
                     .overflow_hidden()
                     .border_t()
                     .border_b()
