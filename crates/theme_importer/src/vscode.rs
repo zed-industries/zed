@@ -445,7 +445,7 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             border_focused: vscode_colors
-                .panel_border
+                .focus_border
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             border_disabled: vscode_colors
@@ -474,6 +474,22 @@ impl VsCodeThemeConverter {
                 .traverse(|color| try_parse_color(&color))?,
             element_background: vscode_colors
                 .button_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            element_hover: vscode_colors
+                .list_hover_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            element_selected: vscode_colors
+                .list_active_selection_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            ghost_element_hover: vscode_colors
+                .list_hover_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            drop_target_background: vscode_colors
+                .list_drop_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             text: vscode_colors
