@@ -39,10 +39,10 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, px, relative, AnyElement, AppContext, BackgroundExecutor, ClipboardItem,
-    Context, DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, PlatformInputHandler, Render,
-    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView,
+    action, actions, div, px, relative, AnyElement, AppContext, BackgroundExecutor, BorrowWindow,
+    ClipboardItem, Context, DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle,
+    FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, PlatformInputHandler,
+    Render, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -96,7 +96,9 @@ use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, SplitDirection, ViewId, Workspace};
+use workspace::{
+    item::ItemEvent, searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace,
+};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -1903,7 +1905,8 @@ impl Editor {
             if let Some(project) = project.as_ref() {
                 if buffer.read(cx).is_singleton() {
                     project_subscriptions.push(cx.observe(project, |_, _, cx| {
-                        cx.emit(Event::TitleChanged);
+                        cx.emit(ItemEvent::UpdateTab);
+                        cx.emit(ItemEvent::UpdateBreadcrumbs);
                     }));
                 }
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
@@ -2361,6 +2364,15 @@ impl Editor {
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
         cx.emit(Event::SelectionsChanged { local });
+
+        if self.selections.disjoint_anchors().len() == 1 {
+            cx.emit(SearchEvent::ActiveMatchChanged)
+        }
+
+        if local {
+            cx.emit(ItemEvent::UpdateBreadcrumbs);
+        }
+
         cx.notify();
     }
 
@@ -8760,6 +8772,9 @@ impl Editor {
                     self.update_visible_copilot_suggestion(cx);
                 }
                 cx.emit(Event::BufferEdited);
+                cx.emit(ItemEvent::Edit);
+                cx.emit(ItemEvent::UpdateBreadcrumbs);
+                cx.emit(SearchEvent::MatchesInvalidated);
 
                 if *sigleton_buffer_edited {
                     if let Some(project) = &self.project {
@@ -8806,13 +8821,20 @@ impl Editor {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 cx.emit(Event::ExcerptsRemoved { ids: ids.clone() })
             }
-            multi_buffer::Event::Reparsed => cx.emit(Event::Reparsed),
-            multi_buffer::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
-            multi_buffer::Event::Saved => cx.emit(Event::Saved),
-            multi_buffer::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
-            multi_buffer::Event::Reloaded => cx.emit(Event::TitleChanged),
+            multi_buffer::Event::Reparsed => {
+                cx.emit(ItemEvent::UpdateBreadcrumbs);
+            }
+            multi_buffer::Event::DirtyChanged => {
+                cx.emit(ItemEvent::UpdateTab);
+            }
+            multi_buffer::Event::Saved
+            | multi_buffer::Event::FileHandleChanged
+            | multi_buffer::Event::Reloaded => {
+                cx.emit(ItemEvent::UpdateTab);
+                cx.emit(ItemEvent::UpdateBreadcrumbs);
+            }
             multi_buffer::Event::DiffBaseChanged => cx.emit(Event::DiffBaseChanged),
-            multi_buffer::Event::Closed => cx.emit(Event::Closed),
+            multi_buffer::Event::Closed => cx.emit(ItemEvent::CloseItem),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
             }
@@ -9378,12 +9400,8 @@ pub enum Event {
     },
     BufferEdited,
     Edited,
-    Reparsed,
     Focused,
     Blurred,
-    DirtyChanged,
-    Saved,
-    TitleChanged,
     DiffBaseChanged,
     SelectionsChanged {
         local: bool,
@@ -9392,7 +9410,6 @@ pub enum Event {
         local: bool,
         autoscroll: bool,
     },
-    Closed,
 }
 
 pub struct EditorFocused(pub View<Editor>);
