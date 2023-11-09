@@ -488,6 +488,22 @@ impl VsCodeThemeConverter {
                 .tab_inactive_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
+            editor_background: vscode_colors
+                .editor_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            editor_gutter_background: vscode_colors
+                .editor_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            editor_line_number: vscode_colors
+                .editor_line_number_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            editor_active_line_number: vscode_colors
+                .editor_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             terminal_background: vscode_colors
                 .terminal_background
                 .as_ref()
