@@ -97,6 +97,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x15a2b6ff).into()),
@@ -111,6 +118,62 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5888a5ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xbecfdaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
@@ -118,7 +181,49 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xbecfdaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe4b781ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()
@@ -211,6 +316,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x15a2b6ff).into()),
@@ -225,6 +337,62 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8b737bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcbbec2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
@@ -232,7 +400,49 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcbbec2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe4b781ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()
@@ -325,6 +535,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0094a8ff).into()),
@@ -339,6 +556,62 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00bdd6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0094a8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0094a8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5841ffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0094a8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8ca6a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x00b368ff).into()),
@@ -346,7 +619,49 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5792ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00bdd6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00bdd6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfa8900ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
@@ -439,6 +754,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0094a8ff).into()),
@@ -453,6 +775,62 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00bdd6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0094a8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0094a8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5841ffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0094a8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9995b7ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0c006bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x00b368ff).into()),
@@ -460,7 +838,49 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0c006bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5792ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00bdd6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00bdd6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfa8900ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
@@ -553,6 +973,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0094a8ff).into()),
@@ -567,6 +994,62 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00bdd6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0094a8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0094a8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5841ffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0094a8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8ca6a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x00b368ff).into()),
@@ -574,7 +1057,49 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5792ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00bdd6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00bdd6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfa8900ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
@@ -667,6 +1192,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x3e848dff).into()),
@@ -681,6 +1213,62 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x72b7c0ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x3e848dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x3e848dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7067b1ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x3e848dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5d7787ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5cdd3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x72c09fff).into()),
@@ -688,7 +1276,49 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5cdd3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc88da2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x72c09fff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x72b7c0ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x72b7c0ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3b692ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc37455ff).into()),
                                     ..Default::default()
@@ -781,6 +1411,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x15a2b6ff).into()),
@@ -795,6 +1432,62 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5b858bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb1c9ccff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
@@ -802,7 +1495,49 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb1c9ccff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe4b781ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()
@@ -895,6 +1630,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x15a2b6ff).into()),
@@ -909,6 +1651,62 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5b858bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb1c9ccff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
@@ -916,7 +1714,49 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb1c9ccff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe4b781ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()
@@ -1009,6 +1849,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x15a2b6ff).into()),
@@ -1023,6 +1870,62 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5b858bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb1c9ccff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
@@ -1030,7 +1933,49 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb1c9ccff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe4b781ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()
@@ -1123,6 +2068,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x15a2b6ff).into()),
@@ -1137,6 +2089,62 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x716b93ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5c2d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
@@ -1144,7 +2152,49 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5c2d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe4b781ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()
@@ -1237,6 +2287,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x15a2b6ff).into()),
@@ -1251,6 +2308,62 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "label".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_text".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "operator".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "property".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7e6499ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xccbfd9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
@@ -1258,7 +2371,49 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xccbfd9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "title".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49d5e9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe4b781ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()

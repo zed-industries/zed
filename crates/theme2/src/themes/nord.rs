@@ -96,9 +96,9 @@ pub fn nord() -> UserThemeFamily {
                             },
                         ),
                         (
-                            "emphasis".into(),
+                            "emphasis.strong".into(),
                             UserHighlightStyle {
-                                font_style: Some(UserFontStyle::Italic),
+                                font_weight: Some(UserFontWeight(700.0)),
                                 ..Default::default()
                             },
                         ),
@@ -117,9 +117,30 @@ pub fn nord() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "number".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xb48eacff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "operator".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x81a1c1ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "punctuation".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xeceff4ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.delimiter".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x81a1c1ff).into()),
                                 ..Default::default()
                             },
                         ),
@@ -131,7 +152,42 @@ pub fn nord() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "string.escape".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xebcb8bff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "tag".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x81a1c1ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "text.literal".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xa3be8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "type".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x8fbcbbff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "variable".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x81a1c1ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "variable.special".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x81a1c1ff).into()),
                                 ..Default::default()

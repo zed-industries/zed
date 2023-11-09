@@ -93,6 +93,27 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "embedded".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x93a1a1ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd33582ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis.strong".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd33582ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x258ad2ff).into()),
@@ -107,6 +128,13 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd33582ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x839496ff).into()),
@@ -114,7 +142,35 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x29a198ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcb4b15ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x258ad2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x29a198ff).into()),
                                     ..Default::default()
@@ -129,6 +185,13 @@ pub fn solarized() -> UserThemeFamily {
                             ),
                             (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x258ad2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x258ad2ff).into()),
                                     ..Default::default()
@@ -214,6 +277,27 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "embedded".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd33582ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "emphasis.strong".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd33582ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x258ad2ff).into()),
@@ -228,7 +312,42 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd33582ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x93a1a1ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x29a198ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcb4b15ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "tag".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x258ad2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "text.literal".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x29a198ff).into()),
                                     ..Default::default()
@@ -243,6 +362,13 @@ pub fn solarized() -> UserThemeFamily {
                             ),
                             (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x258ad2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x258ad2ff).into()),
                                     ..Default::default()
