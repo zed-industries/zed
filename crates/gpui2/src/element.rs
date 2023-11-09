@@ -1,4 +1,6 @@
-use crate::{BorrowWindow, Bounds, ElementId, LayoutId, Pixels, ViewContext};
+use crate::{
+    AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, Size, ViewContext,
+};
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, mem};
@@ -195,6 +197,33 @@ impl<V> AnyElement<V> {
 
     pub fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
         self.0.paint(view_state, cx)
+    }
+
+    /// Initializes this element and performs layout within the given available space to determine its size.
+    pub fn measure(
+        &mut self,
+        available_space: Size<AvailableSpace>,
+        view_state: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> Size<Pixels> {
+        self.initialize(view_state, cx);
+        let layout_id = self.layout(view_state, cx);
+        cx.compute_layout(layout_id, available_space);
+        cx.layout_bounds(layout_id).size
+    }
+
+    /// Initializes this element and performs layout in the available space, then paints it at the given origin.
+    pub fn draw(
+        &mut self,
+        origin: Point<Pixels>,
+        available_space: Size<AvailableSpace>,
+        view_state: &mut V,
+        cx: &mut ViewContext<V>,
+    ) {
+        self.initialize(view_state, cx);
+        let layout_id = self.layout(view_state, cx);
+        cx.compute_layout(layout_id, available_space);
+        cx.with_element_offset(Some(origin), |cx| self.paint(view_state, cx))
     }
 }
 
