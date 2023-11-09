@@ -39,10 +39,10 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, px, relative, AnyElement, AppContext, BackgroundExecutor, ClipboardItem,
-    Context, DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, PlatformInputHandler, Render,
-    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView,
+    action, actions, div, point, px, relative, AnyElement, AppContext, BackgroundExecutor, Bounds,
+    ClipboardItem, Context, DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle,
+    FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, PlatformInputHandler,
+    Render, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -9750,14 +9750,38 @@ impl InputHandler for Editor {
     }
 
     fn bounds_for_range(
-        &self,
+        &mut self,
         range_utf16: Range<usize>,
         element_bounds: gpui::Bounds<Pixels>,
         cx: &mut ViewContext<Self>,
     ) -> Option<gpui::Bounds<Pixels>> {
-        // todo!()
-        // See how we did it before: `rect_for_range`
-        None
+        let text_layout_details = self.text_layout_details(cx);
+        let style = &text_layout_details.editor_style;
+        let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
+        let font_size = style.text.font_size.to_pixels(cx.rem_size());
+        let line_height = style.text.line_height_in_pixels(cx.rem_size());
+        let em_width = cx
+            .text_system()
+            .typographic_bounds(font_id, font_size, 'm')
+            .unwrap()
+            .size
+            .width;
+
+        let snapshot = self.snapshot(cx);
+        let scroll_position = snapshot.scroll_position();
+        let scroll_left = scroll_position.x * em_width;
+
+        let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
+        let end = OffsetUtf16(range_utf16.end).to_display_point(&snapshot);
+        let start_y = line_height * (start.row() as f32 - scroll_position.y);
+        let end_y = line_height * (end.row() as f32 - scroll_position.y);
+        let start_x = snapshot.x_for_point(start, &text_layout_details) - scroll_left;
+        let end_x = snapshot.x_for_point(end, &text_layout_details) - scroll_left;
+
+        Some(Bounds::from_corners(
+            element_bounds.origin + point(start_x, start_y),
+            element_bounds.origin + point(end_x, end_y),
+        ))
     }
 }
 

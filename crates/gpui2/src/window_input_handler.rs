@@ -159,7 +159,7 @@ pub trait InputHandler: Sized {
         cx: &mut ViewContext<Self>,
     );
     fn bounds_for_range(
-        &self,
+        &mut self,
         range_utf16: std::ops::Range<usize>,
         element_bounds: crate::Bounds<Pixels>,
         cx: &mut ViewContext<Self>,
