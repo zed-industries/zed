@@ -6,7 +6,8 @@ mod registry;
 mod scale;
 mod settings;
 mod syntax;
-// mod themes;
+#[cfg(not(feature = "importing-themes"))]
+mod themes;
 mod user_theme;
 
 use std::sync::Arc;
@@ -20,7 +21,8 @@ pub use registry::*;
 pub use scale::*;
 pub use settings::*;
 pub use syntax::*;
-// pub use themes::*;
+#[cfg(not(feature = "importing-themes"))]
+pub use themes::*;
 pub use user_theme::*;
 
 use gpui::{AppContext, Hsla, SharedString};

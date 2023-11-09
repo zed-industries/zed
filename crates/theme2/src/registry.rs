@@ -83,7 +83,9 @@ impl Default for ThemeRegistry {
         };
 
         this.insert_theme_families([zed_pro_family()]);
-        // this.insert_user_theme_familes(crate::all_user_themes());
+
+        #[cfg(not(feature = "importing-themes"))]
+        this.insert_user_theme_familes(crate::all_user_themes());
 
         this
     }

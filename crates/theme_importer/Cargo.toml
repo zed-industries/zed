@@ -14,5 +14,5 @@ log.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
 simplelog = "0.9"
-theme = { package = "theme2", path = "../theme2" }
+theme = { package = "theme2", path = "../theme2", features = ["importing-themes"] }
 uuid.workspace = true
