@@ -1468,6 +1468,7 @@ impl EditorElement {
             gutter_margin = Pixels::ZERO;
         };
 
+        editor.gutter_width = gutter_width;
         let text_width = bounds.size.width - gutter_width;
         let overscroll = size(em_width, px(0.));
         let snapshot = {

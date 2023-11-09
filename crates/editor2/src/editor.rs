@@ -674,6 +674,7 @@ pub struct Editor {
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
+    gutter_width: Pixels,
     style: Option<EditorStyle>,
 }
 
@@ -1984,6 +1985,7 @@ impl Editor {
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
+            gutter_width: Default::default(),
             style: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -9771,14 +9773,12 @@ impl InputHandler for Editor {
         let scroll_position = snapshot.scroll_position();
         let scroll_left = scroll_position.x * em_width;
 
-        // todo!() How do we actually get the gutter margin here?
-        let gutter_margin = px(84.46154);
-
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
         let end = OffsetUtf16(range_utf16.end).to_display_point(&snapshot);
         let start_y = line_height * (start.row() as f32 - scroll_position.y);
         let end_y = line_height * (end.row() as f32 - scroll_position.y);
-        let start_x = snapshot.x_for_point(start, &text_layout_details) - scroll_left + gutter_margin;
+        let start_x =
+            snapshot.x_for_point(start, &text_layout_details) - scroll_left + self.gutter_width;
         let end_x = snapshot.x_for_point(end, &text_layout_details) - scroll_left;
 
         Some(Bounds::from_corners(
