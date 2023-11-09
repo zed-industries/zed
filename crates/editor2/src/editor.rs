@@ -39,11 +39,11 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, point, px, relative, AnyElement, AppContext, BackgroundExecutor, Bounds,
-    ClipboardItem, Context, DispatchContext, Div, Element, Entity, EventEmitter, FocusHandle,
-    FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, PlatformInputHandler,
-    Render, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    action, actions, div, point, px, relative, size, AnyElement, AppContext, BackgroundExecutor,
+    Bounds, ClipboardItem, Context, DispatchContext, Div, Element, Entity, EventEmitter,
+    FocusHandle, FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels,
+    PlatformInputHandler, Render, Styled, Subscription, Task, TextStyle, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -9774,17 +9774,13 @@ impl InputHandler for Editor {
         let scroll_left = scroll_position.x * em_width;
 
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
-        let end = OffsetUtf16(range_utf16.end).to_display_point(&snapshot);
-        let start_y = line_height * (start.row() as f32 - scroll_position.y);
-        let end_y = line_height * (end.row() as f32 - scroll_position.y);
-        let start_x =
-            snapshot.x_for_point(start, &text_layout_details) - scroll_left + self.gutter_width;
-        let end_x = snapshot.x_for_point(end, &text_layout_details) - scroll_left;
+        let x = snapshot.x_for_point(start, &text_layout_details) - scroll_left + self.gutter_width;
+        let y = line_height * (start.row() as f32 - scroll_position.y);
 
-        Some(Bounds::from_corners(
-            element_bounds.origin + point(start_x, start_y),
-            element_bounds.origin + point(end_x, end_y),
-        ))
+        Some(Bounds {
+            origin: element_bounds.origin + point(x, y),
+            size: size(em_width, line_height),
+        })
     }
 }
 
