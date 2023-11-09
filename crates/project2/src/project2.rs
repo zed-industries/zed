@@ -9062,9 +9062,7 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
     }
 }
 
-impl EventEmitter for Project {
-    type Event = Event;
-}
+impl EventEmitter<Event> for Project {}
 
 impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
     fn from((worktree_id, path): (WorktreeId, P)) -> Self {

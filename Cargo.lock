@@ -6109,7 +6109,6 @@ dependencies = [
  "settings2",
  "theme2",
  "util",
- "workspace2",
 ]
 
 [[package]]

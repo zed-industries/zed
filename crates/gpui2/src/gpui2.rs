@@ -138,6 +138,8 @@ pub trait Entity<T>: Sealed {
         Self: Sized;
 }
 
+pub trait EventEmitter<E: Any>: 'static {}
+
 pub enum GlobalKey {
     Numeric(usize),
     View(EntityId),
@@ -169,10 +171,6 @@ where
     fn set_global<G: 'static>(&mut self, global: G) {
         self.borrow_mut().set_global(global)
     }
-}
-
-pub trait EventEmitter: 'static {
-    type Event: Any;
 }
 
 pub trait Flatten<T> {

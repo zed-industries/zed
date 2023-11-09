@@ -8,7 +8,7 @@ use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::{h_stack, modal, v_stack, Label, LabelColor};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{Modal, ModalEvent, Workspace};
+use workspace::{ModalEvent, Workspace};
 
 actions!(Toggle);
 
@@ -41,9 +41,9 @@ pub enum Event {
     Dismissed,
 }
 
-impl EventEmitter for GoToLine {
-    type Event = Event;
-}
+impl EventEmitter<Event> for GoToLine {}
+
+impl EventEmitter<ModalEvent> for GoToLine {}
 
 impl GoToLine {
     pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
@@ -146,14 +146,6 @@ impl GoToLine {
         }
 
         cx.emit(Event::Dismissed);
-    }
-}
-
-impl Modal for GoToLine {
-    fn to_modal_event(&self, e: &Self::Event) -> Option<ModalEvent> {
-        match e {
-            Event::Dismissed => Some(ModalEvent::Dismissed),
-        }
     }
 }
 

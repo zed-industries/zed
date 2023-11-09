@@ -16,10 +16,6 @@ pub enum ModalEvent {
     Dismissed,
 }
 
-pub trait Modal: EventEmitter + Render {
-    fn to_modal_event(&self, _: &Self::Event) -> Option<ModalEvent>;
-}
-
 impl ModalLayer {
     pub fn new() -> Self {
         Self {
@@ -31,7 +27,7 @@ impl ModalLayer {
 
     pub fn register_modal<A: 'static, V, B>(&mut self, action: A, build_view: B)
     where
-        V: Modal,
+        V: EventEmitter<ModalEvent> + Render,
         B: Fn(&mut Workspace, &mut ViewContext<Workspace>) -> Option<View<V>> + 'static,
     {
         let build_view = Arc::new(build_view);
@@ -51,12 +47,12 @@ impl ModalLayer {
         ));
     }
 
-    pub fn show_modal<V: Modal>(&mut self, new_modal: View<V>, cx: &mut ViewContext<Workspace>) {
-        self.subscription = Some(cx.subscribe(&new_modal, |this, modal, e, cx| {
-            match modal.read(cx).to_modal_event(e) {
-                Some(ModalEvent::Dismissed) => this.modal_layer().hide_modal(cx),
-                None => {}
-            }
+    pub fn show_modal<V>(&mut self, new_modal: View<V>, cx: &mut ViewContext<Workspace>)
+    where
+        V: EventEmitter<ModalEvent> + Render,
+    {
+        self.subscription = Some(cx.subscribe(&new_modal, |this, modal, e, cx| match e {
+            ModalEvent::Dismissed => this.modal_layer().hide_modal(cx),
         }));
         self.open_modal = Some(new_modal.into());
         cx.notify();

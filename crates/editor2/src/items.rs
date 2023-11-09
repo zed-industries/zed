@@ -7,9 +7,9 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    div, point, AnyElement, AppContext, AsyncAppContext, Entity, EntityId, FocusHandle, Model,
-    ParentElement, Pixels, SharedString, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView,
+    div, point, AnyElement, AppContext, AsyncAppContext, Entity, EntityId, EventEmitter,
+    FocusHandle, Model, ParentElement, Pixels, SharedString, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WeakView,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
@@ -29,7 +29,7 @@ use std::{
 use text::Selection;
 use theme::{ActiveTheme, Theme};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
-use workspace::item::{BreadcrumbText, FollowableItemHandle};
+use workspace::item::{BreadcrumbText, FollowEvent, FollowableEvents, FollowableItemHandle};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -38,7 +38,26 @@ use workspace::{
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
 
+impl FollowableEvents for Event {
+    fn to_follow_event(&self) -> Option<workspace::item::FollowEvent> {
+        match self {
+            Event::Edited => Some(FollowEvent::Unfollow),
+            Event::SelectionsChanged { local } | Event::ScrollPositionChanged { local, .. } => {
+                if *local {
+                    Some(FollowEvent::Unfollow)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+impl EventEmitter<ItemEvent> for Editor {}
+
 impl FollowableItem for Editor {
+    type FollowableEvent = Event;
     fn remote_id(&self) -> Option<ViewId> {
         self.remote_id
     }
@@ -217,7 +236,7 @@ impl FollowableItem for Editor {
 
     fn add_event_to_update_proto(
         &self,
-        event: &Self::Event,
+        event: &Self::FollowableEvent,
         update: &mut Option<proto::update_view::Variant>,
         cx: &AppContext,
     ) -> bool {
@@ -290,15 +309,6 @@ impl FollowableItem for Editor {
         cx.spawn(|this, mut cx| async move {
             update_editor_from_message(this, project, message, &mut cx).await
         })
-    }
-
-    fn should_unfollow_on_event(event: &Self::Event, _: &AppContext) -> bool {
-        match event {
-            Event::Edited => true,
-            Event::SelectionsChanged { local } => *local,
-            Event::ScrollPositionChanged { local, .. } => *local,
-            _ => false,
-        }
     }
 
     fn is_project_item(&self, _cx: &AppContext) -> bool {
@@ -739,32 +749,6 @@ impl Item for Editor {
         })
     }
 
-    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
-        let mut result = SmallVec::new();
-        match event {
-            Event::Closed => result.push(ItemEvent::CloseItem),
-            Event::Saved | Event::TitleChanged => {
-                result.push(ItemEvent::UpdateTab);
-                result.push(ItemEvent::UpdateBreadcrumbs);
-            }
-            Event::Reparsed => {
-                result.push(ItemEvent::UpdateBreadcrumbs);
-            }
-            Event::SelectionsChanged { local } if *local => {
-                result.push(ItemEvent::UpdateBreadcrumbs);
-            }
-            Event::DirtyChanged => {
-                result.push(ItemEvent::UpdateTab);
-            }
-            Event::BufferEdited => {
-                result.push(ItemEvent::Edit);
-                result.push(ItemEvent::UpdateBreadcrumbs);
-            }
-            _ => {}
-        }
-        result
-    }
-
     fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
@@ -913,27 +897,11 @@ impl ProjectItem for Editor {
     }
 }
 
+impl EventEmitter<SearchEvent> for Editor {}
+
 pub(crate) enum BufferSearchHighlights {}
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
-
-    fn to_search_event(
-        &mut self,
-        event: &Self::Event,
-        _: &mut ViewContext<Self>,
-    ) -> Option<SearchEvent> {
-        match event {
-            Event::BufferEdited => Some(SearchEvent::MatchesInvalidated),
-            Event::SelectionsChanged { .. } => {
-                if self.selections.disjoint_anchors().len() == 1 {
-                    Some(SearchEvent::ActiveMatchChanged)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
         todo!()

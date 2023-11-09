@@ -75,6 +75,8 @@ where
             .flatten()
     }
 
+    /// Call the given callback for each subscriber to the given emitter.
+    /// If the callback returns false, the subscriber is removed.
     pub fn retain<F>(&self, emitter: &EmitterKey, mut f: F)
     where
         F: FnMut(&mut Callback) -> bool,

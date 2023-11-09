@@ -9,9 +9,11 @@ pub fn init(cx: &mut AppContext) {
     // simple_message_notification::init(cx);
 }
 
-pub trait Notification: EventEmitter + Render {
-    fn should_dismiss_notification_on_event(&self, event: &Self::Event) -> bool;
+pub enum NotificationEvent {
+    Dismiss,
 }
+
+pub trait Notification: EventEmitter<NotificationEvent> + Render {}
 
 pub trait NotificationHandle: Send {
     fn id(&self) -> EntityId;
@@ -101,11 +103,14 @@ impl Workspace {
             })
         {
             let notification = build_notification(cx);
-            cx.subscribe(&notification, move |this, handle, event, cx| {
-                if handle.read(cx).should_dismiss_notification_on_event(event) {
-                    this.dismiss_notification_internal(type_id, id, cx);
-                }
-            })
+            cx.subscribe(
+                &notification,
+                move |this, handle, event: &NotificationEvent, cx| match event {
+                    NotificationEvent::Dismiss => {
+                        this.dismiss_notification_internal(type_id, id, cx);
+                    }
+                },
+            )
             .detach();
             self.notifications
                 .push((type_id, id, Box::new(notification)));
@@ -159,7 +164,7 @@ impl Workspace {
 }
 
 pub mod simple_message_notification {
-    use super::Notification;
+    use super::{Notification, NotificationEvent};
     use gpui::{AnyElement, AppContext, Div, EventEmitter, Render, TextStyle, ViewContext};
     use serde::Deserialize;
     use std::{borrow::Cow, sync::Arc};
@@ -200,13 +205,7 @@ pub mod simple_message_notification {
         click_message: Option<Cow<'static, str>>,
     }
 
-    pub enum MessageNotificationEvent {
-        Dismiss,
-    }
-
-    impl EventEmitter for MessageNotification {
-        type Event = MessageNotificationEvent;
-    }
+    impl EventEmitter<NotificationMessage> for MessageNotification {}
 
     impl MessageNotification {
         pub fn new<S>(message: S) -> MessageNotification
@@ -359,13 +358,8 @@ pub mod simple_message_notification {
     //         }
     //     }
 
-    impl Notification for MessageNotification {
-        fn should_dismiss_notification_on_event(&self, event: &Self::Event) -> bool {
-            match event {
-                MessageNotificationEvent::Dismiss => true,
-            }
-        }
-    }
+    impl EventEmitter<NotificationEvent> for MessageNotification {}
+    impl Notification for MessageNotification {}
 }
 
 pub trait NotifyResultExt {

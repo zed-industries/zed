@@ -91,7 +91,7 @@ pub struct BreadcrumbText {
     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
 }
 
-pub trait Item: Render + EventEmitter {
+pub trait Item: Render + EventEmitter<ItemEvent> {
     fn focus_handle(&self) -> FocusHandle;
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
@@ -106,12 +106,13 @@ pub trait Item: Render + EventEmitter {
     }
     fn tab_content<V: 'static>(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<V>;
 
+    /// (model id, Item)
     fn for_each_project_item(
         &self,
         _: &AppContext,
         _: &mut dyn FnMut(EntityId, &dyn project2::Item),
     ) {
-    } // (model id, Item)
+    }
     fn is_singleton(&self, _cx: &AppContext) -> bool {
         false
     }
@@ -152,15 +153,6 @@ pub trait Item: Render + EventEmitter {
         _cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("reload() must be implemented if can_save() returns true")
-    }
-    fn to_item_events(_event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
-        SmallVec::new()
-    }
-    fn should_close_item_on_event(_: &Self::Event) -> bool {
-        false
-    }
-    fn should_update_tab_on_event(_: &Self::Event) -> bool {
-        false
     }
 
     fn act_as_type<'a>(
@@ -218,7 +210,7 @@ pub trait ItemHandle: 'static + Send {
     fn subscribe_to_item_events(
         &self,
         cx: &mut WindowContext,
-        handler: Box<dyn Fn(ItemEvent, &mut WindowContext) + Send>,
+        handler: Box<dyn Fn(&ItemEvent, &mut WindowContext) + Send>,
     ) -> gpui::Subscription;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
@@ -300,12 +292,10 @@ impl<T: Item> ItemHandle for View<T> {
     fn subscribe_to_item_events(
         &self,
         cx: &mut WindowContext,
-        handler: Box<dyn Fn(ItemEvent, &mut WindowContext) + Send>,
+        handler: Box<dyn Fn(&ItemEvent, &mut WindowContext) + Send>,
     ) -> gpui::Subscription {
         cx.subscribe(self, move |_, event, cx| {
-            for item_event in T::to_item_events(event) {
-                handler(item_event, cx)
-            }
+            handler(event, cx);
         })
     }
 
@@ -433,7 +423,10 @@ impl<T: Item> ItemHandle for View<T> {
                         let is_project_item = item.is_project_item(cx);
                         let leader_id = workspace.leader_for_pane(&pane);
 
-                        if leader_id.is_some() && item.should_unfollow_on_event(event, cx) {
+                        let follow_event = item.to_follow_event(event);
+                        if leader_id.is_some()
+                            && matches!(follow_event, Some(FollowEvent::Unfollow))
+                        {
                             workspace.unfollow(&pane, cx);
                         }
 
@@ -467,36 +460,34 @@ impl<T: Item> ItemHandle for View<T> {
                         }
                     }
 
-                    for item_event in T::to_item_events(event).into_iter() {
-                        match item_event {
-                            ItemEvent::CloseItem => {
-                                pane.update(cx, |pane, cx| {
-                                    pane.close_item_by_id(item.id(), crate::SaveIntent::Close, cx)
-                                })
-                                .detach_and_log_err(cx);
-                                return;
-                            }
+                    match event {
+                        ItemEvent::CloseItem => {
+                            pane.update(cx, |pane, cx| {
+                                pane.close_item_by_id(item.id(), crate::SaveIntent::Close, cx)
+                            })
+                            .detach_and_log_err(cx);
+                            return;
+                        }
 
-                            ItemEvent::UpdateTab => {
-                                pane.update(cx, |_, cx| {
-                                    cx.emit(pane::Event::ChangeItemTitle);
-                                    cx.notify();
+                        ItemEvent::UpdateTab => {
+                            pane.update(cx, |_, cx| {
+                                cx.emit(pane::Event::ChangeItemTitle);
+                                cx.notify();
+                            });
+                        }
+
+                        ItemEvent::Edit => {
+                            let autosave = WorkspaceSettings::get_global(cx).autosave;
+                            if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
+                                let delay = Duration::from_millis(milliseconds);
+                                let item = item.clone();
+                                pending_autosave.fire_new(delay, cx, move |workspace, cx| {
+                                    Pane::autosave_item(&item, workspace.project().clone(), cx)
                                 });
                             }
-
-                            ItemEvent::Edit => {
-                                let autosave = WorkspaceSettings::get_global(cx).autosave;
-                                if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
-                                    let delay = Duration::from_millis(milliseconds);
-                                    let item = item.clone();
-                                    pending_autosave.fire_new(delay, cx, move |workspace, cx| {
-                                        Pane::autosave_item(&item, workspace.project().clone(), cx)
-                                    });
-                                }
-                            }
-
-                            _ => {}
                         }
+
+                        _ => {}
                     }
                 }));
 
@@ -660,7 +651,16 @@ pub trait ProjectItem: Item {
         Self: Sized;
 }
 
+pub enum FollowEvent {
+    Unfollow,
+}
+
+pub trait FollowableEvents {
+    fn to_follow_event(&self) -> Option<FollowEvent>;
+}
+
 pub trait FollowableItem: Item {
+    type FollowableEvent: FollowableEvents;
     fn remote_id(&self) -> Option<ViewId>;
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn from_state_proto(
@@ -672,7 +672,7 @@ pub trait FollowableItem: Item {
     ) -> Option<Task<Result<View<Self>>>>;
     fn add_event_to_update_proto(
         &self,
-        event: &Self::Event,
+        event: &Self::FollowableEvent,
         update: &mut Option<proto::update_view::Variant>,
         cx: &AppContext,
     ) -> bool;
@@ -685,7 +685,6 @@ pub trait FollowableItem: Item {
     fn is_project_item(&self, cx: &AppContext) -> bool;
 
     fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>);
-    fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool;
 }
 
 pub trait FollowableItemHandle: ItemHandle {
@@ -698,13 +697,13 @@ pub trait FollowableItemHandle: ItemHandle {
         update: &mut Option<proto::update_view::Variant>,
         cx: &AppContext,
     ) -> bool;
+    fn to_follow_event(&self, event: &dyn Any) -> Option<FollowEvent>;
     fn apply_update_proto(
         &self,
         project: &Model<Project>,
         message: proto::update_view::Variant,
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
-    fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool;
     fn is_project_item(&self, cx: &AppContext) -> bool;
 }
 
@@ -739,6 +738,13 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
         }
     }
 
+    fn to_follow_event(&self, event: &dyn Any) -> Option<FollowEvent> {
+        event
+            .downcast_ref()
+            .map(T::FollowableEvent::to_follow_event)
+            .flatten()
+    }
+
     fn apply_update_proto(
         &self,
         project: &Model<Project>,
@@ -746,14 +752,6 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
         self.update(cx, |this, cx| this.apply_update_proto(project, message, cx))
-    }
-
-    fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool {
-        if let Some(event) = event.downcast_ref() {
-            T::should_unfollow_on_event(event, cx)
-        } else {
-            false
-        }
     }
 
     fn is_project_item(&self, cx: &AppContext) -> bool {

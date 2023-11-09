@@ -59,15 +59,16 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         })
     }
 
-    pub fn subscribe<T2, E>(
+    pub fn subscribe<T2, E, Evt>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(&mut T, E, &T2::Event, &mut ModelContext<'_, T>) + 'static,
+        mut on_event: impl FnMut(&mut T, E, &Evt, &mut ModelContext<'_, T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
-        T2: 'static + EventEmitter,
+        T2: 'static + EventEmitter<Evt>,
         E: Entity<T2>,
+        Evt: 'static,
     {
         let this = self.weak_model();
         self.app.subscribe_internal(entity, move |e, event, cx| {
@@ -189,13 +190,15 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     }
 }
 
-impl<'a, T> ModelContext<'a, T>
-where
-    T: EventEmitter,
-{
-    pub fn emit(&mut self, event: T::Event) {
+impl<'a, T> ModelContext<'a, T> {
+    pub fn emit<Evt>(&mut self, event: Evt)
+    where
+        T: EventEmitter<Evt>,
+        Evt: 'static,
+    {
         self.app.pending_effects.push_back(Effect::Emit {
             emitter: self.model_state.entity_id,
+            event_type: TypeId::of::<Evt>(),
             event: Box::new(event),
         });
     }
