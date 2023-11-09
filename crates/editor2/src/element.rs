@@ -603,7 +603,7 @@ impl EditorElement {
     fn paint_text(
         &mut self,
         bounds: Bounds<Pixels>,
-        layout: &LayoutState,
+        layout: &mut LayoutState,
         editor: &mut Editor,
         cx: &mut ViewContext<Editor>,
     ) {
@@ -794,48 +794,46 @@ impl EditorElement {
                 )
             }
 
-            cx.stack(0, |cx| {
+            cx.with_z_index(0, |cx| {
                 for cursor in cursors {
                     cursor.paint(content_origin, cx);
                 }
             });
-            // cx.scene().push_layer(Some(bounds));
 
-            // cx.scene().pop_layer();
+            if let Some((position, context_menu)) = layout.context_menu.as_mut() {
+                cx.with_z_index(1, |cx| {
+                    let line_height = self.style.text.line_height_in_pixels(cx.rem_size());
+                    let available_space = size(
+                        AvailableSpace::Definite(cx.viewport_size().width * 0.7),
+                        AvailableSpace::Definite(
+                            (12. * line_height).min((bounds.size.height - line_height) / 2.),
+                        ),
+                    );
+                    let context_menu_size = context_menu.measure(available_space, editor, cx);
 
-            // if let Some((position, context_menu)) = layout.context_menu.as_mut() {
-            //     cx.scene().push_stacking_context(None, None);
-            //     let cursor_row_layout =
-            //         &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
-            //     let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
-            //     let y = (position.row() + 1) as f32 * layout.position_map.line_height - scroll_top;
-            //     let mut list_origin = content_origin + point(x, y);
-            //     let list_width = context_menu.size().x;
-            //     let list_height = context_menu.size().y;
+                    let cursor_row_layout = &layout.position_map.line_layouts
+                        [(position.row() - start_row) as usize]
+                        .line;
+                    let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
+                    let y =
+                        (position.row() + 1) as f32 * layout.position_map.line_height - scroll_top;
+                    let mut list_origin = content_origin + point(x, y);
+                    let list_width = context_menu_size.width;
+                    let list_height = context_menu_size.height;
 
-            //     // Snap the right edge of the list to the right edge of the window if
-            //     // its horizontal bounds overflow.
-            //     if list_origin.x + list_width > cx.window_size().x {
-            //         list_origin.set_x((cx.window_size().x - list_width).max(0.));
-            //     }
+                    // Snap the right edge of the list to the right edge of the window if
+                    // its horizontal bounds overflow.
+                    if list_origin.x + list_width > cx.viewport_size().width {
+                        list_origin.x = (cx.viewport_size().width - list_width).max(Pixels::ZERO);
+                    }
 
-            //     if list_origin.y + list_height > bounds.max_y {
-            //         list_origin
-            //             .set_y(list_origin.y - layout.position_map.line_height - list_height);
-            //     }
+                    if list_origin.y + list_height > bounds.lower_right().y {
+                        list_origin.y -= layout.position_map.line_height - list_height;
+                    }
 
-            //     context_menu.paint(
-            //         list_origin,
-            //         Bounds::<Pixels>::from_points(
-            //             gpui::Point::<Pixels>::zero(),
-            //             point(f32::MAX, f32::MAX),
-            //         ), // Let content bleed outside of editor
-            //         editor,
-            //         cx,
-            //     );
-
-            //     cx.scene().pop_stacking_context();
-            // }
+                    context_menu.draw(list_origin, available_space, editor, cx);
+                })
+            }
 
             // if let Some((position, hover_popovers)) = layout.hover_popovers.as_mut() {
             //     cx.scene().push_stacking_context(None, None);
@@ -1781,15 +1779,14 @@ impl EditorElement {
             snapshot = editor.snapshot(cx);
         }
 
-        // todo!("context menu")
-        // let mut context_menu = None;
+        let mut context_menu = None;
         let mut code_actions_indicator = None;
         if let Some(newest_selection_head) = newest_selection_head {
             if (start_row..end_row).contains(&newest_selection_head.row()) {
-                //         if editor.context_menu_visible() {
-                //             context_menu =
-                //                 editor.render_context_menu(newest_selection_head, style.clone(), cx);
-                //         }
+                if editor.context_menu_visible() {
+                    context_menu =
+                        editor.render_context_menu(newest_selection_head, &self.style, cx);
+                }
 
                 let active = matches!(
                     editor.context_menu.read().as_ref(),
@@ -1939,7 +1936,7 @@ impl EditorElement {
             display_hunks,
             // blocks,
             selections,
-            // context_menu,
+            context_menu,
             code_actions_indicator,
             // fold_indicators,
             tab_invisible,
@@ -2501,21 +2498,24 @@ impl Element<Editor> for EditorElement {
             size: layout.text_size,
         };
 
-        cx.with_content_mask(ContentMask { bounds }, |cx| {
-            self.paint_mouse_listeners(
-                bounds,
-                gutter_bounds,
-                text_bounds,
-                &layout.position_map,
-                cx,
-            );
-            self.paint_background(gutter_bounds, text_bounds, &layout, cx);
-            if layout.gutter_size.width > Pixels::ZERO {
-                self.paint_gutter(gutter_bounds, &mut layout, editor, cx);
-            }
-            self.paint_text(text_bounds, &layout, editor, cx);
-            let input_handler = ElementInputHandler::new(bounds, cx);
-            cx.handle_input(&editor.focus_handle, input_handler);
+        // We call with_z_index to establish a new stacking context.
+        cx.with_z_index(0, |cx| {
+            cx.with_content_mask(ContentMask { bounds }, |cx| {
+                self.paint_mouse_listeners(
+                    bounds,
+                    gutter_bounds,
+                    text_bounds,
+                    &layout.position_map,
+                    cx,
+                );
+                self.paint_background(gutter_bounds, text_bounds, &layout, cx);
+                if layout.gutter_size.width > Pixels::ZERO {
+                    self.paint_gutter(gutter_bounds, &mut layout, editor, cx);
+                }
+                self.paint_text(text_bounds, &mut layout, editor, cx);
+                let input_handler = ElementInputHandler::new(bounds, cx);
+                cx.handle_input(&editor.focus_handle, input_handler);
+            });
         });
     }
 }
@@ -3141,7 +3141,7 @@ pub struct LayoutState {
     show_scrollbars: bool,
     is_singleton: bool,
     max_row: u32,
-    // context_menu: Option<(DisplayPoint, AnyElement<Editor>)>,
+    context_menu: Option<(DisplayPoint, AnyElement<Editor>)>,
     code_actions_indicator: Option<CodeActionsIndicator>,
     // hover_popovers: Option<(DisplayPoint, Vec<AnyElement<Editor>>)>,
     // fold_indicators: Vec<Option<AnyElement<Editor>>>,

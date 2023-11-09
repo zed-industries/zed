@@ -200,7 +200,7 @@ pub struct Window {
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
-    content_size: Size<Pixels>,
+    viewport_size: Size<Pixels>,
     pub(crate) layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView>,
     pub(crate) element_id_stack: GlobalElementId,
@@ -299,7 +299,7 @@ impl Window {
             display_id,
             sprite_atlas,
             rem_size: px(16.),
-            content_size,
+            viewport_size: content_size,
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             element_id_stack: GlobalElementId::default(),
@@ -609,7 +609,7 @@ impl<'a> WindowContext<'a> {
 
     fn window_bounds_changed(&mut self) {
         self.window.scale_factor = self.window.platform_window.scale_factor();
-        self.window.content_size = self.window.platform_window.content_size();
+        self.window.viewport_size = self.window.platform_window.content_size();
         self.window.bounds = self.window.platform_window.bounds();
         self.window.display_id = self.window.platform_window.display().id();
         self.window.dirty = true;
@@ -622,6 +622,10 @@ impl<'a> WindowContext<'a> {
 
     pub fn window_bounds(&self) -> WindowBounds {
         self.window.bounds
+    }
+
+    pub fn viewport_size(&self) -> Size<Pixels> {
+        self.window.viewport_size
     }
 
     pub fn is_window_active(&self) -> bool {
@@ -717,7 +721,7 @@ impl<'a> WindowContext<'a> {
 
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
-    pub fn stack<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
         self.window.current_frame.z_index_stack.push(z_index);
         let result = f(self);
         self.window.current_frame.z_index_stack.pop();
@@ -1015,13 +1019,13 @@ impl<'a> WindowContext<'a> {
 
         self.start_frame();
 
-        self.stack(0, |cx| {
-            let available_space = cx.window.content_size.map(Into::into);
+        self.with_z_index(0, |cx| {
+            let available_space = cx.window.viewport_size.map(Into::into);
             root_view.draw(available_space, cx);
         });
 
         if let Some(active_drag) = self.app.active_drag.take() {
-            self.stack(1, |cx| {
+            self.with_z_index(1, |cx| {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
                 cx.with_element_offset(Some(offset), |cx| {
                     let available_space =
@@ -1031,7 +1035,7 @@ impl<'a> WindowContext<'a> {
                 });
             });
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
-            self.stack(1, |cx| {
+            self.with_z_index(1, |cx| {
                 cx.with_element_offset(Some(active_tooltip.cursor_offset), |cx| {
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
@@ -1686,7 +1690,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
             .unwrap_or_else(|| ContentMask {
                 bounds: Bounds {
                     origin: Point::default(),
-                    size: self.window().content_size,
+                    size: self.window().viewport_size,
                 },
             })
     }

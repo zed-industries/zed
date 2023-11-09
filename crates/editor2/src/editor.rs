@@ -920,15 +920,14 @@ impl ContextMenu {
     fn render(
         &self,
         cursor_position: DisplayPoint,
-        style: EditorStyle,
+        style: &EditorStyle,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, AnyElement<Editor>) {
-        todo!()
-        // match self {
-        //     ContextMenu::Completions(menu) => (cursor_position, menu.render(style, workspace, cx)),
-        //     ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
-        // }
+        match self {
+            ContextMenu::Completions(menu) => (cursor_position, menu.render(style, workspace, cx)),
+            ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
+        }
     }
 }
 
@@ -1253,13 +1252,13 @@ impl CompletionsMenu {
 
     fn render(
         &self,
-        style: EditorStyle,
+        style: &EditorStyle,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
-    ) {
+    ) -> AnyElement<Editor> {
         todo!("old implementation below")
     }
-    // ) -> AnyElement<Editor> {
+
     //     enum CompletionTag {}
 
     //     let settings = EditorSettings>(cx);
@@ -1572,7 +1571,7 @@ impl CodeActionsMenu {
     fn render(
         &self,
         mut cursor_position: DisplayPoint,
-        style: EditorStyle,
+        style: &EditorStyle,
         cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, AnyElement<Editor>) {
         todo!("old version below")
@@ -4480,29 +4479,27 @@ impl Editor {
     //     }
 
     pub fn context_menu_visible(&self) -> bool {
-        false
-        // todo!("context menu")
-        // self.context_menu
-        //     .read()
-        //     .as_ref()
-        //     .map_or(false, |menu| menu.visible())
+        self.context_menu
+            .read()
+            .as_ref()
+            .map_or(false, |menu| menu.visible())
     }
 
-    //     pub fn render_context_menu(
-    //         &self,
-    //         cursor_position: DisplayPoint,
-    //         style: EditorStyle,
-    //         cx: &mut ViewContext<Editor>,
-    //     ) -> Option<(DisplayPoint, AnyElement<Editor>)> {
-    //         self.context_menu.read().as_ref().map(|menu| {
-    //             menu.render(
-    //                 cursor_position,
-    //                 style,
-    //                 self.workspace.as_ref().map(|(w, _)| w.clone()),
-    //                 cx,
-    //             )
-    //         })
-    //     }
+    pub fn render_context_menu(
+        &self,
+        cursor_position: DisplayPoint,
+        style: &EditorStyle,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<(DisplayPoint, AnyElement<Editor>)> {
+        self.context_menu.read().as_ref().map(|menu| {
+            menu.render(
+                cursor_position,
+                style,
+                self.workspace.as_ref().map(|(w, _)| w.clone()),
+                cx,
+            )
+        })
+    }
 
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<ContextMenu> {
         cx.notify();
