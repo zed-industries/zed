@@ -239,6 +239,14 @@ impl<'a, T> Context for ModelContext<'a, T> {
     {
         self.app.read_model(handle, read)
     }
+
+    fn read_window<R>(
+        &self,
+        window: &AnyWindowHandle,
+        read: impl FnOnce(AnyView, &AppContext) -> R,
+    ) -> Result<R> {
+        self.app.read_window(window, read)
+    }
 }
 
 impl<T> Borrow<AppContext> for ModelContext<'_, T> {

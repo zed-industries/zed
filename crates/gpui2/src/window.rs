@@ -1428,6 +1428,19 @@ impl Context for WindowContext<'_> {
         let entity = self.entities.read(handle);
         read(&*entity, &*self.app)
     }
+
+    fn read_window<R>(
+        &self,
+        window: &AnyWindowHandle,
+        read: impl FnOnce(AnyView, &AppContext) -> R,
+    ) -> Result<R> {
+        if window == &self.window.handle {
+            let root_view = self.window.root_view.clone().unwrap();
+            Ok(read(root_view, self))
+        } else {
+            window.read(self.app, read)
+        }
+    }
 }
 
 impl VisualContext for WindowContext<'_> {
@@ -1747,9 +1760,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         }
     }
 
-    // todo!("change this to return a reference");
-    pub fn view(&self) -> View<V> {
-        self.view.clone()
+    pub fn view(&self) -> &View<V> {
+        self.view
     }
 
     pub fn model(&self) -> Model<V> {
@@ -1772,7 +1784,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     where
         V: 'static,
     {
-        let view = self.view();
+        let view = self.view().clone();
         self.window_cx.on_next_frame(move |cx| view.update(cx, f));
     }
 
@@ -2170,7 +2182,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &mut self,
         handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + 'static,
     ) {
-        let handle = self.view();
+        let handle = self.view().clone();
         self.window_cx.on_mouse_event(move |event, phase, cx| {
             handle.update(cx, |view, cx| {
                 handler(view, event, phase, cx);
@@ -2244,6 +2256,14 @@ impl<V> Context for ViewContext<'_, V> {
     {
         self.window_cx.read_model(handle, read)
     }
+
+    fn read_window<R>(
+        &self,
+        window: &AnyWindowHandle,
+        read: impl FnOnce(AnyView, &AppContext) -> R,
+    ) -> Result<R> {
+        self.window_cx.read_window(window, read)
+    }
 }
 
 impl<V: 'static> VisualContext for ViewContext<'_, V> {
@@ -2313,6 +2333,14 @@ impl<V: 'static + Render> WindowHandle<V> {
             },
             state_type: PhantomData,
         }
+    }
+
+    pub fn root<C: Context>(&self, cx: &C) -> Result<View<V>> {
+        cx.read_window(&self.any_handle, |root_view, _| {
+            root_view
+                .downcast::<V>()
+                .map_err(|_| anyhow!("the type of the window's root view has changed"))
+        })?
     }
 
     pub fn update<C, R>(
@@ -2394,6 +2422,13 @@ impl AnyWindowHandle {
         C: Context,
     {
         cx.update_window(self, update)
+    }
+
+    pub fn read<C, R>(self, cx: &C, read: impl FnOnce(AnyView, &AppContext) -> R) -> Result<R>
+    where
+        C: Context,
+    {
+        cx.read_window(&self, read)
     }
 }
 

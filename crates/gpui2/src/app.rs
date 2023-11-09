@@ -1007,6 +1007,22 @@ impl Context for AppContext {
         let entity = self.entities.read(handle);
         read(entity, self)
     }
+
+    fn read_window<R>(
+        &self,
+        window: &AnyWindowHandle,
+        read: impl FnOnce(AnyView, &AppContext) -> R,
+    ) -> Result<R> {
+        let window = self
+            .windows
+            .get(window.id)
+            .ok_or_else(|| anyhow!("window not found"))?
+            .as_ref()
+            .unwrap();
+
+        let root_view = window.root_view.clone().unwrap();
+        Ok(read(root_view, self))
+    }
 }
 
 /// These effects are processed at the end of each application update cycle.
