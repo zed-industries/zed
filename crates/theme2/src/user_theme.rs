@@ -1,7 +1,7 @@
 use refineable::Refineable;
 use serde::Deserialize;
 
-use crate::{Appearance, ThemeColors, ThemeColorsRefinement};
+use crate::{Appearance, StatusColors, StatusColorsRefinement, ThemeColors, ThemeColorsRefinement};
 
 #[derive(Deserialize)]
 pub struct UserThemeFamily {
@@ -22,4 +22,6 @@ pub struct UserTheme {
 pub struct UserThemeStyles {
     #[refineable]
     pub colors: ThemeColors,
+    #[refineable]
+    pub status: StatusColors,
 }

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use gpui::{Hsla, Rgba};
 use serde::Deserialize;
-use theme::{ThemeColorsRefinement, UserTheme, UserThemeStylesRefinement};
+use theme::{StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeStylesRefinement};
 
 use crate::util::Traverse;
 use crate::ThemeMetadata;
@@ -435,6 +435,33 @@ impl VsCodeThemeConverter {
 
         let vscode_colors = &self.theme.colors;
 
+        let status_color_refinements = StatusColorsRefinement {
+            // conflict: None,
+            // created: None,
+            deleted: vscode_colors
+                .error_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            error: vscode_colors
+                .error_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            hidden: vscode_colors
+                .tab_inactive_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            // ignored: None,
+            // info: None,
+            // modified: None,
+            // renamed: None,
+            // success: None,
+            warning: vscode_colors
+                .list_warning_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            ..Default::default()
+        };
+
         let theme_colors_refinements = ThemeColorsRefinement {
             border: vscode_colors
                 .panel_border
@@ -596,6 +623,7 @@ impl VsCodeThemeConverter {
             appearance,
             styles: UserThemeStylesRefinement {
                 colors: theme_colors_refinements,
+                status: status_color_refinements,
             },
         })
     }

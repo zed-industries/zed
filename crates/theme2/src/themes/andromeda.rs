@@ -4,7 +4,8 @@
 use gpui::rgba;
 
 use crate::{
-    Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 pub fn andromeda() -> UserThemeFamily {
@@ -19,7 +20,7 @@ pub fn andromeda() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x1b1d23ff).into()),
                         border_variant: Some(rgba(0x1b1d23ff).into()),
-                        border_focused: Some(rgba(0x1b1d23ff).into()),
+                        border_focused: Some(rgba(0x746f77ff).into()),
                         border_selected: Some(rgba(0x1b1d23ff).into()),
                         border_transparent: Some(rgba(0x1b1d23ff).into()),
                         border_disabled: Some(rgba(0x1b1d23ff).into()),
@@ -27,6 +28,10 @@ pub fn andromeda() -> UserThemeFamily {
                         surface_background: Some(rgba(0x23262eff).into()),
                         background: Some(rgba(0x23262eff).into()),
                         element_background: Some(rgba(0x00e8c5cc).into()),
+                        element_hover: Some(rgba(0x23262eff).into()),
+                        element_selected: Some(rgba(0x23262eff).into()),
+                        drop_target_background: Some(rgba(0x3a404eff).into()),
+                        ghost_element_hover: Some(rgba(0x23262eff).into()),
                         text: Some(rgba(0xd4cdd8ff).into()),
                         tab_inactive_background: Some(rgba(0x23262eff).into()),
                         tab_active_background: Some(rgba(0x23262eff).into()),
@@ -48,6 +53,12 @@ pub fn andromeda() -> UserThemeFamily {
                         terminal_ansi_cyan: Some(rgba(0x00e8c6ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xfc634cff).into()),
+                        error: Some(rgba(0xfc634cff).into()),
+                        hidden: Some(rgba(0x746f77ff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -57,7 +68,7 @@ pub fn andromeda() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x1b1d23ff).into()),
                         border_variant: Some(rgba(0x1b1d23ff).into()),
-                        border_focused: Some(rgba(0x1b1d23ff).into()),
+                        border_focused: Some(rgba(0x746f77ff).into()),
                         border_selected: Some(rgba(0x1b1d23ff).into()),
                         border_transparent: Some(rgba(0x1b1d23ff).into()),
                         border_disabled: Some(rgba(0x1b1d23ff).into()),
@@ -65,6 +76,10 @@ pub fn andromeda() -> UserThemeFamily {
                         surface_background: Some(rgba(0x23262eff).into()),
                         background: Some(rgba(0x262933ff).into()),
                         element_background: Some(rgba(0x00e8c5cc).into()),
+                        element_hover: Some(rgba(0x23262eff).into()),
+                        element_selected: Some(rgba(0x23262eff).into()),
+                        drop_target_background: Some(rgba(0x3a404eff).into()),
+                        ghost_element_hover: Some(rgba(0x23262eff).into()),
                         text: Some(rgba(0xd4cdd8ff).into()),
                         tab_inactive_background: Some(rgba(0x23262eff).into()),
                         tab_active_background: Some(rgba(0x262933ff).into()),
@@ -84,6 +99,12 @@ pub fn andromeda() -> UserThemeFamily {
                         terminal_ansi_blue: Some(rgba(0x7bb7ffff).into()),
                         terminal_ansi_magenta: Some(rgba(0xff00a9ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x00e8c6ff).into()),
+                        ..Default::default()
+                    },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xfc634cff).into()),
+                        error: Some(rgba(0xfc634cff).into()),
+                        hidden: Some(rgba(0x746f77ff).into()),
                         ..Default::default()
                     },
                 },

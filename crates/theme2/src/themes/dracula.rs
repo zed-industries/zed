@@ -4,7 +4,8 @@
 use gpui::rgba;
 
 use crate::{
-    Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 pub fn dracula() -> UserThemeFamily {
@@ -18,7 +19,7 @@ pub fn dracula() -> UserThemeFamily {
                 colors: ThemeColorsRefinement {
                     border: Some(rgba(0xbd93f9ff).into()),
                     border_variant: Some(rgba(0xbd93f9ff).into()),
-                    border_focused: Some(rgba(0xbd93f9ff).into()),
+                    border_focused: Some(rgba(0x6272a4ff).into()),
                     border_selected: Some(rgba(0xbd93f9ff).into()),
                     border_transparent: Some(rgba(0xbd93f9ff).into()),
                     border_disabled: Some(rgba(0xbd93f9ff).into()),
@@ -26,6 +27,10 @@ pub fn dracula() -> UserThemeFamily {
                     surface_background: Some(rgba(0x282a35ff).into()),
                     background: Some(rgba(0x282a35ff).into()),
                     element_background: Some(rgba(0x44475aff).into()),
+                    element_hover: Some(rgba(0x44475a75).into()),
+                    element_selected: Some(rgba(0x44475aff).into()),
+                    drop_target_background: Some(rgba(0x44475aff).into()),
+                    ghost_element_hover: Some(rgba(0x44475a75).into()),
                     text: Some(rgba(0xf8f8f2ff).into()),
                     tab_inactive_background: Some(rgba(0x21222cff).into()),
                     tab_active_background: Some(rgba(0x282a35ff).into()),
@@ -50,6 +55,13 @@ pub fn dracula() -> UserThemeFamily {
                     terminal_ansi_magenta: Some(rgba(0xff79c6ff).into()),
                     terminal_ansi_cyan: Some(rgba(0x8be9fdff).into()),
                     terminal_ansi_white: Some(rgba(0xf8f8f2ff).into()),
+                    ..Default::default()
+                },
+                status: StatusColorsRefinement {
+                    deleted: Some(rgba(0xff5555ff).into()),
+                    error: Some(rgba(0xff5555ff).into()),
+                    hidden: Some(rgba(0x6272a4ff).into()),
+                    warning: Some(rgba(0xffb76bff).into()),
                     ..Default::default()
                 },
             },

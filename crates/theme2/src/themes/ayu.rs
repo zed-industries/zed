@@ -4,7 +4,8 @@
 use gpui::rgba;
 
 use crate::{
-    Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 pub fn ayu() -> UserThemeFamily {
@@ -19,7 +20,7 @@ pub fn ayu() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x6b7d8f1f).into()),
                         border_variant: Some(rgba(0x6b7d8f1f).into()),
-                        border_focused: Some(rgba(0x6b7d8f1f).into()),
+                        border_focused: Some(rgba(0xffaa32b3).into()),
                         border_selected: Some(rgba(0x6b7d8f1f).into()),
                         border_transparent: Some(rgba(0x6b7d8f1f).into()),
                         border_disabled: Some(rgba(0x6b7d8f1f).into()),
@@ -27,6 +28,9 @@ pub fn ayu() -> UserThemeFamily {
                         surface_background: Some(rgba(0xf8f9faff).into()),
                         background: Some(rgba(0xf8f9faff).into()),
                         element_background: Some(rgba(0xffaa32ff).into()),
+                        element_hover: Some(rgba(0x55728f1f).into()),
+                        element_selected: Some(rgba(0x55728f1f).into()),
+                        ghost_element_hover: Some(rgba(0x55728f1f).into()),
                         text: Some(rgba(0x8a9199ff).into()),
                         tab_inactive_background: Some(rgba(0xf8f9faff).into()),
                         tab_active_background: Some(rgba(0xf8f9faff).into()),
@@ -53,6 +57,12 @@ pub fn ayu() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xc7c7c7ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xe65050ff).into()),
+                        error: Some(rgba(0xe65050ff).into()),
+                        hidden: Some(rgba(0x8a9199ff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -62,7 +72,7 @@ pub fn ayu() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x171a24ff).into()),
                         border_variant: Some(rgba(0x171a24ff).into()),
-                        border_focused: Some(rgba(0x171a24ff).into()),
+                        border_focused: Some(rgba(0xffcb65b3).into()),
                         border_selected: Some(rgba(0x171a24ff).into()),
                         border_transparent: Some(rgba(0x171a24ff).into()),
                         border_disabled: Some(rgba(0x171a24ff).into()),
@@ -70,6 +80,9 @@ pub fn ayu() -> UserThemeFamily {
                         surface_background: Some(rgba(0x1f2430ff).into()),
                         background: Some(rgba(0x1f2430ff).into()),
                         element_background: Some(rgba(0xffcb65ff).into()),
+                        element_hover: Some(rgba(0x63759926).into()),
+                        element_selected: Some(rgba(0x63759926).into()),
+                        ghost_element_hover: Some(rgba(0x63759926).into()),
                         text: Some(rgba(0x707a8cff).into()),
                         tab_inactive_background: Some(rgba(0x1f2430ff).into()),
                         tab_active_background: Some(rgba(0x1f2430ff).into()),
@@ -96,6 +109,12 @@ pub fn ayu() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xc7c7c7ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xff6565ff).into()),
+                        error: Some(rgba(0xff6565ff).into()),
+                        hidden: Some(rgba(0x707a8cff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -105,7 +124,7 @@ pub fn ayu() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x1e232bff).into()),
                         border_variant: Some(rgba(0x1e232bff).into()),
-                        border_focused: Some(rgba(0x1e232bff).into()),
+                        border_focused: Some(rgba(0xe6b450b3).into()),
                         border_selected: Some(rgba(0x1e232bff).into()),
                         border_transparent: Some(rgba(0x1e232bff).into()),
                         border_disabled: Some(rgba(0x1e232bff).into()),
@@ -113,6 +132,9 @@ pub fn ayu() -> UserThemeFamily {
                         surface_background: Some(rgba(0x0b0e14ff).into()),
                         background: Some(rgba(0x0b0e14ff).into()),
                         element_background: Some(rgba(0xe6b450ff).into()),
+                        element_hover: Some(rgba(0x47526640).into()),
+                        element_selected: Some(rgba(0x47526640).into()),
+                        ghost_element_hover: Some(rgba(0x47526640).into()),
                         text: Some(rgba(0x565b66ff).into()),
                         tab_inactive_background: Some(rgba(0x0b0e14ff).into()),
                         tab_active_background: Some(rgba(0x0b0e14ff).into()),
@@ -137,6 +159,12 @@ pub fn ayu() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xcca1faff).into()),
                         terminal_ansi_cyan: Some(rgba(0x90e1c6ff).into()),
                         terminal_ansi_white: Some(rgba(0xc7c7c7ff).into()),
+                        ..Default::default()
+                    },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xd95757ff).into()),
+                        error: Some(rgba(0xd95757ff).into()),
+                        hidden: Some(rgba(0x565b66ff).into()),
                         ..Default::default()
                     },
                 },

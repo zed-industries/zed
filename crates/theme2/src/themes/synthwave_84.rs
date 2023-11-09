@@ -4,7 +4,8 @@
 use gpui::rgba;
 
 use crate::{
-    Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 pub fn synthwave_84() -> UserThemeFamily {
@@ -16,8 +17,13 @@ pub fn synthwave_84() -> UserThemeFamily {
             appearance: Appearance::Dark,
             styles: UserThemeStylesRefinement {
                 colors: ThemeColorsRefinement {
+                    border_focused: Some(rgba(0x1f212bff).into()),
                     background: Some(rgba(0x252334ff).into()),
                     element_background: Some(rgba(0x614d85ff).into()),
+                    element_hover: Some(rgba(0x37294d99).into()),
+                    element_selected: Some(rgba(0xffffff20).into()),
+                    drop_target_background: Some(rgba(0x34294f66).into()),
+                    ghost_element_hover: Some(rgba(0x37294d99).into()),
                     text: Some(rgba(0xffffffff).into()),
                     tab_inactive_background: Some(rgba(0x252334ff).into()),
                     editor_background: Some(rgba(0x252334ff).into()),
@@ -35,6 +41,12 @@ pub fn synthwave_84() -> UserThemeFamily {
                     terminal_ansi_blue: Some(rgba(0x02edf9ff).into()),
                     terminal_ansi_magenta: Some(rgba(0xff7ddaff).into()),
                     terminal_ansi_cyan: Some(rgba(0x02edf9ff).into()),
+                    ..Default::default()
+                },
+                status: StatusColorsRefinement {
+                    deleted: Some(rgba(0xfe444fff).into()),
+                    error: Some(rgba(0xfe444fff).into()),
+                    warning: Some(rgba(0x71f1b7bb).into()),
                     ..Default::default()
                 },
             },

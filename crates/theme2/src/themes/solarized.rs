@@ -4,7 +4,8 @@
 use gpui::rgba;
 
 use crate::{
-    Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 pub fn solarized() -> UserThemeFamily {
@@ -19,12 +20,16 @@ pub fn solarized() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x003847ff).into()),
                         border_variant: Some(rgba(0x003847ff).into()),
-                        border_focused: Some(rgba(0x003847ff).into()),
+                        border_focused: Some(rgba(0x29a19899).into()),
                         border_selected: Some(rgba(0x003847ff).into()),
                         border_transparent: Some(rgba(0x003847ff).into()),
                         border_disabled: Some(rgba(0x003847ff).into()),
                         background: Some(rgba(0x002a35ff).into()),
                         element_background: Some(rgba(0x29a19899).into()),
+                        element_hover: Some(rgba(0x004353aa).into()),
+                        element_selected: Some(rgba(0x005a6fff).into()),
+                        drop_target_background: Some(rgba(0x00435388).into()),
+                        ghost_element_hover: Some(rgba(0x004353aa).into()),
                         tab_inactive_background: Some(rgba(0x003f51ff).into()),
                         tab_active_background: Some(rgba(0x002a36ff).into()),
                         editor_background: Some(rgba(0x002a35ff).into()),
@@ -48,6 +53,12 @@ pub fn solarized() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0x839496ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xffeaeaff).into()),
+                        error: Some(rgba(0xffeaeaff).into()),
+                        hidden: Some(rgba(0x93a1a1ff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -57,12 +68,15 @@ pub fn solarized() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xddd6c1ff).into()),
                         border_variant: Some(rgba(0xddd6c1ff).into()),
-                        border_focused: Some(rgba(0xddd6c1ff).into()),
+                        border_focused: Some(rgba(0xd3af86ff).into()),
                         border_selected: Some(rgba(0xddd6c1ff).into()),
                         border_transparent: Some(rgba(0xddd6c1ff).into()),
                         border_disabled: Some(rgba(0xddd6c1ff).into()),
                         background: Some(rgba(0xfdf6e3ff).into()),
                         element_background: Some(rgba(0xab9d56ff).into()),
+                        element_hover: Some(rgba(0xdec98744).into()),
+                        element_selected: Some(rgba(0xdec987ff).into()),
+                        ghost_element_hover: Some(rgba(0xdec98744).into()),
                         tab_inactive_background: Some(rgba(0xd3cbb7ff).into()),
                         tab_active_background: Some(rgba(0xfdf6e3ff).into()),
                         editor_background: Some(rgba(0xfdf6e3ff).into()),
@@ -84,6 +98,10 @@ pub fn solarized() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xd33582ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x29a198ff).into()),
                         terminal_ansi_white: Some(rgba(0xeee8d5ff).into()),
+                        ..Default::default()
+                    },
+                    status: StatusColorsRefinement {
+                        hidden: Some(rgba(0x586e75ff).into()),
                         ..Default::default()
                     },
                 },

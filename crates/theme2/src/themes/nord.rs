@@ -4,7 +4,8 @@
 use gpui::rgba;
 
 use crate::{
-    Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 pub fn nord() -> UserThemeFamily {
@@ -26,6 +27,10 @@ pub fn nord() -> UserThemeFamily {
                     surface_background: Some(rgba(0x2e3440ff).into()),
                     background: Some(rgba(0x2e3440ff).into()),
                     element_background: Some(rgba(0x88bfd0ee).into()),
+                    element_hover: Some(rgba(0x3b4252ff).into()),
+                    element_selected: Some(rgba(0x88bfd0ff).into()),
+                    drop_target_background: Some(rgba(0x88bfd099).into()),
+                    ghost_element_hover: Some(rgba(0x3b4252ff).into()),
                     text: Some(rgba(0xd8dee9ff).into()),
                     tab_inactive_background: Some(rgba(0x2e3440ff).into()),
                     tab_active_background: Some(rgba(0x3b4252ff).into()),
@@ -50,6 +55,13 @@ pub fn nord() -> UserThemeFamily {
                     terminal_ansi_magenta: Some(rgba(0xb48eacff).into()),
                     terminal_ansi_cyan: Some(rgba(0x88bfd0ff).into()),
                     terminal_ansi_white: Some(rgba(0xe5e9f0ff).into()),
+                    ..Default::default()
+                },
+                status: StatusColorsRefinement {
+                    deleted: Some(rgba(0xbf616aff).into()),
+                    error: Some(rgba(0xbf616aff).into()),
+                    hidden: Some(rgba(0xd8dee966).into()),
+                    warning: Some(rgba(0xebcb8bff).into()),
                     ..Default::default()
                 },
             },

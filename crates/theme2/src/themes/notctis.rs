@@ -4,7 +4,8 @@
 use gpui::rgba;
 
 use crate::{
-    Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 pub fn notctis() -> UserThemeFamily {
@@ -19,7 +20,7 @@ pub fn notctis() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x1579b6ff).into()),
                         border_variant: Some(rgba(0x1579b6ff).into()),
-                        border_focused: Some(rgba(0x1579b6ff).into()),
+                        border_focused: Some(rgba(0x08324eff).into()),
                         border_selected: Some(rgba(0x1579b6ff).into()),
                         border_transparent: Some(rgba(0x1579b6ff).into()),
                         border_disabled: Some(rgba(0x1579b6ff).into()),
@@ -27,6 +28,10 @@ pub fn notctis() -> UserThemeFamily {
                         surface_background: Some(rgba(0x051b28ff).into()),
                         background: Some(rgba(0x07263aff).into()),
                         element_background: Some(rgba(0x007e99ff).into()),
+                        element_hover: Some(rgba(0x00558a65).into()),
+                        element_selected: Some(rgba(0x0b3f5fff).into()),
+                        drop_target_background: Some(rgba(0x00294dff).into()),
+                        ghost_element_hover: Some(rgba(0x00558a65).into()),
                         text: Some(rgba(0xbecfdaff).into()),
                         tab_inactive_background: Some(rgba(0x08324eff).into()),
                         tab_active_background: Some(rgba(0x07263aff).into()),
@@ -53,6 +58,13 @@ pub fn notctis() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xaec3d0ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xe34d1bff).into()),
+                        error: Some(rgba(0xe34d1bff).into()),
+                        hidden: Some(rgba(0x9fb6c6ff).into()),
+                        warning: Some(rgba(0xffa857ff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -62,7 +74,7 @@ pub fn notctis() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x997582ff).into()),
                         border_variant: Some(rgba(0x997582ff).into()),
-                        border_focused: Some(rgba(0x997582ff).into()),
+                        border_focused: Some(rgba(0x413036ff).into()),
                         border_selected: Some(rgba(0x997582ff).into()),
                         border_transparent: Some(rgba(0x997582ff).into()),
                         border_disabled: Some(rgba(0x997582ff).into()),
@@ -70,6 +82,10 @@ pub fn notctis() -> UserThemeFamily {
                         surface_background: Some(rgba(0x272022ff).into()),
                         background: Some(rgba(0x322a2dff).into()),
                         element_background: Some(rgba(0x007e99ff).into()),
+                        element_hover: Some(rgba(0x533641ff).into()),
+                        element_selected: Some(rgba(0x5c2e3e99).into()),
+                        drop_target_background: Some(rgba(0x38292eff).into()),
+                        ghost_element_hover: Some(rgba(0x533641ff).into()),
                         text: Some(rgba(0xcbbec2ff).into()),
                         tab_inactive_background: Some(rgba(0x413036ff).into()),
                         tab_active_background: Some(rgba(0x322a2dff).into()),
@@ -96,6 +112,13 @@ pub fn notctis() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xb9acb0ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xe34d1bff).into()),
+                        error: Some(rgba(0xe34d1bff).into()),
+                        hidden: Some(rgba(0xbbaab0ff).into()),
+                        warning: Some(rgba(0xffa857ff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -105,7 +128,7 @@ pub fn notctis() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x00c6e0ff).into()),
                         border_variant: Some(rgba(0x00c6e0ff).into()),
-                        border_focused: Some(rgba(0x00c6e0ff).into()),
+                        border_focused: Some(rgba(0xe0eff1ff).into()),
                         border_selected: Some(rgba(0x00c6e0ff).into()),
                         border_transparent: Some(rgba(0x00c6e0ff).into()),
                         border_disabled: Some(rgba(0x00c6e0ff).into()),
@@ -113,6 +136,10 @@ pub fn notctis() -> UserThemeFamily {
                         surface_background: Some(rgba(0xe1eeefff).into()),
                         background: Some(rgba(0xf4f6f6ff).into()),
                         element_background: Some(rgba(0x089099ff).into()),
+                        element_hover: Some(rgba(0xd1eafaff).into()),
+                        element_selected: Some(rgba(0xb6e1e7ff).into()),
+                        drop_target_background: Some(rgba(0xb1c9ccff).into()),
+                        ghost_element_hover: Some(rgba(0xd1eafaff).into()),
                         text: Some(rgba(0x005661ff).into()),
                         tab_inactive_background: Some(rgba(0xcaedf2ff).into()),
                         tab_active_background: Some(rgba(0xf4f6f6ff).into()),
@@ -139,6 +166,13 @@ pub fn notctis() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0x8ca6a6ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xff3f00ff).into()),
+                        error: Some(rgba(0xff3f00ff).into()),
+                        hidden: Some(rgba(0x70838dff).into()),
+                        warning: Some(rgba(0xe07a52ff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -148,7 +182,7 @@ pub fn notctis() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xaea4f4ff).into()),
                         border_variant: Some(rgba(0xaea4f4ff).into()),
-                        border_focused: Some(rgba(0xaea4f4ff).into()),
+                        border_focused: Some(rgba(0xdedbf5ff).into()),
                         border_selected: Some(rgba(0xaea4f4ff).into()),
                         border_transparent: Some(rgba(0xaea4f4ff).into()),
                         border_disabled: Some(rgba(0xaea4f4ff).into()),
@@ -156,6 +190,10 @@ pub fn notctis() -> UserThemeFamily {
                         surface_background: Some(rgba(0xe9e7f3ff).into()),
                         background: Some(rgba(0xf2f1f8ff).into()),
                         element_background: Some(rgba(0x8d7ffeff).into()),
+                        element_hover: Some(rgba(0xd1cbfeff).into()),
+                        element_selected: Some(rgba(0xbcb6e7ff).into()),
+                        drop_target_background: Some(rgba(0xafaad4aa).into()),
+                        ghost_element_hover: Some(rgba(0xd1cbfeff).into()),
                         text: Some(rgba(0x0c006bff).into()),
                         tab_inactive_background: Some(rgba(0xe2dff6ff).into()),
                         tab_active_background: Some(rgba(0xf2f1f8ff).into()),
@@ -182,6 +220,13 @@ pub fn notctis() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0x8ca6a6ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xff3f00ff).into()),
+                        error: Some(rgba(0xff3f00ff).into()),
+                        hidden: Some(rgba(0x74708dff).into()),
+                        warning: Some(rgba(0xe07a52ff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -191,7 +236,7 @@ pub fn notctis() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x00c6e0ff).into()),
                         border_variant: Some(rgba(0x00c6e0ff).into()),
-                        border_focused: Some(rgba(0x00c6e0ff).into()),
+                        border_focused: Some(rgba(0xf2eddeff).into()),
                         border_selected: Some(rgba(0x00c6e0ff).into()),
                         border_transparent: Some(rgba(0x00c6e0ff).into()),
                         border_disabled: Some(rgba(0x00c6e0ff).into()),
@@ -199,6 +244,10 @@ pub fn notctis() -> UserThemeFamily {
                         surface_background: Some(rgba(0xf6eddaff).into()),
                         background: Some(rgba(0xfef8ecff).into()),
                         element_background: Some(rgba(0x089099ff).into()),
+                        element_hover: Some(rgba(0xd1f2f8ff).into()),
+                        element_selected: Some(rgba(0xb6e1e7ff).into()),
+                        drop_target_background: Some(rgba(0xcccab1ff).into()),
+                        ghost_element_hover: Some(rgba(0xd1f2f8ff).into()),
                         text: Some(rgba(0x005661ff).into()),
                         tab_inactive_background: Some(rgba(0xf0e9d6ff).into()),
                         tab_active_background: Some(rgba(0xfef8ecff).into()),
@@ -225,6 +274,13 @@ pub fn notctis() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0x8ca6a6ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xff3f00ff).into()),
+                        error: Some(rgba(0xff3f00ff).into()),
+                        hidden: Some(rgba(0x878476ff).into()),
+                        warning: Some(rgba(0xe07a52ff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -234,7 +290,7 @@ pub fn notctis() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x496c83ff).into()),
                         border_variant: Some(rgba(0x496c83ff).into()),
-                        border_focused: Some(rgba(0x496c83ff).into()),
+                        border_focused: Some(rgba(0x202d37ff).into()),
                         border_selected: Some(rgba(0x496c83ff).into()),
                         border_transparent: Some(rgba(0x496c83ff).into()),
                         border_disabled: Some(rgba(0x496c83ff).into()),
@@ -242,6 +298,10 @@ pub fn notctis() -> UserThemeFamily {
                         surface_background: Some(rgba(0x0e1920ff).into()),
                         background: Some(rgba(0x1b2932ff).into()),
                         element_background: Some(rgba(0x2e616bff).into()),
+                        element_hover: Some(rgba(0x00558aff).into()),
+                        element_selected: Some(rgba(0x2c414eff).into()),
+                        drop_target_background: Some(rgba(0x152836ff).into()),
+                        ghost_element_hover: Some(rgba(0x00558aff).into()),
                         text: Some(rgba(0xc5cdd3ff).into()),
                         tab_inactive_background: Some(rgba(0x202d37ff).into()),
                         tab_active_background: Some(rgba(0x1b2932ff).into()),
@@ -268,6 +328,13 @@ pub fn notctis() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xc5cdd3ff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xb96245ff).into()),
+                        error: Some(rgba(0xb96245ff).into()),
+                        hidden: Some(rgba(0x96a8b6ff).into()),
+                        warning: Some(rgba(0xffa857ff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -277,7 +344,7 @@ pub fn notctis() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x0d6571ff).into()),
                         border_variant: Some(rgba(0x0d6571ff).into()),
-                        border_focused: Some(rgba(0x0d6571ff).into()),
+                        border_focused: Some(rgba(0x063940ff).into()),
                         border_selected: Some(rgba(0x0d6571ff).into()),
                         border_transparent: Some(rgba(0x0d6571ff).into()),
                         border_disabled: Some(rgba(0x0d6571ff).into()),
@@ -285,6 +352,10 @@ pub fn notctis() -> UserThemeFamily {
                         surface_background: Some(rgba(0x03181aff).into()),
                         background: Some(rgba(0x052428ff).into()),
                         element_background: Some(rgba(0x089099ff).into()),
+                        element_hover: Some(rgba(0x0b505aff).into()),
+                        element_selected: Some(rgba(0x0d6571ff).into()),
+                        drop_target_background: Some(rgba(0x00404dff).into()),
+                        ghost_element_hover: Some(rgba(0x0b505aff).into()),
                         text: Some(rgba(0xb1c9ccff).into()),
                         tab_inactive_background: Some(rgba(0x052e32ff).into()),
                         tab_active_background: Some(rgba(0x052428ff).into()),
@@ -311,6 +382,13 @@ pub fn notctis() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xb1c9ccff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xe34d1bff).into()),
+                        error: Some(rgba(0xe34d1bff).into()),
+                        hidden: Some(rgba(0x87a7abff).into()),
+                        warning: Some(rgba(0xffa487ff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -320,7 +398,7 @@ pub fn notctis() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x0d6571ff).into()),
                         border_variant: Some(rgba(0x0d6571ff).into()),
-                        border_focused: Some(rgba(0x0d6571ff).into()),
+                        border_focused: Some(rgba(0x052e32ff).into()),
                         border_selected: Some(rgba(0x0d6571ff).into()),
                         border_transparent: Some(rgba(0x0d6571ff).into()),
                         border_disabled: Some(rgba(0x0d6571ff).into()),
@@ -328,6 +406,10 @@ pub fn notctis() -> UserThemeFamily {
                         surface_background: Some(rgba(0x020c0eff).into()),
                         background: Some(rgba(0x031316ff).into()),
                         element_background: Some(rgba(0x089099ff).into()),
+                        element_hover: Some(rgba(0x0b505aff).into()),
+                        element_selected: Some(rgba(0x0d6571ff).into()),
+                        drop_target_background: Some(rgba(0x00404dff).into()),
+                        ghost_element_hover: Some(rgba(0x0b505aff).into()),
                         text: Some(rgba(0xb1c9ccff).into()),
                         tab_inactive_background: Some(rgba(0x052e32ff).into()),
                         tab_active_background: Some(rgba(0x031316ff).into()),
@@ -352,6 +434,13 @@ pub fn notctis() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xdf759aff).into()),
                         terminal_ansi_cyan: Some(rgba(0x49d5e9ff).into()),
                         terminal_ansi_white: Some(rgba(0xb1c9ccff).into()),
+                        ..Default::default()
+                    },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xe34d1bff).into()),
+                        error: Some(rgba(0xe34d1bff).into()),
+                        hidden: Some(rgba(0x87a7abff).into()),
+                        warning: Some(rgba(0xffa487ff).into()),
                         ..Default::default()
                     },
                 },
@@ -363,7 +452,7 @@ pub fn notctis() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x0d6571ff).into()),
                         border_variant: Some(rgba(0x0d6571ff).into()),
-                        border_focused: Some(rgba(0x0d6571ff).into()),
+                        border_focused: Some(rgba(0x052e32ff).into()),
                         border_selected: Some(rgba(0x0d6571ff).into()),
                         border_transparent: Some(rgba(0x0d6571ff).into()),
                         border_disabled: Some(rgba(0x0d6571ff).into()),
@@ -371,6 +460,10 @@ pub fn notctis() -> UserThemeFamily {
                         surface_background: Some(rgba(0x020c0eff).into()),
                         background: Some(rgba(0x031316ff).into()),
                         element_background: Some(rgba(0x089099ff).into()),
+                        element_hover: Some(rgba(0x0b505aff).into()),
+                        element_selected: Some(rgba(0x0d6571ff).into()),
+                        drop_target_background: Some(rgba(0x00404dff).into()),
+                        ghost_element_hover: Some(rgba(0x0b505aff).into()),
                         text: Some(rgba(0xb1c9ccff).into()),
                         tab_inactive_background: Some(rgba(0x052e32ff).into()),
                         tab_active_background: Some(rgba(0x031316ff).into()),
@@ -397,6 +490,13 @@ pub fn notctis() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xb1c9ccff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xe34d1bff).into()),
+                        error: Some(rgba(0xe34d1bff).into()),
+                        hidden: Some(rgba(0x87a7abff).into()),
+                        warning: Some(rgba(0xffa487ff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -406,7 +506,7 @@ pub fn notctis() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x6d66a7ff).into()),
                         border_variant: Some(rgba(0x6d66a7ff).into()),
-                        border_focused: Some(rgba(0x6d66a7ff).into()),
+                        border_focused: Some(rgba(0x2f2c49ff).into()),
                         border_selected: Some(rgba(0x6d66a7ff).into()),
                         border_transparent: Some(rgba(0x6d66a7ff).into()),
                         border_disabled: Some(rgba(0x6d66a7ff).into()),
@@ -414,6 +514,10 @@ pub fn notctis() -> UserThemeFamily {
                         surface_background: Some(rgba(0x1f1d30ff).into()),
                         background: Some(rgba(0x292640ff).into()),
                         element_background: Some(rgba(0x007e99ff).into()),
+                        element_hover: Some(rgba(0x383866ff).into()),
+                        element_selected: Some(rgba(0x322e5cff).into()),
+                        drop_target_background: Some(rgba(0x202040ff).into()),
+                        ghost_element_hover: Some(rgba(0x383866ff).into()),
                         text: Some(rgba(0xc5c2d6ff).into()),
                         tab_inactive_background: Some(rgba(0x2f2c49ff).into()),
                         tab_active_background: Some(rgba(0x292640ff).into()),
@@ -440,6 +544,13 @@ pub fn notctis() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xb6b3ccff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xe34d1bff).into()),
+                        error: Some(rgba(0xe34d1bff).into()),
+                        hidden: Some(rgba(0xa9a5c0ff).into()),
+                        warning: Some(rgba(0xffa857ff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -449,7 +560,7 @@ pub fn notctis() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x8666a7ff).into()),
                         border_variant: Some(rgba(0x8666a7ff).into()),
-                        border_focused: Some(rgba(0x8666a7ff).into()),
+                        border_focused: Some(rgba(0x3d2e4dff).into()),
                         border_selected: Some(rgba(0x8666a7ff).into()),
                         border_transparent: Some(rgba(0x8666a7ff).into()),
                         border_disabled: Some(rgba(0x8666a7ff).into()),
@@ -457,6 +568,10 @@ pub fn notctis() -> UserThemeFamily {
                         surface_background: Some(rgba(0x291d35ff).into()),
                         background: Some(rgba(0x30243dff).into()),
                         element_background: Some(rgba(0x007e99ff).into()),
+                        element_hover: Some(rgba(0x69438dff).into()),
+                        element_selected: Some(rgba(0x472e60ff).into()),
+                        drop_target_background: Some(rgba(0x302040ff).into()),
+                        ghost_element_hover: Some(rgba(0x69438dff).into()),
                         text: Some(rgba(0xccbfd9ff).into()),
                         tab_inactive_background: Some(rgba(0x3d2e4dff).into()),
                         tab_active_background: Some(rgba(0x30243dff).into()),
@@ -481,6 +596,13 @@ pub fn notctis() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xdf759aff).into()),
                         terminal_ansi_cyan: Some(rgba(0x49d5e9ff).into()),
                         terminal_ansi_white: Some(rgba(0xbfafcfff).into()),
+                        ..Default::default()
+                    },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xe34d1bff).into()),
+                        error: Some(rgba(0xe34d1bff).into()),
+                        hidden: Some(rgba(0xb3a5c0ff).into()),
+                        warning: Some(rgba(0xffa857ff).into()),
                         ..Default::default()
                     },
                 },

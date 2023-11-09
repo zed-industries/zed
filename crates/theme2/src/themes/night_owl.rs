@@ -4,7 +4,8 @@
 use gpui::rgba;
 
 use crate::{
-    Appearance, ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 pub fn night_owl() -> UserThemeFamily {
@@ -19,7 +20,7 @@ pub fn night_owl() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x5f7e97ff).into()),
                         border_variant: Some(rgba(0x5f7e97ff).into()),
-                        border_focused: Some(rgba(0x5f7e97ff).into()),
+                        border_focused: Some(rgba(0x122d42ff).into()),
                         border_selected: Some(rgba(0x5f7e97ff).into()),
                         border_transparent: Some(rgba(0x5f7e97ff).into()),
                         border_disabled: Some(rgba(0x5f7e97ff).into()),
@@ -27,6 +28,10 @@ pub fn night_owl() -> UserThemeFamily {
                         surface_background: Some(rgba(0x011526ff).into()),
                         background: Some(rgba(0x011526ff).into()),
                         element_background: Some(rgba(0x7d56c1cc).into()),
+                        element_hover: Some(rgba(0x011526ff).into()),
+                        element_selected: Some(rgba(0x234c708c).into()),
+                        drop_target_background: Some(rgba(0x011526ff).into()),
+                        ghost_element_hover: Some(rgba(0x011526ff).into()),
                         text: Some(rgba(0xd6deebff).into()),
                         tab_inactive_background: Some(rgba(0x01101cff).into()),
                         tab_active_background: Some(rgba(0x0a2842ff).into()),
@@ -52,6 +57,12 @@ pub fn night_owl() -> UserThemeFamily {
                         terminal_ansi_white: Some(rgba(0xffffffff).into()),
                         ..Default::default()
                     },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0xef524fff).into()),
+                        error: Some(rgba(0xef524fff).into()),
+                        hidden: Some(rgba(0x5f7e97ff).into()),
+                        ..Default::default()
+                    },
                 },
             },
             UserTheme {
@@ -61,7 +72,7 @@ pub fn night_owl() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xd9d9d9ff).into()),
                         border_variant: Some(rgba(0xd9d9d9ff).into()),
-                        border_focused: Some(rgba(0xd9d9d9ff).into()),
+                        border_focused: Some(rgba(0x93a1a1ff).into()),
                         border_selected: Some(rgba(0xd9d9d9ff).into()),
                         border_transparent: Some(rgba(0xd9d9d9ff).into()),
                         border_disabled: Some(rgba(0xd9d9d9ff).into()),
@@ -69,6 +80,9 @@ pub fn night_owl() -> UserThemeFamily {
                         surface_background: Some(rgba(0xf0f0f0ff).into()),
                         background: Some(rgba(0xfbfbfbff).into()),
                         element_background: Some(rgba(0x29a298ff).into()),
+                        element_hover: Some(rgba(0xd3e7f8ff).into()),
+                        element_selected: Some(rgba(0xd3e7f8ff).into()),
+                        ghost_element_hover: Some(rgba(0xd3e7f8ff).into()),
                         text: Some(rgba(0x403f53ff).into()),
                         tab_inactive_background: Some(rgba(0xf0f0f0ff).into()),
                         tab_active_background: Some(rgba(0xf6f6f6ff).into()),
@@ -93,6 +107,13 @@ pub fn night_owl() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xd64289ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x29a298ff).into()),
                         terminal_ansi_white: Some(rgba(0xf0f0f0ff).into()),
+                        ..Default::default()
+                    },
+                    status: StatusColorsRefinement {
+                        deleted: Some(rgba(0x403f53ff).into()),
+                        error: Some(rgba(0x403f53ff).into()),
+                        hidden: Some(rgba(0x403f53ff).into()),
+                        warning: Some(rgba(0xdaa900ff).into()),
                         ..Default::default()
                     },
                 },
