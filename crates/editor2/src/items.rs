@@ -1,7 +1,7 @@
 use crate::{
-    display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
-    movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
-    Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
+    link_go_to_definition::hide_link_definition, movement::surrounding_word, persistence::DB,
+    scroll::ScrollAnchor, Anchor, Autoscroll, Editor, Event, ExcerptId, ExcerptRange, MultiBuffer,
+    MultiBufferSnapshot, NavigationData, ToPoint as _,
 };
 use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
@@ -12,8 +12,8 @@ use gpui::{
     ViewContext, VisualContext, WeakView,
 };
 use language::{
-    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
-    SelectionGoal,
+    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
+    Point, SelectionGoal,
 };
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
@@ -921,10 +921,12 @@ impl SearchableItem for Editor {
         let display_map = self.snapshot(cx).display_snapshot;
         let selection = self.selections.newest::<usize>(cx);
         if selection.start == selection.end {
-            let point = selection.start.to_display_point(&display_map);
-            let range = surrounding_word(&display_map, point);
-            let range = range.start.to_offset(&display_map, Bias::Left)
-                ..range.end.to_offset(&display_map, Bias::Right);
+            let (range, kind) = display_map
+                .buffer_snapshot
+                .surrounding_word(selection.start);
+            if kind != Some(CharKind::Word) {
+                return String::new();
+            }
             let text: String = display_map.buffer_snapshot.text_for_range(range).collect();
             if text.trim().is_empty() {
                 String::new()
