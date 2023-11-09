@@ -42,7 +42,8 @@ use gpui::{
     action, actions, point, px, relative, rems, size, AnyElement, AppContext, BackgroundExecutor,
     Bounds, ClipboardItem, Component, Context, DispatchContext, EventEmitter, FocusHandle,
     FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, Render,
-    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView, WindowContext,
+    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -940,29 +941,13 @@ struct CompletionsMenu {
     match_candidates: Arc<[StringMatchCandidate]>,
     matches: Arc<[StringMatch]>,
     selected_item: usize,
-    list: UniformListState,
-}
-
-// todo!(this is fake)
-#[derive(Clone, Default)]
-struct UniformListState;
-
-// todo!(this is fake)
-impl UniformListState {
-    pub fn scroll_to(&mut self, target: ScrollTarget) {}
-}
-
-// todo!(this is somewhat fake)
-#[derive(Debug)]
-pub enum ScrollTarget {
-    Show(usize),
-    Center(usize),
+    scroll_handle: UniformListScrollHandle,
 }
 
 impl CompletionsMenu {
     fn select_first(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
         self.selected_item = 0;
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.scroll_handle.scroll_to_item(self.selected_item);
         self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
@@ -973,7 +958,7 @@ impl CompletionsMenu {
         } else {
             self.selected_item = self.matches.len() - 1;
         }
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.scroll_handle.scroll_to_item(self.selected_item);
         self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
@@ -984,14 +969,14 @@ impl CompletionsMenu {
         } else {
             self.selected_item = 0;
         }
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.scroll_handle.scroll_to_item(self.selected_item);
         self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
 
     fn select_last(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
         self.selected_item = self.matches.len() - 1;
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.scroll_handle.scroll_to_item(self.selected_item);
         self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
@@ -1527,14 +1512,14 @@ struct CodeActionsMenu {
     actions: Arc<[CodeAction]>,
     buffer: Model<Buffer>,
     selected_item: usize,
-    list: UniformListState,
+    scroll_handle: UniformListScrollHandle,
     deployed_from_indicator: bool,
 }
 
 impl CodeActionsMenu {
     fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
         self.selected_item = 0;
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.scroll_handle.scroll_to_item(self.selected_item);
         cx.notify()
     }
 
@@ -1544,7 +1529,7 @@ impl CodeActionsMenu {
         } else {
             self.selected_item = self.actions.len() - 1;
         }
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.scroll_handle.scroll_to_item(self.selected_item);
         cx.notify();
     }
 
@@ -1554,13 +1539,13 @@ impl CodeActionsMenu {
         } else {
             self.selected_item = 0;
         }
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.scroll_handle.scroll_to_item(self.selected_item);
         cx.notify();
     }
 
     fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
         self.selected_item = self.actions.len() - 1;
-        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.scroll_handle.scroll_to_item(self.selected_item);
         cx.notify()
     }
 
@@ -3660,7 +3645,7 @@ impl Editor {
                         completions: Arc::new(RwLock::new(completions.into())),
                         matches: Vec::new().into(),
                         selected_item: 0,
-                        list: Default::default(),
+                        scroll_handle: UniformListScrollHandle::new(),
                     };
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
@@ -3873,7 +3858,7 @@ impl Editor {
                                 buffer,
                                 actions,
                                 selected_item: Default::default(),
-                                list: Default::default(),
+                                scroll_handle: UniformListScrollHandle::default(),
                                 deployed_from_indicator,
                             }));
                     }

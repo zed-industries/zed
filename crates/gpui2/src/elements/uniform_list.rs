@@ -50,7 +50,7 @@ pub struct UniformList<V: 'static> {
     scroll_handle: Option<UniformListScrollHandle>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct UniformListScrollHandle(Arc<Mutex<Option<ScrollHandleState>>>);
 
 #[derive(Clone, Debug)]
