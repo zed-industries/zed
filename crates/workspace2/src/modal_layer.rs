@@ -1,7 +1,7 @@
 use crate::Workspace;
 use gpui::{
-    div, px, AnyView, Component, Div, EventEmitter, ParentElement, Render, StatelessInteractive,
-    Styled, Subscription, View, ViewContext,
+    div, px, AnyView, Component, Div, EventEmitter, ParentElement, Render, StatefulInteractivity,
+    StatelessInteractive, Styled, Subscription, View, ViewContext,
 };
 use std::{any::TypeId, sync::Arc};
 use ui::v_stack;
@@ -9,7 +9,14 @@ use ui::v_stack;
 pub struct ModalLayer {
     open_modal: Option<AnyView>,
     subscription: Option<Subscription>,
-    registered_modals: Vec<(TypeId, Box<dyn Fn(Div<Workspace>) -> Div<Workspace>>)>,
+    registered_modals: Vec<(
+        TypeId,
+        Box<
+            dyn Fn(
+                Div<Workspace, StatefulInteractivity<Workspace>>,
+            ) -> Div<Workspace, StatefulInteractivity<Workspace>>,
+        >,
+    )>,
 }
 
 pub enum ModalEvent {
@@ -64,8 +71,11 @@ impl ModalLayer {
         cx.notify();
     }
 
-    pub fn wrapper_element(&self, cx: &ViewContext<Workspace>) -> Div<Workspace> {
-        let mut parent = div().relative().size_full();
+    pub fn wrapper_element(
+        &self,
+        cx: &ViewContext<Workspace>,
+    ) -> Div<Workspace, StatefulInteractivity<Workspace>> {
+        let mut parent = div().id("modal layer").relative().size_full();
 
         for (_, action) in self.registered_modals.iter() {
             parent = (action)(parent);

@@ -39,8 +39,8 @@ use gpui::{
     actions, div, point, rems, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, Component, DispatchContext, Div, Entity, EntityId, EventEmitter,
     FocusHandle, GlobalPixels, Model, ModelContext, ParentElement, Point, Render, Size,
-    StatefulInteractive, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    StatefulInteractive, StatefulInteractivity, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -3706,13 +3706,14 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
 impl EventEmitter<Event> for Workspace {}
 
 impl Render for Workspace {
-    type Element = Div<Self>;
+    type Element = Div<Self, StatefulInteractivity<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let mut context = DispatchContext::default();
         context.insert("Workspace");
         cx.with_key_dispatch_context(context, |cx| {
             div()
+                .id("workspace")
                 .relative()
                 .size_full()
                 .flex()

@@ -3,8 +3,8 @@ use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, div, Action, AnyElement, AnyWindowHandle, AppContext, BorrowWindow, Div, Element,
-    EventEmitter, FocusHandle, Keystroke, ParentElement, Render, View, ViewContext, VisualContext,
-    WeakView,
+    EventEmitter, FocusHandle, Keystroke, ParentElement, Render, Styled, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::cmp::{self, Reverse};
@@ -60,7 +60,6 @@ impl Render for CommandPalette {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        dbg!("Rendering");
         modal(cx).w_96().child(self.picker.clone())
     }
 }

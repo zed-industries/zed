@@ -4149,12 +4149,16 @@ fn build_key_listeners(
         build_key_listener(
             move |editor, key_down: &KeyDownEvent, dispatch_context, phase, cx| {
                 if phase == DispatchPhase::Bubble {
+                    dbg!(&dispatch_context);
                     if let KeyMatch::Some(action) = cx.match_keystroke(
                         &global_element_id,
                         &key_down.keystroke,
                         dispatch_context,
                     ) {
+                        dbg!("got action", &action);
                         return Some(action);
+                    } else {
+                        dbg!("not action");
                     }
                 }
 

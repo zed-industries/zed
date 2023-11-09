@@ -414,6 +414,7 @@ pub trait ElementInteractivity<V: 'static>: 'static {
                     Box::new(move |_, key_down, context, phase, cx| {
                         if phase == DispatchPhase::Bubble {
                             let key_down = key_down.downcast_ref::<KeyDownEvent>().unwrap();
+                            dbg!(&context);
                             if let KeyMatch::Some(action) =
                                 cx.match_keystroke(&global_id, &key_down.keystroke, context)
                             {

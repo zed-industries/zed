@@ -44,6 +44,19 @@ impl KeyBinding {
         pending_keystrokes: &[Keystroke],
         contexts: &[&DispatchContext],
     ) -> KeyMatch {
+        let should_debug = self.keystrokes.len() == 1
+            && self.keystrokes[0].key == "p"
+            && self.keystrokes[0].modifiers.command == true
+            && self.keystrokes[0].modifiers.shift == true;
+
+        if false && should_debug {
+            dbg!(
+                &self.keystrokes,
+                &pending_keystrokes,
+                &contexts,
+                &self.matches_context(contexts)
+            );
+        }
         if self.keystrokes.as_ref().starts_with(&pending_keystrokes)
             && self.matches_context(contexts)
         {
