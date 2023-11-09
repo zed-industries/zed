@@ -285,7 +285,7 @@
       "name": "Inherited class",
       "scope": "entity.other.inherited-class",
       "settings": {
-        "foreground": "#D50D50"
+        "foreground": "#D50"
       }
     },
     {
@@ -452,7 +452,7 @@
         "entity.other.attribute-name.pseudo-class"
       ],
       "settings": {
-        "foreground": "#D50D50"
+        "foreground": "#D50"
       }
     },
     {
@@ -495,7 +495,7 @@
       "name": "Markup link",
       "scope": "markup.underline.link",
       "settings": {
-        "foreground": "#D50D50"
+        "foreground": "#D50"
       }
     },
     {

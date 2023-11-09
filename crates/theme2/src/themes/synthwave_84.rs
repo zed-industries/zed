@@ -98,14 +98,14 @@ pub fn synthwave_84() -> UserThemeFamily {
                         (
                             "link_text".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xd50c50ff).into()),
+                                color: Some(rgba(0xdd5500ff).into()),
                                 ..Default::default()
                             },
                         ),
                         (
                             "link_uri".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xd50c50ff).into()),
+                                color: Some(rgba(0xdd5500ff).into()),
                                 ..Default::default()
                             },
                         ),
