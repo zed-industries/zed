@@ -36,7 +36,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    div, point, rems, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
+    actions, div, point, rems, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, Component, Div, Entity, EntityId, EventEmitter, FocusHandle,
     GlobalPixels, Model, ModelContext, ParentElement, Point, Render, Size, StatefulInteractive,
     Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds,
@@ -88,35 +88,32 @@ lazy_static! {
 // #[derive(Clone, PartialEq)]
 // pub struct RemoveWorktreeFromProject(pub WorktreeId);
 
-// actions!(
-//     workspace,
-//     [
-//         Open,
-//         NewFile,
-//         NewWindow,
-//         CloseWindow,
-//         CloseInactiveTabsAndPanes,
-//         AddFolderToProject,
-//         Unfollow,
-//         SaveAs,
-//         ReloadActiveItem,
-//         ActivatePreviousPane,
-//         ActivateNextPane,
-//         FollowNextCollaborator,
-//         NewTerminal,
-//         NewCenterTerminal,
-//         ToggleTerminalFocus,
-//         NewSearch,
-//         Feedback,
-//         Restart,
-//         Welcome,
-//         ToggleZoom,
-//         ToggleLeftDock,
-//         ToggleRightDock,
-//         ToggleBottomDock,
-//         CloseAllDocks,
-//     ]
-// );
+actions!(
+    Open,
+    NewFile,
+    NewWindow,
+    CloseWindow,
+    CloseInactiveTabsAndPanes,
+    AddFolderToProject,
+    Unfollow,
+    SaveAs,
+    ReloadActiveItem,
+    ActivatePreviousPane,
+    ActivateNextPane,
+    FollowNextCollaborator,
+    NewTerminal,
+    NewCenterTerminal,
+    ToggleTerminalFocus,
+    NewSearch,
+    Feedback,
+    Restart,
+    Welcome,
+    ToggleZoom,
+    ToggleLeftDock,
+    ToggleRightDock,
+    ToggleBottomDock,
+    CloseAllDocks,
+);
 
 // #[derive(Clone, PartialEq)]
 // pub struct OpenPaths {
@@ -964,6 +961,9 @@ impl Workspace {
     //             let mut prev_position = panel.position(cx);
     //             move |this, panel, event, cx| {
     //                 if T::should_change_position_on_event(event) {
+    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
+    //                     See: Dock::add_panel
+    //
     //                     let new_position = panel.read(cx).position(cx);
     //                     let mut was_visible = false;
     //                     dock.update(cx, |dock, cx| {
@@ -994,6 +994,9 @@ impl Workspace {
     //                         }
     //                     });
     //                 } else if T::should_zoom_in_on_event(event) {
+    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
+    //                     See: Dock::add_panel
+    //
     //                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
     //                     if !panel.has_focus(cx) {
     //                         cx.focus(&panel);
@@ -1001,6 +1004,9 @@ impl Workspace {
     //                     this.zoomed = Some(panel.downgrade().into_any());
     //                     this.zoomed_position = Some(panel.read(cx).position(cx));
     //                 } else if T::should_zoom_out_on_event(event) {
+    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
+    //                     See: Dock::add_panel
+    //
     //                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, false, cx));
     //                     if this.zoomed_position == Some(prev_position) {
     //                         this.zoomed = None;
@@ -1008,6 +1014,9 @@ impl Workspace {
     //                     }
     //                     cx.notify();
     //                 } else if T::is_focus_event(event) {
+    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
+    //                     See: Dock::add_panel
+    //
     //                     let position = panel.read(cx).position(cx);
     //                     this.dismiss_zoomed_items_to_reveal(Some(position), cx);
     //                     if panel.is_zoomed(cx) {
@@ -3691,9 +3700,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
         .log_err();
 }
 
-impl EventEmitter for Workspace {
-    type Event = Event;
-}
+impl EventEmitter<Event> for Workspace {}
 
 impl Render for Workspace {
     type Element = Div<Self>;
@@ -4133,10 +4140,6 @@ impl WorkspaceStore {
             Ok(())
         })?
     }
-}
-
-impl EventEmitter for WorkspaceStore {
-    type Event = ();
 }
 
 impl ViewId {

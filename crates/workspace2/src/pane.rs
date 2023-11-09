@@ -9,8 +9,9 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    AppContext, AsyncWindowContext, Component, Div, EntityId, EventEmitter, FocusHandle, Model,
-    PromptLevel, Render, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, register_action, AppContext, AsyncWindowContext, Component, Div, EntityId,
+    EventEmitter, FocusHandle, Model, PromptLevel, Render, Task, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -48,8 +49,10 @@ pub enum SaveIntent {
     Skip,
 }
 
-// #[derive(Clone, Deserialize, PartialEq)]
-// pub struct ActivateItem(pub usize);
+//todo!("Do we need the default bound on actions? Decide soon")
+// #[register_action]
+#[derive(Clone, Deserialize, PartialEq, Debug)]
+pub struct ActivateItem(pub usize);
 
 // #[derive(Clone, PartialEq)]
 // pub struct CloseItemById {
@@ -69,40 +72,37 @@ pub enum SaveIntent {
 //     pub pane: WeakView<Pane>,
 // }
 
-// #[derive(Clone, PartialEq, Debug, Deserialize, Default)]
-// #[serde(rename_all = "camelCase")]
-// pub struct CloseActiveItem {
-//     pub save_intent: Option<SaveIntent>,
-// }
+#[register_action]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseActiveItem {
+    pub save_intent: Option<SaveIntent>,
+}
 
-// #[derive(Clone, PartialEq, Debug, Deserialize)]
-// #[serde(rename_all = "camelCase")]
-// pub struct CloseAllItems {
-//     pub save_intent: Option<SaveIntent>,
-// }
+#[register_action]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseAllItems {
+    pub save_intent: Option<SaveIntent>,
+}
 
-// todo!()
-// actions!(
-//     pane,
-//     [
-//         ActivatePrevItem,
-//         ActivateNextItem,
-//         ActivateLastItem,
-//         CloseInactiveItems,
-//         CloseCleanItems,
-//         CloseItemsToTheLeft,
-//         CloseItemsToTheRight,
-//         GoBack,
-//         GoForward,
-//         ReopenClosedItem,
-//         SplitLeft,
-//         SplitUp,
-//         SplitRight,
-//         SplitDown,
-//     ]
-// );
-
-// impl_actions!(pane, [ActivateItem, CloseActiveItem, CloseAllItems]);
+// todo!(These used to be under pane::{Action}. Are they now workspace::pane::{Action}?)
+actions!(
+    ActivatePrevItem,
+    ActivateNextItem,
+    ActivateLastItem,
+    CloseInactiveItems,
+    CloseCleanItems,
+    CloseItemsToTheLeft,
+    CloseItemsToTheRight,
+    GoBack,
+    GoForward,
+    ReopenClosedItem,
+    SplitLeft,
+    SplitUp,
+    SplitRight,
+    SplitDown,
+);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -310,9 +310,7 @@ pub struct NavigationEntry {
 //     .into_any_named("nav button")
 // }
 
-impl EventEmitter for Pane {
-    type Event = Event;
-}
+impl EventEmitter<Event> for Pane {}
 
 impl Pane {
     pub fn new(

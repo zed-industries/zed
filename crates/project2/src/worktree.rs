@@ -281,9 +281,7 @@ pub enum Event {
     UpdatedGitRepositories(UpdatedGitRepositoriesSet),
 }
 
-impl EventEmitter for Worktree {
-    type Event = Event;
-}
+impl EventEmitter<Event> for Worktree {}
 
 impl Worktree {
     pub async fn local(

@@ -1,23 +1,16 @@
 use crate::ItemHandle;
-use gpui::{
-    AnyView, AppContext, Entity, EntityId, EventEmitter, Render, View, ViewContext, WindowContext,
-};
+use gpui::{AnyView, Entity, EntityId, EventEmitter, Render, View, ViewContext, WindowContext};
 
-pub trait ToolbarItemView: Render + EventEmitter {
+pub enum ToolbarItemEvent {
+    ChangeLocation(ToolbarItemLocation),
+}
+
+pub trait ToolbarItemView: Render + EventEmitter<ToolbarItemEvent> {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) -> ToolbarItemLocation;
-
-    fn location_for_event(
-        &self,
-        _event: &Self::Event,
-        current_location: ToolbarItemLocation,
-        _cx: &AppContext,
-    ) -> ToolbarItemLocation {
-        current_location
-    }
 
     fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut ViewContext<Self>) {}
 
@@ -211,12 +204,13 @@ impl Toolbar {
             if let Some((_, current_location)) =
                 this.items.iter_mut().find(|(i, _)| i.id() == item.id())
             {
-                let new_location = item
-                    .read(cx)
-                    .location_for_event(event, *current_location, cx);
-                if new_location != *current_location {
-                    *current_location = new_location;
-                    cx.notify();
+                match event {
+                    ToolbarItemEvent::ChangeLocation(new_location) => {
+                        if new_location != current_location {
+                            *current_location = *new_location;
+                            cx.notify();
+                        }
+                    }
                 }
             }
         })

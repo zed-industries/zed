@@ -103,9 +103,7 @@ pub enum ContactEventKind {
     Cancelled,
 }
 
-impl EventEmitter for UserStore {
-    type Event = Event;
-}
+impl EventEmitter<Event> for UserStore {}
 
 enum UpdateContacts {
     Update(proto::UpdateContacts),

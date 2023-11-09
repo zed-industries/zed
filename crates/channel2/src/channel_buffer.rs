@@ -38,9 +38,7 @@ pub enum ChannelBufferEvent {
     ChannelChanged,
 }
 
-impl EventEmitter for ChannelBuffer {
-    type Event = ChannelBufferEvent;
-}
+impl EventEmitter<ChannelBufferEvent> for ChannelBuffer {}
 
 impl ChannelBuffer {
     pub(crate) async fn new(

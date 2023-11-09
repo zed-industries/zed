@@ -17,6 +17,7 @@ use gpui::{
 };
 use postage::watch;
 use project::Project;
+use room::Event;
 use settings::Settings;
 use std::sync::Arc;
 
@@ -85,9 +86,7 @@ pub struct ActiveCall {
     _subscriptions: Vec<client::Subscription>,
 }
 
-impl EventEmitter for ActiveCall {
-    type Event = room::Event;
-}
+impl EventEmitter<Event> for ActiveCall {}
 
 impl ActiveCall {
     fn new(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut ModelContext<Self>) -> Self {

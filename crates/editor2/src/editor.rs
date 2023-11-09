@@ -9407,9 +9407,7 @@ pub struct EditorReleased(pub WeakView<Editor>);
 //     }
 // }
 //
-impl EventEmitter for Editor {
-    type Event = Event;
-}
+impl EventEmitter<Event> for Editor {}
 
 impl Render for Editor {
     type Element = EditorElement;

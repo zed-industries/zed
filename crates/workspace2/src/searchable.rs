@@ -1,6 +1,8 @@
 use std::{any::Any, sync::Arc};
 
-use gpui::{AnyView, AppContext, Subscription, Task, View, ViewContext, WindowContext};
+use gpui::{
+    AnyView, AppContext, EventEmitter, Subscription, Task, View, ViewContext, WindowContext,
+};
 use project2::search::SearchQuery;
 
 use crate::{
@@ -29,7 +31,7 @@ pub struct SearchOptions {
     pub replacement: bool,
 }
 
-pub trait SearchableItem: Item {
+pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
     type Match: Any + Sync + Send + Clone;
 
     fn supported_options() -> SearchOptions {
@@ -40,11 +42,7 @@ pub trait SearchableItem: Item {
             replacement: true,
         }
     }
-    fn to_search_event(
-        &mut self,
-        event: &Self::Event,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<SearchEvent>;
+
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>);
     fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>);
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String;
@@ -95,7 +93,7 @@ pub trait SearchableItemHandle: ItemHandle {
     fn subscribe_to_search_events(
         &self,
         cx: &mut WindowContext,
-        handler: Box<dyn Fn(SearchEvent, &mut WindowContext) + Send>,
+        handler: Box<dyn Fn(&SearchEvent, &mut WindowContext) + Send>,
     ) -> Subscription;
     fn clear_matches(&self, cx: &mut WindowContext);
     fn update_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut WindowContext);
@@ -146,14 +144,9 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
     fn subscribe_to_search_events(
         &self,
         cx: &mut WindowContext,
-        handler: Box<dyn Fn(SearchEvent, &mut WindowContext) + Send>,
+        handler: Box<dyn Fn(&SearchEvent, &mut WindowContext) + Send>,
     ) -> Subscription {
-        cx.subscribe(self, move |handle, event, cx| {
-            let search_event = handle.update(cx, |handle, cx| handle.to_search_event(event, cx));
-            if let Some(search_event) = search_event {
-                handler(search_event, cx)
-            }
-        })
+        cx.subscribe(self, move |_, event: &SearchEvent, cx| handler(event, cx))
     }
 
     fn clear_matches(&self, cx: &mut WindowContext) {

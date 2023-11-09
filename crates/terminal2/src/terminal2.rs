@@ -1351,9 +1351,7 @@ impl Drop for Terminal {
     }
 }
 
-impl EventEmitter for Terminal {
-    type Event = Event;
-}
+impl EventEmitter<Event> for Terminal {}
 
 /// Based on alacritty/src/display/hint.rs > regex_match_at
 /// Retrieve the match, if the specified point is inside the content matching the regex.

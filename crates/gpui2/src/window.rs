@@ -1813,24 +1813,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         )
     }
 
-    // Options for simplifying this new event API:
-    //
-    // - Make a new stlye of API which does partial application of the arguments to capture
-    //   the types involved e.g.
-    //      `cx.for_entity(handle).subscribe::<ItemEvents>(..)`
-    //
-    // - Make it so there are less types:
-    //   - Bail on this idea all together, go back to associated types.
-    //      causes our event enums to be a blob of anything that could happen ever, and
-    //      makes applications have some translation boilerplate
-    //
-    //   - Move some of the types into the method names,
-    //      `cx.subscribe_model::<_, ItemEvents>(handle)`
-    //
-    //   - Do something drastic like removing views and models, or removing the multiple
-    //      kind of contexts. (Not going to happen, we already tried this before.)
-    //
-    // - Accept it, and use `cx.subscribe::<_, _, ItemEvents>(handle, ...)`
     pub fn subscribe<V2, E, Evt>(
         &mut self,
         entity: &E,

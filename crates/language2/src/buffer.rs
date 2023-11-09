@@ -1815,9 +1815,7 @@ impl Buffer {
     }
 }
 
-impl EventEmitter for Buffer {
-    type Event = Event;
-}
+impl EventEmitter<Event> for Buffer {}
 
 impl Deref for Buffer {
     type Target = TextBuffer;
