@@ -104,6 +104,12 @@ pub trait Context {
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
         F: FnOnce(AnyView, &mut WindowContext<'_>) -> T;
+
+    fn read_window<R>(
+        &self,
+        window: &AnyWindowHandle,
+        read: impl FnOnce(AnyView, &AppContext) -> R,
+    ) -> Result<R>;
 }
 
 pub trait VisualContext: Context {

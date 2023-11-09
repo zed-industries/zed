@@ -66,6 +66,16 @@ impl Context for AsyncAppContext {
         let mut lock = app.borrow_mut();
         lock.update_window(window, f)
     }
+
+    fn read_window<R>(
+        &self,
+        window: &AnyWindowHandle,
+        read: impl FnOnce(AnyView, &AppContext) -> R,
+    ) -> Result<R> {
+        let app = self.app.upgrade().context("app was released")?;
+        let lock = app.borrow();
+        lock.read_window(window, read)
+    }
 }
 
 impl AsyncAppContext {
@@ -249,6 +259,14 @@ impl Context for AsyncWindowContext {
         T: 'static,
     {
         self.app.read_model(handle, read)
+    }
+
+    fn read_window<R>(
+        &self,
+        window: &AnyWindowHandle,
+        read: impl FnOnce(AnyView, &AppContext) -> R,
+    ) -> Result<R> {
+        self.app.read_window(window, read)
     }
 }
 

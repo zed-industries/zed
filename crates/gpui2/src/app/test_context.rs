@@ -58,6 +58,15 @@ impl Context for TestAppContext {
         let app = self.app.borrow();
         app.read_model(handle, read)
     }
+
+    fn read_window<R>(
+        &self,
+        window: &AnyWindowHandle,
+        read: impl FnOnce(AnyView, &AppContext) -> R,
+    ) -> Result<R> {
+        let app = self.app.borrow();
+        app.read_window(window, read)
+    }
 }
 
 impl TestAppContext {
@@ -144,6 +153,11 @@ impl TestAppContext {
     ) -> Option<R> {
         let lock = self.app.borrow();
         Some(read(lock.try_global()?, &lock))
+    }
+
+    pub fn set_global<G: 'static, R>(&mut self, global: G) {
+        let mut lock = self.app.borrow_mut();
+        lock.set_global(global);
     }
 
     pub fn update_global<G: 'static, R>(
