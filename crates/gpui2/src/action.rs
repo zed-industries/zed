@@ -145,8 +145,7 @@ macro_rules! actions {
     () => {};
 
     ( $name:ident ) => {
-        #[gpui::register_action]
-        #[derive(::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq, $crate::serde::Deserialize)]
+        #[gpui::action]
         pub struct $name;
     };
 

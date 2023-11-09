@@ -34,13 +34,21 @@ pub fn action(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let visibility = input.vis;
 
     let output = match input.data {
-        syn::Data::Struct(ref struct_data) => {
-            let fields = &struct_data.fields;
-            quote! {
-                #attributes
-                #visibility struct #name #fields
+        syn::Data::Struct(ref struct_data) => match &struct_data.fields {
+            syn::Fields::Named(_) | syn::Fields::Unnamed(_) => {
+                let fields = &struct_data.fields;
+                quote! {
+                    #attributes
+                    #visibility struct #name #fields
+                }
             }
-        }
+            syn::Fields::Unit => {
+                quote! {
+                    #attributes
+                    #visibility struct #name;
+                }
+            }
+        },
         syn::Data::Enum(ref enum_data) => {
             let variants = &enum_data.variants;
             quote! {
