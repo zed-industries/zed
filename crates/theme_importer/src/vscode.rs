@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
 use gpui::{Hsla, Rgba};
 use serde::Deserialize;
@@ -439,9 +441,34 @@ impl VsCodeThemeConverter {
     pub fn convert(self) -> Result<UserTheme> {
         let appearance = self.theme_metadata.appearance.into();
 
+        let status_color_refinements = self.convert_status_colors()?;
+        let theme_colors_refinements = self.convert_theme_colors()?;
+
+        let mut highlight_styles = HashMap::new();
+
+        for token_color in self.theme.token_colors {
+            highlight_styles.extend(token_color.highlight_styles()?);
+        }
+
+        let syntax_theme = UserSyntaxTheme {
+            highlights: highlight_styles.into_iter().collect(),
+        };
+
+        Ok(UserTheme {
+            name: self.theme_metadata.name.into(),
+            appearance,
+            styles: UserThemeStylesRefinement {
+                colors: theme_colors_refinements,
+                status: status_color_refinements,
+                syntax: Some(syntax_theme),
+            },
+        })
+    }
+
+    fn convert_status_colors(&self) -> Result<StatusColorsRefinement> {
         let vscode_colors = &self.theme.colors;
 
-        let status_color_refinements = StatusColorsRefinement {
+        Ok(StatusColorsRefinement {
             // conflict: None,
             // created: None,
             deleted: vscode_colors
@@ -466,9 +493,13 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             ..Default::default()
-        };
+        })
+    }
 
-        let theme_colors_refinements = ThemeColorsRefinement {
+    fn convert_theme_colors(&self) -> Result<ThemeColorsRefinement> {
+        let vscode_colors = &self.theme.colors;
+
+        Ok(ThemeColorsRefinement {
             border: vscode_colors
                 .panel_border
                 .as_ref()
@@ -622,26 +653,6 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             ..Default::default()
-        };
-
-        let mut highlight_styles = Vec::new();
-
-        for token_color in self.theme.token_colors {
-            highlight_styles.extend(token_color.highlight_styles()?);
-        }
-
-        let syntax_theme = UserSyntaxTheme {
-            highlights: highlight_styles,
-        };
-
-        Ok(UserTheme {
-            name: self.theme_metadata.name.into(),
-            appearance,
-            styles: UserThemeStylesRefinement {
-                colors: theme_colors_refinements,
-                status: status_color_refinements,
-                syntax: Some(syntax_theme),
-            },
         })
     }
 }

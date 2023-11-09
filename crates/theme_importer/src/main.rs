@@ -28,7 +28,7 @@ struct FamilyMetadata {
     pub themes: Vec<ThemeMetadata>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeAppearanceJson {
     Light,

@@ -2,11 +2,14 @@
 // Map tokenColors style to HighlightStyle (fontStyle, foreground, background)
 // Take in the scopes from the tokenColors and try to match each to our HighlightStyles
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use serde::Deserialize;
 use theme::UserHighlightStyle;
 
-use crate::{util::Traverse, vscode::try_parse_color};
+use crate::util::Traverse;
+use crate::vscode::try_parse_color;
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -30,13 +33,13 @@ pub struct VsCodeTokenColorSettings {
 }
 
 impl VsCodeTokenColor {
-    pub fn highlight_styles(&self) -> Result<Vec<(String, UserHighlightStyle)>> {
-        let mut highlight_styles = Vec::new();
+    pub fn highlight_styles(&self) -> Result<HashMap<String, UserHighlightStyle>> {
+        let mut highlight_styles = HashMap::new();
 
         let scope = match self.scope {
             Some(VsCodeTokenScope::One(ref scope)) => vec![scope.clone()],
             Some(VsCodeTokenScope::Many(ref scopes)) => scopes.clone(),
-            None => return Ok(Vec::new()),
+            None => return Ok(HashMap::new()),
         };
 
         for scope in &scope {
@@ -56,7 +59,7 @@ impl VsCodeTokenColor {
                 continue;
             }
 
-            highlight_styles.push((syntax_token, highlight_style));
+            highlight_styles.insert(syntax_token, highlight_style);
         }
 
         Ok(highlight_styles)
