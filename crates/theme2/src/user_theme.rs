@@ -1,8 +1,7 @@
+use crate::{Appearance, StatusColors, StatusColorsRefinement, ThemeColors, ThemeColorsRefinement};
 use gpui::{FontStyle, FontWeight, Hsla};
 use refineable::Refineable;
 use serde::Deserialize;
-
-use crate::{Appearance, StatusColors, StatusColorsRefinement, ThemeColors, ThemeColorsRefinement};
 
 #[derive(Deserialize)]
 pub struct UserThemeFamily {
@@ -19,7 +18,7 @@ pub struct UserTheme {
 }
 
 #[derive(Refineable, Clone)]
-#[refineable(deserialize)]
+#[refineable(Deserialize)]
 pub struct UserThemeStyles {
     #[refineable]
     pub colors: ThemeColors,
