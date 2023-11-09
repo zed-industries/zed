@@ -1,5 +1,3 @@
-use std::num::ParseIntError;
-
 use gpui::{hsla, Hsla, Rgba};
 
 use crate::colors::{StatusColors, SystemColors, ThemeColors};
@@ -413,10 +411,10 @@ struct StaticColorScaleSet {
 }
 
 impl TryFrom<StaticColorScaleSet> for ColorScaleSet {
-    type Error = ParseIntError;
+    type Error = anyhow::Error;
 
     fn try_from(value: StaticColorScaleSet) -> Result<Self, Self::Error> {
-        fn to_color_scale(scale: StaticColorScale) -> Result<ColorScale, ParseIntError> {
+        fn to_color_scale(scale: StaticColorScale) -> Result<ColorScale, anyhow::Error> {
             scale
                 .into_iter()
                 .map(|color| Rgba::try_from(color).map(Hsla::from))

@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
+use anyhow::bail;
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::fmt;
-use std::num::ParseIntError;
 
 pub fn rgb<C: From<Rgba>>(hex: u32) -> C {
     let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
@@ -70,12 +70,7 @@ impl<'de> Visitor<'de> for RgbaVisitor {
     }
 
     fn visit_str<E: de::Error>(self, value: &str) -> Result<Rgba, E> {
-        match value.len() {
-            4 | 5 | 7 | 9 => Rgba::try_from(value).map_err(E::custom),
-            _ => Err(E::custom(
-                "Bad format for RGBA. Expected #rgb, #rgba, #rrggbb, or #rrggbbaa.",
-            )),
-        }
+        Rgba::try_from(value).map_err(E::custom)
     }
 }
 
@@ -116,7 +111,7 @@ impl From<Hsla> for Rgba {
 }
 
 impl TryFrom<&'_ str> for Rgba {
-    type Error = ParseIntError;
+    type Error = anyhow::Error;
 
     fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
         const RGB: usize = "rgb".len();
@@ -124,12 +119,18 @@ impl TryFrom<&'_ str> for Rgba {
         const RRGGBB: usize = "rrggbb".len();
         const RRGGBBAA: usize = "rrggbbaa".len();
 
-        let Some(("", hex)) = value.split_once('#') else {
-            panic!("invalid color: {value}");
+        const EXPECTED_FORMATS: &'static str = "Expected #rgb, #rgba, #rrggbb, or #rrggbbaa";
+
+        let Some(("", hex)) = value.trim().split_once('#') else {
+            bail!("invalid RGBA hex color: '{value}'. {EXPECTED_FORMATS}");
         };
 
         let (r, g, b, a) = match hex.len() {
             RGB | RGBA => {
+                // There's likely a better way to handle 3 and 4-value hex codes without
+                // needing to use `.repeat` and incur additional allocations.
+                // What we probably want to do is parse the single hex digit and then perform
+                // bit-shifting to "duplicate" the digit.
                 let r = u8::from_str_radix(&hex[0..1].repeat(2), 16)?;
                 let g = u8::from_str_radix(&hex[1..2].repeat(2), 16)?;
                 let b = u8::from_str_radix(&hex[2..3].repeat(2), 16)?;
@@ -151,7 +152,7 @@ impl TryFrom<&'_ str> for Rgba {
                 };
                 (r, g, b, a)
             }
-            _ => panic!("invalid color: {value}"),
+            _ => bail!("invalid RGBA hex color: '{value}'. {EXPECTED_FORMATS}"),
         };
 
         Ok(Rgba {
@@ -366,5 +367,19 @@ mod tests {
         let actual: Rgba = serde_json::from_value(json!("#ff0099ff")).unwrap();
 
         assert_eq!(actual, rgba(0xff0099ff))
+    }
+
+    #[test]
+    fn test_deserialize_eight_value_hex_with_padding_to_rgba() {
+        let actual: Rgba = serde_json::from_value(json!(" #f5f5f5ff   ")).unwrap();
+
+        assert_eq!(actual, rgba(0xf5f5f5ff))
+    }
+
+    #[test]
+    fn test_deserialize_eight_value_hex_with_mixed_case_to_rgba() {
+        let actual: Rgba = serde_json::from_value(json!("#DeAdbEeF")).unwrap();
+
+        assert_eq!(actual, rgba(0xdeadbeef))
     }
 }
