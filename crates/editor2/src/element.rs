@@ -17,11 +17,10 @@ use collections::{BTreeMap, HashMap};
 use gpui::{
     black, hsla, point, px, relative, size, transparent_black, Action, AnyElement,
     BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchContext, DispatchPhase,
-    Edges, Element, ElementId, Entity, FocusHandle, GlobalElementId, Hsla, InputHandler,
-    InputHandlerView, KeyDownEvent, KeyListener, KeyMatch, Line, LineLayout, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent,
-    ShapedGlyph, Size, Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext,
-    WrappedLineLayout,
+    Edges, Element, ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, Hsla,
+    InputHandler, KeyDownEvent, KeyListener, KeyMatch, Line, LineLayout, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size,
+    Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext, WrappedLineLayout,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -2517,15 +2516,9 @@ impl Element<Editor> for EditorElement {
                 self.paint_gutter(gutter_bounds, &layout, editor, cx);
             }
             self.paint_text(text_bounds, &layout, editor, cx);
+            let input_handler = ElementInputHandler::new(bounds, cx);
+            cx.handle_input(&editor.focus_handle, input_handler);
         });
-    }
-
-    fn handle_text_input<'a>(
-        &self,
-        editor: &'a mut Editor,
-        cx: &mut ViewContext<Editor>,
-    ) -> Option<(Box<dyn InputHandlerView>, &'a FocusHandle)> {
-        Some((Box::new(cx.view()), &editor.focus_handle))
     }
 }
 

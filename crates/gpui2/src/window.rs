@@ -211,7 +211,6 @@ pub struct Window {
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     requested_cursor_style: Option<CursorStyle>,
-    pub(crate) requested_input_handler: Option<Box<dyn PlatformInputHandler>>,
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
@@ -236,6 +235,7 @@ pub(crate) struct Frame {
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
     focus_stack: Vec<FocusId>,
+    input_handler: Option<Box<dyn PlatformInputHandler>>,
 }
 
 impl Window {
@@ -311,7 +311,6 @@ impl Window {
             default_prevented: true,
             mouse_position,
             requested_cursor_style: None,
-            requested_input_handler: None,
             scale_factor,
             bounds,
             bounds_observers: SubscriberSet::new(),
@@ -1048,9 +1047,6 @@ impl<'a> WindowContext<'a> {
             .take()
             .unwrap_or(CursorStyle::Arrow);
         self.platform.set_cursor_style(cursor_style);
-        if let Some(handler) = self.window.requested_input_handler.take() {
-            self.window.platform_window.set_input_handler(handler);
-        }
 
         self.window.dirty = false;
     }
@@ -2173,6 +2169,16 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 handler(view, event, phase, cx);
             })
         });
+    }
+
+    pub fn handle_input(
+        &mut self,
+        focus_handle: &FocusHandle,
+        input_handler: impl PlatformInputHandler,
+    ) {
+        if focus_handle.is_focused(self) {
+            self.window.current_frame.input_handler = Some(Box::new(input_handler));
+        }
     }
 }
 

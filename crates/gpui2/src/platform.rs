@@ -293,10 +293,10 @@ impl From<TileId> for etagere::AllocId {
     }
 }
 
-pub trait PlatformInputHandler {
-    fn selected_text_range(&self) -> Option<Range<usize>>;
-    fn marked_text_range(&self) -> Option<Range<usize>>;
-    fn text_for_range(&self, range_utf16: Range<usize>) -> Option<String>;
+pub trait PlatformInputHandler: 'static {
+    fn selected_text_range(&mut self) -> Option<Range<usize>>;
+    fn marked_text_range(&mut self) -> Option<Range<usize>>;
+    fn text_for_range(&mut self, range_utf16: Range<usize>) -> Option<String>;
     fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str);
     fn replace_and_mark_text_in_range(
         &mut self,
@@ -305,7 +305,7 @@ pub trait PlatformInputHandler {
         new_selected_range: Option<Range<usize>>,
     );
     fn unmark_text(&mut self);
-    fn bounds_for_range(&self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>>;
+    fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>>;
 }
 
 #[derive(Debug)]
