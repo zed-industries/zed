@@ -1,6 +1,10 @@
 use crate::{AsyncWindowContext, Bounds, Pixels, PlatformInputHandler, View, ViewContext};
 use std::ops::Range;
 
+/// Implement this trait to allow views to handle textual input when implementing an editor, field, etc.
+///
+/// Once your view `V` implements this trait, you can use it to construct an [ElementInputHandler<V>].
+/// This input handler can then be assigned during paint by calling [WindowContext::handle_input].
 pub trait InputHandler: 'static + Sized {
     fn text_for_range(&mut self, range: Range<usize>, cx: &mut ViewContext<Self>)
         -> Option<String>;
@@ -28,6 +32,8 @@ pub trait InputHandler: 'static + Sized {
     ) -> Option<Bounds<Pixels>>;
 }
 
+/// The canonical implementation of `PlatformInputHandler`. Call `WindowContext::handle_input`
+/// with an instance during your element's paint.
 pub struct ElementInputHandler<V> {
     view: View<V>,
     element_bounds: Bounds<Pixels>,
@@ -35,6 +41,8 @@ pub struct ElementInputHandler<V> {
 }
 
 impl<V: 'static> ElementInputHandler<V> {
+    /// Used in [Element::paint] with the element's bounds and a view context for its
+    /// containing view.
     pub fn new(element_bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) -> Self {
         ElementInputHandler {
             view: cx.view(),

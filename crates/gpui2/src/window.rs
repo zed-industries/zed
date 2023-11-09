@@ -2170,6 +2170,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         });
     }
 
+    /// Set an input handler, such as [ElementInputHandler], which interfaces with the
+    /// platform to receive textual input with proper integration with concerns such
+    /// as IME interactions.
     pub fn handle_input(
         &mut self,
         focus_handle: &FocusHandle,
