@@ -154,21 +154,6 @@ where
                 mut frame_state,
             } => {
                 let bounds = cx.layout_bounds(layout_id);
-                // if let Some((input_handler, focus_handle)) =
-                //     self.element.handle_text_input(view_state, cx)
-                // {
-                //     todo!()
-                //     // cx.handle_input(&focus_handle, Box::new())
-
-                //     // if focus_handle.is_focused(cx) {
-                //     //     cx.window.requested_input_handler = Some(Box::new(WindowInputHandler {
-                //     //         cx: cx.app.this.clone(),
-                //     //         window: cx.window_handle(),
-                //     //         input_handler,
-                //     //         element_bounds: bounds,
-                //     //     }));
-                //     // }
-                // }
                 if let Some(id) = self.element.id() {
                     cx.with_element_state(id, |element_state, cx| {
                         let mut element_state = element_state.unwrap();
