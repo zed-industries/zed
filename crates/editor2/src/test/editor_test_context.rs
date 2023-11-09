@@ -27,7 +27,7 @@ pub struct EditorTestContext<'a> {
 
 impl<'a> EditorTestContext<'a> {
     pub async fn new(cx: &'a mut gpui::TestAppContext) -> EditorTestContext<'a> {
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         // fs.insert_file("/file", "".to_owned()).await;
         fs.insert_tree(
             "/root",

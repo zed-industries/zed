@@ -36,7 +36,7 @@ impl FakeServer {
             peer: Peer::new(0),
             state: Default::default(),
             user_id: client_user_id,
-            executor: cx.executor().clone(),
+            executor: cx.executor(),
         };
 
         client

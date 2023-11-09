@@ -154,6 +154,30 @@ impl Hsla {
     pub fn to_rgb(self) -> Rgba {
         self.into()
     }
+
+    pub fn red() -> Self {
+        red()
+    }
+
+    pub fn green() -> Self {
+        green()
+    }
+
+    pub fn blue() -> Self {
+        blue()
+    }
+
+    pub fn black() -> Self {
+        black()
+    }
+
+    pub fn white() -> Self {
+        white()
+    }
+
+    pub fn transparent_black() -> Self {
+        transparent_black()
+    }
 }
 
 impl Eq for Hsla {}
@@ -206,6 +230,15 @@ pub fn red() -> Hsla {
 pub fn blue() -> Hsla {
     Hsla {
         h: 0.6,
+        s: 1.,
+        l: 0.5,
+        a: 1.,
+    }
+}
+
+pub fn green() -> Hsla {
+    Hsla {
+        h: 0.3,
         s: 1.,
         l: 0.5,
         a: 1.,

@@ -59,11 +59,14 @@ impl Context for TestAppContext {
         app.read_model(handle, read)
     }
 
-    fn read_window<R>(
+    fn read_window<T, R>(
         &self,
-        window: &AnyWindowHandle,
-        read: impl FnOnce(AnyView, &AppContext) -> R,
-    ) -> Result<R> {
+        window: &WindowHandle<T>,
+        read: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Result<R>
+    where
+        T: 'static,
+    {
         let app = self.app.borrow();
         app.read_window(window, read)
     }
@@ -102,8 +105,8 @@ impl TestAppContext {
         Ok(())
     }
 
-    pub fn executor(&self) -> &BackgroundExecutor {
-        &self.background_executor
+    pub fn executor(&self) -> BackgroundExecutor {
+        self.background_executor.clone()
     }
 
     pub fn foreground_executor(&self) -> &ForegroundExecutor {

@@ -105,11 +105,13 @@ pub trait Context {
     where
         F: FnOnce(AnyView, &mut WindowContext<'_>) -> T;
 
-    fn read_window<R>(
+    fn read_window<T, R>(
         &self,
-        window: &AnyWindowHandle,
-        read: impl FnOnce(AnyView, &AppContext) -> R,
-    ) -> Result<R>;
+        window: &WindowHandle<T>,
+        read: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Result<R>
+    where
+        T: 'static;
 }
 
 pub trait VisualContext: Context {

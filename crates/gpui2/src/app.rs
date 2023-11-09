@@ -1008,11 +1008,14 @@ impl Context for AppContext {
         read(entity, self)
     }
 
-    fn read_window<R>(
+    fn read_window<T, R>(
         &self,
-        window: &AnyWindowHandle,
-        read: impl FnOnce(AnyView, &AppContext) -> R,
-    ) -> Result<R> {
+        window: &WindowHandle<T>,
+        read: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Result<R>
+    where
+        T: 'static,
+    {
         let window = self
             .windows
             .get(window.id)
@@ -1021,7 +1024,11 @@ impl Context for AppContext {
             .unwrap();
 
         let root_view = window.root_view.clone().unwrap();
-        Ok(read(root_view, self))
+        let view = root_view
+            .downcast::<T>()
+            .map_err(|_| anyhow!("root view's type has changed"))?;
+
+        Ok(read(view.read(self), self))
     }
 }
 

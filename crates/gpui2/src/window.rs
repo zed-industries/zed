@@ -10,7 +10,7 @@ use crate::{
     SharedString, Size, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline,
     UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use futures::{
@@ -1429,16 +1429,25 @@ impl Context for WindowContext<'_> {
         read(&*entity, &*self.app)
     }
 
-    fn read_window<R>(
+    fn read_window<T, R>(
         &self,
-        window: &AnyWindowHandle,
-        read: impl FnOnce(AnyView, &AppContext) -> R,
-    ) -> Result<R> {
-        if window == &self.window.handle {
-            let root_view = self.window.root_view.clone().unwrap();
-            Ok(read(root_view, self))
+        window: &WindowHandle<T>,
+        read: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Result<R>
+    where
+        T: 'static,
+    {
+        if window.any_handle == self.window.handle {
+            let root_view = self
+                .window
+                .root_view
+                .clone()
+                .unwrap()
+                .downcast::<T>()
+                .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
+            Ok(read(root_view.read(self), self))
         } else {
-            window.read(self.app, read)
+            self.app.read_window(window, read)
         }
     }
 }
@@ -2257,11 +2266,14 @@ impl<V> Context for ViewContext<'_, V> {
         self.window_cx.read_model(handle, read)
     }
 
-    fn read_window<R>(
+    fn read_window<T, R>(
         &self,
-        window: &AnyWindowHandle,
-        read: impl FnOnce(AnyView, &AppContext) -> R,
-    ) -> Result<R> {
+        window: &WindowHandle<T>,
+        read: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Result<R>
+    where
+        T: 'static,
+    {
         self.window_cx.read_window(window, read)
     }
 }
@@ -2335,14 +2347,6 @@ impl<V: 'static + Render> WindowHandle<V> {
         }
     }
 
-    pub fn root<C: Context>(&self, cx: &C) -> Result<View<V>> {
-        cx.read_window(&self.any_handle, |root_view, _| {
-            root_view
-                .downcast::<V>()
-                .map_err(|_| anyhow!("the type of the window's root view has changed"))
-        })?
-    }
-
     pub fn update<C, R>(
         self,
         cx: &mut C,
@@ -2357,6 +2361,29 @@ impl<V: 'static + Render> WindowHandle<V> {
                 .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
             Ok(cx.update_view(&view, update))
         })?
+    }
+
+    pub fn read<'a>(&self, cx: &'a AppContext) -> Result<&'a V> {
+        let x = cx
+            .windows
+            .get(self.id)
+            .and_then(|window| {
+                window
+                    .as_ref()
+                    .and_then(|window| window.root_view.clone())
+                    .map(|root_view| root_view.downcast::<V>())
+            })
+            .ok_or_else(|| anyhow!("window not found"))?
+            .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
+
+        Ok(x.read(cx))
+    }
+
+    pub fn read_with<C, R>(self, cx: &C, read_with: impl FnOnce(&V, &AppContext) -> R) -> Result<R>
+    where
+        C: Context,
+    {
+        cx.read_window(&self, |root_view: &V, cx| read_with(root_view, cx))
     }
 }
 
@@ -2424,11 +2451,16 @@ impl AnyWindowHandle {
         cx.update_window(self, update)
     }
 
-    pub fn read<C, R>(self, cx: &C, read: impl FnOnce(AnyView, &AppContext) -> R) -> Result<R>
+    pub fn read<T, C, R>(self, cx: &C, read: impl FnOnce(&T, &AppContext) -> R) -> Result<R>
     where
         C: Context,
+        T: 'static,
     {
-        cx.read_window(&self, read)
+        let view = self
+            .downcast::<T>()
+            .context("the type of the window's root view has changed")?;
+
+        cx.read_window(&view, read)
     }
 }
 
