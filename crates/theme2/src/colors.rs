@@ -14,7 +14,7 @@ pub struct SystemColors {
 }
 
 #[derive(Refineable, Clone, Debug)]
-#[refineable(debug)]
+#[refineable(Debug)]
 pub struct StatusColors {
     pub conflict: Hsla,
     pub created: Hsla,
@@ -30,7 +30,7 @@ pub struct StatusColors {
 }
 
 #[derive(Refineable, Clone, Debug)]
-#[refineable(debug, deserialize)]
+#[refineable(Debug, serde::Deserialize)]
 pub struct ThemeColors {
     pub border: Hsla,
     /// Border color. Used for deemphasized borders, like a visual divider between two sections
