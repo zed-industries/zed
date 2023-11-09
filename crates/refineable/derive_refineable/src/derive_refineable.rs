@@ -19,8 +19,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
     let refineable_attr = attrs.iter().find(|attr| attr.path.is_ident("refineable"));
 
     let mut impl_debug_on_refinement = false;
-    let mut derive_serialize_on_refinement = false;
-    let mut derive_deserialize_on_refinement = false;
+    let mut refinement_traits_to_derive = vec![];
 
     if let Some(refineable_attr) = refineable_attr {
         if let Ok(syn::Meta::List(meta_list)) = refineable_attr.parse_meta() {
@@ -29,16 +28,10 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                     continue;
                 };
 
-                if path.is_ident("debug") {
+                if path.is_ident("Debug") {
                     impl_debug_on_refinement = true;
-                }
-
-                if path.is_ident("serialize") {
-                    derive_serialize_on_refinement = true;
-                }
-
-                if path.is_ident("deserialize") {
-                    derive_deserialize_on_refinement = true;
+                } else {
+                    refinement_traits_to_derive.push(path);
                 }
             }
         }
@@ -259,22 +252,14 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
-    let derive_serialize = if derive_serialize_on_refinement {
-        quote! { #[derive(serde::Serialize)]}
-    } else {
-        quote! {}
-    };
-
-    let derive_deserialize = if derive_deserialize_on_refinement {
-        quote! { #[derive(serde::Deserialize)]}
-    } else {
-        quote! {}
-    };
+    let mut derive_stream = quote! {};
+    for trait_to_derive in refinement_traits_to_derive {
+        derive_stream.extend(quote! { #[derive(#trait_to_derive)] })
+    }
 
     let gen = quote! {
         #[derive(Clone)]
-        #derive_serialize
-        #derive_deserialize
+        #derive_stream
         pub struct #refinement_ident #impl_generics {
             #( #field_visibilities #field_names: #wrapped_types ),*
         }

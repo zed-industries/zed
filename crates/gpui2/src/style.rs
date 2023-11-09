@@ -14,7 +14,7 @@ pub use taffy::style::{
 pub type StyleCascade = Cascade<Style>;
 
 #[derive(Clone, Refineable, Debug)]
-#[refineable(debug)]
+#[refineable(Debug)]
 pub struct Style {
     /// What layout strategy should be used?
     pub display: Display,
@@ -129,7 +129,7 @@ pub struct BoxShadow {
 }
 
 #[derive(Refineable, Clone, Debug)]
-#[refineable(debug)]
+#[refineable(Debug)]
 pub struct TextStyle {
     pub color: Hsla,
     pub font_family: SharedString,
@@ -353,7 +353,7 @@ impl Default for Style {
 }
 
 #[derive(Refineable, Copy, Clone, Default, Debug, PartialEq, Eq)]
-#[refineable(debug)]
+#[refineable(Debug)]
 pub struct UnderlineStyle {
     pub thickness: Pixels,
     pub color: Option<Hsla>,
