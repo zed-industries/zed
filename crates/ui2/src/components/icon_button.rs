@@ -98,6 +98,7 @@ impl<V: 'static> IconButton<V> {
 
         if let Some(click_handler) = self.handlers.click.clone() {
             button = button.on_mouse_down(MouseButton::Left, move |state, event, cx| {
+                cx.stop_propagation();
                 click_handler(state, cx);
             });
         }

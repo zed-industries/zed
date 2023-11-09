@@ -1060,6 +1060,8 @@ impl<'a> WindowContext<'a> {
         self.text_system().start_frame();
 
         let window = &mut *self.window;
+        window.layout_engine.clear();
+
         mem::swap(&mut window.previous_frame, &mut window.current_frame);
         let frame = &mut window.current_frame;
         frame.element_states.clear();

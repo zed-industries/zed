@@ -15,7 +15,7 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
-    black, hsla, point, px, relative, size, transparent_black, Action, AnyElement,
+    black, hsla, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
     BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchContext, DispatchPhase,
     Edges, Element, ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, Hsla,
     InputHandler, KeyDownEvent, KeyListener, KeyMatch, Line, LineLayout, Modifiers, MouseButton,
@@ -447,7 +447,7 @@ impl EditorElement {
     fn paint_gutter(
         &mut self,
         bounds: Bounds<Pixels>,
-        layout: &LayoutState,
+        layout: &mut LayoutState,
         editor: &mut Editor,
         cx: &mut ViewContext<Editor>,
     ) {
@@ -495,14 +495,21 @@ impl EditorElement {
         //     }
         // }
 
-        // todo!("code actions indicator")
-        // if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
-        //     let mut x = 0.;
-        //     let mut y = *row as f32 * line_height - scroll_top;
-        //     x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x) / 2.;
-        //     y += (line_height - indicator.size().y) / 2.;
-        //     indicator.paint(bounds.origin + point(x, y), visible_bounds, editor, cx);
-        // }
+        if let Some(indicator) = layout.code_actions_indicator.as_mut() {
+            let available_space = size(
+                AvailableSpace::MinContent,
+                AvailableSpace::Definite(line_height),
+            );
+            let indicator_size = indicator.element.measure(available_space, editor, cx);
+            let mut x = Pixels::ZERO;
+            let mut y = indicator.row as f32 * line_height - scroll_top;
+            // Center indicator.
+            x += ((layout.gutter_padding + layout.gutter_margin) - indicator_size.width) / 2.;
+            y += (line_height - indicator_size.height) / 2.;
+            indicator
+                .element
+                .draw(bounds.origin + point(x, y), available_space, editor, cx);
+        }
     }
 
     fn paint_diff_hunks(
@@ -1776,24 +1783,27 @@ impl EditorElement {
 
         // todo!("context menu")
         // let mut context_menu = None;
-        // let mut code_actions_indicator = None;
-        // if let Some(newest_selection_head) = newest_selection_head {
-        //     if (start_row..end_row).contains(&newest_selection_head.row()) {
-        //         if editor.context_menu_visible() {
-        //             context_menu =
-        //                 editor.render_context_menu(newest_selection_head, style.clone(), cx);
-        //         }
+        let mut code_actions_indicator = None;
+        if let Some(newest_selection_head) = newest_selection_head {
+            if (start_row..end_row).contains(&newest_selection_head.row()) {
+                //         if editor.context_menu_visible() {
+                //             context_menu =
+                //                 editor.render_context_menu(newest_selection_head, style.clone(), cx);
+                //         }
 
-        //         let active = matches!(
-        //             editor.context_menu.read().as_ref(),
-        //             Some(crate::ContextMenu::CodeActions(_))
-        //         );
+                let active = matches!(
+                    editor.context_menu.read().as_ref(),
+                    Some(crate::ContextMenu::CodeActions(_))
+                );
 
-        //         code_actions_indicator = editor
-        //             .render_code_actions_indicator(&style, active, cx)
-        //             .map(|indicator| (newest_selection_head.row(), indicator));
-        //     }
-        // }
+                code_actions_indicator = editor
+                    .render_code_actions_indicator(&style, active, cx)
+                    .map(|element| CodeActionsIndicator {
+                        row: newest_selection_head.row(),
+                        element,
+                    });
+            }
+        }
 
         let visible_rows = start_row..start_row + line_layouts.len() as u32;
         // todo!("hover")
@@ -1826,18 +1836,6 @@ impl EditorElement {
         //                 (12. * line_height).min((size.y - line_height) / 2.),
         //             ),
         //         },
-        //         editor,
-        //         cx,
-        //     );
-        // }
-
-        // todo!("code actions")
-        // if let Some((_, indicator)) = code_actions_indicator.as_mut() {
-        //     indicator.layout(
-        //         SizeConstraint::strict_along(
-        //             Axis::Vertical,
-        //             line_height * style.code_actions.vertical_scale,
-        //         ),
         //         editor,
         //         cx,
         //     );
@@ -1942,7 +1940,7 @@ impl EditorElement {
             // blocks,
             selections,
             // context_menu,
-            // code_actions_indicator,
+            code_actions_indicator,
             // fold_indicators,
             tab_invisible,
             space_invisible,
@@ -2493,7 +2491,7 @@ impl Element<Editor> for EditorElement {
         element_state: &mut Self::ElementState,
         cx: &mut gpui::ViewContext<Editor>,
     ) {
-        let layout = self.compute_layout(editor, cx, bounds);
+        let mut layout = self.compute_layout(editor, cx, bounds);
         let gutter_bounds = Bounds {
             origin: bounds.origin,
             size: layout.gutter_size,
@@ -2513,7 +2511,7 @@ impl Element<Editor> for EditorElement {
             );
             self.paint_background(gutter_bounds, text_bounds, &layout, cx);
             if layout.gutter_size.width > Pixels::ZERO {
-                self.paint_gutter(gutter_bounds, &layout, editor, cx);
+                self.paint_gutter(gutter_bounds, &mut layout, editor, cx);
             }
             self.paint_text(text_bounds, &layout, editor, cx);
             let input_handler = ElementInputHandler::new(bounds, cx);
@@ -3144,11 +3142,16 @@ pub struct LayoutState {
     is_singleton: bool,
     max_row: u32,
     // context_menu: Option<(DisplayPoint, AnyElement<Editor>)>,
-    // code_actions_indicator: Option<(u32, AnyElement<Editor>)>,
+    code_actions_indicator: Option<CodeActionsIndicator>,
     // hover_popovers: Option<(DisplayPoint, Vec<AnyElement<Editor>>)>,
     // fold_indicators: Vec<Option<AnyElement<Editor>>>,
     tab_invisible: Line,
     space_invisible: Line,
+}
+
+struct CodeActionsIndicator {
+    row: u32,
+    element: AnyElement<Editor>,
 }
 
 struct PositionMap {

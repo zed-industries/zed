@@ -40,9 +40,9 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
     action, actions, point, px, relative, rems, size, AnyElement, AppContext, BackgroundExecutor,
-    Bounds, ClipboardItem, Context, DispatchContext, EventEmitter, FocusHandle, FontFeatures,
-    FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, Render, Subscription,
-    Task, TextStyle, View, ViewContext, VisualContext, WeakView, WindowContext,
+    Bounds, ClipboardItem, Component, Context, DispatchContext, EventEmitter, FocusHandle,
+    FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, Render,
+    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -95,6 +95,7 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
+use ui2::IconButton;
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::ItemEvent, searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace,
@@ -3846,44 +3847,44 @@ impl Editor {
     //         }))
     //     }
 
-    //     pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
-    //         let mut context_menu = self.context_menu.write();
-    //         if matches!(context_menu.as_ref(), Some(ContextMenu::CodeActions(_))) {
-    //             *context_menu = None;
-    //             cx.notify();
-    //             return;
-    //         }
-    //         drop(context_menu);
+    pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
+        let mut context_menu = self.context_menu.write();
+        if matches!(context_menu.as_ref(), Some(ContextMenu::CodeActions(_))) {
+            *context_menu = None;
+            cx.notify();
+            return;
+        }
+        drop(context_menu);
 
-    //         let deployed_from_indicator = action.deployed_from_indicator;
-    //         let mut task = self.code_actions_task.take();
-    //         cx.spawn(|this, mut cx| async move {
-    //             while let Some(prev_task) = task {
-    //                 prev_task.await;
-    //                 task = this.update(&mut cx, |this, _| this.code_actions_task.take())?;
-    //             }
+        let deployed_from_indicator = action.deployed_from_indicator;
+        let mut task = self.code_actions_task.take();
+        cx.spawn(|this, mut cx| async move {
+            while let Some(prev_task) = task {
+                prev_task.await;
+                task = this.update(&mut cx, |this, _| this.code_actions_task.take())?;
+            }
 
-    //             this.update(&mut cx, |this, cx| {
-    //                 if this.focused {
-    //                     if let Some((buffer, actions)) = this.available_code_actions.clone() {
-    //                         this.completion_tasks.clear();
-    //                         this.discard_copilot_suggestion(cx);
-    //                         *this.context_menu.write() =
-    //                             Some(ContextMenu::CodeActions(CodeActionsMenu {
-    //                                 buffer,
-    //                                 actions,
-    //                                 selected_item: Default::default(),
-    //                                 list: Default::default(),
-    //                                 deployed_from_indicator,
-    //                             }));
-    //                     }
-    //                 }
-    //             })?;
+            this.update(&mut cx, |this, cx| {
+                if this.focus_handle.is_focused(cx) {
+                    if let Some((buffer, actions)) = this.available_code_actions.clone() {
+                        this.completion_tasks.clear();
+                        this.discard_copilot_suggestion(cx);
+                        *this.context_menu.write() =
+                            Some(ContextMenu::CodeActions(CodeActionsMenu {
+                                buffer,
+                                actions,
+                                selected_item: Default::default(),
+                                list: Default::default(),
+                                deployed_from_indicator,
+                            }));
+                    }
+                }
+            })?;
 
-    //             Ok::<_, anyhow::Error>(())
-    //         })
-    //         .detach_and_log_err(cx);
-    //     }
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+    }
 
     //     pub fn confirm_code_action(
     //         workspace: &mut Workspace,
@@ -4390,41 +4391,29 @@ impl Editor {
         self.discard_copilot_suggestion(cx);
     }
 
-    //     pub fn render_code_actions_indicator(
-    //         &self,
-    //         style: &EditorStyle,
-    //         is_active: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<AnyElement<Self>> {
-    //         if self.available_code_actions.is_some() {
-    //             enum CodeActions {}
-    //             Some(
-    //                 MouseEventHandler::new::<CodeActions, _>(0, cx, |state, _| {
-    //                     Svg::new("icons/bolt.svg").with_color(
-    //                         style
-    //                             .code_actions
-    //                             .indicator
-    //                             .in_state(is_active)
-    //                             .style_for(state)
-    //                             .color,
-    //                     )
-    //                 })
-    //                 .with_cursor_style(CursorStyle::PointingHand)
-    //                 .with_padding(Padding::uniform(3.))
-    //                 .on_down(MouseButton::Left, |_, this, cx| {
-    //                     this.toggle_code_actions(
-    //                         &ToggleCodeActions {
-    //                             deployed_from_indicator: true,
-    //                         },
-    //                         cx,
-    //                     );
-    //                 })
-    //                 .into_any(),
-    //             )
-    //         } else {
-    //             None
-    //         }
-    //     }
+    pub fn render_code_actions_indicator(
+        &self,
+        style: &EditorStyle,
+        is_active: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<AnyElement<Self>> {
+        if self.available_code_actions.is_some() {
+            Some(
+                IconButton::new("code_actions", ui2::Icon::Bolt)
+                    .on_click(|editor: &mut Editor, cx| {
+                        editor.toggle_code_actions(
+                            &ToggleCodeActions {
+                                deployed_from_indicator: true,
+                            },
+                            cx,
+                        );
+                    })
+                    .render(),
+            )
+        } else {
+            None
+        }
+    }
 
     //     pub fn render_fold_indicators(
     //         &self,

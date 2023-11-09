@@ -63,6 +63,19 @@ trait ElementObject<V> {
     fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
     fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId;
     fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
+    fn measure(
+        &mut self,
+        available_space: Size<AvailableSpace>,
+        view_state: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> Size<Pixels>;
+    fn draw(
+        &mut self,
+        origin: Point<Pixels>,
+        available_space: Size<AvailableSpace>,
+        view_state: &mut V,
+        cx: &mut ViewContext<V>,
+    );
 }
 
 struct RenderedElement<V: 'static, E: Element<V>> {
@@ -79,6 +92,11 @@ enum ElementRenderPhase<V> {
     },
     LayoutRequested {
         layout_id: LayoutId,
+        frame_state: Option<V>,
+    },
+    LayoutComputed {
+        layout_id: LayoutId,
+        available_space: Size<AvailableSpace>,
         frame_state: Option<V>,
     },
     Painted,
@@ -137,7 +155,9 @@ where
                 }
             }
             ElementRenderPhase::Start => panic!("must call initialize before layout"),
-            ElementRenderPhase::LayoutRequested { .. } | ElementRenderPhase::Painted => {
+            ElementRenderPhase::LayoutRequested { .. }
+            | ElementRenderPhase::LayoutComputed { .. }
+            | ElementRenderPhase::Painted => {
                 panic!("element rendered twice")
             }
         };
@@ -154,6 +174,11 @@ where
             ElementRenderPhase::LayoutRequested {
                 layout_id,
                 mut frame_state,
+            }
+            | ElementRenderPhase::LayoutComputed {
+                layout_id,
+                mut frame_state,
+                ..
             } => {
                 let bounds = cx.layout_bounds(layout_id);
                 if let Some(id) = self.element.id() {
@@ -172,6 +197,62 @@ where
 
             _ => panic!("must call layout before paint"),
         };
+    }
+
+    fn measure(
+        &mut self,
+        available_space: Size<AvailableSpace>,
+        view_state: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> Size<Pixels> {
+        if matches!(&self.phase, ElementRenderPhase::Start) {
+            self.initialize(view_state, cx);
+        }
+
+        if matches!(&self.phase, ElementRenderPhase::Initialized { .. }) {
+            self.layout(view_state, cx);
+        }
+
+        let layout_id = match &mut self.phase {
+            ElementRenderPhase::LayoutRequested {
+                layout_id,
+                frame_state,
+            } => {
+                cx.compute_layout(*layout_id, available_space);
+                let layout_id = *layout_id;
+                self.phase = ElementRenderPhase::LayoutComputed {
+                    layout_id,
+                    available_space,
+                    frame_state: frame_state.take(),
+                };
+                layout_id
+            }
+            ElementRenderPhase::LayoutComputed {
+                layout_id,
+                available_space: prev_available_space,
+                ..
+            } => {
+                if available_space != *prev_available_space {
+                    cx.compute_layout(*layout_id, available_space);
+                    *prev_available_space = available_space;
+                }
+                *layout_id
+            }
+            _ => panic!("cannot measure after painting"),
+        };
+
+        cx.layout_bounds(layout_id).size
+    }
+
+    fn draw(
+        &mut self,
+        origin: Point<Pixels>,
+        available_space: Size<AvailableSpace>,
+        view_state: &mut V,
+        cx: &mut ViewContext<V>,
+    ) {
+        self.measure(available_space, view_state, cx);
+        cx.with_element_offset(Some(origin), |cx| self.paint(view_state, cx))
     }
 }
 
@@ -206,10 +287,7 @@ impl<V> AnyElement<V> {
         view_state: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Size<Pixels> {
-        self.initialize(view_state, cx);
-        let layout_id = self.layout(view_state, cx);
-        cx.compute_layout(layout_id, available_space);
-        cx.layout_bounds(layout_id).size
+        self.0.measure(available_space, view_state, cx)
     }
 
     /// Initializes this element and performs layout in the available space, then paints it at the given origin.
@@ -220,10 +298,7 @@ impl<V> AnyElement<V> {
         view_state: &mut V,
         cx: &mut ViewContext<V>,
     ) {
-        self.initialize(view_state, cx);
-        let layout_id = self.layout(view_state, cx);
-        cx.compute_layout(layout_id, available_space);
-        cx.with_element_offset(Some(origin), |cx| self.paint(view_state, cx))
+        self.0.draw(origin, available_space, view_state, cx)
     }
 }
 
