@@ -235,7 +235,6 @@ pub(crate) struct Frame {
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
     focus_stack: Vec<FocusId>,
-    input_handler: Option<Box<dyn PlatformInputHandler>>,
 }
 
 impl Window {
@@ -2177,7 +2176,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         input_handler: impl PlatformInputHandler,
     ) {
         if focus_handle.is_focused(self) {
-            self.window.current_frame.input_handler = Some(Box::new(input_handler));
+            self.window
+                .platform_window
+                .set_input_handler(Box::new(input_handler));
         }
     }
 }
