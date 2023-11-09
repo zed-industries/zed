@@ -147,6 +147,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = Div<Picker<Self>>;
 
     fn match_count(&self) -> usize {
+        dbg!(self.matches.len());
         self.matches.len()
     }
 
@@ -163,44 +164,11 @@ impl PickerDelegate for CommandPaletteDelegate {
         query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let view_id = &self.previous_focus_handle;
-        let window = cx.window();
+        let mut commands = self.commands.clone();
+
         cx.spawn(move |picker, mut cx| async move {
-            let mut actions = picker
-                .update(&mut cx, |this, _| this.delegate.commands.clone())
-                .expect("todo: handle picker no longer being around");
-            // _ = window
-            //     .available_actions(view_id, &cx)
-            //     .into_iter()
-            //     .flatten()
-            //     .filter_map(|(name, action, bindings)| {
-            //         let filtered = cx.read(|cx| {
-            //             if cx.has_global::<CommandPaletteFilter>() {
-            //                 let filter = cx.global::<CommandPaletteFilter>();
-            //                 filter.filtered_namespaces.contains(action.namespace())
-            //             } else {
-            //                 false
-            //             }
-            //         });
-
-            //         if filtered {
-            //             None
-            //         } else {
-            //             Some(Command {
-            //                 name: humanize_action_name(name),
-            //                 action,
-            //                 keystrokes: bindings
-            //                     .iter()
-            //                     .map(|binding| binding.keystrokes())
-            //                     .last()
-            //                     .map_or(Vec::new(), |keystrokes| keystrokes.to_vec()),
-            //             })
-            //         }
-            //     })
-            //     .collect::<Vec<_>>();
-
             cx.read_global::<HitCounts, _>(|hit_counts, _| {
-                actions.sort_by_key(|action| {
+                commands.sort_by_key(|action| {
                     (
                         Reverse(hit_counts.0.get(&action.name).cloned()),
                         action.name.clone(),
@@ -209,7 +177,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             })
             .ok();
 
-            let candidates = actions
+            let candidates = commands
                 .iter()
                 .enumerate()
                 .map(|(ix, command)| StringMatchCandidate {
@@ -240,15 +208,13 @@ impl PickerDelegate for CommandPaletteDelegate {
                 )
                 .await
             };
-            let mut intercept_result = None;
-            // todo!() for vim mode
-            // cx.read(|cx| {
-            //     if cx.has_global::<CommandPaletteInterceptor>() {
-            //         cx.global::<CommandPaletteInterceptor>()(&query, cx)
-            //     } else {
-            //         None
-            //     }
-            // });
+
+            let mut intercept_result = cx
+                .try_read_global(|interceptor: &CommandPaletteInterceptor, cx| {
+                    (interceptor)(&query, cx)
+                })
+                .flatten();
+
             if *RELEASE_CHANNEL == ReleaseChannel::Dev {
                 if parse_zed_link(&query).is_some() {
                     intercept_result = Some(CommandInterceptResult {
@@ -266,11 +232,11 @@ impl PickerDelegate for CommandPaletteDelegate {
             {
                 if let Some(idx) = matches
                     .iter()
-                    .position(|m| actions[m.candidate_id].action.type_id() == action.type_id())
+                    .position(|m| commands[m.candidate_id].action.type_id() == action.type_id())
                 {
                     matches.remove(idx);
                 }
-                actions.push(Command {
+                commands.push(Command {
                     name: string.clone(),
                     action,
                     keystrokes: vec![],
@@ -278,7 +244,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 matches.insert(
                     0,
                     StringMatch {
-                        candidate_id: actions.len() - 1,
+                        candidate_id: commands.len() - 1,
                         string,
                         positions,
                         score: 0.0,
@@ -288,7 +254,8 @@ impl PickerDelegate for CommandPaletteDelegate {
             picker
                 .update(&mut cx, |picker, _| {
                     let delegate = &mut picker.delegate;
-                    delegate.commands = actions;
+                    dbg!(&matches);
+                    delegate.commands = commands;
                     delegate.matches = matches;
                     if delegate.matches.is_empty() {
                         delegate.selected_ix = 0;

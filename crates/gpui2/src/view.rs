@@ -145,7 +145,7 @@ impl<V> Eq for WeakView<V> {}
 #[derive(Clone, Debug)]
 pub struct AnyView {
     model: AnyModel,
-    pub initialize: fn(&AnyView, &mut WindowContext) -> AnyBox,
+    initialize: fn(&AnyView, &mut WindowContext) -> AnyBox,
     layout: fn(&AnyView, &mut AnyBox, &mut WindowContext) -> LayoutId,
     paint: fn(&AnyView, &mut AnyBox, &mut WindowContext),
 }
