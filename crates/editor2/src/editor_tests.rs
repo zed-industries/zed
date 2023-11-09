@@ -10,9 +10,6 @@ use crate::{
 use drag_and_drop::DragAndDrop;
 use futures::StreamExt;
 use gpui::{
-    executor::Deterministic,
-    geometry::{rect::RectF, vector::vec2f},
-    platform::{WindowBounds, WindowOptions},
     serde_json::{self, json},
     TestAppContext,
 };
@@ -42,8 +39,8 @@ use workspace::{
 fn test_edit_events(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let buffer = cx.add_model(|cx| {
-        let mut buffer = language::Buffer::new(0, cx.model_id() as u64, "123456");
+    let buffer = cx.build_model(|cx| {
+        let mut buffer = language::Buffer::new(0, cx.entity_id().as_u64(), "123456");
         buffer.set_group_interval(Duration::from_secs(1));
         buffer
     });
@@ -53,11 +50,8 @@ fn test_edit_events(cx: &mut TestAppContext) {
         .add_window({
             let events = events.clone();
             |cx| {
-                cx.subscribe(&cx.handle(), move |_, _, event, _| {
-                    if matches!(
-                        event,
-                        Event::Edited | Event::BufferEdited | Event::DirtyChanged
-                    ) {
+                cx.subscribe(cx.view(), move |_, _, event, _| {
+                    if matches!(event, Event::Edited | Event::BufferEdited) {
                         events.borrow_mut().push(("editor1", event.clone()));
                     }
                 })
@@ -65,16 +59,14 @@ fn test_edit_events(cx: &mut TestAppContext) {
                 Editor::for_buffer(buffer.clone(), None, cx)
             }
         })
-        .root(cx);
+        .root(cx)
+        .unwrap();
     let editor2 = cx
         .add_window({
             let events = events.clone();
             |cx| {
-                cx.subscribe(&cx.handle(), move |_, _, event, _| {
-                    if matches!(
-                        event,
-                        Event::Edited | Event::BufferEdited | Event::DirtyChanged
-                    ) {
+                cx.subscribe(cx.view(), move |_, _, event, _| {
+                    if matches!(event, Event::Edited | Event::BufferEdited) {
                         events.borrow_mut().push(("editor2", event.clone()));
                     }
                 })
@@ -82,7 +74,8 @@ fn test_edit_events(cx: &mut TestAppContext) {
                 Editor::for_buffer(buffer.clone(), None, cx)
             }
         })
-        .root(cx);
+        .root(cx)
+        .unwrap();
     assert_eq!(mem::take(&mut *events.borrow_mut()), []);
 
     // Mutating editor 1 will emit an `Edited` event only for that editor.
@@ -93,8 +86,6 @@ fn test_edit_events(cx: &mut TestAppContext) {
             ("editor1", Event::Edited),
             ("editor1", Event::BufferEdited),
             ("editor2", Event::BufferEdited),
-            ("editor1", Event::DirtyChanged),
-            ("editor2", Event::DirtyChanged)
         ]
     );
 
@@ -365,7 +356,7 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
     );
 
     editor.update(cx, |view, cx| {
-        view.update_selection(DisplayPoint::new(3, 3), 0, Point<Pixels>::zero(), cx);
+        view.update_selection(DisplayPoint::new(3, 3), 0, Point::<Pixels>::zero(), cx);
     });
 
     assert_eq!(
@@ -374,7 +365,7 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
     );
 
     editor.update(cx, |view, cx| {
-        view.update_selection(DisplayPoint::new(1, 1), 0, Point<Pixels>::zero(), cx);
+        view.update_selection(DisplayPoint::new(1, 1), 0, Point::<Pixels>::zero(), cx);
     });
 
     assert_eq!(
@@ -384,7 +375,7 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
 
     editor.update(cx, |view, cx| {
         view.end_selection(cx);
-        view.update_selection(DisplayPoint::new(3, 3), 0, Point<Pixels>::zero(), cx);
+        view.update_selection(DisplayPoint::new(3, 3), 0, Point::<Pixels>::zero(), cx);
     });
 
     assert_eq!(
@@ -394,7 +385,7 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
 
     editor.update(cx, |view, cx| {
         view.begin_selection(DisplayPoint::new(3, 3), true, 1, cx);
-        view.update_selection(DisplayPoint::new(0, 0), 0, Point<Pixels>::zero(), cx);
+        view.update_selection(DisplayPoint::new(0, 0), 0, Point::<Pixels>::zero(), cx);
     });
 
     assert_eq!(
@@ -435,7 +426,7 @@ fn test_canceling_pending_selection(cx: &mut TestAppContext) {
     });
 
     view.update(cx, |view, cx| {
-        view.update_selection(DisplayPoint::new(3, 3), 0, Point<Pixels>::zero(), cx);
+        view.update_selection(DisplayPoint::new(3, 3), 0, Point::<Pixels>::zero(), cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
@@ -444,7 +435,7 @@ fn test_canceling_pending_selection(cx: &mut TestAppContext) {
 
     view.update(cx, |view, cx| {
         view.cancel(&Cancel, cx);
-        view.update_selection(DisplayPoint::new(1, 1), 0, Point<Pixels>::zero(), cx);
+        view.update_selection(DisplayPoint::new(1, 1), 0, Point::<Pixels>::zero(), cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
@@ -589,12 +580,12 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
         assert!(pop_history(&mut editor, cx).is_none());
 
         // Set scroll position to check later
-        editor.set_scroll_position(Point<Pixels>::new(5.5, 5.5), cx);
+        editor.set_scroll_position(Point::<Pixels>::new(5.5, 5.5), cx);
         let original_scroll_position = editor.scroll_manager.anchor();
 
         // Jump to the end of the document and adjust scroll
         editor.move_to_end(&MoveToEnd, cx);
-        editor.set_scroll_position(Point<Pixels>::new(-2.5, -0.5), cx);
+        editor.set_scroll_position(Point::<Pixels>::new(-2.5, -0.5), cx);
         assert_ne!(editor.scroll_manager.anchor(), original_scroll_position);
 
         let nav_entry = pop_history(&mut editor, cx).unwrap();
@@ -643,11 +634,11 @@ fn test_cancel(cx: &mut TestAppContext) {
 
     view.update(cx, |view, cx| {
         view.begin_selection(DisplayPoint::new(3, 4), false, 1, cx);
-        view.update_selection(DisplayPoint::new(1, 1), 0, Point<Pixels>::zero(), cx);
+        view.update_selection(DisplayPoint::new(1, 1), 0, Point::<Pixels>::zero(), cx);
         view.end_selection(cx);
 
         view.begin_selection(DisplayPoint::new(0, 1), true, 1, cx);
-        view.update_selection(DisplayPoint::new(0, 3), 0, Point<Pixels>::zero(), cx);
+        view.update_selection(DisplayPoint::new(0, 3), 0, Point::<Pixels>::zero(), cx);
         view.end_selection(cx);
         assert_eq!(
             view.selections.display_ranges(cx),

@@ -60,7 +60,7 @@ pub fn assert_text_with_selections(
 #[allow(dead_code)]
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn build_editor(buffer: Model<MultiBuffer>, cx: &mut ViewContext<Editor>) -> Editor {
-    Editor::new(EditorMode::Full, buffer, None, None, cx)
+    Editor::new(EditorMode::Full, buffer, None, /*None,*/ cx)
 }
 
 pub(crate) fn build_editor_with_project(
@@ -68,5 +68,5 @@ pub(crate) fn build_editor_with_project(
     buffer: Model<MultiBuffer>,
     cx: &mut ViewContext<Editor>,
 ) -> Editor {
-    Editor::new(EditorMode::Full, buffer, Some(project), None, cx)
+    Editor::new(EditorMode::Full, buffer, Some(project), /*None,*/ cx)
 }

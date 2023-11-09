@@ -282,28 +282,27 @@ async fn test_core_channel_buffers(
 //     });
 // }
 
-//todo!(editor)
-// #[track_caller]
-// fn assert_remote_selections(
-//     editor: &mut Editor,
-//     expected_selections: &[(Option<ParticipantIndex>, Range<usize>)],
-//     cx: &mut ViewContext<Editor>,
-// ) {
-//     let snapshot = editor.snapshot(cx);
-//     let range = Anchor::min()..Anchor::max();
-//     let remote_selections = snapshot
-//         .remote_selections_in_range(&range, editor.collaboration_hub().unwrap(), cx)
-//         .map(|s| {
-//             let start = s.selection.start.to_offset(&snapshot.buffer_snapshot);
-//             let end = s.selection.end.to_offset(&snapshot.buffer_snapshot);
-//             (s.participant_index, start..end)
-//         })
-//         .collect::<Vec<_>>();
-//     assert_eq!(
-//         remote_selections, expected_selections,
-//         "incorrect remote selections"
-//     );
-// }
+#[track_caller]
+fn assert_remote_selections(
+    editor: &mut Editor,
+    expected_selections: &[(Option<ParticipantIndex>, Range<usize>)],
+    cx: &mut ViewContext<Editor>,
+) {
+    let snapshot = editor.snapshot(cx);
+    let range = Anchor::min()..Anchor::max();
+    let remote_selections = snapshot
+        .remote_selections_in_range(&range, editor.collaboration_hub().unwrap(), cx)
+        .map(|s| {
+            let start = s.selection.start.to_offset(&snapshot.buffer_snapshot);
+            let end = s.selection.end.to_offset(&snapshot.buffer_snapshot);
+            (s.participant_index, start..end)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        remote_selections, expected_selections,
+        "incorrect remote selections"
+    );
+}
 
 #[gpui::test]
 async fn test_multiple_handles_to_channel_buffer(

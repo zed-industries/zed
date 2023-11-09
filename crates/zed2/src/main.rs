@@ -357,8 +357,7 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
         } else {
             cx.update(|cx| {
                 workspace::open_new(app_state, cx, |workspace, cx| {
-                    // todo!(editor)
-                    // Editor::new_file(workspace, &Default::default(), cx)
+                    Editor::new_file(workspace, &Default::default(), cx)
                 })
                 .detach();
             })?;
