@@ -33,6 +33,9 @@ pub fn init(cx: &mut AppContext) {
                         return None;
                     };
 
+                    let available_actions = cx.available_actions();
+                    dbg!(&available_actions);
+
                     Some(cx.build_view(|cx| {
                         let delegate =
                             CommandPaletteDelegate::new(cx.view().downgrade(), focus_handle);

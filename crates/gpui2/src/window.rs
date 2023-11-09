@@ -1,14 +1,15 @@
 use crate::{
-    px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
-    Bounds, BoxShadow, Context, Corners, CursorStyle, DevicePixels, DispatchContext, DisplayId,
-    Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId,
-    GlobalElementId, GlyphId, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch,
-    KeyMatcher, Keystroke, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow,
-    SharedString, Size, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline,
-    UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    build_action_from_type, px, size, Action, AnyBox, AnyDrag, AnyView, AppContext,
+    AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
+    DevicePixels, DispatchContext, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
+    FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla, ImageData, InputEvent,
+    IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId, Model, ModelContext, Modifiers,
+    MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
+    SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
+    WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -1293,6 +1294,32 @@ impl<'a> WindowContext<'a> {
         answers: &[&str],
     ) -> oneshot::Receiver<usize> {
         self.window.platform_window.prompt(level, msg, answers)
+    }
+
+    pub fn available_actions(&mut self) -> Vec<Box<dyn Action>> {
+        let key_dispatch_stack = &self.window.current_frame.key_dispatch_stack;
+        let mut actions = Vec::new();
+        dbg!(key_dispatch_stack.len());
+        for frame in key_dispatch_stack {
+            match frame {
+                // todo!factor out a KeyDispatchStackFrame::Action
+                KeyDispatchStackFrame::Listener {
+                    event_type,
+                    listener: _,
+                } => {
+                    match build_action_from_type(event_type) {
+                        Ok(action) => {
+                            actions.push(action);
+                        }
+                        Err(err) => {
+                            dbg!(err);
+                        } // we'll hit his if TypeId == KeyDown
+                    }
+                }
+                KeyDispatchStackFrame::Context(_) => {}
+            }
+        }
+        actions
     }
 
     fn dispatch_action(
