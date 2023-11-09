@@ -181,7 +181,7 @@ pub fn rose_pine() -> UserThemeFamily {
                 },
             },
             UserTheme {
-                name: "Rose Moon".into(),
+                name: "Rose Pine Moon".into(),
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
