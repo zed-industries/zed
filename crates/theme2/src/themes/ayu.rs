@@ -3,9 +3,10 @@
 
 use gpui::rgba;
 
+#[allow(unused)]
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
-    UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
+    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn ayu() -> UserThemeFamily {
@@ -66,6 +67,20 @@ pub fn ayu() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf2ad48ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xa37accff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x787b8099).into()),
@@ -74,16 +89,38 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4bbf98ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf2ad48ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfa8d3eff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "string".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x787b8099).into()),
+                                    color: Some(rgba(0x86b300ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x55b4d3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -144,6 +181,20 @@ pub fn ayu() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffd173ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdfbfffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb8cfe680).into()),
@@ -152,16 +203,38 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x95e6cbff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffd173ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xffad65ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "string".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xb8cfe680).into()),
+                                    color: Some(rgba(0xd4fe7fff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5ccfe6ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -222,6 +295,20 @@ pub fn ayu() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffb353ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd2a6ffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xabb5be8c).into()),
@@ -230,16 +317,38 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x95e6cbff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xffb353ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xff8f3fff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "string".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xabb5be8c).into()),
+                                    color: Some(rgba(0xa9d94bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x38b9e6ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),

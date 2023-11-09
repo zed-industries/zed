@@ -3,9 +3,10 @@
 
 use gpui::rgba;
 
+#[allow(unused)]
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
-    UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
+    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn night_owl() -> UserThemeFamily {
@@ -66,6 +67,21 @@ pub fn night_owl() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5e478ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x637777ff).into()),
@@ -74,16 +90,39 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x7fcac3ff).into()),
+                                    color: Some(rgba(0x82aaffff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xd3413dff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xecc48dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fdbcaff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -145,6 +184,21 @@ pub fn night_owl() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x989fb1ff).into()),
@@ -153,16 +207,39 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x0b969bff).into()),
+                                    color: Some(rgba(0x4876d6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xd3413dff).into()),
+                                    color: Some(rgba(0x994bc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994bc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0b969bff).into()),
                                     ..Default::default()
                                 },
                             ),

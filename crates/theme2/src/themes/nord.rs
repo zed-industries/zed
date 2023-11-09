@@ -3,9 +3,10 @@
 
 use gpui::rgba;
 
+#[allow(unused)]
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
-    UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
+    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn nord() -> UserThemeFamily {
@@ -67,6 +68,20 @@ pub fn nord() -> UserThemeFamily {
                 syntax: Some(UserSyntaxTheme {
                     highlights: vec![
                         (
+                            "attribute".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x8fbcbbff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "boolean".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x81a1c1ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "comment".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x606e87ff).into()),
@@ -74,16 +89,51 @@ pub fn nord() -> UserThemeFamily {
                             },
                         ),
                         (
-                            "punctuation".into(),
+                            "constant".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xebcb8bff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "emphasis".into(),
+                            UserHighlightStyle {
+                                font_style: Some(UserFontStyle::Italic),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "function".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x88bfd0ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "keyword".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x81a1c1ff).into()),
                                 ..Default::default()
                             },
                         ),
                         (
-                            "something".into(),
+                            "punctuation".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xeceff4ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xa3be8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "variable".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x81a1c1ff).into()),
                                 ..Default::default()
                             },
                         ),

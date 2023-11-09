@@ -9139,6 +9139,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "simplelog",
+ "strum",
  "theme2",
  "uuid 1.4.1",
 ]

@@ -3,9 +3,10 @@
 
 use gpui::rgba;
 
+#[allow(unused)]
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
-    UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
+    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn dracula() -> UserThemeFamily {
@@ -67,6 +68,14 @@ pub fn dracula() -> UserThemeFamily {
                 syntax: Some(UserSyntaxTheme {
                     highlights: vec![
                         (
+                            "attribute".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x50fa7bff).into()),
+                                font_style: Some(UserFontStyle::Italic),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "comment".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x6272a4ff).into()),
@@ -74,16 +83,46 @@ pub fn dracula() -> UserThemeFamily {
                             },
                         ),
                         (
-                            "something".into(),
+                            "emphasis".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xf8f8f2ff).into()),
+                                font_style: Some(UserFontStyle::Italic),
                                 ..Default::default()
                             },
                         ),
                         (
-                            "punctuation".into(),
+                            "function".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x50fa7bff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "keyword".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xff79c6ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "type".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x8be9fdff).into()),
+                                font_style: Some(UserFontStyle::Italic),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "variable".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xbd93f9ff).into()),
+                                font_style: Some(UserFontStyle::Italic),
                                 ..Default::default()
                             },
                         ),

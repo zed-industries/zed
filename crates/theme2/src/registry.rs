@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use gpui::SharedString;
+use gpui::{HighlightStyle, SharedString};
 use refineable::Refineable;
 
 use crate::{
@@ -39,8 +39,32 @@ impl ThemeRegistry {
                 Appearance::Light => ThemeColors::default_light(),
                 Appearance::Dark => ThemeColors::default_dark(),
             };
-
             theme_colors.refine(&user_theme.styles.colors);
+
+            let mut status_colors = StatusColors::default();
+            status_colors.refine(&user_theme.styles.status);
+
+            let mut syntax_colors = match user_theme.appearance {
+                Appearance::Light => SyntaxTheme::default_light(),
+                Appearance::Dark => SyntaxTheme::default_dark(),
+            };
+            if let Some(user_syntax) = user_theme.styles.syntax {
+                syntax_colors.highlights = user_syntax
+                    .highlights
+                    .iter()
+                    .map(|(syntax_token, highlight)| {
+                        (
+                            syntax_token.clone(),
+                            HighlightStyle {
+                                color: highlight.color,
+                                font_style: highlight.font_style.map(Into::into),
+                                font_weight: highlight.font_weight.map(Into::into),
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+            }
 
             Theme {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -49,12 +73,9 @@ impl ThemeRegistry {
                 styles: ThemeStyles {
                     system: SystemColors::default(),
                     colors: theme_colors,
-                    status: StatusColors::default(),
+                    status: status_colors,
                     player: PlayerColors::default(),
-                    syntax: match user_theme.appearance {
-                        Appearance::Light => Arc::new(SyntaxTheme::default_light()),
-                        Appearance::Dark => Arc::new(SyntaxTheme::default_dark()),
-                    },
+                    syntax: Arc::new(syntax_colors),
                 },
             }
         }));

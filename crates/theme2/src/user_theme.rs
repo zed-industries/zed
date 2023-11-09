@@ -1,4 +1,4 @@
-use gpui::{FontWeight, Hsla};
+use gpui::{FontStyle, FontWeight, Hsla};
 use refineable::Refineable;
 use serde::Deserialize;
 
@@ -40,7 +40,7 @@ pub struct UserHighlightStyle {
     pub font_weight: Option<UserFontWeight>,
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Copy, Default, Deserialize)]
 pub struct UserFontWeight(pub f32);
 
 impl UserFontWeight {
@@ -64,6 +64,12 @@ impl UserFontWeight {
     pub const BLACK: Self = Self(FontWeight::BLACK.0);
 }
 
+impl From<UserFontWeight> for FontWeight {
+    fn from(value: UserFontWeight) -> Self {
+        Self(value.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub enum UserFontStyle {
     Normal,
@@ -71,8 +77,18 @@ pub enum UserFontStyle {
     Oblique,
 }
 
+impl From<UserFontStyle> for FontStyle {
+    fn from(value: UserFontStyle) -> Self {
+        match value {
+            UserFontStyle::Normal => FontStyle::Normal,
+            UserFontStyle::Italic => FontStyle::Italic,
+            UserFontStyle::Oblique => FontStyle::Oblique,
+        }
+    }
+}
+
 impl UserHighlightStyle {
     pub fn is_empty(&self) -> bool {
-        self.color.is_none()
+        self.color.is_none() && self.font_style.is_none() && self.font_weight.is_none()
     }
 }

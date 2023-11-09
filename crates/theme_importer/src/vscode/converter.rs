@@ -1,14 +1,17 @@
 use anyhow::Result;
 use gpui::{Hsla, Rgba};
 use indexmap::IndexMap;
+use strum::IntoEnumIterator;
 use theme::{
-    StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight, UserSyntaxTheme,
-    UserTheme, UserThemeStylesRefinement,
+    StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
+    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeStylesRefinement,
 };
 
 use crate::util::Traverse;
 use crate::vscode::VsCodeTheme;
 use crate::ThemeMetadata;
+
+use super::{VsCodeTokenScope, ZedSyntaxToken};
 
 pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
     Ok(Rgba::try_from(color)?.into())
@@ -47,16 +50,7 @@ impl VsCodeThemeConverter {
 
         let status_color_refinements = self.convert_status_colors()?;
         let theme_colors_refinements = self.convert_theme_colors()?;
-
-        let mut highlight_styles = IndexMap::new();
-
-        for token_color in self.theme.token_colors {
-            highlight_styles.extend(token_color.highlight_styles()?);
-        }
-
-        let syntax_theme = UserSyntaxTheme {
-            highlights: highlight_styles.into_iter().collect(),
-        };
+        let syntax_theme = self.convert_syntax_theme()?;
 
         Ok(UserTheme {
             name: self.theme_metadata.name.into(),
@@ -258,5 +252,115 @@ impl VsCodeThemeConverter {
                 .traverse(|color| try_parse_color(&color))?,
             ..Default::default()
         })
+    }
+
+    fn convert_syntax_theme(&self) -> Result<UserSyntaxTheme> {
+        let mut highlight_styles = IndexMap::new();
+
+        for syntax_token in ZedSyntaxToken::iter() {
+            let vscode_scope = syntax_token.to_vscode();
+
+            let token_color = self
+                .theme
+                .token_colors
+                .iter()
+                .find(|token_color| match token_color.scope {
+                    Some(VsCodeTokenScope::One(ref scope)) => scope == vscode_scope,
+                    Some(VsCodeTokenScope::Many(ref scopes)) => {
+                        scopes.contains(&vscode_scope.to_string())
+                    }
+                    None => false,
+                });
+
+            let Some(token_color) = token_color else {
+                continue;
+            };
+
+            let highlight_style = UserHighlightStyle {
+                color: token_color
+                    .settings
+                    .foreground
+                    .as_ref()
+                    .traverse(|color| try_parse_color(&color))?,
+                font_style: token_color
+                    .settings
+                    .font_style
+                    .as_ref()
+                    .and_then(|style| try_parse_font_style(&style)),
+                font_weight: token_color
+                    .settings
+                    .font_style
+                    .as_ref()
+                    .and_then(|style| try_parse_font_weight(&style)),
+            };
+
+            if highlight_style.is_empty() {
+                continue;
+            }
+
+            highlight_styles.insert(syntax_token.to_string(), highlight_style);
+        }
+
+        Ok(UserSyntaxTheme {
+            highlights: highlight_styles.into_iter().collect(),
+        })
+
+        // let mut highlight_styles = IndexMap::new();
+
+        // for token_color in self.theme.token_colors {
+        //     highlight_styles.extend(token_color.highlight_styles()?);
+        // }
+
+        // let syntax_theme = UserSyntaxTheme {
+        //     highlights: highlight_styles.into_iter().collect(),
+        // };
+
+        // pub fn highlight_styles(&self) -> Result<IndexMap<String, UserHighlightStyle>> {
+        // let mut highlight_styles = IndexMap::new();
+
+        // for syntax_token in ZedSyntaxToken::iter() {
+        //     let scope = syntax_token.to_scope();
+
+        //     // let token_color =
+        // }
+
+        // let scope = match self.scope {
+        //     Some(VsCodeTokenScope::One(ref scope)) => vec![scope.clone()],
+        //     Some(VsCodeTokenScope::Many(ref scopes)) => scopes.clone(),
+        //     None => return Ok(IndexMap::new()),
+        // };
+
+        // for scope in &scope {
+        //     let Some(syntax_token) = Self::to_zed_token(&scope) else {
+        //         continue;
+        //     };
+
+        //     let highlight_style = UserHighlightStyle {
+        //         color: self
+        //             .settings
+        //             .foreground
+        //             .as_ref()
+        //             .traverse(|color| try_parse_color(&color))?,
+        //         font_style: self
+        //             .settings
+        //             .font_style
+        //             .as_ref()
+        //             .and_then(|style| try_parse_font_style(&style)),
+        //         font_weight: self
+        //             .settings
+        //             .font_style
+        //             .as_ref()
+        //             .and_then(|style| try_parse_font_weight(&style)),
+        //     };
+
+        //     if highlight_style.is_empty() {
+        //         continue;
+        //     }
+
+        //     highlight_styles.insert(syntax_token, highlight_style);
+        // }
+
+        // Ok(highlight_styles)
+        // }
     }
 }

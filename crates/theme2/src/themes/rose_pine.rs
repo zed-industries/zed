@@ -3,9 +3,10 @@
 
 use gpui::rgba;
 
+#[allow(unused)]
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
-    UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
+    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn rose_pine() -> UserThemeFamily {
@@ -67,6 +68,21 @@ pub fn rose_pine() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc4a7e7ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xebbcbaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x6e6a86ff).into()),
@@ -75,17 +91,37 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "something".into(),
+                                "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xebbcbaff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x30738fff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf5c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9ccfd8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe0def4ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -147,6 +183,21 @@ pub fn rose_pine() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc4a7e7ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9a97ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x6e6a86ff).into()),
@@ -155,17 +206,37 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "something".into(),
+                                "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xea9a97ff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x3d8fb0ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf5c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9ccfd8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe0def4ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -227,6 +298,21 @@ pub fn rose_pine() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "attribute".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9079a9ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd7827dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x9893a5ff).into()),
@@ -235,17 +321,37 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "something".into(),
+                                "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xd7827dff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x276983ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x9893a5ff).into()),
+                                    color: Some(rgba(0x797593ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9d34ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "type".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x55949fff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x575279ff).into()),
                                     ..Default::default()
                                 },
                             ),

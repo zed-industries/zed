@@ -3,14 +3,15 @@
 
 use gpui::rgba;
 
+#[allow(unused)]
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
-    UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
+    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
-pub fn notctis() -> UserThemeFamily {
+pub fn noctis() -> UserThemeFamily {
     UserThemeFamily {
-        name: "Notctis".into(),
+        name: "Noctis".into(),
         author: "Liviu Schera (liviuschera)".into(),
         themes: vec![
             UserTheme {
@@ -68,6 +69,13 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x5888a5ff).into()),
@@ -75,16 +83,44 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49ace9ff).into()),
+                                    color: Some(rgba(0xbecfdaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -147,6 +183,13 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8b737bff).into()),
@@ -154,16 +197,44 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49ace9ff).into()),
+                                    color: Some(rgba(0xcbbec2ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -226,6 +297,13 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5841ffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8ca6a6ff).into()),
@@ -233,16 +311,44 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x0094f0ff).into()),
+                                    color: Some(rgba(0x004d57ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0094a8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5792ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x00b368ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -305,6 +411,13 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5841ffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x9995b7ff).into()),
@@ -312,16 +425,44 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x0094f0ff).into()),
+                                    color: Some(rgba(0x0c006bff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0094a8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5792ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x00b368ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -384,6 +525,13 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5841ffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8ca6a6ff).into()),
@@ -391,16 +539,44 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x0094f0ff).into()),
+                                    color: Some(rgba(0x004d57ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0094a8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5792ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x00b368ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -463,6 +639,13 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7067b1ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x5d7787ff).into()),
@@ -470,16 +653,44 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x5897bfff).into()),
+                                    color: Some(rgba(0xc5cdd3ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x3e848dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc88da2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x72c09fff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc37455ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -542,6 +753,13 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x5b858bff).into()),
@@ -549,16 +767,44 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49ace9ff).into()),
+                                    color: Some(rgba(0xb1c9ccff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -621,6 +867,13 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x5b858bff).into()),
@@ -628,16 +881,44 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49ace9ff).into()),
+                                    color: Some(rgba(0xb1c9ccff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -700,6 +981,13 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x5b858bff).into()),
@@ -707,16 +995,44 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49ace9ff).into()),
+                                    color: Some(rgba(0xb1c9ccff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -779,6 +1095,13 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x716b93ff).into()),
@@ -786,16 +1109,44 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49ace9ff).into()),
+                                    color: Some(rgba(0xc5c2d6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -858,6 +1209,13 @@ pub fn notctis() -> UserThemeFamily {
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
+                                "boolean".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x705febff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "comment".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x7e6499ff).into()),
@@ -865,16 +1223,44 @@ pub fn notctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
+                                "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49ace9ff).into()),
+                                    color: Some(rgba(0xccbfd9ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
-                                "something".into(),
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    font_weight: Some(UserFontWeight(700.0)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x15a2b6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "keyword".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf759aff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66432ff).into()),
                                     ..Default::default()
                                 },
                             ),

@@ -3,9 +3,10 @@
 
 use gpui::rgba;
 
+#[allow(unused)]
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
-    UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
+    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
 };
 
 pub fn synthwave_84() -> UserThemeFamily {
@@ -52,6 +53,20 @@ pub fn synthwave_84() -> UserThemeFamily {
                 syntax: Some(UserSyntaxTheme {
                     highlights: vec![
                         (
+                            "attribute".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xfede5cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "boolean".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf97d71ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "comment".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x848bbdff).into()),
@@ -60,16 +75,31 @@ pub fn synthwave_84() -> UserThemeFamily {
                             },
                         ),
                         (
-                            "something".into(),
+                            "function".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x35f9f5ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "keyword".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xfede5cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "type".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xfe444fff).into()),
                                 ..Default::default()
                             },
                         ),
                         (
-                            "punctuation".into(),
+                            "variable".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xfede5cff).into()),
+                                color: Some(rgba(0xfe444fff).into()),
+                                font_weight: Some(UserFontWeight(700.0)),
                                 ..Default::default()
                             },
                         ),
