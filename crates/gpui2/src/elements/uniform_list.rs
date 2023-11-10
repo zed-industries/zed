@@ -211,7 +211,7 @@ impl<V: 'static> Element<V> for UniformList<V> {
                         let item_origin =
                             padded_bounds.origin + point(px(0.), item_height * ix + scroll_offset);
                         let available_space = size(
-                            AvailableSpace::Definite(bounds.size.width),
+                            AvailableSpace::Definite(padded_bounds.size.width),
                             AvailableSpace::Definite(item_height),
                         );
                         item.draw(item_origin, available_space, view_state, cx);
