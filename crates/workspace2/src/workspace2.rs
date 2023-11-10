@@ -36,11 +36,12 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, div, point, rems, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
-    AsyncWindowContext, Bounds, Component, DispatchContext, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, GlobalPixels, Model, ModelContext, ParentElement, Point, Render, Size,
-    StatefulInteractive, StatefulInteractivity, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    actions, div, point, rems, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
+    AsyncAppContext, AsyncWindowContext, Bounds, Component, DispatchContext, Div, Entity, EntityId,
+    EventEmitter, FocusHandle, GlobalPixels, Model, ModelContext, ParentElement, Point, Render,
+    Size, StatefulInteractive, StatefulInteractivity, StatelessInteractive, Styled, Subscription,
+    Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
+    WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -530,6 +531,13 @@ pub enum Event {
 pub struct Workspace {
     weak_self: WeakView<Self>,
     focus_handle: FocusHandle,
+    workspace_actions: Vec<
+        Box<
+            dyn Fn(
+                Div<Workspace, StatefulInteractivity<Workspace>>,
+            ) -> Div<Workspace, StatefulInteractivity<Workspace>>,
+        >,
+    >,
     zoomed: Option<AnyWeakView>,
     zoomed_position: Option<DockPosition>,
     center: PaneGroup,
@@ -775,11 +783,8 @@ impl Workspace {
             leader_updates_tx,
             subscriptions,
             pane_history_timestamp,
+            workspace_actions: Default::default(),
         }
-    }
-
-    pub fn modal_layer(&mut self) -> &mut ModalLayer {
-        &mut self.modal_layer
     }
 
     fn new_local(
@@ -3495,6 +3500,34 @@ impl Workspace {
     //         )
     //     }
     // }
+    pub fn register_action<A: Action>(
+        &mut self,
+        callback: impl Fn(&mut Self, &A, &mut ViewContext<Self>) + 'static,
+    ) {
+        let callback = Arc::new(callback);
+
+        self.workspace_actions.push(Box::new(move |div| {
+            let callback = callback.clone();
+            div.on_action(move |workspace, event, cx| (callback.clone())(workspace, event, cx))
+        }));
+    }
+
+    fn add_workspace_actions_listeners(
+        &self,
+        mut div: Div<Workspace, StatefulInteractivity<Workspace>>,
+    ) -> Div<Workspace, StatefulInteractivity<Workspace>> {
+        for action in self.workspace_actions.iter() {
+            div = (action)(div)
+        }
+        div
+    }
+
+    pub fn toggle_modal<V: Modal, B>(&mut self, cx: &mut ViewContext<Self>, build: B)
+    where
+        B: FnOnce(&mut ViewContext<V>) -> V,
+    {
+        self.modal_layer.toggle_modal(cx, build)
+    }
 }
 
 fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<WindowBounds> {
@@ -3706,14 +3739,13 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
 impl EventEmitter<Event> for Workspace {}
 
 impl Render for Workspace {
-    type Element = Div<Self, StatefulInteractivity<Self>>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let mut context = DispatchContext::default();
         context.insert("Workspace");
         cx.with_key_dispatch_context(context, |cx| {
             div()
-                .id("workspace")
                 .relative()
                 .size_full()
                 .flex()
@@ -3727,8 +3759,7 @@ impl Render for Workspace {
                 .child(self.render_titlebar(cx))
                 .child(
                     // todo! should this be a component a view?
-                    self.modal_layer
-                        .wrapper_element(cx)
+                    self.add_workspace_actions_listeners(div().id("workspace"))
                         .relative()
                         .flex_1()
                         .w_full()
@@ -3737,6 +3768,7 @@ impl Render for Workspace {
                         .border_t()
                         .border_b()
                         .border_color(cx.theme().colors().border)
+                        .child(self.modal_layer.wrapper_element(cx))
                         // .children(
                         //     Some(
                         //         Panel::new("project-panel-outer", cx)

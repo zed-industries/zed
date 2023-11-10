@@ -21,19 +21,7 @@ actions!(Toggle);
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(HitCounts::default());
-
-    cx.observe_new_views(
-        |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
-            workspace.modal_layer().register_modal(Toggle, |cx| {
-                let Some(previous_focus_handle) = cx.focused() else {
-                    return None;
-                };
-
-                Some(cx.build_view(|cx| CommandPalette::new(previous_focus_handle, cx)))
-            });
-        },
-    )
-    .detach();
+    cx.observe_new_views(CommandPalette::register).detach();
 }
 
 pub struct CommandPalette {
@@ -41,6 +29,15 @@ pub struct CommandPalette {
 }
 
 impl CommandPalette {
+    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+        workspace.register_action(|workspace, _: &Toggle, cx| {
+            let Some(previous_focus_handle) = cx.focused() else {
+                return;
+            };
+            workspace.toggle_modal(cx, move |cx| CommandPalette::new(previous_focus_handle, cx));
+        });
+    }
+
     fn new(previous_focus_handle: FocusHandle, cx: &mut ViewContext<Self>) -> Self {
         let filter = cx.try_global::<CommandPaletteFilter>();
 

@@ -2,7 +2,7 @@ use crate::Workspace;
 use gpui::{
     div, px, AnyView, Component, Div, EventEmitter, FocusHandle, ParentElement, Render,
     StatefulInteractivity, StatelessInteractive, Styled, Subscription, View, ViewContext,
-    WindowContext,
+    VisualContext, WindowContext,
 };
 use std::{any::TypeId, sync::Arc};
 use ui::v_stack;
@@ -16,14 +16,6 @@ pub struct ActiveModal {
 
 pub struct ModalLayer {
     active_modal: Option<ActiveModal>,
-    registered_modals: Vec<(
-        TypeId,
-        Box<
-            dyn Fn(
-                Div<Workspace, StatefulInteractivity<Workspace>>,
-            ) -> Div<Workspace, StatefulInteractivity<Workspace>>,
-        >,
-    )>,
 }
 
 pub trait Modal: Render + EventEmitter<ModalEvent> {
@@ -36,35 +28,13 @@ pub enum ModalEvent {
 
 impl ModalLayer {
     pub fn new() -> Self {
-        Self {
-            active_modal: None,
-            registered_modals: Vec::new(),
-        }
+        Self { active_modal: None }
     }
 
-    pub fn register_modal<A: 'static, V, B>(&mut self, action: A, build_view: B)
+    pub fn toggle_modal<V, B>(&mut self, cx: &mut ViewContext<Workspace>, build_view: B)
     where
         V: Modal,
-        B: Fn(&mut WindowContext) -> Option<View<V>> + 'static,
-    {
-        let build_view = Arc::new(build_view);
-
-        self.registered_modals.push((
-            TypeId::of::<A>(),
-            Box::new(move |mut div| {
-                let build_view = build_view.clone();
-
-                div.on_action(move |workspace, event: &A, cx| {
-                    workspace.modal_layer().toggle_modal(build_view.clone(), cx)
-                })
-            }),
-        ));
-    }
-
-    pub fn toggle_modal<V, B>(&mut self, build_view: Arc<B>, cx: &mut ViewContext<Workspace>)
-    where
-        V: Modal,
-        B: Fn(&mut WindowContext) -> Option<View<V>> + 'static,
+        B: FnOnce(&mut ViewContext<V>) -> V,
     {
         let previous_focus = cx.focused();
 
@@ -74,28 +44,23 @@ impl ModalLayer {
                 return;
             }
         }
-        let Some(new_modal) = (build_view)(cx) else {
-            return;
-        };
-        self.show_modal(previous_focus, new_modal, cx);
+        let new_modal = cx.build_view(build_view);
+        self.show_modal(new_modal, cx);
     }
 
-    pub fn show_modal<V>(
-        &mut self,
-        previous_focus: Option<FocusHandle>,
-        new_modal: View<V>,
-        cx: &mut ViewContext<Workspace>,
-    ) where
+    pub fn show_modal<V>(&mut self, new_modal: View<V>, cx: &mut ViewContext<Workspace>)
+    where
         V: Modal,
     {
         self.active_modal = Some(ActiveModal {
             modal: new_modal.clone().into(),
-            subscription: cx.subscribe(&new_modal, |this, modal, e, cx| match e {
-                ModalEvent::Dismissed => this.modal_layer().hide_modal(cx),
+            subscription: cx.subscribe(&new_modal, |workspace, modal, e, cx| match e {
+                ModalEvent::Dismissed => workspace.modal_layer.hide_modal(cx),
             }),
-            previous_focus_handle: previous_focus,
+            previous_focus_handle: cx.focused(),
             focus_handle: cx.focus_handle(),
         });
+        new_modal.update(cx, |modal, cx| modal.focus(cx));
         cx.notify();
     }
 
@@ -115,12 +80,7 @@ impl ModalLayer {
         &self,
         cx: &ViewContext<Workspace>,
     ) -> Div<Workspace, StatefulInteractivity<Workspace>> {
-        let mut parent = div().id("modal layer").relative().size_full();
-
-        for (_, action) in self.registered_modals.iter() {
-            parent = (action)(parent);
-        }
-
+        let parent = div().id("boop");
         parent.when_some(self.active_modal.as_ref(), |parent, open_modal| {
             let container1 = div()
                 .absolute()
@@ -137,8 +97,8 @@ impl ModalLayer {
                 .relative()
                 .top_20()
                 .track_focus(&open_modal.focus_handle)
-                .on_mouse_down_out(|workspace: &mut Workspace, _, cx| {
-                    workspace.modal_layer().hide_modal(cx);
+                .on_mouse_down_out(|workspace: &mut Workspace, event, cx| {
+                    workspace.modal_layer.hide_modal(cx);
                 });
 
             parent.child(container1.child(container2.child(open_modal.modal.clone())))

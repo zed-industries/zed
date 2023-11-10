@@ -13,22 +13,7 @@ use workspace::{Modal, ModalEvent, Workspace};
 actions!(Toggle);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(
-        |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
-            let handle = cx.view().downgrade();
-
-            workspace.modal_layer().register_modal(Toggle, move |cx| {
-                let workspace = handle.upgrade()?;
-                let editor = workspace
-                    .read(cx)
-                    .active_item(cx)
-                    .and_then(|active_item| active_item.downcast::<Editor>())?;
-
-                Some(cx.build_view(|cx| GoToLine::new(editor, cx)))
-            });
-        },
-    )
-    .detach();
+    cx.observe_new_views(GoToLine::register).detach();
 }
 
 pub struct GoToLine {
@@ -47,6 +32,19 @@ impl Modal for GoToLine {
 }
 
 impl GoToLine {
+    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+        workspace.register_action(|workspace, _: &Toggle, cx| {
+            let Some(editor) = workspace
+                .active_item(cx)
+                .and_then(|active_item| active_item.downcast::<Editor>())
+            else {
+                return;
+            };
+
+            workspace.toggle_modal(cx, move |cx| GoToLine::new(editor, cx));
+        });
+    }
+
     pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
         let line_editor = cx.build_view(|cx| Editor::single_line(cx));
         let line_editor_change = cx.subscribe(&line_editor, Self::on_line_editor_event);
