@@ -3,7 +3,7 @@ use crate::{v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHea
 
 pub enum ContextMenuItem {
     Header(SharedString),
-    Entry(Label),
+    Entry(Label, Box<dyn Action>),
     Separator,
 }
 
@@ -11,9 +11,10 @@ impl ContextMenuItem {
     fn to_list_item<V: 'static>(self) -> ListItem {
         match self {
             ContextMenuItem::Header(label) => ListSubHeader::new(label).into(),
-            ContextMenuItem::Entry(label) => {
-                ListEntry::new(label).variant(ListItemVariant::Inset).into()
-            }
+            ContextMenuItem::Entry(label, action) => ListEntry::new(label)
+                .variant(ListItemVariant::Inset)
+                .on_click(action)
+                .into(),
             ContextMenuItem::Separator => ListSeparator::new().into(),
         }
     }
@@ -26,8 +27,8 @@ impl ContextMenuItem {
         Self::Separator
     }
 
-    pub fn entry(label: Label) -> Self {
-        Self::Entry(label)
+    pub fn entry(label: Label, action: impl Action) -> Self {
+        Self::Entry(label, Box::new(action))
     }
 }
 
@@ -58,6 +59,7 @@ impl ContextMenu {
     }
 }
 
+use gpui::Action;
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -65,7 +67,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::story::Story;
-    use gpui::{Div, Render};
+    use gpui::{action, Div, Render};
 
     pub struct ContextMenuStory;
 
@@ -73,13 +75,20 @@ mod stories {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+            #[action]
+            struct PrintCurrentDate {}
+            cx.on_action(|_: &PrintCurrentDate, cx| {
+                if let Ok(unix_time) = std::time::UNIX_EPOCH.elapsed() {
+                    println!("Current Unix time is {:?}", unix_time.as_secs());
+                }
+            });
             Story::container(cx)
                 .child(Story::title_for::<_, ContextMenu>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(ContextMenu::new([
                     ContextMenuItem::header("Section header"),
                     ContextMenuItem::Separator,
-                    ContextMenuItem::entry(Label::new("Some entry")),
+                    ContextMenuItem::entry(Label::new("Print current time"), PrintCurrentDate {}),
                 ]))
         }
     }

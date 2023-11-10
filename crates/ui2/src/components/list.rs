@@ -1,4 +1,4 @@
-use gpui::div;
+use gpui::{div, Action};
 
 use crate::settings::user_settings;
 use crate::{
@@ -232,6 +232,7 @@ pub struct ListEntry {
     size: ListEntrySize,
     toggle: Toggle,
     variant: ListItemVariant,
+    on_click: Option<Box<dyn Action>>,
 }
 
 impl ListEntry {
@@ -245,7 +246,13 @@ impl ListEntry {
             size: ListEntrySize::default(),
             toggle: Toggle::NotToggleable,
             variant: ListItemVariant::default(),
+            on_click: Default::default(),
         }
+    }
+
+    pub fn on_click(mut self, action: impl Into<Box<dyn Action>>) -> Self {
+        self.on_click = Some(action.into());
+        self
     }
 
     pub fn variant(mut self, variant: ListItemVariant) -> Self {
@@ -303,9 +310,17 @@ impl ListEntry {
             ListEntrySize::Small => div().h_6(),
             ListEntrySize::Medium => div().h_7(),
         };
-
         div()
             .relative()
+            .on_mouse_down(gpui::MouseButton::Left, {
+                let action = self.on_click.map(|action| action.boxed_clone());
+
+                move |entry: &mut V, event, cx| {
+                    if let Some(action) = action.as_ref() {
+                        cx.window_context().dispatch_action(action.boxed_clone());
+                    }
+                }
+            })
             .group("")
             .bg(cx.theme().colors().surface_background)
             // TODO: Add focus state
