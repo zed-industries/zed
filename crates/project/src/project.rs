@@ -5548,7 +5548,16 @@ impl Project {
             .collect::<Vec<_>>();
 
         let background = cx.background().clone();
-        let path_count: usize = snapshots.iter().map(|s| s.visible_file_count()).sum();
+        let path_count: usize = snapshots
+            .iter()
+            .map(|s| {
+                if query.include_ignored() {
+                    s.file_count()
+                } else {
+                    s.visible_file_count()
+                }
+            })
+            .sum();
         if path_count == 0 {
             let (_, rx) = smol::channel::bounded(1024);
             return rx;
@@ -5735,7 +5744,12 @@ impl Project {
                         let mut snapshot_start_ix = 0;
                         let mut abs_path = PathBuf::new();
                         for snapshot in snapshots {
-                            let snapshot_end_ix = snapshot_start_ix + snapshot.visible_file_count();
+                            let snapshot_end_ix = snapshot_start_ix
+                                + if query.include_ignored() {
+                                    snapshot.file_count()
+                                } else {
+                                    snapshot.visible_file_count()
+                                };
                             if worker_end_ix <= snapshot_start_ix {
                                 break;
                             } else if worker_start_ix > snapshot_end_ix {
@@ -5748,7 +5762,7 @@ impl Project {
                                     cmp::min(worker_end_ix, snapshot_end_ix) - snapshot_start_ix;
 
                                 for entry in snapshot
-                                    .files(false, start_in_snapshot)
+                                    .files(query.include_ignored(), start_in_snapshot)
                                     .take(end_in_snapshot - start_in_snapshot)
                                 {
                                     if matching_paths_tx.is_closed() {

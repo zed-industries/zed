@@ -805,6 +805,7 @@ impl BufferSearchBar {
                         query,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                        false,
                         Vec::new(),
                         Vec::new(),
                     ) {
@@ -820,6 +821,7 @@ impl BufferSearchBar {
                         query,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                        false,
                         Vec::new(),
                         Vec::new(),
                     ) {

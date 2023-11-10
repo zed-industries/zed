@@ -39,6 +39,7 @@ pub enum SearchQuery {
         replacement: Option<String>,
         whole_word: bool,
         case_sensitive: bool,
+        include_ignored: bool,
         inner: SearchInputs,
     },
 
@@ -48,6 +49,7 @@ pub enum SearchQuery {
         multiline: bool,
         whole_word: bool,
         case_sensitive: bool,
+        include_ignored: bool,
         inner: SearchInputs,
     },
 }
@@ -57,6 +59,7 @@ impl SearchQuery {
         query: impl ToString,
         whole_word: bool,
         case_sensitive: bool,
+        include_ignored: bool,
         files_to_include: Vec<PathMatcher>,
         files_to_exclude: Vec<PathMatcher>,
     ) -> Result<Self> {
@@ -74,6 +77,7 @@ impl SearchQuery {
             replacement: None,
             whole_word,
             case_sensitive,
+            include_ignored,
             inner,
         })
     }
@@ -82,6 +86,7 @@ impl SearchQuery {
         query: impl ToString,
         whole_word: bool,
         case_sensitive: bool,
+        include_ignored: bool,
         files_to_include: Vec<PathMatcher>,
         files_to_exclude: Vec<PathMatcher>,
     ) -> Result<Self> {
@@ -111,6 +116,7 @@ impl SearchQuery {
             multiline,
             whole_word,
             case_sensitive,
+            include_ignored,
             inner,
         })
     }
@@ -121,6 +127,7 @@ impl SearchQuery {
                 message.query,
                 message.whole_word,
                 message.case_sensitive,
+                message.include_ignored,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
             )
@@ -129,6 +136,7 @@ impl SearchQuery {
                 message.query,
                 message.whole_word,
                 message.case_sensitive,
+                message.include_ignored,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
             )
@@ -156,6 +164,7 @@ impl SearchQuery {
             regex: self.is_regex(),
             whole_word: self.whole_word(),
             case_sensitive: self.case_sensitive(),
+            include_ignored: self.include_ignored(),
             files_to_include: self
                 .files_to_include()
                 .iter()
@@ -333,6 +342,17 @@ impl SearchQuery {
         match self {
             Self::Text { case_sensitive, .. } => *case_sensitive,
             Self::Regex { case_sensitive, .. } => *case_sensitive,
+        }
+    }
+
+    pub fn include_ignored(&self) -> bool {
+        match self {
+            Self::Text {
+                include_ignored, ..
+            } => *include_ignored,
+            Self::Regex {
+                include_ignored, ..
+            } => *include_ignored,
         }
     }
 

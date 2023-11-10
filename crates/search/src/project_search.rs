@@ -4,7 +4,7 @@ use crate::{
     search_bar::{render_nav_button, render_option_button_icon, render_search_mode_button},
     ActivateRegexMode, ActivateSemanticMode, ActivateTextMode, CycleMode, NextHistoryQuery,
     PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPrevMatch,
-    ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
+    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleReplace, ToggleWholeWord,
 };
 use anyhow::{Context, Result};
 use collections::HashMap;
@@ -85,6 +85,7 @@ pub fn init(cx: &mut AppContext) {
     cx.capture_action(ProjectSearchView::replace_next);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
+    add_toggle_option_action::<ToggleIncludeIgnored>(SearchOptions::INCLUDE_IGNORED, cx);
     add_toggle_filters_action::<ToggleFilters>(cx);
 }
 
@@ -1192,6 +1193,7 @@ impl ProjectSearchView {
                     text,
                     self.search_options.contains(SearchOptions::WHOLE_WORD),
                     self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                    self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                     included_files,
                     excluded_files,
                 ) {
@@ -1210,6 +1212,7 @@ impl ProjectSearchView {
                 text,
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
                 self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                 included_files,
                 excluded_files,
             ) {
@@ -1764,6 +1767,15 @@ impl View for ProjectSearchBar {
                 render_option_button_icon("icons/word_search.svg", SearchOptions::WHOLE_WORD, cx)
             });
 
+            let include_ignored = is_semantic_disabled.then(|| {
+                render_option_button_icon(
+                    // TODO kb icon
+                    "icons/case_insensitive.svg",
+                    SearchOptions::INCLUDE_IGNORED,
+                    cx,
+                )
+            });
+
             let search_button_for_mode = |mode, side, cx: &mut ViewContext<ProjectSearchBar>| {
                 let is_active = if let Some(search) = self.active_project_search.as_ref() {
                     let search = search.read(cx);
@@ -1863,6 +1875,7 @@ impl View for ProjectSearchBar {
                                 .with_child(filter_button)
                                 .with_children(case_sensitive)
                                 .with_children(whole_word)
+                                .with_children(include_ignored)
                                 .flex(1., false)
                                 .constrained()
                                 .contained(),
