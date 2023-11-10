@@ -804,7 +804,7 @@ impl EditorElement {
                 cx.with_z_index(1, |cx| {
                     let line_height = self.style.text.line_height_in_pixels(cx.rem_size());
                     let available_space = size(
-                        AvailableSpace::Definite(cx.viewport_size().width * 0.7),
+                        AvailableSpace::MinContent,
                         AvailableSpace::Definite(
                             (12. * line_height).min((bounds.size.height - line_height) / 2.),
                         ),

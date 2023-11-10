@@ -39,11 +39,11 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, point, px, relative, rems, size, AnyElement, AppContext, BackgroundExecutor,
-    Bounds, ClipboardItem, Component, Context, DispatchContext, EventEmitter, FocusHandle,
-    FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model, Pixels, Render,
-    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    action, actions, div, point, px, relative, rems, size, uniform_list, AnyElement, AppContext,
+    BackgroundExecutor, Bounds, ClipboardItem, Component, Context, DispatchContext, EventEmitter,
+    FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model,
+    ParentElement, Pixels, Render, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
+    View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -1559,7 +1559,30 @@ impl CodeActionsMenu {
         style: &EditorStyle,
         cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, AnyElement<Editor>) {
-        todo!("old version below")
+        let actions = self.actions.clone();
+        let selected_item = self.selected_item;
+        let element = uniform_list(
+            "code_actions_menu",
+            self.actions.len(),
+            move |editor, range, cx| {
+                actions[range.clone()]
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, action)| {
+                        let item_ix = range.start + ix;
+                        div().child(action.lsp_action.title.clone())
+                    })
+                    .collect()
+            },
+        )
+        .bg(gpui::red())
+        .render();
+
+        if self.deployed_from_indicator {
+            *cursor_position.column_mut() = 0;
+        }
+
+        (cursor_position, element)
     }
     //     enum ActionTag {}
 
@@ -4383,7 +4406,7 @@ impl Editor {
     ) -> Option<AnyElement<Self>> {
         if self.available_code_actions.is_some() {
             Some(
-                IconButton::new("code_actions", ui2::Icon::Bolt)
+                IconButton::new("code_actions_indicator", ui2::Icon::Bolt)
                     .on_click(|editor: &mut Editor, cx| {
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
