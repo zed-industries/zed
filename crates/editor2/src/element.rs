@@ -18,10 +18,9 @@ use gpui::{
     black, hsla, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
     BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element,
     ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, Hsla, InputHandler,
-    KeyBindingContext, KeyDownEvent, KeyListener, KeyMatch, Line, LineLayout, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent,
-    ShapedGlyph, Size, Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext,
-    WrappedLineLayout,
+    KeyContext, KeyDownEvent, KeyListener, KeyMatch, Line, LineLayout, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size,
+    Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext, WrappedLineLayout,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -2457,11 +2456,11 @@ impl Element<Editor> for EditorElement {
 
         let dispatch_context = editor.dispatch_context(cx);
         cx.with_element_id(cx.view().entity_id(), |global_id, cx| {
-            cx.with_key_dispatch_context(dispatch_context, |cx| {
-                cx.with_key_listeners(build_key_listeners(global_id), |cx| {
-                    cx.with_focus(editor.focus_handle.clone(), |_| {})
-                });
-            })
+            cx.with_key_dispatch(
+                dispatch_context,
+                Some(editor.focus_handle.clone()),
+                |_, _| {},
+            )
         });
     }
 
@@ -4165,7 +4164,7 @@ fn build_key_listener<T: 'static>(
     listener: impl Fn(
             &mut Editor,
             &T,
-            &[&KeyBindingContext],
+            &[&KeyContext],
             DispatchPhase,
             &mut ViewContext<Editor>,
         ) -> Option<Box<dyn Action>>

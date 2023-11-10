@@ -1,4 +1,4 @@
-use crate::{Action, KeyBindingContext, Keymap, KeymapVersion, Keystroke};
+use crate::{Action, KeyContext, Keymap, KeymapVersion, Keystroke};
 use parking_lot::Mutex;
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -44,7 +44,7 @@ impl KeystrokeMatcher {
     pub fn match_keystroke(
         &mut self,
         keystroke: &Keystroke,
-        context_stack: &[KeyBindingContext],
+        context_stack: &[KeyContext],
     ) -> KeyMatch {
         let keymap = self.keymap.lock();
         // Clear pending keystrokes if the keymap has changed since the last matched keystroke.
@@ -86,7 +86,7 @@ impl KeystrokeMatcher {
     pub fn keystrokes_for_action(
         &self,
         action: &dyn Action,
-        contexts: &[KeyBindingContext],
+        contexts: &[KeyContext],
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         self.keymap
             .lock()

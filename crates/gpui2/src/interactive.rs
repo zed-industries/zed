@@ -1,8 +1,8 @@
 use crate::{
-    div, point, px, Action, AnyDrag, AnyTooltip, AnyView, AppContext, BorrowWindow, Bounds,
-    Component, DispatchPhase, Div, Element, ElementId, FocusHandle, KeyBindingContext, KeyMatch,
-    Keystroke, Modifiers, Overflow, Pixels, Point, Render, SharedString, Size, Style,
-    StyleRefinement, Task, View, ViewContext,
+    div, point, px, Action, AnyDrag, AnyTooltip, AnyView, AppContext, Bounds, Component,
+    DispatchPhase, Div, Element, ElementId, FocusHandle, KeyContext, Keystroke, Modifiers,
+    Overflow, Pixels, Point, Render, SharedString, Size, Style, StyleRefinement, Task, View,
+    ViewContext,
 };
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -161,17 +161,6 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
                     handler(view, event, cx);
                 }
             }));
-        self
-    }
-
-    fn context<C>(mut self, context: C) -> Self
-    where
-        Self: Sized,
-        C: TryInto<KeyBindingContext>,
-        C::Error: Debug,
-    {
-        self.stateless_interactivity().dispatch_context =
-            context.try_into().expect("invalid dispatch context");
         self
     }
 
@@ -395,25 +384,6 @@ pub trait ElementInteractivity<V: 'static>: 'static {
     fn as_stateless_mut(&mut self) -> &mut StatelessInteractivity<V>;
     fn as_stateful(&self) -> Option<&StatefulInteractivity<V>>;
     fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>>;
-
-    fn initialize<R>(
-        &mut self,
-        cx: &mut ViewContext<V>,
-        f: impl FnOnce(&mut ViewContext<V>) -> R,
-    ) -> R {
-        if let Some(stateful) = self.as_stateful_mut() {
-            cx.with_element_id(stateful.id.clone(), |global_id, cx| {
-                cx.with_key_dispatch_context(stateful.dispatch_context.clone(), |cx| {
-                    cx.with_key_listeners(mem::take(&mut stateful.key_listeners), f)
-                })
-            })
-        } else {
-            let stateless = self.as_stateless_mut();
-            cx.with_key_dispatch_context(stateless.dispatch_context.clone(), |cx| {
-                cx.with_key_listeners(mem::take(&mut stateless.key_listeners), f)
-            })
-        }
-    }
 
     fn refine_style(
         &self,
@@ -790,7 +760,7 @@ impl<V: 'static> ElementInteractivity<V> for StatefulInteractivity<V> {
 type DropListener<V> = dyn Fn(&mut V, AnyView, &mut ViewContext<V>) + 'static;
 
 pub struct StatelessInteractivity<V> {
-    pub dispatch_context: KeyBindingContext,
+    pub dispatch_context: KeyContext,
     pub mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
     pub mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
     pub mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
@@ -892,7 +862,7 @@ impl InteractiveElementState {
 impl<V> Default for StatelessInteractivity<V> {
     fn default() -> Self {
         Self {
-            dispatch_context: KeyBindingContext::default(),
+            dispatch_context: KeyContext::default(),
             mouse_down_listeners: SmallVec::new(),
             mouse_up_listeners: SmallVec::new(),
             mouse_move_listeners: SmallVec::new(),
@@ -1236,7 +1206,7 @@ pub type KeyListener<V> = Box<
     dyn Fn(
             &mut V,
             &dyn Any,
-            &[&KeyBindingContext],
+            &[&KeyContext],
             DispatchPhase,
             &mut ViewContext<V>,
         ) -> Option<Box<dyn Action>>

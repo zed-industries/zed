@@ -38,10 +38,10 @@ use futures::{
 use gpui::{
     actions, div, point, rems, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
     AsyncAppContext, AsyncWindowContext, Bounds, Component, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, GlobalPixels, KeyBindingContext, Model, ModelContext, ParentElement, Point,
-    Render, Size, StatefulInteractive, StatefulInteractivity, StatelessInteractive, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
-    WindowHandle, WindowOptions,
+    FocusHandle, GlobalPixels, KeyContext, Model, ModelContext, ParentElement, Point, Render, Size,
+    StatefulInteractive, StatefulInteractivity, StatelessInteractive, Styled, Subscription, Task,
+    View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
+    WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -3743,158 +3743,158 @@ impl Render for Workspace {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let mut context = KeyBindingContext::default();
+        let mut context = KeyContext::default();
         context.add("Workspace");
-        cx.with_key_dispatch_context(context, |cx| {
-            div()
-                .relative()
-                .size_full()
-                .flex()
-                .flex_col()
-                .font("Zed Sans")
-                .gap_0()
-                .justify_start()
-                .items_start()
-                .text_color(cx.theme().colors().text)
-                .bg(cx.theme().colors().background)
-                .child(self.render_titlebar(cx))
-                .child(
-                    // todo! should this be a component a view?
-                    self.add_workspace_actions_listeners(div().id("workspace"))
-                        .relative()
-                        .flex_1()
-                        .w_full()
-                        .flex()
-                        .overflow_hidden()
-                        .border_t()
-                        .border_b()
-                        .border_color(cx.theme().colors().border)
-                        .child(self.modal_layer.clone())
-                        // .children(
-                        //     Some(
-                        //         Panel::new("project-panel-outer", cx)
-                        //             .side(PanelSide::Left)
-                        //             .child(ProjectPanel::new("project-panel-inner")),
-                        //     )
-                        //     .filter(|_| self.is_project_panel_open()),
-                        // )
-                        // .children(
-                        //     Some(
-                        //         Panel::new("collab-panel-outer", cx)
-                        //             .child(CollabPanel::new("collab-panel-inner"))
-                        //             .side(PanelSide::Left),
-                        //     )
-                        //     .filter(|_| self.is_collab_panel_open()),
-                        // )
-                        // .child(NotificationToast::new(
-                        //     "maxbrunsfeld has requested to add you as a contact.".into(),
-                        // ))
-                        .child(
-                            div().flex().flex_col().flex_1().h_full().child(
-                                div().flex().flex_1().child(self.center.render(
-                                    &self.project,
-                                    &self.follower_states,
-                                    self.active_call(),
-                                    &self.active_pane,
-                                    self.zoomed.as_ref(),
-                                    &self.app_state,
-                                    cx,
-                                )),
-                            ), // .children(
-                               //     Some(
-                               //         Panel::new("terminal-panel", cx)
-                               //             .child(Terminal::new())
-                               //             .allowed_sides(PanelAllowedSides::BottomOnly)
-                               //             .side(PanelSide::Bottom),
-                               //     )
-                               //     .filter(|_| self.is_terminal_open()),
-                               // ),
+
+        div()
+            .context(context)
+            .relative()
+            .size_full()
+            .flex()
+            .flex_col()
+            .font("Zed Sans")
+            .gap_0()
+            .justify_start()
+            .items_start()
+            .text_color(cx.theme().colors().text)
+            .bg(cx.theme().colors().background)
+            .child(self.render_titlebar(cx))
+            .child(
+                // todo! should this be a component a view?
+                self.add_workspace_actions_listeners(div().id("workspace"))
+                    .relative()
+                    .flex_1()
+                    .w_full()
+                    .flex()
+                    .overflow_hidden()
+                    .border_t()
+                    .border_b()
+                    .border_color(cx.theme().colors().border)
+                    .child(self.modal_layer.clone())
+                    // .children(
+                    //     Some(
+                    //         Panel::new("project-panel-outer", cx)
+                    //             .side(PanelSide::Left)
+                    //             .child(ProjectPanel::new("project-panel-inner")),
+                    //     )
+                    //     .filter(|_| self.is_project_panel_open()),
+                    // )
+                    // .children(
+                    //     Some(
+                    //         Panel::new("collab-panel-outer", cx)
+                    //             .child(CollabPanel::new("collab-panel-inner"))
+                    //             .side(PanelSide::Left),
+                    //     )
+                    //     .filter(|_| self.is_collab_panel_open()),
+                    // )
+                    // .child(NotificationToast::new(
+                    //     "maxbrunsfeld has requested to add you as a contact.".into(),
+                    // ))
+                    .child(
+                        div().flex().flex_col().flex_1().h_full().child(
+                            div().flex().flex_1().child(self.center.render(
+                                &self.project,
+                                &self.follower_states,
+                                self.active_call(),
+                                &self.active_pane,
+                                self.zoomed.as_ref(),
+                                &self.app_state,
+                                cx,
+                            )),
                         ), // .children(
                            //     Some(
-                           //         Panel::new("chat-panel-outer", cx)
-                           //             .side(PanelSide::Right)
-                           //             .child(ChatPanel::new("chat-panel-inner").messages(vec![
-                           //                 ChatMessage::new(
-                           //                     "osiewicz".to_string(),
-                           //                     "is this thing on?".to_string(),
-                           //                     DateTime::parse_from_rfc3339("2023-09-27T15:40:52.707Z")
-                           //                         .unwrap()
-                           //                         .naive_local(),
-                           //                 ),
-                           //                 ChatMessage::new(
-                           //                     "maxdeviant".to_string(),
-                           //                     "Reading you loud and clear!".to_string(),
-                           //                     DateTime::parse_from_rfc3339("2023-09-28T15:40:52.707Z")
-                           //                         .unwrap()
-                           //                         .naive_local(),
-                           //                 ),
-                           //             ])),
+                           //         Panel::new("terminal-panel", cx)
+                           //             .child(Terminal::new())
+                           //             .allowed_sides(PanelAllowedSides::BottomOnly)
+                           //             .side(PanelSide::Bottom),
                            //     )
-                           //     .filter(|_| self.is_chat_panel_open()),
-                           // )
-                           // .children(
-                           //     Some(
-                           //         Panel::new("notifications-panel-outer", cx)
-                           //             .side(PanelSide::Right)
-                           //             .child(NotificationsPanel::new("notifications-panel-inner")),
-                           //     )
-                           //     .filter(|_| self.is_notifications_panel_open()),
-                           // )
-                           // .children(
-                           //     Some(
-                           //         Panel::new("assistant-panel-outer", cx)
-                           //             .child(AssistantPanel::new("assistant-panel-inner")),
-                           //     )
-                           //     .filter(|_| self.is_assistant_panel_open()),
+                           //     .filter(|_| self.is_terminal_open()),
                            // ),
-                )
-                .child(self.status_bar.clone())
-                // .when(self.debug.show_toast, |this| {
-                //     this.child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))
-                // })
-                // .children(
-                //     Some(
-                //         div()
-                //             .absolute()
-                //             .top(px(50.))
-                //             .left(px(640.))
-                //             .z_index(8)
-                //             .child(LanguageSelector::new("language-selector")),
-                //     )
-                //     .filter(|_| self.is_language_selector_open()),
-                // )
-                .z_index(8)
-                // Debug
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .z_index(9)
-                        .absolute()
-                        .top_20()
-                        .left_1_4()
-                        .w_40()
-                        .gap_2(), // .when(self.show_debug, |this| {
-                                  //     this.child(Button::<Workspace>::new("Toggle User Settings").on_click(
-                                  //         Arc::new(|workspace, cx| workspace.debug_toggle_user_settings(cx)),
-                                  //     ))
-                                  //     .child(
-                                  //         Button::<Workspace>::new("Toggle Toasts").on_click(Arc::new(
-                                  //             |workspace, cx| workspace.debug_toggle_toast(cx),
-                                  //         )),
-                                  //     )
-                                  //     .child(
-                                  //         Button::<Workspace>::new("Toggle Livestream").on_click(Arc::new(
-                                  //             |workspace, cx| workspace.debug_toggle_livestream(cx),
-                                  //         )),
-                                  //     )
-                                  // })
-                                  // .child(
-                                  //     Button::<Workspace>::new("Toggle Debug")
-                                  //         .on_click(Arc::new(|workspace, cx| workspace.toggle_debug(cx))),
-                                  // ),
-                )
-        })
+                    ), // .children(
+                       //     Some(
+                       //         Panel::new("chat-panel-outer", cx)
+                       //             .side(PanelSide::Right)
+                       //             .child(ChatPanel::new("chat-panel-inner").messages(vec![
+                       //                 ChatMessage::new(
+                       //                     "osiewicz".to_string(),
+                       //                     "is this thing on?".to_string(),
+                       //                     DateTime::parse_from_rfc3339("2023-09-27T15:40:52.707Z")
+                       //                         .unwrap()
+                       //                         .naive_local(),
+                       //                 ),
+                       //                 ChatMessage::new(
+                       //                     "maxdeviant".to_string(),
+                       //                     "Reading you loud and clear!".to_string(),
+                       //                     DateTime::parse_from_rfc3339("2023-09-28T15:40:52.707Z")
+                       //                         .unwrap()
+                       //                         .naive_local(),
+                       //                 ),
+                       //             ])),
+                       //     )
+                       //     .filter(|_| self.is_chat_panel_open()),
+                       // )
+                       // .children(
+                       //     Some(
+                       //         Panel::new("notifications-panel-outer", cx)
+                       //             .side(PanelSide::Right)
+                       //             .child(NotificationsPanel::new("notifications-panel-inner")),
+                       //     )
+                       //     .filter(|_| self.is_notifications_panel_open()),
+                       // )
+                       // .children(
+                       //     Some(
+                       //         Panel::new("assistant-panel-outer", cx)
+                       //             .child(AssistantPanel::new("assistant-panel-inner")),
+                       //     )
+                       //     .filter(|_| self.is_assistant_panel_open()),
+                       // ),
+            )
+            .child(self.status_bar.clone())
+            // .when(self.debug.show_toast, |this| {
+            //     this.child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))
+            // })
+            // .children(
+            //     Some(
+            //         div()
+            //             .absolute()
+            //             .top(px(50.))
+            //             .left(px(640.))
+            //             .z_index(8)
+            //             .child(LanguageSelector::new("language-selector")),
+            //     )
+            //     .filter(|_| self.is_language_selector_open()),
+            // )
+            .z_index(8)
+            // Debug
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .z_index(9)
+                    .absolute()
+                    .top_20()
+                    .left_1_4()
+                    .w_40()
+                    .gap_2(), // .when(self.show_debug, |this| {
+                              //     this.child(Button::<Workspace>::new("Toggle User Settings").on_click(
+                              //         Arc::new(|workspace, cx| workspace.debug_toggle_user_settings(cx)),
+                              //     ))
+                              //     .child(
+                              //         Button::<Workspace>::new("Toggle Toasts").on_click(Arc::new(
+                              //             |workspace, cx| workspace.debug_toggle_toast(cx),
+                              //         )),
+                              //     )
+                              //     .child(
+                              //         Button::<Workspace>::new("Toggle Livestream").on_click(Arc::new(
+                              //             |workspace, cx| workspace.debug_toggle_livestream(cx),
+                              //         )),
+                              //     )
+                              // })
+                              // .child(
+                              //     Button::<Workspace>::new("Toggle Debug")
+                              //         .on_click(Arc::new(|workspace, cx| workspace.toggle_debug(cx))),
+                              // ),
+            )
     }
 }
 // todo!()

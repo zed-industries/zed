@@ -42,7 +42,7 @@ use gpui::{
     action, actions, div, point, px, relative, rems, size, uniform_list, AnyElement, AppContext,
     AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
     EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla,
-    InputHandler, KeyBindingContext, Model, MouseButton, ParentElement, Pixels, Render,
+    InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render,
     StatelessInteractive, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View,
     ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -646,7 +646,7 @@ pub struct Editor {
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakView<Workspace>, i64)>,
-    keymap_context_layers: BTreeMap<TypeId, KeyBindingContext>,
+    keymap_context_layers: BTreeMap<TypeId, KeyContext>,
     input_enabled: bool,
     read_only: bool,
     leader_peer_id: Option<PeerId>,
@@ -1980,8 +1980,8 @@ impl Editor {
         this
     }
 
-    fn dispatch_context(&self, cx: &AppContext) -> KeyBindingContext {
-        let mut dispatch_context = KeyBindingContext::default();
+    fn dispatch_context(&self, cx: &AppContext) -> KeyContext {
+        let mut dispatch_context = KeyContext::default();
         dispatch_context.add("Editor");
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",

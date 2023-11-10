@@ -1,5 +1,5 @@
 use gpui::{
-    actions, div, Div, FocusEnabled, Focusable, KeyBinding, ParentElement, Render,
+    actions, div, Div, Focusable, FocusableKeyDispatch, KeyBinding, ParentElement, Render,
     StatefulInteractivity, StatelessInteractive, Styled, View, VisualContext, WindowContext,
 };
 use theme2::ActiveTheme;
@@ -21,7 +21,7 @@ impl FocusStory {
 }
 
 impl Render for FocusStory {
-    type Element = Div<Self, StatefulInteractivity<Self>, FocusEnabled<Self>>;
+    type Element = Div<Self, StatefulInteractivity<Self>, FocusableKeyDispatch<Self>>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let theme = cx.theme();

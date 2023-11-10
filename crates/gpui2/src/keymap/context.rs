@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use smallvec::SmallVec;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
-pub struct KeyBindingContext(SmallVec<[ContextEntry; 8]>);
+pub struct KeyContext(SmallVec<[ContextEntry; 8]>);
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct ContextEntry {
@@ -11,7 +11,7 @@ struct ContextEntry {
     value: Option<SharedString>,
 }
 
-impl<'a> TryFrom<&'a str> for KeyBindingContext {
+impl<'a> TryFrom<&'a str> for KeyContext {
     type Error = anyhow::Error;
 
     fn try_from(value: &'a str) -> Result<Self> {
@@ -19,7 +19,7 @@ impl<'a> TryFrom<&'a str> for KeyBindingContext {
     }
 }
 
-impl KeyBindingContext {
+impl KeyContext {
     pub fn parse(source: &str) -> Result<Self> {
         let mut context = Self::default();
         let source = skip_whitespace(source);
@@ -130,7 +130,7 @@ impl KeyBindingContextPredicate {
         }
     }
 
-    pub fn eval(&self, contexts: &[KeyBindingContext]) -> bool {
+    pub fn eval(&self, contexts: &[KeyContext]) -> bool {
         let Some(context) = contexts.last() else {
             return false;
         };
@@ -293,19 +293,16 @@ mod tests {
 
     #[test]
     fn test_parse_context() {
-        let mut expected = KeyBindingContext::default();
+        let mut expected = KeyContext::default();
         expected.set("foo", "bar");
         expected.add("baz");
-        assert_eq!(KeyBindingContext::parse("baz foo=bar").unwrap(), expected);
-        assert_eq!(KeyBindingContext::parse("foo = bar baz").unwrap(), expected);
+        assert_eq!(KeyContext::parse("baz foo=bar").unwrap(), expected);
+        assert_eq!(KeyContext::parse("foo = bar baz").unwrap(), expected);
         assert_eq!(
-            KeyBindingContext::parse("  baz foo   =   bar baz").unwrap(),
+            KeyContext::parse("  baz foo   =   bar baz").unwrap(),
             expected
         );
-        assert_eq!(
-            KeyBindingContext::parse(" foo = bar baz").unwrap(),
-            expected
-        );
+        assert_eq!(KeyContext::parse(" foo = bar baz").unwrap(), expected);
     }
 
     #[test]
