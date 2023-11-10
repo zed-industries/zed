@@ -8,25 +8,12 @@ use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::{h_stack, modal, v_stack, Label, LabelColor};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{ModalEvent, Workspace};
+use workspace::{Modal, ModalEvent, Workspace};
 
 actions!(Toggle);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(
-        |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
-            workspace
-                .modal_layer()
-                .register_modal(Toggle, |workspace, cx| {
-                    let editor = workspace
-                        .active_item(cx)
-                        .and_then(|active_item| active_item.downcast::<Editor>())?;
-
-                    Some(cx.build_view(|cx| GoToLine::new(editor, cx)))
-                });
-        },
-    )
-    .detach();
+    cx.observe_new_views(GoToLine::register).detach();
 }
 
 pub struct GoToLine {
@@ -38,14 +25,28 @@ pub struct GoToLine {
 }
 
 impl EventEmitter<ModalEvent> for GoToLine {}
+impl Modal for GoToLine {
+    fn focus(&self, cx: &mut WindowContext) {
+        self.line_editor.update(cx, |editor, cx| editor.focus(cx))
+    }
+}
 
 impl GoToLine {
-    pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
-        let line_editor = cx.build_view(|cx| {
-            let editor = Editor::single_line(cx);
-            editor.focus(cx);
-            editor
+    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+        workspace.register_action(|workspace, _: &Toggle, cx| {
+            let Some(editor) = workspace
+                .active_item(cx)
+                .and_then(|active_item| active_item.downcast::<Editor>())
+            else {
+                return;
+            };
+
+            workspace.toggle_modal(cx, move |cx| GoToLine::new(editor, cx));
         });
+    }
+
+    pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
+        let line_editor = cx.build_view(|cx| Editor::single_line(cx));
         let line_editor_change = cx.subscribe(&line_editor, Self::on_line_editor_event);
 
         let editor = active_editor.read(cx);
@@ -123,10 +124,6 @@ impl GoToLine {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        self.active_editor.update(cx, |editor, cx| {
-            editor.focus(cx);
-            cx.notify();
-        });
         cx.emit(ModalEvent::Dismissed);
     }
 

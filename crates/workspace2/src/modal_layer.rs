@@ -1,15 +1,22 @@
-use crate::Workspace;
 use gpui::{
-    div, px, AnyView, Component, Div, EventEmitter, ParentElement, Render, StatelessInteractive,
-    Styled, Subscription, View, ViewContext,
+    div, px, AnyView, Div, EventEmitter, FocusHandle, ParentElement, Render, StatelessInteractive,
+    Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
 };
-use std::{any::TypeId, sync::Arc};
 use ui::v_stack;
 
+pub struct ActiveModal {
+    modal: AnyView,
+    subscription: Subscription,
+    previous_focus_handle: Option<FocusHandle>,
+    focus_handle: FocusHandle,
+}
+
 pub struct ModalLayer {
-    open_modal: Option<AnyView>,
-    subscription: Option<Subscription>,
-    registered_modals: Vec<(TypeId, Box<dyn Fn(Div<Workspace>) -> Div<Workspace>>)>,
+    active_modal: Option<ActiveModal>,
+}
+
+pub trait Modal: Render + EventEmitter<ModalEvent> {
+    fn focus(&self, cx: &mut WindowContext);
 }
 
 pub enum ModalEvent {
@@ -18,98 +25,82 @@ pub enum ModalEvent {
 
 impl ModalLayer {
     pub fn new() -> Self {
-        Self {
-            open_modal: None,
-            subscription: None,
-            registered_modals: Vec::new(),
-        }
+        Self { active_modal: None }
     }
 
-    pub fn register_modal<A: 'static, V, B>(&mut self, action: A, build_view: B)
+    pub fn toggle_modal<V, B>(&mut self, cx: &mut ViewContext<Self>, build_view: B)
     where
-        V: EventEmitter<ModalEvent> + Render,
-        B: Fn(&mut Workspace, &mut ViewContext<Workspace>) -> Option<View<V>> + 'static,
+        V: Modal,
+        B: FnOnce(&mut ViewContext<V>) -> V,
     {
-        let build_view = Arc::new(build_view);
+        let previous_focus = cx.focused();
 
-        self.registered_modals.push((
-            TypeId::of::<A>(),
-            Box::new(move |mut div| {
-                let build_view = build_view.clone();
+        if let Some(active_modal) = &self.active_modal {
+            let is_close = active_modal.modal.clone().downcast::<V>().is_ok();
+            self.hide_modal(cx);
+            if is_close {
+                return;
+            }
+        }
+        let new_modal = cx.build_view(build_view);
+        self.show_modal(new_modal, cx);
+    }
 
-                div.on_action(move |workspace, event: &A, cx| {
-                    let Some(new_modal) = (build_view)(workspace, cx) else {
-                        return;
-                    };
-                    workspace.modal_layer().show_modal(new_modal, cx);
-                })
+    pub fn show_modal<V>(&mut self, new_modal: View<V>, cx: &mut ViewContext<Self>)
+    where
+        V: Modal,
+    {
+        self.active_modal = Some(ActiveModal {
+            modal: new_modal.clone().into(),
+            subscription: cx.subscribe(&new_modal, |this, modal, e, cx| match e {
+                ModalEvent::Dismissed => this.hide_modal(cx),
             }),
-        ));
-    }
-
-    pub fn show_modal<V>(&mut self, new_modal: View<V>, cx: &mut ViewContext<Workspace>)
-    where
-        V: EventEmitter<ModalEvent> + Render,
-    {
-        self.subscription = Some(cx.subscribe(&new_modal, |this, modal, e, cx| match e {
-            ModalEvent::Dismissed => this.modal_layer().hide_modal(cx),
-        }));
-        self.open_modal = Some(new_modal.into());
+            previous_focus_handle: cx.focused(),
+            focus_handle: cx.focus_handle(),
+        });
+        new_modal.update(cx, |modal, cx| modal.focus(cx));
         cx.notify();
     }
 
-    pub fn hide_modal(&mut self, cx: &mut ViewContext<Workspace>) {
-        self.open_modal.take();
-        self.subscription.take();
-        cx.notify();
-    }
-
-    pub fn wrapper_element(&self, cx: &ViewContext<Workspace>) -> Div<Workspace> {
-        let mut parent = div().relative().size_full();
-
-        for (_, action) in self.registered_modals.iter() {
-            parent = (action)(parent);
+    pub fn hide_modal(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(active_modal) = self.active_modal.take() {
+            if let Some(previous_focus) = active_modal.previous_focus_handle {
+                if active_modal.focus_handle.contains_focused(cx) {
+                    previous_focus.focus(cx);
+                }
+            }
         }
 
-        parent.when_some(self.open_modal.as_ref(), |parent, open_modal| {
-            let container1 = div()
-                .absolute()
-                .flex()
-                .flex_col()
-                .items_center()
-                .size_full()
-                .top_0()
-                .left_0()
-                .z_index(400);
-
-            // transparent layer
-            let container2 = v_stack().h(px(0.0)).relative().top_20();
-
-            parent.child(container1.child(container2.child(open_modal.clone())))
-        })
+        cx.notify();
     }
 }
 
-// impl Render for ModalLayer {
-//     type Element = Div<Self>;
+impl Render for ModalLayer {
+    type Element = Div<Self>;
 
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-//         let mut div = div();
-//         for (type_id, build_view) in cx.global::<ModalRegistry>().registered_modals {
-//             div = div.useful_on_action(
-//                 type_id,
-//                 Box::new(|this, _: dyn Any, phase, cx: &mut ViewContext<Self>| {
-//                     if phase == DispatchPhase::Capture {
-//                         return;
-//                     }
-//                     self.workspace.update(cx, |workspace, cx| {
-//                         self.open_modal = Some(build_view(workspace, cx));
-//                     });
-//                     cx.notify();
-//                 }),
-//             )
-//         }
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let Some(active_modal) = &self.active_modal else {
+            return div();
+        };
 
-//         div
-//     }
-// }
+        div()
+            .absolute()
+            .flex()
+            .flex_col()
+            .items_center()
+            .size_full()
+            .top_0()
+            .left_0()
+            .z_index(400)
+            .child(
+                v_stack()
+                    .h(px(0.0))
+                    .top_20()
+                    .track_focus(&active_modal.focus_handle)
+                    .on_mouse_down_out(|this: &mut Self, event, cx| {
+                        this.hide_modal(cx);
+                    })
+                    .child(active_modal.modal.clone()),
+            )
+    }
+}
