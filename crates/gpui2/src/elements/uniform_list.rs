@@ -30,6 +30,7 @@ where
         id: id.clone(),
         style,
         item_count,
+        item_to_measure_index: 0,
         render_items: Box::new(move |view, visible_range, cx| {
             f(view, visible_range, cx)
                 .into_iter()
@@ -45,6 +46,7 @@ pub struct UniformList<V: 'static> {
     id: ElementId,
     style: StyleRefinement,
     item_count: usize,
+    item_to_measure_index: usize,
     render_items: Box<
         dyn for<'a> Fn(
             &'a mut V,
@@ -56,7 +58,7 @@ pub struct UniformList<V: 'static> {
     scroll_handle: Option<UniformListScrollHandle>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct UniformListScrollHandle(Arc<Mutex<Option<ScrollHandleState>>>);
 
 #[derive(Clone, Debug)]
@@ -112,7 +114,7 @@ impl<V: 'static> Element<V> for UniformList<V> {
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
         element_state.unwrap_or_else(|| {
-            let item_size = self.measure_first_item(view_state, None, cx);
+            let item_size = self.measure_item(view_state, None, cx);
             UniformListState {
                 interactive: InteractiveElementState::default(),
                 item_size,
@@ -158,7 +160,6 @@ impl<V: 'static> Element<V> for UniformList<V> {
         cx: &mut ViewContext<V>,
     ) {
         let style = self.computed_style();
-        style.paint(bounds, cx);
 
         let border = style.border_widths.to_pixels(cx.rem_size());
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
@@ -170,10 +171,12 @@ impl<V: 'static> Element<V> for UniformList<V> {
         );
 
         cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
+            style.paint(bounds, cx);
+
             let content_size;
             if self.item_count > 0 {
                 let item_height = self
-                    .measure_first_item(view_state, Some(padded_bounds.size.width), cx)
+                    .measure_item(view_state, Some(padded_bounds.size.width), cx)
                     .height;
                 if let Some(scroll_handle) = self.scroll_handle.clone() {
                     scroll_handle.0.lock().replace(ScrollHandleState {
@@ -207,19 +210,13 @@ impl<V: 'static> Element<V> for UniformList<V> {
 
                 cx.with_z_index(1, |cx| {
                     for (item, ix) in items.iter_mut().zip(visible_range) {
-                        item.initialize(view_state, cx);
-
-                        let layout_id = item.layout(view_state, cx);
-                        cx.compute_layout(
-                            layout_id,
-                            Size {
-                                width: AvailableSpace::Definite(bounds.size.width),
-                                height: AvailableSpace::Definite(item_height),
-                            },
-                        );
-                        let offset =
+                        let item_origin =
                             padded_bounds.origin + point(px(0.), item_height * ix + scroll_offset);
-                        cx.with_element_offset(Some(offset), |cx| item.paint(view_state, cx))
+                        let available_space = size(
+                            AvailableSpace::Definite(padded_bounds.size.width),
+                            AvailableSpace::Definite(item_height),
+                        );
+                        item.draw(item_origin, available_space, view_state, cx);
                     }
                 });
             } else {
@@ -245,27 +242,31 @@ impl<V: 'static> Element<V> for UniformList<V> {
 }
 
 impl<V> UniformList<V> {
-    fn measure_first_item(
+    pub fn with_width_from_item(mut self, item_index: Option<usize>) -> Self {
+        self.item_to_measure_index = item_index.unwrap_or(0);
+        self
+    }
+
+    fn measure_item(
         &self,
         view_state: &mut V,
         list_width: Option<Pixels>,
         cx: &mut ViewContext<V>,
     ) -> Size<Pixels> {
-        let mut items = (self.render_items)(view_state, 0..1, cx);
-        debug_assert!(items.len() == 1);
+        if self.item_count == 0 {
+            return Size::default();
+        }
+
+        let item_ix = cmp::min(self.item_to_measure_index, self.item_count - 1);
+        let mut items = (self.render_items)(view_state, item_ix..item_ix + 1, cx);
         let mut item_to_measure = items.pop().unwrap();
-        item_to_measure.initialize(view_state, cx);
-        let layout_id = item_to_measure.layout(view_state, cx);
-        cx.compute_layout(
-            layout_id,
-            Size {
-                width: list_width.map_or(AvailableSpace::MinContent, |width| {
-                    AvailableSpace::Definite(width)
-                }),
-                height: AvailableSpace::MinContent,
-            },
+        let available_space = size(
+            list_width.map_or(AvailableSpace::MinContent, |width| {
+                AvailableSpace::Definite(width)
+            }),
+            AvailableSpace::MinContent,
         );
-        cx.layout_bounds(layout_id).size
+        item_to_measure.measure(available_space, view_state, cx)
     }
 
     pub fn track_scroll(mut self, handle: UniformListScrollHandle) -> Self {

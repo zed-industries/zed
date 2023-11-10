@@ -101,7 +101,12 @@ impl<V: 'static> Element<V> for Text<V> {
                     .map(|line| line.wrap_count() + 1)
                     .sum::<usize>();
                 let size = Size {
-                    width: lines.iter().map(|line| line.layout.width).max().unwrap(),
+                    width: lines
+                        .iter()
+                        .map(|line| line.layout.width)
+                        .max()
+                        .unwrap()
+                        .ceil(),
                     height: line_height * line_count,
                 };
 

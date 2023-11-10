@@ -785,6 +785,10 @@ impl Pixels {
         Self(self.0.round())
     }
 
+    pub fn ceil(&self) -> Self {
+        Self(self.0.ceil())
+    }
+
     pub fn scale(&self, factor: f32) -> ScaledPixels {
         ScaledPixels(self.0 * factor)
     }

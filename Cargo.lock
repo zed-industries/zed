@@ -2805,6 +2805,7 @@ dependencies = [
  "tree-sitter-html",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+ "ui2",
  "unindent",
  "util",
  "workspace2",
