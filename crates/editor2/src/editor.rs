@@ -1605,6 +1605,13 @@ impl CodeActionsMenu {
         .bg(cx.theme().colors().element_background)
         .px_2()
         .py_1()
+        .with_width_from_item(
+            self.actions
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
+                .map(|(ix, _)| ix),
+        )
         .render();
 
         if self.deployed_from_indicator {
@@ -1613,78 +1620,6 @@ impl CodeActionsMenu {
 
         (cursor_position, element)
     }
-    //     enum ActionTag {}
-
-    //     let container_style = style.autocomplete.container;
-    //     let actions = self.actions.clone();
-    //     let selected_item = self.selected_item;
-    //     let element = UniformList::new(
-    //         self.list.clone(),
-    //         actions.len(),
-    //         cx,
-    //         move |_, range, items, cx| {
-    //             let start_ix = range.start;
-    //             for (ix, action) in actions[range].iter().enumerate() {
-    //                 let item_ix = start_ix + ix;
-    //                 items.push(
-    //                     MouseEventHandler::new::<ActionTag, _>(item_ix, cx, |state, _| {
-    //                         let item_style = if item_ix == selected_item {
-    //                             style.autocomplete.selected_item
-    //                         } else if state.hovered() {
-    //                             style.autocomplete.hovered_item
-    //                         } else {
-    //                             style.autocomplete.item
-    //                         };
-
-    //                         Text::new(action.lsp_action.title.clone(), style.text.clone())
-    //                             .with_soft_wrap(false)
-    //                             .contained()
-    //                             .with_style(item_style)
-    //                     })
-    //                     .with_cursor_style(CursorStyle::PointingHand)
-    //                     .on_down(MouseButton::Left, move |_, this, cx| {
-    //                         let workspace = this
-    //                             .workspace
-    //                             .as_ref()
-    //                             .and_then(|(workspace, _)| workspace.upgrade(cx));
-    //                         cx.window_context().defer(move |cx| {
-    //                             if let Some(workspace) = workspace {
-    //                                 workspace.update(cx, |workspace, cx| {
-    //                                     if let Some(task) = Editor::confirm_code_action(
-    //                                         workspace,
-    //                                         &ConfirmCodeAction {
-    //                                             item_ix: Some(item_ix),
-    //                                         },
-    //                                         cx,
-    //                                     ) {
-    //                                         task.detach_and_log_err(cx);
-    //                                     }
-    //                                 });
-    //                             }
-    //                         });
-    //                     })
-    //                     .into_any(),
-    //                 );
-    //             }
-    //         },
-    //     )
-    //     .with_width_from_item(
-    //         self.actions
-    //             .iter()
-    //             .enumerate()
-    //             .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
-    //             .map(|(ix, _)| ix),
-    //     )
-    //     .contained()
-    //     .with_style(container_style)
-    //     .into_any();
-
-    //     if self.deployed_from_indicator {
-    //         *cursor_position.column_mut() = 0;
-    //     }
-
-    //     (cursor_position, element)
-    // }
 }
 
 pub struct CopilotState {

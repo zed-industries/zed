@@ -30,6 +30,7 @@ where
         id: id.clone(),
         style,
         item_count,
+        item_to_measure_index: 0,
         render_items: Box::new(move |view, visible_range, cx| {
             f(view, visible_range, cx)
                 .into_iter()
@@ -45,6 +46,7 @@ pub struct UniformList<V: 'static> {
     id: ElementId,
     style: StyleRefinement,
     item_count: usize,
+    item_to_measure_index: usize,
     render_items: Box<
         dyn for<'a> Fn(
             &'a mut V,
@@ -112,7 +114,7 @@ impl<V: 'static> Element<V> for UniformList<V> {
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
         element_state.unwrap_or_else(|| {
-            let item_size = self.measure_first_item(view_state, None, cx);
+            let item_size = self.measure_item(view_state, None, cx);
             UniformListState {
                 interactive: InteractiveElementState::default(),
                 item_size,
@@ -174,7 +176,7 @@ impl<V: 'static> Element<V> for UniformList<V> {
             let content_size;
             if self.item_count > 0 {
                 let item_height = self
-                    .measure_first_item(view_state, Some(padded_bounds.size.width), cx)
+                    .measure_item(view_state, Some(padded_bounds.size.width), cx)
                     .height;
                 if let Some(scroll_handle) = self.scroll_handle.clone() {
                     scroll_handle.0.lock().replace(ScrollHandleState {
@@ -240,14 +242,23 @@ impl<V: 'static> Element<V> for UniformList<V> {
 }
 
 impl<V> UniformList<V> {
-    fn measure_first_item(
+    pub fn with_width_from_item(mut self, item_index: Option<usize>) -> Self {
+        self.item_to_measure_index = item_index.unwrap_or(0);
+        self
+    }
+
+    fn measure_item(
         &self,
         view_state: &mut V,
         list_width: Option<Pixels>,
         cx: &mut ViewContext<V>,
     ) -> Size<Pixels> {
-        let mut items = (self.render_items)(view_state, 0..1, cx);
-        debug_assert_eq!(items.len(), 1);
+        if self.item_count == 0 {
+            return Size::default();
+        }
+
+        let item_ix = cmp::min(self.item_to_measure_index, self.item_count - 1);
+        let mut items = (self.render_items)(view_state, item_ix..item_ix + 1, cx);
         let mut item_to_measure = items.pop().unwrap();
         let available_space = size(
             list_width.map_or(AvailableSpace::MinContent, |width| {
