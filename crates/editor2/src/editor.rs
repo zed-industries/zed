@@ -42,8 +42,8 @@ use gpui::{
     action, actions, div, point, px, relative, rems, size, uniform_list, AnyElement, AppContext,
     BackgroundExecutor, Bounds, ClipboardItem, Component, Context, DispatchContext, EventEmitter,
     FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model,
-    ParentElement, Pixels, Render, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
-    View, ViewContext, VisualContext, WeakView, WindowContext,
+    ParentElement, Pixels, Render, StatelessInteractive, Styled, Subscription, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -1570,12 +1570,29 @@ impl CodeActionsMenu {
                     .enumerate()
                     .map(|(ix, action)| {
                         let item_ix = range.start + ix;
-                        div().child(action.lsp_action.title.clone())
+                        let selected = selected_item == item_ix;
+                        let colors = cx.theme().colors();
+                        div()
+                            .px_2()
+                            .text_color(colors.text)
+                            .when(selected, |style| {
+                                style
+                                    .bg(colors.element_active)
+                                    .text_color(colors.text_accent)
+                            })
+                            .hover(|style| {
+                                style
+                                    .bg(colors.element_hover)
+                                    .text_color(colors.text_accent)
+                            })
+                            .child(action.lsp_action.title.clone())
                     })
                     .collect()
             },
         )
-        .bg(gpui::red())
+        .bg(cx.theme().colors().element_background)
+        .px_2()
+        .py_1()
         .render();
 
         if self.deployed_from_indicator {
@@ -5948,29 +5965,29 @@ impl Editor {
         });
     }
 
-    //     pub fn context_menu_first(&mut self, _: &ContextMenuFirst, cx: &mut ViewContext<Self>) {
-    //         if let Some(context_menu) = self.context_menu.write().as_mut() {
-    //             context_menu.select_first(self.project.as_ref(), cx);
-    //         }
-    //     }
+    pub fn context_menu_first(&mut self, _: &ContextMenuFirst, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.write().as_mut() {
+            context_menu.select_first(self.project.as_ref(), cx);
+        }
+    }
 
-    //     pub fn context_menu_prev(&mut self, _: &ContextMenuPrev, cx: &mut ViewContext<Self>) {
-    //         if let Some(context_menu) = self.context_menu.write().as_mut() {
-    //             context_menu.select_prev(self.project.as_ref(), cx);
-    //         }
-    //     }
+    pub fn context_menu_prev(&mut self, _: &ContextMenuPrev, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.write().as_mut() {
+            context_menu.select_prev(self.project.as_ref(), cx);
+        }
+    }
 
-    //     pub fn context_menu_next(&mut self, _: &ContextMenuNext, cx: &mut ViewContext<Self>) {
-    //         if let Some(context_menu) = self.context_menu.write().as_mut() {
-    //             context_menu.select_next(self.project.as_ref(), cx);
-    //         }
-    //     }
+    pub fn context_menu_next(&mut self, _: &ContextMenuNext, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.write().as_mut() {
+            context_menu.select_next(self.project.as_ref(), cx);
+        }
+    }
 
-    //     pub fn context_menu_last(&mut self, _: &ContextMenuLast, cx: &mut ViewContext<Self>) {
-    //         if let Some(context_menu) = self.context_menu.write().as_mut() {
-    //             context_menu.select_last(self.project.as_ref(), cx);
-    //         }
-    //     }
+    pub fn context_menu_last(&mut self, _: &ContextMenuLast, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.write().as_mut() {
+            context_menu.select_last(self.project.as_ref(), cx);
+        }
+    }
 
     pub fn move_to_previous_word_start(
         &mut self,
