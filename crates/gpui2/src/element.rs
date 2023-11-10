@@ -246,12 +246,15 @@ where
 
     fn draw(
         &mut self,
-        origin: Point<Pixels>,
+        mut origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
         view_state: &mut V,
         cx: &mut ViewContext<V>,
     ) {
         self.measure(available_space, view_state, cx);
+        // Ignore the element offset when drawing this element, as the origin is already specified
+        // in absolute terms.
+        origin -= cx.element_offset();
         cx.with_element_offset(Some(origin), |cx| self.paint(view_state, cx))
     }
 }
