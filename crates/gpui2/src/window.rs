@@ -1,15 +1,15 @@
 use crate::{
     build_action_from_type, px, size, Action, AnyBox, AnyDrag, AnyView, AppContext,
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
-    DevicePixels, DispatchContext, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla, ImageData, InputEvent,
-    IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId, Model, ModelContext, Modifiers,
-    MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
-    SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    DevicePixels, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent,
+    FocusEvent, FontId, GlobalElementId, GlyphId, Hsla, ImageData, InputEvent, IsZero,
+    KeyBindingContext, KeyListener, KeyMatch, Keystroke, KeystrokeMatcher, LayoutId, Model,
+    ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
+    Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
+    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -64,7 +64,7 @@ type AnyListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 
 type AnyKeyListener = Box<
     dyn Fn(
             &dyn Any,
-            &[&DispatchContext],
+            &[&KeyBindingContext],
             DispatchPhase,
             &mut WindowContext,
         ) -> Option<Box<dyn Action>>
@@ -230,7 +230,7 @@ pub struct Window {
 #[derive(Default)]
 pub(crate) struct Frame {
     element_states: HashMap<GlobalElementId, AnyBox>,
-    key_matchers: HashMap<GlobalElementId, KeyMatcher>,
+    key_matchers: HashMap<GlobalElementId, KeystrokeMatcher>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyListener)>>,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
     pub(crate) key_dispatch_stack: Vec<KeyDispatchStackFrame>,
@@ -337,7 +337,7 @@ pub(crate) enum KeyDispatchStackFrame {
         event_type: TypeId,
         listener: AnyKeyListener,
     },
-    Context(DispatchContext),
+    Context(KeyBindingContext),
 }
 
 /// Indicates which region of the window is visible. Content falling outside of this mask will not be
@@ -1228,7 +1228,7 @@ impl<'a> WindowContext<'a> {
         } else if let Some(any_key_event) = event.keyboard_event() {
             let key_dispatch_stack = mem::take(&mut self.window.current_frame.key_dispatch_stack);
             let key_event_type = any_key_event.type_id();
-            let mut context_stack = SmallVec::<[&DispatchContext; 16]>::new();
+            let mut context_stack = SmallVec::<[&KeyBindingContext; 16]>::new();
 
             for (ix, frame) in key_dispatch_stack.iter().enumerate() {
                 match frame {
@@ -1300,7 +1300,7 @@ impl<'a> WindowContext<'a> {
         &mut self,
         element_id: &GlobalElementId,
         keystroke: &Keystroke,
-        context_stack: &[&DispatchContext],
+        context_stack: &[KeyBindingContext],
     ) -> KeyMatch {
         let key_match = self
             .window
@@ -1621,7 +1621,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                     .previous_frame
                     .key_matchers
                     .remove(&global_id)
-                    .unwrap_or_else(|| KeyMatcher::new(keymap)),
+                    .unwrap_or_else(|| KeystrokeMatcher::new(keymap)),
             );
         }
 
@@ -2120,7 +2120,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 let handle = self.view().downgrade();
                 let listener = Box::new(
                     move |event: &dyn Any,
-                          context_stack: &[&DispatchContext],
+                          context_stack: &[&KeyBindingContext],
                           phase: DispatchPhase,
                           cx: &mut WindowContext<'_>| {
                         handle
@@ -2154,7 +2154,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     pub fn with_key_dispatch_context<R>(
         &mut self,
-        context: DispatchContext,
+        context: KeyBindingContext,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         if context.is_empty() {

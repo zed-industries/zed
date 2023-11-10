@@ -37,11 +37,11 @@ use futures::{
 };
 use gpui::{
     actions, div, point, rems, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
-    AsyncAppContext, AsyncWindowContext, Bounds, Component, DispatchContext, Div, Entity, EntityId,
-    EventEmitter, FocusHandle, GlobalPixels, Model, ModelContext, ParentElement, Point, Render,
-    Size, StatefulInteractive, StatefulInteractivity, StatelessInteractive, Styled, Subscription,
-    Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
-    WindowOptions,
+    AsyncAppContext, AsyncWindowContext, Bounds, Component, Div, Entity, EntityId, EventEmitter,
+    FocusHandle, GlobalPixels, KeyBindingContext, Model, ModelContext, ParentElement, Point,
+    Render, Size, StatefulInteractive, StatefulInteractivity, StatelessInteractive, Styled,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -3743,8 +3743,8 @@ impl Render for Workspace {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let mut context = DispatchContext::default();
-        context.insert("Workspace");
+        let mut context = KeyBindingContext::default();
+        context.add("Workspace");
         cx.with_key_dispatch_context(context, |cx| {
             div()
                 .relative()

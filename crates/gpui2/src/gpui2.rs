@@ -3,6 +3,7 @@ mod action;
 mod app;
 mod assets;
 mod color;
+mod dispatch;
 mod element;
 mod elements;
 mod executor;

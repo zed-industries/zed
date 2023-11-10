@@ -1,6 +1,6 @@
 use crate::{
     div, point, px, Action, AnyDrag, AnyTooltip, AnyView, AppContext, BorrowWindow, Bounds,
-    Component, DispatchContext, DispatchPhase, Div, Element, ElementId, FocusHandle, KeyMatch,
+    Component, DispatchPhase, Div, Element, ElementId, FocusHandle, KeyBindingContext, KeyMatch,
     Keystroke, Modifiers, Overflow, Pixels, Point, Render, SharedString, Size, Style,
     StyleRefinement, Task, View, ViewContext,
 };
@@ -167,7 +167,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
     fn context<C>(mut self, context: C) -> Self
     where
         Self: Sized,
-        C: TryInto<DispatchContext>,
+        C: TryInto<KeyBindingContext>,
         C::Error: Debug,
     {
         self.stateless_interactivity().dispatch_context =
@@ -403,24 +403,6 @@ pub trait ElementInteractivity<V: 'static>: 'static {
     ) -> R {
         if let Some(stateful) = self.as_stateful_mut() {
             cx.with_element_id(stateful.id.clone(), |global_id, cx| {
-                // In addition to any key down/up listeners registered directly on the element,
-                // we also add a key listener to match actions from the keymap.
-                stateful.key_listeners.push((
-                    TypeId::of::<KeyDownEvent>(),
-                    Box::new(move |_, key_down, context, phase, cx| {
-                        if phase == DispatchPhase::Bubble {
-                            let key_down = key_down.downcast_ref::<KeyDownEvent>().unwrap();
-                            if let KeyMatch::Some(action) =
-                                cx.match_keystroke(&global_id, &key_down.keystroke, context)
-                            {
-                                return Some(action);
-                            }
-                        }
-
-                        None
-                    }),
-                ));
-
                 cx.with_key_dispatch_context(stateful.dispatch_context.clone(), |cx| {
                     cx.with_key_listeners(mem::take(&mut stateful.key_listeners), f)
                 })
@@ -808,7 +790,7 @@ impl<V: 'static> ElementInteractivity<V> for StatefulInteractivity<V> {
 type DropListener<V> = dyn Fn(&mut V, AnyView, &mut ViewContext<V>) + 'static;
 
 pub struct StatelessInteractivity<V> {
-    pub dispatch_context: DispatchContext,
+    pub dispatch_context: KeyBindingContext,
     pub mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
     pub mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
     pub mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
@@ -910,7 +892,7 @@ impl InteractiveElementState {
 impl<V> Default for StatelessInteractivity<V> {
     fn default() -> Self {
         Self {
-            dispatch_context: DispatchContext::default(),
+            dispatch_context: KeyBindingContext::default(),
             mouse_down_listeners: SmallVec::new(),
             mouse_up_listeners: SmallVec::new(),
             mouse_move_listeners: SmallVec::new(),
@@ -1254,7 +1236,7 @@ pub type KeyListener<V> = Box<
     dyn Fn(
             &mut V,
             &dyn Any,
-            &[&DispatchContext],
+            &[&KeyBindingContext],
             DispatchPhase,
             &mut ViewContext<V>,
         ) -> Option<Box<dyn Action>>

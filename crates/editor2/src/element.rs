@@ -16,11 +16,12 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
     black, hsla, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
-    BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchContext, DispatchPhase,
-    Edges, Element, ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, Hsla,
-    InputHandler, KeyDownEvent, KeyListener, KeyMatch, Line, LineLayout, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size,
-    Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext, WrappedLineLayout,
+    BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element,
+    ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, Hsla, InputHandler,
+    KeyBindingContext, KeyDownEvent, KeyListener, KeyMatch, Line, LineLayout, Modifiers,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent,
+    ShapedGlyph, Size, Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext,
+    WrappedLineLayout,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -4157,21 +4158,6 @@ fn build_key_listeners(
         build_action_listener(Editor::context_menu_prev),
         build_action_listener(Editor::context_menu_next),
         build_action_listener(Editor::context_menu_last),
-        build_key_listener(
-            move |editor, key_down: &KeyDownEvent, dispatch_context, phase, cx| {
-                if phase == DispatchPhase::Bubble {
-                    if let KeyMatch::Some(action) = cx.match_keystroke(
-                        &global_element_id,
-                        &key_down.keystroke,
-                        dispatch_context,
-                    ) {
-                        return Some(action);
-                    }
-                }
-
-                None
-            },
-        ),
     ]
 }
 
@@ -4179,7 +4165,7 @@ fn build_key_listener<T: 'static>(
     listener: impl Fn(
             &mut Editor,
             &T,
-            &[&DispatchContext],
+            &[&KeyBindingContext],
             DispatchPhase,
             &mut ViewContext<Editor>,
         ) -> Option<Box<dyn Action>>

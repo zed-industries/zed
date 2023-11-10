@@ -41,8 +41,8 @@ use git::diff_hunk_to_display;
 use gpui::{
     action, actions, div, point, px, relative, rems, size, uniform_list, AnyElement, AppContext,
     AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
-    DispatchContext, EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight,
-    HighlightStyle, Hsla, InputHandler, Model, MouseButton, ParentElement, Pixels, Render,
+    EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla,
+    InputHandler, KeyBindingContext, Model, MouseButton, ParentElement, Pixels, Render,
     StatelessInteractive, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View,
     ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -646,7 +646,7 @@ pub struct Editor {
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakView<Workspace>, i64)>,
-    keymap_context_layers: BTreeMap<TypeId, DispatchContext>,
+    keymap_context_layers: BTreeMap<TypeId, KeyBindingContext>,
     input_enabled: bool,
     read_only: bool,
     leader_peer_id: Option<PeerId>,
@@ -1980,9 +1980,9 @@ impl Editor {
         this
     }
 
-    fn dispatch_context(&self, cx: &AppContext) -> DispatchContext {
-        let mut dispatch_context = DispatchContext::default();
-        dispatch_context.insert("Editor");
+    fn dispatch_context(&self, cx: &AppContext) -> KeyBindingContext {
+        let mut dispatch_context = KeyBindingContext::default();
+        dispatch_context.add("Editor");
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
@@ -1990,17 +1990,17 @@ impl Editor {
         };
         dispatch_context.set("mode", mode);
         if self.pending_rename.is_some() {
-            dispatch_context.insert("renaming");
+            dispatch_context.add("renaming");
         }
         if self.context_menu_visible() {
             match self.context_menu.read().as_ref() {
                 Some(ContextMenu::Completions(_)) => {
-                    dispatch_context.insert("menu");
-                    dispatch_context.insert("showing_completions")
+                    dispatch_context.add("menu");
+                    dispatch_context.add("showing_completions")
                 }
                 Some(ContextMenu::CodeActions(_)) => {
-                    dispatch_context.insert("menu");
-                    dispatch_context.insert("showing_code_actions")
+                    dispatch_context.add("menu");
+                    dispatch_context.add("showing_code_actions")
                 }
                 None => {}
             }
