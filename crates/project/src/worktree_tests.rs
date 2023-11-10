@@ -1,6 +1,7 @@
 use crate::{
+    project_settings::ProjectSettings,
     worktree::{Event, Snapshot, WorktreeModelHandle},
-    Entry, EntryKind, PathChange, Worktree,
+    Entry, EntryKind, PathChange, Project, Worktree,
 };
 use anyhow::Result;
 use client::Client;
@@ -12,6 +13,7 @@ use postage::stream::Stream;
 use pretty_assertions::assert_eq;
 use rand::prelude::*;
 use serde_json::json;
+use settings::SettingsStore;
 use std::{
     env,
     fmt::Write,
@@ -875,6 +877,87 @@ async fn test_write_file(cx: &mut TestAppContext) {
         assert!(!tracked.is_ignored);
         assert!(ignored.is_ignored);
     });
+}
+
+#[gpui::test]
+async fn test_ignore_inclusions_and_exclusions(cx: &mut TestAppContext) {
+    let dir = temp_tree(json!({
+        ".git": {},
+        ".gitignore": "**/target\n/node_modules\n",
+        "target": {},
+        "node_modules": {
+            ".DS_Store": "",
+            "prettier": {
+                "package.json": "{}",
+            },
+        },
+        "src": {
+            ".DS_Store": "",
+            "foo": {
+                "foo.rs": "mod another;\n",
+                "another.rs": "// another",
+            },
+            "bar": {
+                "bar.rs": "// bar",
+            },
+            "lib.rs": "mod foo;\nmod bar;\n",
+        },
+        ".DS_Store": "",
+    }));
+    cx.update(|cx| {
+        cx.set_global(SettingsStore::test(cx));
+        Project::init_settings(cx);
+        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                project_settings.scan_exclude_files =
+                    vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()];
+                project_settings.scan_include_files = vec!["**/node_modules".to_string()];
+            });
+        });
+    });
+
+    let tree = Worktree::local(
+        build_client(cx),
+        dir.path(),
+        true,
+        Arc::new(RealFs),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    // tree.update(cx, |tree, cx| {
+    //     tree.as_local().unwrap().write_file(
+    //         Path::new("tracked-dir/file.txt"),
+    //         "hello".into(),
+    //         Default::default(),
+    //         cx,
+    //     )
+    // })
+    // .await
+    // .unwrap();
+    // tree.update(cx, |tree, cx| {
+    //     tree.as_local().unwrap().write_file(
+    //         Path::new("ignored-dir/file.txt"),
+    //         "world".into(),
+    //         Default::default(),
+    //         cx,
+    //     )
+    // })
+    // .await
+    // .unwrap();
+
+    // tree.read_with(cx, |tree, _| {
+    //     let tracked = tree.entry_for_path("tracked-dir/file.txt").unwrap();
+    //     let ignored = tree.entry_for_path("ignored-dir/file.txt").unwrap();
+    //     assert!(!tracked.is_ignored);
+    //     assert!(ignored.is_ignored);
+    // });
+    dbg!("!!!!!!!!!!!!");
 }
 
 #[gpui::test(iterations = 30)]

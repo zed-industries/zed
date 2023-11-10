@@ -10,6 +10,12 @@ pub struct ProjectSettings {
     pub lsp: HashMap<Arc<str>, LspSettings>,
     #[serde(default)]
     pub git: GitSettings,
+    // TODO kb better names and docs
+    // TODO kb how to react on their changes?
+    #[serde(default)]
+    pub scan_exclude_files: Vec<String>,
+    #[serde(default)]
+    pub scan_include_files: Vec<String>,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

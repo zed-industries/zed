@@ -1,5 +1,6 @@
 use crate::{
-    copy_recursive, ignore::IgnoreStack, DiagnosticSummary, ProjectEntryId, RemoveOptions,
+    copy_recursive, ignore::IgnoreStack, project_settings::ProjectSettings, DiagnosticSummary,
+    ProjectEntryId, RemoveOptions,
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context, Result};
@@ -55,7 +56,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
-use util::{paths::HOME, ResultExt};
+use util::{
+    paths::{PathMatcher, HOME},
+    ResultExt,
+};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
@@ -216,6 +220,8 @@ pub struct LocalSnapshot {
     /// All of the git repositories in the worktree, indexed by the project entry
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
+    scan_exclude_files: Vec<PathMatcher>,
+    scan_include_files: Vec<PathMatcher>,
 }
 
 struct BackgroundScannerState {
@@ -303,8 +309,34 @@ impl Worktree {
             let root_name = abs_path
                 .file_name()
                 .map_or(String::new(), |f| f.to_string_lossy().to_string());
-
+            let project_settings = settings::get::<ProjectSettings>(cx);
+            let scan_exclude_files = project_settings.scan_exclude_files.iter()
+            .filter_map(|pattern| {
+                PathMatcher::new(pattern)
+                    .map(Some)
+                    .unwrap_or_else(|e| {
+                        log::error!(
+                            "Skipping pattern {pattern} in `scan_exclude_files` project settings due to parsing error: {e:#}"
+                        );
+                        None
+                    })
+            })
+            .collect::<Vec<_>>();
+            let scan_include_files = project_settings.scan_include_files.iter()
+            .filter_map(|pattern| {
+                PathMatcher::new(pattern)
+                    .map(Some)
+                    .unwrap_or_else(|e| {
+                        log::error!(
+                            "Skipping pattern {pattern} in `scan_include_files` project settings due to parsing error: {e:#}"
+                        );
+                        None
+                    })
+            })
+            .collect::<Vec<_>>();
             let mut snapshot = LocalSnapshot {
+                scan_include_files,
+                scan_exclude_files,
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot {
@@ -2042,7 +2074,7 @@ impl LocalSnapshot {
 
         let mut ignore_stack = IgnoreStack::none();
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
-            if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
+            if self.is_abs_path_ignored(parent_abs_path, &ignore_stack, true) {
                 ignore_stack = IgnoreStack::all();
                 break;
             } else if let Some(ignore) = ignore {
@@ -2050,7 +2082,7 @@ impl LocalSnapshot {
             }
         }
 
-        if ignore_stack.is_abs_path_ignored(abs_path, is_dir) {
+        if self.is_abs_path_ignored(abs_path, &ignore_stack, is_dir) {
             ignore_stack = IgnoreStack::all();
         }
         ignore_stack
@@ -2144,6 +2176,45 @@ impl LocalSnapshot {
         }
         paths.sort_by(|a, b| a.0.cmp(b.0));
         paths
+    }
+
+    fn is_abs_path_ignored(
+        &self,
+        abs_path: &Path,
+        ignore_stack: &IgnoreStack,
+        is_dir: bool,
+    ) -> bool {
+        dbg!(&abs_path);
+        if self
+            .scan_include_files
+            .iter()
+            .any(|include_matcher| include_matcher.is_match(abs_path))
+        {
+            dbg!("included!!");
+            return false;
+        } else if self
+            .scan_exclude_files
+            .iter()
+            .any(|exclude_matcher| exclude_matcher.is_match(abs_path))
+        {
+            dbg!("excluded!!");
+            return true;
+        } else if is_dir && abs_path.file_name() == Some(OsStr::new(".git")) {
+            return true;
+        }
+        match ignore_stack {
+            IgnoreStack::None => false,
+            IgnoreStack::All => true,
+            IgnoreStack::Some {
+                abs_base_path,
+                ignore,
+                parent: prev,
+            } => match ignore.matched(abs_path.strip_prefix(abs_base_path).unwrap(), is_dir) {
+                ignore::Match::None => self.is_abs_path_ignored(abs_path, &prev, is_dir),
+                ignore::Match::Ignore(_) => true,
+                ignore::Match::Whitelist(_) => false,
+            },
+        }
     }
 }
 
@@ -2767,7 +2838,7 @@ pub struct Entry {
     pub mtime: SystemTime,
     pub is_symlink: bool,
 
-    /// Whether this entry is ignored by Git.
+    /// Whether this entry is ignored by Zed.
     ///
     /// We only scan ignored entries once the directory is expanded and
     /// exclude them from searches.
@@ -3464,7 +3535,7 @@ impl BackgroundScanner {
                 for entry in &mut new_entries {
                     let entry_abs_path = root_abs_path.join(&entry.path);
                     entry.is_ignored =
-                        ignore_stack.is_abs_path_ignored(&entry_abs_path, entry.is_dir());
+                        self.is_abs_path_ignored(&entry_abs_path, &ignore_stack, entry.is_dir());
 
                     if entry.is_dir() {
                         if let Some(job) = new_jobs.next().expect("missing scan job for entry") {
@@ -3523,7 +3594,8 @@ impl BackgroundScanner {
             }
 
             if child_entry.is_dir() {
-                child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
+                child_entry.is_ignored =
+                    self.is_abs_path_ignored(&child_abs_path, &ignore_stack, true);
 
                 // Avoid recursing until crash in the case of a recursive symlink
                 if !job.ancestor_inodes.contains(&child_entry.inode) {
@@ -3547,7 +3619,8 @@ impl BackgroundScanner {
                     new_jobs.push(None);
                 }
             } else {
-                child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
+                child_entry.is_ignored =
+                    self.is_abs_path_ignored(&child_abs_path, &ignore_stack, false);
                 if !child_entry.is_ignored {
                     if let Some((repository_dir, repository, staged_statuses)) =
                         &job.containing_repository
@@ -3825,7 +3898,7 @@ impl BackgroundScanner {
         for mut entry in snapshot.child_entries(path).cloned() {
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
-            entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
+            entry.is_ignored = self.is_abs_path_ignored(&abs_path, &ignore_stack, entry.is_dir());
             if entry.is_dir() {
                 let child_ignore_stack = if entry.is_ignored {
                     IgnoreStack::all()
@@ -4007,6 +4080,18 @@ impl BackgroundScanner {
         }
 
         smol::Timer::after(Duration::from_millis(100)).await;
+    }
+
+    fn is_abs_path_ignored(
+        &self,
+        abs_path: &Path,
+        ignore_stack: &IgnoreStack,
+        is_dir: bool,
+    ) -> bool {
+        self.state
+            .lock()
+            .snapshot
+            .is_abs_path_ignored(abs_path, ignore_stack, is_dir)
     }
 }
 
