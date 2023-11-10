@@ -44,7 +44,7 @@ snippet = { path = "../snippet" }
 sum_tree = { path = "../sum_tree" }
 text = { package="text2", path = "../text2" }
 theme = { package="theme2", path = "../theme2" }
-ui2 = { package = "ui2", path = "../ui2" }
+ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
 sqlez = { path = "../sqlez" }
 workspace = { package = "workspace2", path = "../workspace2" }

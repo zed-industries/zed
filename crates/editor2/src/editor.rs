@@ -42,9 +42,9 @@ use gpui::{
     action, actions, div, point, px, relative, rems, size, uniform_list, AnyElement, AppContext,
     AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
     DispatchContext, EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight,
-    HighlightStyle, Hsla, InputHandler, Model, ParentElement, Pixels, Render, StatelessInteractive,
-    Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    HighlightStyle, Hsla, InputHandler, Model, MouseButton, ParentElement, Pixels, Render,
+    StatelessInteractive, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -1585,6 +1585,17 @@ impl CodeActionsMenu {
                                 style
                                     .bg(colors.element_hover)
                                     .text_color(colors.text_accent)
+                            })
+                            .on_mouse_down(MouseButton::Left, move |editor: &mut Editor, _, cx| {
+                                cx.stop_propagation();
+                                editor
+                                    .confirm_code_action(
+                                        &ConfirmCodeAction {
+                                            item_ix: Some(item_ix),
+                                        },
+                                        cx,
+                                    )
+                                    .map(|task| task.detach_and_log_err(cx));
                             })
                             .child(action.lsp_action.title.clone())
                     })
@@ -4429,7 +4440,7 @@ impl Editor {
     ) -> Option<AnyElement<Self>> {
         if self.available_code_actions.is_some() {
             Some(
-                IconButton::new("code_actions_indicator", ui2::Icon::Bolt)
+                IconButton::new("code_actions_indicator", ui::Icon::Bolt)
                     .on_click(|editor: &mut Editor, cx| {
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
