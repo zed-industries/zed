@@ -142,7 +142,7 @@ fn main() {
         // context_menu::init(cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
-        // command_palette::init(cx);
+        command_palette::init(cx);
         language::init(cx);
         editor::init(cx);
         copilot::init(
@@ -761,7 +761,7 @@ fn load_embedded_fonts(cx: &AppContext) {
 // #[cfg(not(debug_assertions))]
 // async fn watch_languages(_: Arc<dyn Fs>, _: Arc<LanguageRegistry>) -> Option<()> {
 //     None
-// }
+//
 
 // #[cfg(not(debug_assertions))]
 // fn watch_file_types(_fs: Arc<dyn Fs>, _cx: &mut AppContext) {}

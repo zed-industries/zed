@@ -69,7 +69,7 @@ use std::{
     hash::Hash,
     mem,
     num::NonZeroU32,
-    ops::Range,
+    ops::{ControlFlow, Range},
     path::{self, Component, Path, PathBuf},
     process::Stdio,
     str,
@@ -8442,7 +8442,10 @@ impl Project {
                             })
                             .await
                         {
-                            Ok(None) => {
+                            Ok(ControlFlow::Break(())) => {
+                                return None;
+                            }
+                            Ok(ControlFlow::Continue(None)) => {
                                 let started_default_prettier =
                                     project.update(&mut cx, |project, _| {
                                         project
@@ -8466,7 +8469,7 @@ impl Project {
                                     }
                                 }
                             }
-                            Ok(Some(prettier_dir)) => {
+                            Ok(ControlFlow::Continue(Some(prettier_dir))) => {
                                 project.update(&mut cx, |project, _| {
                                     project
                                         .prettiers_per_worktree
@@ -8593,7 +8596,7 @@ impl Project {
                     .await
                 })
             }
-            None => Task::ready(Ok(None)),
+            None => Task::ready(Ok(ControlFlow::Break(()))),
         };
         let mut plugins_to_install = prettier_plugins;
         let previous_installation_process =
@@ -8622,8 +8625,9 @@ impl Project {
                     .context("locate prettier installation")
                     .map_err(Arc::new)?
                 {
-                    Some(_non_default_prettier) => return Ok(()),
-                    None => {
+                    ControlFlow::Break(()) => return Ok(()),
+                    ControlFlow::Continue(Some(_non_default_prettier)) => return Ok(()),
+                    ControlFlow::Continue(None) => {
                         let mut needs_install = match previous_installation_process {
                             Some(previous_installation_process) => {
                                 previous_installation_process.await.is_err()

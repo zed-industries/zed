@@ -9,6 +9,9 @@ use smallvec::SmallVec;
 use std::{cmp, ops::Range, sync::Arc};
 use taffy::style::Overflow;
 
+/// uniform_list provides lazy rendering for a set of items that are of uniform height.
+/// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
+/// uniform_list will only render the visibile subset of items.
 pub fn uniform_list<Id, V, C>(
     id: Id,
     item_count: usize,
@@ -20,9 +23,12 @@ where
     C: Component<V>,
 {
     let id = id.into();
+    let mut style = StyleRefinement::default();
+    style.overflow.y = Some(Overflow::Hidden);
+
     UniformList {
         id: id.clone(),
-        style: Default::default(),
+        style,
         item_count,
         render_items: Box::new(move |view, visible_range, cx| {
             f(view, visible_range, cx)
@@ -86,8 +92,14 @@ impl<V: 'static> Styled for UniformList<V> {
     }
 }
 
+#[derive(Default)]
+pub struct UniformListState {
+    interactive: InteractiveElementState,
+    item_size: Size<Pixels>,
+}
+
 impl<V: 'static> Element<V> for UniformList<V> {
-    type ElementState = InteractiveElementState;
+    type ElementState = UniformListState;
 
     fn id(&self) -> Option<crate::ElementId> {
         Some(self.id.clone())
@@ -95,20 +107,47 @@ impl<V: 'static> Element<V> for UniformList<V> {
 
     fn initialize(
         &mut self,
-        _: &mut V,
+        view_state: &mut V,
         element_state: Option<Self::ElementState>,
-        _: &mut ViewContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
-        element_state.unwrap_or_default()
+        element_state.unwrap_or_else(|| {
+            let item_size = self.measure_first_item(view_state, None, cx);
+            UniformListState {
+                interactive: InteractiveElementState::default(),
+                item_size,
+            }
+        })
     }
 
     fn layout(
         &mut self,
         _view_state: &mut V,
-        _element_state: &mut Self::ElementState,
+        element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) -> LayoutId {
-        cx.request_layout(&self.computed_style(), None)
+        let max_items = self.item_count;
+        let item_size = element_state.item_size;
+        let rem_size = cx.rem_size();
+
+        cx.request_measured_layout(
+            self.computed_style(),
+            rem_size,
+            move |known_dimensions: Size<Option<Pixels>>, available_space: Size<AvailableSpace>| {
+                let desired_height = item_size.height * max_items;
+                let width = known_dimensions
+                    .width
+                    .unwrap_or(match available_space.width {
+                        AvailableSpace::Definite(x) => x,
+                        AvailableSpace::MinContent | AvailableSpace::MaxContent => item_size.width,
+                    });
+                let height = match available_space.height {
+                    AvailableSpace::Definite(x) => desired_height.min(x),
+                    AvailableSpace::MinContent | AvailableSpace::MaxContent => desired_height,
+                };
+                size(width, height)
+            },
+        )
     }
 
     fn paint(
@@ -133,12 +172,14 @@ impl<V: 'static> Element<V> for UniformList<V> {
         cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
             let content_size;
             if self.item_count > 0 {
-                let item_height = self.measure_item_height(view_state, padded_bounds, cx);
+                let item_height = self
+                    .measure_first_item(view_state, Some(padded_bounds.size.width), cx)
+                    .height;
                 if let Some(scroll_handle) = self.scroll_handle.clone() {
                     scroll_handle.0.lock().replace(ScrollHandleState {
                         item_height,
                         list_height: padded_bounds.size.height,
-                        scroll_offset: element_state.track_scroll_offset(),
+                        scroll_offset: element_state.interactive.track_scroll_offset(),
                     });
                 }
                 let visible_item_count = if item_height > px(0.) {
@@ -147,6 +188,7 @@ impl<V: 'static> Element<V> for UniformList<V> {
                     0
                 };
                 let scroll_offset = element_state
+                    .interactive
                     .scroll_offset()
                     .map_or((0.0).into(), |offset| offset.y);
                 let first_visible_element_ix = (-scroll_offset / item_height).floor() as usize;
@@ -184,29 +226,35 @@ impl<V: 'static> Element<V> for UniformList<V> {
             let overflow = point(style.overflow.x, Overflow::Scroll);
 
             cx.with_z_index(0, |cx| {
-                self.interactivity
-                    .paint(bounds, content_size, overflow, element_state, cx);
+                self.interactivity.paint(
+                    bounds,
+                    content_size,
+                    overflow,
+                    &mut element_state.interactive,
+                    cx,
+                );
             });
         })
     }
 }
 
 impl<V> UniformList<V> {
-    fn measure_item_height(
+    fn measure_first_item(
         &self,
         view_state: &mut V,
-        list_bounds: Bounds<Pixels>,
+        list_width: Option<Pixels>,
         cx: &mut ViewContext<V>,
-    ) -> Pixels {
+    ) -> Size<Pixels> {
         let mut items = (self.render_items)(view_state, 0..1, cx);
         debug_assert_eq!(items.len(), 1);
         let mut item_to_measure = items.pop().unwrap();
         let available_space = size(
-            AvailableSpace::Definite(list_bounds.size.width),
+            list_width.map_or(AvailableSpace::MinContent, |width| {
+                AvailableSpace::Definite(width)
+            }),
             AvailableSpace::MinContent,
         );
-        let size = item_to_measure.measure(available_space, view_state, cx);
-        size.height
+        item_to_measure.measure(available_space, view_state, cx)
     }
 
     pub fn track_scroll(mut self, handle: UniformListScrollHandle) -> Self {

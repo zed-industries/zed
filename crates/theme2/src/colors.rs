@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
+use crate::{PlayerColors, SyntaxTheme};
 use gpui::Hsla;
 use refineable::Refineable;
-
-use crate::{PlayerColors, SyntaxTheme};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct SystemColors {
@@ -14,7 +12,7 @@ pub struct SystemColors {
 }
 
 #[derive(Refineable, Clone, Debug)]
-#[refineable(debug)]
+#[refineable(Debug, serde::Deserialize)]
 pub struct StatusColors {
     pub conflict: Hsla,
     pub created: Hsla,
@@ -30,7 +28,7 @@ pub struct StatusColors {
 }
 
 #[derive(Refineable, Clone, Debug)]
-#[refineable(debug, deserialize)]
+#[refineable(Debug, serde::Deserialize)]
 pub struct ThemeColors {
     pub border: Hsla,
     /// Border color. Used for deemphasized borders, like a visual divider between two sections

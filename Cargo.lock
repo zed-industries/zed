@@ -1881,6 +1881,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "command_palette2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "ctor",
+ "editor2",
+ "env_logger 0.9.3",
+ "fuzzy2",
+ "gpui2",
+ "language2",
+ "picker2",
+ "project2",
+ "serde",
+ "serde_json",
+ "settings2",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
+ "zed_actions2",
+]
+
+[[package]]
 name = "component_test"
 version = "0.1.0"
 dependencies = [
@@ -4435,6 +4459,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "json_comments"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dbbfed4e59ba9750e15ba154fdfd9329cee16ff3df539c2666b70f58cc32105"
+
+[[package]]
 name = "jwt"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6130,6 +6160,7 @@ dependencies = [
  "serde_json",
  "settings2",
  "theme2",
+ "ui2",
  "util",
 ]
 
@@ -9156,10 +9187,13 @@ dependencies = [
  "anyhow",
  "convert_case 0.6.0",
  "gpui2",
+ "indexmap 1.9.3",
+ "json_comments",
  "log",
  "rust-embed",
  "serde",
  "simplelog",
+ "strum",
  "theme2",
  "uuid 1.4.1",
 ]
@@ -11363,6 +11397,7 @@ dependencies = [
  "cli",
  "client2",
  "collections",
+ "command_palette2",
  "copilot2",
  "ctor",
  "db2",
@@ -11449,6 +11484,15 @@ dependencies = [
  "util",
  "uuid 1.4.1",
  "workspace2",
+ "zed_actions2",
+]
+
+[[package]]
+name = "zed_actions2"
+version = "0.1.0"
+dependencies = [
+ "gpui2",
+ "serde",
 ]
 
 [[package]]

@@ -6,6 +6,7 @@ publish = false
 
 [features]
 default = ["stories"]
+importing-themes = []
 stories = ["dep:itertools"]
 test-support = [
     "gpui/test-support",

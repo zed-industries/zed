@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
+use collections::HashMap;
 use futures::{future::BoxFuture, FutureExt};
 use gpui::AppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
@@ -20,12 +21,7 @@ use util::{fs::remove_matching, github::latest_github_release};
 use util::{github::GitHubLspBinaryVersion, ResultExt};
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
-    vec![
-        server_path.into(),
-        "--stdio".into(),
-        "--tsserver-path".into(),
-        "node_modules/typescript/lib".into(),
-    ]
+    vec![server_path.into(), "--stdio".into()]
 }
 
 fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -158,8 +154,19 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
-            "provideFormatter": true
+            "provideFormatter": true,
+            "tsserver": {
+                "path": "node_modules/typescript/lib",
+            },
         }))
+    }
+
+    async fn language_ids(&self) -> HashMap<String, String> {
+        HashMap::from_iter([
+            ("TypeScript".into(), "typescript".into()),
+            ("JavaScript".into(), "javascript".into()),
+            ("TSX".into(), "typescriptreact".into()),
+        ])
     }
 }
 
