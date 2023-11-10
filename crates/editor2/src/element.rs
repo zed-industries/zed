@@ -1,5 +1,8 @@
 use crate::{
-    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint},
+    display_map::{
+        BlockContext, BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint,
+        TransformBlock,
+    },
     editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::hover_at,
@@ -15,17 +18,18 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
-    black, hsla, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
-    BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element,
-    ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, Hsla, InputHandler,
-    KeyContext, KeyDownEvent, KeyMatch, Line, LineLayout, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size, Style, TextRun,
-    TextStyle, TextSystem, ViewContext, WindowContext, WrappedLineLayout,
+    point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace, BorrowWindow,
+    Bounds, ContentMask, Corners, DispatchPhase, Edges, Element, ElementId, ElementInputHandler,
+    Entity, Hsla, Line, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    Pixels, ScrollWheelEvent, Size, Style, TextRun, TextStyle, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
 use multi_buffer::Anchor;
-use project::project_settings::{GitGutterSetting, ProjectSettings};
+use project::{
+    project_settings::{GitGutterSetting, ProjectSettings},
+    ProjectPath,
+};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{
@@ -39,6 +43,7 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
+use ui::{h_stack, IconButton};
 use util::ResultExt;
 use workspace::item::Item;
 
@@ -1741,22 +1746,22 @@ impl EditorElement {
             .unwrap()
             .width;
         let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.width;
-        // todo!("blocks")
-        // let (scroll_width, blocks) = self.layout_blocks(
-        //     start_row..end_row,
-        //     &snapshot,
-        //     size.x,
-        //     scroll_width,
-        //     gutter_padding,
-        //     gutter_width,
-        //     em_width,
-        //     gutter_width + gutter_margin,
-        //     line_height,
-        //     &style,
-        //     &line_layouts,
-        //     editor,
-        //     cx,
-        // );
+
+        let (scroll_width, blocks) = self.layout_blocks(
+            start_row..end_row,
+            &snapshot,
+            bounds.size.width,
+            scroll_width,
+            gutter_padding,
+            gutter_width,
+            em_width,
+            gutter_width + gutter_margin,
+            line_height,
+            &style,
+            &line_layouts,
+            editor,
+            cx,
+        );
 
         let scroll_max = point(
             f32::from((scroll_width - text_size.width) / em_width).max(0.0),
@@ -1948,226 +1953,181 @@ impl EditorElement {
         }
     }
 
-    // #[allow(clippy::too_many_arguments)]
-    // fn layout_blocks(
-    //     &mut self,
-    //     rows: Range<u32>,
-    //     snapshot: &EditorSnapshot,
-    //     editor_width: f32,
-    //     scroll_width: f32,
-    //     gutter_padding: f32,
-    //     gutter_width: f32,
-    //     em_width: f32,
-    //     text_x: f32,
-    //     line_height: f32,
-    //     style: &EditorStyle,
-    //     line_layouts: &[LineWithInvisibles],
-    //     editor: &mut Editor,
-    //     cx: &mut ViewContext<Editor>,
-    // ) -> (f32, Vec<BlockLayout>) {
-    //     let mut block_id = 0;
-    //     let scroll_x = snapshot.scroll_anchor.offset.x;
-    //     let (fixed_blocks, non_fixed_blocks) = snapshot
-    //         .blocks_in_range(rows.clone())
-    //         .partition::<Vec<_>, _>(|(_, block)| match block {
-    //             TransformBlock::ExcerptHeader { .. } => false,
-    //             TransformBlock::Custom(block) => block.style() == BlockStyle::Fixed,
-    //         });
-    //     let mut render_block = |block: &TransformBlock, width: f32, block_id: usize| {
-    //         let mut element = match block {
-    //             TransformBlock::Custom(block) => {
-    //                 let align_to = block
-    //                     .position()
-    //                     .to_point(&snapshot.buffer_snapshot)
-    //                     .to_display_point(snapshot);
-    //                 let anchor_x = text_x
-    //                     + if rows.contains(&align_to.row()) {
-    //                         line_layouts[(align_to.row() - rows.start) as usize]
-    //                             .line
-    //                             .x_for_index(align_to.column() as usize)
-    //                     } else {
-    //                         layout_line(align_to.row(), snapshot, style, cx.text_layout_cache())
-    //                             .x_for_index(align_to.column() as usize)
-    //                     };
+    #[allow(clippy::too_many_arguments)]
+    fn layout_blocks(
+        &mut self,
+        rows: Range<u32>,
+        snapshot: &EditorSnapshot,
+        editor_width: Pixels,
+        scroll_width: Pixels,
+        gutter_padding: Pixels,
+        gutter_width: Pixels,
+        em_width: Pixels,
+        text_x: Pixels,
+        line_height: Pixels,
+        style: &EditorStyle,
+        line_layouts: &[LineWithInvisibles],
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> (Pixels, Vec<BlockLayout>) {
+        let mut block_id = 0;
+        let scroll_x = snapshot.scroll_anchor.offset.x;
+        let (fixed_blocks, non_fixed_blocks) = snapshot
+            .blocks_in_range(rows.clone())
+            .partition::<Vec<_>, _>(|(_, block)| match block {
+                TransformBlock::ExcerptHeader { .. } => false,
+                TransformBlock::Custom(block) => block.style() == BlockStyle::Fixed,
+            });
+        let mut render_block = |block: &TransformBlock, width: Pixels, block_id: usize| {
+            let mut element = match block {
+                TransformBlock::Custom(block) => {
+                    let align_to = block
+                        .position()
+                        .to_point(&snapshot.buffer_snapshot)
+                        .to_display_point(snapshot);
+                    let anchor_x = text_x
+                        + if rows.contains(&align_to.row()) {
+                            line_layouts[(align_to.row() - rows.start) as usize]
+                                .line
+                                .x_for_index(align_to.column() as usize)
+                        } else {
+                            layout_line(align_to.row(), snapshot, style, cx)
+                                .unwrap()
+                                .x_for_index(align_to.column() as usize)
+                        };
 
-    //                 block.render(&mut BlockContext {
-    //                     view_context: cx,
-    //                     anchor_x,
-    //                     gutter_padding,
-    //                     line_height,
-    //                     scroll_x,
-    //                     gutter_width,
-    //                     em_width,
-    //                     block_id,
-    //                 })
-    //             }
-    //             TransformBlock::ExcerptHeader {
-    //                 id,
-    //                 buffer,
-    //                 range,
-    //                 starts_new_buffer,
-    //                 ..
-    //             } => {
-    //                 let tooltip_style = theme::current(cx).tooltip.clone();
-    //                 let include_root = editor
-    //                     .project
-    //                     .as_ref()
-    //                     .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-    //                     .unwrap_or_default();
-    //                 let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
-    //                     let jump_path = ProjectPath {
-    //                         worktree_id: file.worktree_id(cx),
-    //                         path: file.path.clone(),
-    //                     };
-    //                     let jump_anchor = range
-    //                         .primary
-    //                         .as_ref()
-    //                         .map_or(range.context.start, |primary| primary.start);
-    //                     let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
+                    block.render(&mut BlockContext {
+                        view_context: cx,
+                        anchor_x,
+                        gutter_padding,
+                        line_height,
+                        // scroll_x,
+                        gutter_width,
+                        em_width,
+                        block_id,
+                    })
+                }
+                TransformBlock::ExcerptHeader {
+                    id,
+                    buffer,
+                    range,
+                    starts_new_buffer,
+                    ..
+                } => {
+                    let include_root = editor
+                        .project
+                        .as_ref()
+                        .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+                        .unwrap_or_default();
+                    let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
+                        let jump_path = ProjectPath {
+                            worktree_id: file.worktree_id(cx),
+                            path: file.path.clone(),
+                        };
+                        let jump_anchor = range
+                            .primary
+                            .as_ref()
+                            .map_or(range.context.start, |primary| primary.start);
+                        let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
-    //                     enum JumpIcon {}
-    //                     MouseEventHandler::new::<JumpIcon, _>((*id).into(), cx, |state, _| {
-    //                         let style = style.jump_icon.style_for(state);
-    //                         Svg::new("icons/arrow_up_right.svg")
-    //                             .with_color(style.color)
-    //                             .constrained()
-    //                             .with_width(style.icon_width)
-    //                             .aligned()
-    //                             .contained()
-    //                             .with_style(style.container)
-    //                             .constrained()
-    //                             .with_width(style.button_width)
-    //                             .with_height(style.button_width)
-    //                     })
-    //                     .with_cursor_style(CursorStyle::PointingHand)
-    //                     .on_click(MouseButton::Left, move |_, editor, cx| {
-    //                         if let Some(workspace) = editor
-    //                             .workspace
-    //                             .as_ref()
-    //                             .and_then(|(workspace, _)| workspace.upgrade(cx))
-    //                         {
-    //                             workspace.update(cx, |workspace, cx| {
-    //                                 Editor::jump(
-    //                                     workspace,
-    //                                     jump_path.clone(),
-    //                                     jump_position,
-    //                                     jump_anchor,
-    //                                     cx,
-    //                                 );
-    //                             });
-    //                         }
-    //                     })
-    //                     .with_tooltip::<JumpIcon>(
-    //                         (*id).into(),
-    //                         "Jump to Buffer".to_string(),
-    //                         Some(Box::new(crate::OpenExcerpts)),
-    //                         tooltip_style.clone(),
-    //                         cx,
-    //                     )
-    //                     .aligned()
-    //                     .flex_float()
-    //                 });
+                        // todo!("avoid ElementId collision risk here")
+                        IconButton::new(usize::from(*id), ui::Icon::ArrowUpRight)
+                            .on_click(move |editor, cx| {
+                                if let Some(workspace) = editor
+                                    .workspace
+                                    .as_ref()
+                                    .and_then(|(workspace, _)| workspace.upgrade(cx))
+                                {
+                                    workspace.update(cx, |workspace, cx| {
+                                        Editor::jump(
+                                            workspace,
+                                            jump_path.clone(),
+                                            jump_position,
+                                            jump_anchor,
+                                            cx,
+                                        );
+                                    });
+                                }
+                            })
+                            .tooltip("Jump to Buffer") // todo!(pass an action as well to show key binding)
+                    });
 
-    //                 if *starts_new_buffer {
-    //                     let editor_font_size = style.text.font_size;
-    //                     let style = &style.diagnostic_path_header;
-    //                     let font_size = (style.text_scale_factor * editor_font_size).round();
+                    if *starts_new_buffer {
+                        let path = buffer.resolve_file_path(cx, include_root);
+                        let mut filename = None;
+                        let mut parent_path = None;
+                        // Can't use .and_then() because `.file_name()` and `.parent()` return references :(
+                        if let Some(path) = path {
+                            filename = path.file_name().map(|f| f.to_string_lossy().to_string());
+                            parent_path =
+                                path.parent().map(|p| p.to_string_lossy().to_string() + "/");
+                        }
 
-    //                     let path = buffer.resolve_file_path(cx, include_root);
-    //                     let mut filename = None;
-    //                     let mut parent_path = None;
-    //                     // Can't use .and_then() because `.file_name()` and `.parent()` return references :(
-    //                     if let Some(path) = path {
-    //                         filename = path.file_name().map(|f| f.to_string_lossy.to_string());
-    //                         parent_path =
-    //                             path.parent().map(|p| p.to_string_lossy.to_string() + "/");
-    //                     }
+                        h_stack()
+                            .child(filename.unwrap_or_else(|| "untitled".to_string()))
+                            .children(parent_path)
+                            .children(jump_icon)
+                            .p_x(gutter_padding)
+                    } else {
+                        let text_style = style.text.clone();
+                        h_stack()
+                            .child("⋯")
+                            .children(jump_icon)
+                            .p_x(gutter_padding)
+                            .expanded()
+                            .into_any_named("collapsed context")
+                    }
+                }
+            };
 
-    //                     Flex::row()
-    //                         .with_child(
-    //                             Label::new(
-    //                                 filename.unwrap_or_else(|| "untitled".to_string()),
-    //                                 style.filename.text.clone().with_font_size(font_size),
-    //                             )
-    //                             .contained()
-    //                             .with_style(style.filename.container)
-    //                             .aligned(),
-    //                         )
-    //                         .with_children(parent_path.map(|path| {
-    //                             Label::new(path, style.path.text.clone().with_font_size(font_size))
-    //                                 .contained()
-    //                                 .with_style(style.path.container)
-    //                                 .aligned()
-    //                         }))
-    //                         .with_children(jump_icon)
-    //                         .contained()
-    //                         .with_style(style.container)
-    //                         .with_padding_left(gutter_padding)
-    //                         .with_padding_right(gutter_padding)
-    //                         .expanded()
-    //                         .into_any_named("path header block")
-    //                 } else {
-    //                     let text_style = style.text.clone();
-    //                     Flex::row()
-    //                         .with_child(Label::new("⋯", text_style))
-    //                         .with_children(jump_icon)
-    //                         .contained()
-    //                         .with_padding_left(gutter_padding)
-    //                         .with_padding_right(gutter_padding)
-    //                         .expanded()
-    //                         .into_any_named("collapsed context")
-    //                 }
-    //             }
-    //         };
+            // element.layout(
+            //     SizeConstraint {
+            //         min: gpui::Point::<Pixels>::zero(),
+            //         max: point(width, block.height() as f32 * line_height),
+            //     },
+            //     editor,
+            //     cx,
+            // );
+            element
+        };
 
-    //         element.layout(
-    //             SizeConstraint {
-    //                 min: gpui::Point::<Pixels>::zero(),
-    //                 max: point(width, block.height() as f32 * line_height),
-    //             },
-    //             editor,
-    //             cx,
-    //         );
-    //         element
-    //     };
-
-    //     let mut fixed_block_max_width = 0f32;
-    //     let mut blocks = Vec::new();
-    //     for (row, block) in fixed_blocks {
-    //         let element = render_block(block, f32::INFINITY, block_id);
-    //         block_id += 1;
-    //         fixed_block_max_width = fixed_block_max_width.max(element.size().x + em_width);
-    //         blocks.push(BlockLayout {
-    //             row,
-    //             element,
-    //             style: BlockStyle::Fixed,
-    //         });
-    //     }
-    //     for (row, block) in non_fixed_blocks {
-    //         let style = match block {
-    //             TransformBlock::Custom(block) => block.style(),
-    //             TransformBlock::ExcerptHeader { .. } => BlockStyle::Sticky,
-    //         };
-    //         let width = match style {
-    //             BlockStyle::Sticky => editor_width,
-    //             BlockStyle::Flex => editor_width
-    //                 .max(fixed_block_max_width)
-    //                 .max(gutter_width + scroll_width),
-    //             BlockStyle::Fixed => unreachable!(),
-    //         };
-    //         let element = render_block(block, width, block_id);
-    //         block_id += 1;
-    //         blocks.push(BlockLayout {
-    //             row,
-    //             element,
-    //             style,
-    //         });
-    //     }
-    //     (
-    //         scroll_width.max(fixed_block_max_width - gutter_width),
-    //         blocks,
-    //     )
-    // }
+        let mut fixed_block_max_width = Pixels::ZERO;
+        let mut blocks = Vec::new();
+        for (row, block) in fixed_blocks {
+            let element = render_block(block, f32::INFINITY, block_id);
+            block_id += 1;
+            fixed_block_max_width = fixed_block_max_width.max(element.size().x + em_width);
+            blocks.push(BlockLayout {
+                row,
+                element,
+                style: BlockStyle::Fixed,
+            });
+        }
+        for (row, block) in non_fixed_blocks {
+            let style = match block {
+                TransformBlock::Custom(block) => block.style(),
+                TransformBlock::ExcerptHeader { .. } => BlockStyle::Sticky,
+            };
+            let width = match style {
+                BlockStyle::Sticky => editor_width,
+                BlockStyle::Flex => editor_width
+                    .max(fixed_block_max_width)
+                    .max(gutter_width + scroll_width),
+                BlockStyle::Fixed => unreachable!(),
+            };
+            let element = render_block(block, width, block_id);
+            block_id += 1;
+            blocks.push(BlockLayout {
+                row,
+                element,
+                style,
+            });
+        }
+        (
+            scroll_width.max(fixed_block_max_width - gutter_width),
+            blocks,
+        )
+    }
 
     fn paint_mouse_listeners(
         &mut self,
