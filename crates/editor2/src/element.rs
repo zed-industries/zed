@@ -4126,7 +4126,7 @@ fn build_key_listeners(
         build_action_listener(Editor::unfold_at),
         build_action_listener(Editor::fold_selected_ranges),
         build_action_listener(Editor::show_completions),
-        // build_action_listener(Editor::toggle_code_actions), todo!()
+        build_action_listener(Editor::toggle_code_actions),
         // build_action_listener(Editor::open_excerpts), todo!()
         build_action_listener(Editor::toggle_soft_wrap),
         build_action_listener(Editor::toggle_inlay_hints),
@@ -4142,13 +4142,21 @@ fn build_key_listeners(
         build_action_listener(Editor::restart_language_server),
         build_action_listener(Editor::show_character_palette),
         // build_action_listener(Editor::confirm_completion), todo!()
-        // build_action_listener(Editor::confirm_code_action), todo!()
+        build_action_listener(|editor, action, cx| {
+            editor
+                .confirm_code_action(action, cx)
+                .map(|task| task.detach_and_log_err(cx));
+        }),
         // build_action_listener(Editor::rename), todo!()
         // build_action_listener(Editor::confirm_rename), todo!()
         // build_action_listener(Editor::find_all_references), todo!()
         build_action_listener(Editor::next_copilot_suggestion),
         build_action_listener(Editor::previous_copilot_suggestion),
         build_action_listener(Editor::copilot_suggest),
+        build_action_listener(Editor::context_menu_first),
+        build_action_listener(Editor::context_menu_prev),
+        build_action_listener(Editor::context_menu_next),
+        build_action_listener(Editor::context_menu_last),
         build_key_listener(
             move |editor, key_down: &KeyDownEvent, dispatch_context, phase, cx| {
                 if phase == DispatchPhase::Bubble {

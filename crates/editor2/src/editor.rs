@@ -40,10 +40,11 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
     action, actions, div, point, px, relative, rems, size, uniform_list, AnyElement, AppContext,
-    BackgroundExecutor, Bounds, ClipboardItem, Component, Context, DispatchContext, EventEmitter,
-    FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, Model,
-    ParentElement, Pixels, Render, StatelessInteractive, Styled, Subscription, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
+    AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
+    DispatchContext, EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight,
+    HighlightStyle, Hsla, InputHandler, Model, ParentElement, Pixels, Render, StatelessInteractive,
+    Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -68,7 +69,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
-use project::{FormatTrigger, Location, Project};
+use project::{FormatTrigger, Location, Project, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
 use scroll::{
@@ -3901,6 +3902,7 @@ impl Editor {
                                 scroll_handle: UniformListScrollHandle::default(),
                                 deployed_from_indicator,
                             }));
+                        cx.notify();
                     }
                 }
             })?;
@@ -3910,117 +3912,121 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
-    //     pub fn confirm_code_action(
-    //         workspace: &mut Workspace,
-    //         action: &ConfirmCodeAction,
-    //         cx: &mut ViewContext<Workspace>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
-    //         let actions_menu = if let ContextMenu::CodeActions(menu) =
-    //             editor.update(cx, |editor, cx| editor.hide_context_menu(cx))?
-    //         {
-    //             menu
-    //         } else {
-    //             return None;
-    //         };
-    //         let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
-    //         let action = actions_menu.actions.get(action_ix)?.clone();
-    //         let title = action.lsp_action.title.clone();
-    //         let buffer = actions_menu.buffer;
+    pub fn confirm_code_action(
+        &mut self,
+        action: &ConfirmCodeAction,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let actions_menu = if let ContextMenu::CodeActions(menu) = self.hide_context_menu(cx)? {
+            menu
+        } else {
+            return None;
+        };
+        let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
+        let action = actions_menu.actions.get(action_ix)?.clone();
+        let title = action.lsp_action.title.clone();
+        let buffer = actions_menu.buffer;
+        let workspace = self.workspace()?;
 
-    //         let apply_code_actions = workspace.project().clone().update(cx, |project, cx| {
-    //             project.apply_code_action(buffer, action, true, cx)
-    //         });
-    //         let editor = editor.downgrade();
-    //         Some(cx.spawn(|workspace, cx| async move {
-    //             let project_transaction = apply_code_actions.await?;
-    //             Self::open_project_transaction(&editor, workspace, project_transaction, title, cx).await
-    //         }))
-    //     }
+        let apply_code_actions = workspace
+            .read(cx)
+            .project()
+            .clone()
+            .update(cx, |project, cx| {
+                project.apply_code_action(buffer, action, true, cx)
+            });
+        let workspace = workspace.downgrade();
+        Some(cx.spawn(|editor, cx| async move {
+            let project_transaction = apply_code_actions.await?;
+            Self::open_project_transaction(&editor, workspace, project_transaction, title, cx).await
+        }))
+    }
 
-    //     async fn open_project_transaction(
-    //         this: &WeakViewHandle<Editor
-    //         workspace: WeakViewHandle<Workspace
-    //         transaction: ProjectTransaction,
-    //         title: String,
-    //         mut cx: AsyncAppContext,
-    //     ) -> Result<()> {
-    //         let replica_id = this.read_with(&cx, |this, cx| this.replica_id(cx))?;
+    async fn open_project_transaction(
+        this: &WeakView<Editor>,
+        workspace: WeakView<Workspace>,
+        transaction: ProjectTransaction,
+        title: String,
+        mut cx: AsyncWindowContext,
+    ) -> Result<()> {
+        let replica_id = this.update(&mut cx, |this, cx| this.replica_id(cx))?;
 
-    //         let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
-    //         entries.sort_unstable_by_key(|(buffer, _)| {
-    //             buffer.read_with(&cx, |buffer, _| buffer.file().map(|f| f.path().clone()))
-    //         });
+        let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
+        cx.update(|_, cx| {
+            entries.sort_unstable_by_key(|(buffer, _)| {
+                buffer.read(cx).file().map(|f| f.path().clone())
+            });
+        })?;
 
-    //         // If the project transaction's edits are all contained within this editor, then
-    //         // avoid opening a new editor to display them.
+        // If the project transaction's edits are all contained within this editor, then
+        // avoid opening a new editor to display them.
 
-    //         if let Some((buffer, transaction)) = entries.first() {
-    //             if entries.len() == 1 {
-    //                 let excerpt = this.read_with(&cx, |editor, cx| {
-    //                     editor
-    //                         .buffer()
-    //                         .read(cx)
-    //                         .excerpt_containing(editor.selections.newest_anchor().head(), cx)
-    //                 })?;
-    //                 if let Some((_, excerpted_buffer, excerpt_range)) = excerpt {
-    //                     if excerpted_buffer == *buffer {
-    //                         let all_edits_within_excerpt = buffer.read_with(&cx, |buffer, _| {
-    //                             let excerpt_range = excerpt_range.to_offset(buffer);
-    //                             buffer
-    //                                 .edited_ranges_for_transaction::<usize>(transaction)
-    //                                 .all(|range| {
-    //                                     excerpt_range.start <= range.start
-    //                                         && excerpt_range.end >= range.end
-    //                                 })
-    //                         });
+        if let Some((buffer, transaction)) = entries.first() {
+            if entries.len() == 1 {
+                let excerpt = this.update(&mut cx, |editor, cx| {
+                    editor
+                        .buffer()
+                        .read(cx)
+                        .excerpt_containing(editor.selections.newest_anchor().head(), cx)
+                })?;
+                if let Some((_, excerpted_buffer, excerpt_range)) = excerpt {
+                    if excerpted_buffer == *buffer {
+                        let all_edits_within_excerpt = buffer.read_with(&cx, |buffer, _| {
+                            let excerpt_range = excerpt_range.to_offset(buffer);
+                            buffer
+                                .edited_ranges_for_transaction::<usize>(transaction)
+                                .all(|range| {
+                                    excerpt_range.start <= range.start
+                                        && excerpt_range.end >= range.end
+                                })
+                        })?;
 
-    //                         if all_edits_within_excerpt {
-    //                             return Ok(());
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         } else {
-    //             return Ok(());
-    //         }
+                        if all_edits_within_excerpt {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        } else {
+            return Ok(());
+        }
 
-    //         let mut ranges_to_highlight = Vec::new();
-    //         let excerpt_buffer = cx.build_model(|cx| {
-    //             let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
-    //             for (buffer_handle, transaction) in &entries {
-    //                 let buffer = buffer_handle.read(cx);
-    //                 ranges_to_highlight.extend(
-    //                     multibuffer.push_excerpts_with_context_lines(
-    //                         buffer_handle.clone(),
-    //                         buffer
-    //                             .edited_ranges_for_transaction::<usize>(transaction)
-    //                             .collect(),
-    //                         1,
-    //                         cx,
-    //                     ),
-    //                 );
-    //             }
-    //             multibuffer.push_transaction(entries.iter().map(|(b, t)| (b, t)), cx);
-    //             multibuffer
-    //         });
+        let mut ranges_to_highlight = Vec::new();
+        let excerpt_buffer = cx.build_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
+            for (buffer_handle, transaction) in &entries {
+                let buffer = buffer_handle.read(cx);
+                ranges_to_highlight.extend(
+                    multibuffer.push_excerpts_with_context_lines(
+                        buffer_handle.clone(),
+                        buffer
+                            .edited_ranges_for_transaction::<usize>(transaction)
+                            .collect(),
+                        1,
+                        cx,
+                    ),
+                );
+            }
+            multibuffer.push_transaction(entries.iter().map(|(b, t)| (b, t)), cx);
+            multibuffer
+        })?;
 
-    //         workspace.update(&mut cx, |workspace, cx| {
-    //             let project = workspace.project().clone();
-    //             let editor =
-    //                 cx.add_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
-    //             workspace.add_item(Box::new(editor.clone()), cx);
-    //             editor.update(cx, |editor, cx| {
-    //                 editor.highlight_background::<Self>(
-    //                     ranges_to_highlight,
-    //                     |theme| theme.editor.highlighted_line_background,
-    //                     cx,
-    //                 );
-    //             });
-    //         })?;
+        workspace.update(&mut cx, |workspace, cx| {
+            let project = workspace.project().clone();
+            let editor =
+                cx.build_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
+            workspace.add_item(Box::new(editor.clone()), cx);
+            editor.update(cx, |editor, cx| {
+                editor.highlight_background::<Self>(
+                    ranges_to_highlight,
+                    |theme| theme.editor_highlighted_line_background,
+                    cx,
+                );
+            });
+        })?;
 
-    //         Ok(())
-    //     }
+        Ok(())
+    }
 
     fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let project = self.project.clone()?;
