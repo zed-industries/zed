@@ -65,11 +65,7 @@ impl CommandPalette {
         let delegate =
             CommandPaletteDelegate::new(cx.view().downgrade(), commands, previous_focus_handle, cx);
 
-        let picker = cx.build_view(|cx| {
-            let picker = Picker::new(delegate, cx);
-            picker.focus(cx);
-            picker
-        });
+        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
         Self { picker }
     }
 }

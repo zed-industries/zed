@@ -126,10 +126,6 @@ impl GoToLine {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        self.active_editor.update(cx, |editor, cx| {
-            editor.focus(cx);
-            cx.notify();
-        });
         cx.emit(ModalEvent::Dismissed);
     }
 

@@ -291,11 +291,3 @@ impl<V: 'static> Component<V> for UniformList<V> {
         AnyElement::new(self)
     }
 }
-
-#[cfg(test)]
-mod test {
-    use crate::{self as gpui, TestAppContext};
-
-    #[gpui::test]
-    fn test_uniform_list(cx: &mut TestAppContext) {}
-}

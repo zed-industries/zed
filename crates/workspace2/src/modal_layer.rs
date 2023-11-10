@@ -55,22 +55,29 @@ impl ModalLayer {
                 let build_view = build_view.clone();
 
                 div.on_action(move |workspace, event: &A, cx| {
-                    let previous_focus = cx.focused();
-                    if let Some(active_modal) = &workspace.modal_layer().active_modal {
-                        if active_modal.modal.clone().downcast::<V>().is_ok() {
-                            workspace.modal_layer().hide_modal(cx);
-                            return;
-                        }
-                    }
-                    let Some(new_modal) = (build_view)(cx) else {
-                        return;
-                    };
-                    workspace
-                        .modal_layer()
-                        .show_modal(previous_focus, new_modal, cx);
+                    workspace.modal_layer().toggle_modal(build_view.clone(), cx)
                 })
             }),
         ));
+    }
+
+    pub fn toggle_modal<V, B>(&mut self, build_view: Arc<B>, cx: &mut ViewContext<Workspace>)
+    where
+        V: Modal,
+        B: Fn(&mut WindowContext) -> Option<View<V>> + 'static,
+    {
+        let previous_focus = cx.focused();
+
+        if let Some(active_modal) = &self.active_modal {
+            if active_modal.modal.clone().downcast::<V>().is_ok() {
+                self.hide_modal(cx);
+                return;
+            }
+        }
+        let Some(new_modal) = (build_view)(cx) else {
+            return;
+        };
+        self.show_modal(previous_focus, new_modal, cx);
     }
 
     pub fn show_modal<V>(
@@ -79,7 +86,7 @@ impl ModalLayer {
         new_modal: View<V>,
         cx: &mut ViewContext<Workspace>,
     ) where
-        V: EventEmitter<ModalEvent> + Render,
+        V: Modal,
     {
         self.active_modal = Some(ActiveModal {
             modal: new_modal.clone().into(),
@@ -93,13 +100,9 @@ impl ModalLayer {
     }
 
     pub fn hide_modal(&mut self, cx: &mut ViewContext<Workspace>) {
-        dbg!("hiding...");
         if let Some(active_modal) = self.active_modal.take() {
-            dbg!("something");
             if let Some(previous_focus) = active_modal.previous_focus_handle {
-                dbg!("oohthing");
                 if active_modal.focus_handle.contains_focused(cx) {
-                    dbg!("aahthing");
                     previous_focus.focus(cx);
                 }
             }
@@ -133,7 +136,10 @@ impl ModalLayer {
                 .h(px(0.0))
                 .relative()
                 .top_20()
-                .track_focus(&open_modal.focus_handle);
+                .track_focus(&open_modal.focus_handle)
+                .on_mouse_down_out(|workspace: &mut Workspace, _, cx| {
+                    workspace.modal_layer().hide_modal(cx);
+                });
 
             parent.child(container1.child(container2.child(open_modal.modal.clone())))
         })
