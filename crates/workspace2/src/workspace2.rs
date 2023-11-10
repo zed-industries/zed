@@ -29,7 +29,7 @@ use client2::{
     Client, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
-use dock::{Dock, DockPosition, PanelButtons};
+use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle as _};
 use futures::{
     channel::{mpsc, oneshot},
     future::try_join_all,
@@ -937,108 +937,15 @@ impl Workspace {
         &self.right_dock
     }
 
-    //     pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>)
-    //     where
-    //         T::Event: std::fmt::Debug,
-    //     {
-    //         self.add_panel_with_extra_event_handler(panel, cx, |_, _, _, _| {})
-    //     }
+    pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) {
+        let dock = match panel.position(cx) {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
+        };
 
-    //     pub fn add_panel_with_extra_event_handler<T: Panel, F>(
-    //         &mut self,
-    //         panel: View<T>,
-    //         cx: &mut ViewContext<Self>,
-    //         handler: F,
-    //     ) where
-    //         T::Event: std::fmt::Debug,
-    //         F: Fn(&mut Self, &View<T>, &T::Event, &mut ViewContext<Self>) + 'static,
-    //     {
-    //         let dock = match panel.position(cx) {
-    //             DockPosition::Left => &self.left_dock,
-    //             DockPosition::Bottom => &self.bottom_dock,
-    //             DockPosition::Right => &self.right_dock,
-    //         };
-
-    //         self.subscriptions.push(cx.subscribe(&panel, {
-    //             let mut dock = dock.clone();
-    //             let mut prev_position = panel.position(cx);
-    //             move |this, panel, event, cx| {
-    //                 if T::should_change_position_on_event(event) {
-    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
-    //                     See: Dock::add_panel
-    //
-    //                     let new_position = panel.read(cx).position(cx);
-    //                     let mut was_visible = false;
-    //                     dock.update(cx, |dock, cx| {
-    //                         prev_position = new_position;
-
-    //                         was_visible = dock.is_open()
-    //                             && dock
-    //                                 .visible_panel()
-    //                                 .map_or(false, |active_panel| active_panel.id() == panel.id());
-    //                         dock.remove_panel(&panel, cx);
-    //                     });
-
-    //                     if panel.is_zoomed(cx) {
-    //                         this.zoomed_position = Some(new_position);
-    //                     }
-
-    //                     dock = match panel.read(cx).position(cx) {
-    //                         DockPosition::Left => &this.left_dock,
-    //                         DockPosition::Bottom => &this.bottom_dock,
-    //                         DockPosition::Right => &this.right_dock,
-    //                     }
-    //                     .clone();
-    //                     dock.update(cx, |dock, cx| {
-    //                         dock.add_panel(panel.clone(), cx);
-    //                         if was_visible {
-    //                             dock.set_open(true, cx);
-    //                             dock.activate_panel(dock.panels_len() - 1, cx);
-    //                         }
-    //                     });
-    //                 } else if T::should_zoom_in_on_event(event) {
-    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
-    //                     See: Dock::add_panel
-    //
-    //                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
-    //                     if !panel.has_focus(cx) {
-    //                         cx.focus(&panel);
-    //                     }
-    //                     this.zoomed = Some(panel.downgrade().into_any());
-    //                     this.zoomed_position = Some(panel.read(cx).position(cx));
-    //                 } else if T::should_zoom_out_on_event(event) {
-    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
-    //                     See: Dock::add_panel
-    //
-    //                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, false, cx));
-    //                     if this.zoomed_position == Some(prev_position) {
-    //                         this.zoomed = None;
-    //                         this.zoomed_position = None;
-    //                     }
-    //                     cx.notify();
-    //                 } else if T::is_focus_event(event) {
-    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
-    //                     See: Dock::add_panel
-    //
-    //                     let position = panel.read(cx).position(cx);
-    //                     this.dismiss_zoomed_items_to_reveal(Some(position), cx);
-    //                     if panel.is_zoomed(cx) {
-    //                         this.zoomed = Some(panel.downgrade().into_any());
-    //                         this.zoomed_position = Some(position);
-    //                     } else {
-    //                         this.zoomed = None;
-    //                         this.zoomed_position = None;
-    //                     }
-    //                     this.update_active_view_for_followers(cx);
-    //                     cx.notify();
-    //                 } else {
-    //                     handler(this, &panel, event, cx)
-    //                 }
-    //             }
-    //         }));
-
-    //         dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
-    //     }
+        dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
+    }
 
     pub fn status_bar(&self) -> &View<StatusBar> {
         &self.status_bar
@@ -1727,42 +1634,42 @@ impl Workspace {
     //         }
     //     }
 
-    //     pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
-    //         let dock = match dock_side {
-    //             DockPosition::Left => &self.left_dock,
-    //             DockPosition::Bottom => &self.bottom_dock,
-    //             DockPosition::Right => &self.right_dock,
-    //         };
-    //         let mut focus_center = false;
-    //         let mut reveal_dock = false;
-    //         dock.update(cx, |dock, cx| {
-    //             let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
-    //             let was_visible = dock.is_open() && !other_is_zoomed;
-    //             dock.set_open(!was_visible, cx);
+    pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
+        let dock = match dock_side {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
+        };
+        let mut focus_center = false;
+        let mut reveal_dock = false;
+        dock.update(cx, |dock, cx| {
+            let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
+            let was_visible = dock.is_open() && !other_is_zoomed;
+            dock.set_open(!was_visible, cx);
 
-    //             if let Some(active_panel) = dock.active_panel() {
-    //                 if was_visible {
-    //                     if active_panel.has_focus(cx) {
-    //                         focus_center = true;
-    //                     }
-    //                 } else {
-    //                     cx.focus(active_panel.as_any());
-    //                     reveal_dock = true;
-    //                 }
-    //             }
-    //         });
+            if let Some(active_panel) = dock.active_panel() {
+                if was_visible {
+                    if active_panel.has_focus(cx) {
+                        focus_center = true;
+                    }
+                } else {
+                    // cx.focus(active_panel.as_any());
+                    reveal_dock = true;
+                }
+            }
+        });
 
-    //         if reveal_dock {
-    //             self.dismiss_zoomed_items_to_reveal(Some(dock_side), cx);
-    //         }
+        if reveal_dock {
+            self.dismiss_zoomed_items_to_reveal(Some(dock_side), cx);
+        }
 
-    //         if focus_center {
-    //             cx.focus_self();
-    //         }
+        if focus_center {
+            cx.focus(&self.focus_handle);
+        }
 
-    //         cx.notify();
-    //         self.serialize_workspace(cx);
-    //     }
+        cx.notify();
+        self.serialize_workspace(cx);
+    }
 
     pub fn close_all_docks(&mut self, cx: &mut ViewContext<Self>) {
         let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];

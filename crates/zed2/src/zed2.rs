@@ -15,9 +15,10 @@ pub use only_instance::*;
 pub use open_listener::*;
 
 use anyhow::Result;
+use project_panel::ProjectPanel;
 use std::sync::Arc;
 use uuid::Uuid;
-use workspace::{AppState, Workspace};
+use workspace::{dock::PanelHandle as _, AppState, Workspace};
 
 pub fn build_window_options(
     bounds: Option<WindowBounds>,
@@ -138,49 +139,38 @@ pub fn initialize_workspace(
             //         }
             //         false
             //     });
-            // })?;
+        })?;
 
-            // let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
-            // let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
-            // let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
-            // let channels_panel =
-            //     collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
-            // let chat_panel =
-            //     collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
-            // let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
-            //     workspace_handle.clone(),
-            //     cx.clone(),
-            // );
-            // let (
-            //     project_panel,
+        let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
+        // let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
+        // let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
+        // let channels_panel =
+        //     collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
+        // let chat_panel =
+        //     collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
+        // let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
+        //     workspace_handle.clone(),
+        //     cx.clone(),
+        // );
+        let (
+            project_panel,
             //     terminal_panel,
             //     assistant_panel,
             //     channels_panel,
             //     chat_panel,
             //     notification_panel,
-            // ) = futures::try_join!(
-            //     project_panel,
+        ) = futures::try_join!(
+            project_panel,
             //     terminal_panel,
             //     assistant_panel,
             //     channels_panel,
             //     chat_panel,
             //     notification_panel,
-            // )?;
-            // workspace_handle.update(&mut cx, |workspace, cx| {
-            //     let project_panel_position = project_panel.position(cx);
-            //     workspace.add_panel_with_extra_event_handler(
-            //         project_panel,
-            //         cx,
-            //         |workspace, _, event, cx| match event {
-            //             project_panel::Event::NewSearchInDirectory { dir_entry } => {
-            //                 search::ProjectSearchView::new_search_in_directory(workspace, dir_entry, cx)
-            //             }
-            //             project_panel::Event::ActivatePanel => {
-            //                 workspace.focus_panel::<ProjectPanel>(cx);
-            //             }
-            //             _ => {}
-            //         },
-            //     );
+        )?;
+
+        workspace_handle.update(&mut cx, |workspace, cx| {
+            let project_panel_position = project_panel.position(cx);
+            workspace.add_panel(project_panel, cx);
             //     workspace.add_panel(terminal_panel, cx);
             //     workspace.add_panel(assistant_panel, cx);
             //     workspace.add_panel(channels_panel, cx);
@@ -198,9 +188,9 @@ pub fn initialize_workspace(
             //                     .map_or(false, |entry| entry.is_dir())
             //             })
             //     {
-            //         workspace.toggle_dock(project_panel_position, cx);
+            workspace.toggle_dock(project_panel_position, cx);
             //     }
-            //     cx.focus_self();
+            // cx.focus_self();
         })?;
         Ok(())
     })
