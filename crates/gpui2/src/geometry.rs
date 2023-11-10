@@ -9,7 +9,7 @@ use std::{
 };
 
 #[derive(Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash)]
-#[refineable(debug)]
+#[refineable(Debug)]
 #[repr(C)]
 pub struct Point<T: Default + Clone + Debug> {
     pub x: T,
@@ -140,7 +140,7 @@ impl<T: Clone + Default + Debug> Clone for Point<T> {
 }
 
 #[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash, Serialize, Deserialize)]
-#[refineable(debug)]
+#[refineable(Debug)]
 #[repr(C)]
 pub struct Size<T: Clone + Default + Debug> {
     pub width: T,
@@ -313,7 +313,7 @@ impl Size<Length> {
 }
 
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(debug)]
+#[refineable(Debug)]
 #[repr(C)]
 pub struct Bounds<T: Clone + Default + Debug> {
     pub origin: Point<T>,
@@ -477,7 +477,7 @@ impl Bounds<Pixels> {
 impl<T: Clone + Debug + Copy + Default> Copy for Bounds<T> {}
 
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(debug)]
+#[refineable(Debug)]
 #[repr(C)]
 pub struct Edges<T: Clone + Default + Debug> {
     pub top: T,
@@ -619,7 +619,7 @@ impl Edges<Pixels> {
 }
 
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(debug)]
+#[refineable(Debug)]
 #[repr(C)]
 pub struct Corners<T: Clone + Default + Debug> {
     pub top_left: T,

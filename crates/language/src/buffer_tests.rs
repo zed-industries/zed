@@ -1692,14 +1692,25 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
             r#"
                 (jsx_element) @element
                 (string) @string
+                [
+                    (jsx_opening_element)
+                    (jsx_closing_element)
+                    (jsx_expression)
+                ] @default
             "#,
         )
         .unwrap();
 
-        let text = r#"a["b"] = <C d="e"></C>;"#;
+        let text = r#"
+            a["b"] = <C d="e">
+                <F></F>
+                { g() }
+            </C>;
+        "#
+        .unindent();
 
         let buffer =
-            Buffer::new(0, cx.model_id() as u64, text).with_language(Arc::new(language), cx);
+            Buffer::new(0, cx.model_id() as u64, &text).with_language(Arc::new(language), cx);
         let snapshot = buffer.snapshot();
 
         let config = snapshot.language_scope_at(0).unwrap();
@@ -1710,7 +1721,9 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
             &[true, true]
         );
 
-        let string_config = snapshot.language_scope_at(3).unwrap();
+        let string_config = snapshot
+            .language_scope_at(text.find("b\"").unwrap())
+            .unwrap();
         assert_eq!(string_config.line_comment_prefix().unwrap().as_ref(), "// ");
         // Second bracket pair is disabled
         assert_eq!(
@@ -1718,15 +1731,46 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
             &[true, false]
         );
 
-        let element_config = snapshot.language_scope_at(10).unwrap();
+        // In between JSX tags: use the `element` override.
+        let element_config = snapshot
+            .language_scope_at(text.find("<F>").unwrap())
+            .unwrap();
         assert_eq!(element_config.line_comment_prefix(), None);
         assert_eq!(
             element_config.block_comment_delimiters(),
             Some((&"{/*".into(), &"*/}".into()))
         );
-        // Both bracket pairs are enabled
         assert_eq!(
             element_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, true]
+        );
+
+        // Within a JSX tag: use the default config.
+        let tag_config = snapshot
+            .language_scope_at(text.find(" d=").unwrap() + 1)
+            .unwrap();
+        assert_eq!(tag_config.line_comment_prefix().unwrap().as_ref(), "// ");
+        assert_eq!(
+            tag_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, true]
+        );
+
+        // In a JSX expression: use the default config.
+        let expression_in_element_config = snapshot
+            .language_scope_at(text.find("{").unwrap() + 1)
+            .unwrap();
+        assert_eq!(
+            expression_in_element_config
+                .line_comment_prefix()
+                .unwrap()
+                .as_ref(),
+            "// "
+        );
+        assert_eq!(
+            expression_in_element_config
+                .brackets()
+                .map(|e| e.1)
+                .collect::<Vec<_>>(),
             &[true, true]
         );
 

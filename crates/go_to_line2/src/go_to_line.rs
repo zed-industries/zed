@@ -39,12 +39,6 @@ pub struct GoToLine {
     _subscriptions: Vec<Subscription>,
 }
 
-pub enum Event {
-    Dismissed,
-}
-
-impl EventEmitter<Event> for GoToLine {}
-
 impl EventEmitter<ModalEvent> for GoToLine {}
 impl Modal for GoToLine {
     fn focus(&self, cx: &mut WindowContext) {
@@ -81,7 +75,6 @@ impl GoToLine {
     fn release(&mut self, cx: &mut WindowContext) {
         let scroll_position = self.prev_scroll_position.take();
         self.active_editor.update(cx, |editor, cx| {
-            editor.focus(cx);
             editor.highlight_rows(None);
             if let Some(scroll_position) = scroll_position {
                 editor.set_scroll_position(scroll_position, cx);
@@ -98,7 +91,7 @@ impl GoToLine {
     ) {
         match event {
             // todo!() this isn't working...
-            editor::Event::Blurred => cx.emit(Event::Dismissed),
+            editor::Event::Blurred => cx.emit(ModalEvent::Dismissed),
             editor::Event::BufferEdited { .. } => self.highlight_current_line(cx),
             _ => {}
         }
@@ -133,22 +126,28 @@ impl GoToLine {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Dismissed);
+        self.active_editor.update(cx, |editor, cx| {
+            editor.focus(cx);
+            cx.notify();
+        });
+        cx.emit(ModalEvent::Dismissed);
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         if let Some(point) = self.point_from_query(cx) {
-            self.active_editor.update(cx, |active_editor, cx| {
-                let snapshot = active_editor.snapshot(cx).display_snapshot;
+            self.active_editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx).display_snapshot;
                 let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-                active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::center()), cx, |s| {
                     s.select_ranges([point..point])
                 });
+                editor.focus(cx);
+                cx.notify();
             });
             self.prev_scroll_position.take();
         }
 
-        cx.emit(Event::Dismissed);
+        cx.emit(ModalEvent::Dismissed);
     }
 }
 

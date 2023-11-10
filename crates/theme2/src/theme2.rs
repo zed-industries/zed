@@ -6,6 +6,7 @@ mod registry;
 mod scale;
 mod settings;
 mod syntax;
+#[cfg(not(feature = "importing-themes"))]
 mod themes;
 mod user_theme;
 
@@ -20,6 +21,7 @@ pub use registry::*;
 pub use scale::*;
 pub use settings::*;
 pub use syntax::*;
+#[cfg(not(feature = "importing-themes"))]
 pub use themes::*;
 pub use user_theme::*;
 

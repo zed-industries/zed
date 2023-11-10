@@ -1,61 +1,61 @@
 {
-    "name": "Notctis",
-    "author": "Liviu Schera (liviuschera)",
-    "themes": [
-        {
-            "name": "Noctis Azureus",
-            "file_name": "azureus.json",
-            "appearance": "dark"
-        },
-        {
-            "name": "Noctis Bordo",
-            "file_name": "bordo.json",
-            "appearance": "dark"
-        },
-        {
-            "name": "Noctus Hibernus",
-            "file_name": "hibernus.json",
-            "appearance": "light"
-        },
-        {
-            "name": "Noctis Lilac",
-            "file_name": "lilac.json",
-            "appearance": "dark"
-        },
-        {
-            "name": "Noctis Lux",
-            "file_name": "lux.json",
-            "appearance": "light"
-        },
-        {
-            "name": "Noctis Minimus",
-            "file_name": "minimus.json",
-            "appearance": "dark"
-        },
-        {
-            "name": "Noctis",
-            "file_name": "noctis.json",
-            "appearance": "dark"
-        },
-        {
-            "name": "Noctis Obscuro",
-            "file_name": "obscuro.json",
-            "appearance": "dark"
-        },
-        {
-            "name": "Noctis Sereno",
-            "file_name": "obscuro.json",
-            "appearance": "dark"
-        },
-        {
-            "name": "Noctis Uva",
-            "file_name": "uva.json",
-            "appearance": "dark"
-        },
-        {
-            "name": "Noctis Viola",
-            "file_name": "viola.json",
-            "appearance": "dark"
-        }
-    ]
+  "name": "Noctis",
+  "author": "Liviu Schera (liviuschera)",
+  "themes": [
+    {
+      "name": "Noctis Azureus",
+      "file_name": "azureus.json",
+      "appearance": "dark"
+    },
+    {
+      "name": "Noctis Bordo",
+      "file_name": "bordo.json",
+      "appearance": "dark"
+    },
+    {
+      "name": "Noctus Hibernus",
+      "file_name": "hibernus.json",
+      "appearance": "light"
+    },
+    {
+      "name": "Noctis Lilac",
+      "file_name": "lilac.json",
+      "appearance": "dark"
+    },
+    {
+      "name": "Noctis Lux",
+      "file_name": "lux.json",
+      "appearance": "light"
+    },
+    {
+      "name": "Noctis Minimus",
+      "file_name": "minimus.json",
+      "appearance": "dark"
+    },
+    {
+      "name": "Noctis",
+      "file_name": "noctis.json",
+      "appearance": "dark"
+    },
+    {
+      "name": "Noctis Obscuro",
+      "file_name": "obscuro.json",
+      "appearance": "dark"
+    },
+    {
+      "name": "Noctis Sereno",
+      "file_name": "obscuro.json",
+      "appearance": "dark"
+    },
+    {
+      "name": "Noctis Uva",
+      "file_name": "uva.json",
+      "appearance": "dark"
+    },
+    {
+      "name": "Noctis Viola",
+      "file_name": "viola.json",
+      "appearance": "dark"
+    }
+  ]
 }
