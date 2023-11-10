@@ -158,7 +158,6 @@ impl<V: 'static> Element<V> for UniformList<V> {
         cx: &mut ViewContext<V>,
     ) {
         let style = self.computed_style();
-        style.paint(bounds, cx);
 
         let border = style.border_widths.to_pixels(cx.rem_size());
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
@@ -170,6 +169,8 @@ impl<V: 'static> Element<V> for UniformList<V> {
         );
 
         cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
+            style.paint(bounds, cx);
+
             let content_size;
             if self.item_count > 0 {
                 let item_height = self
