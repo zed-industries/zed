@@ -146,6 +146,11 @@ impl FocusHandle {
         }
     }
 
+    /// Moves the focus to the element associated with this handle.
+    pub fn focus(&self, cx: &mut WindowContext) {
+        cx.focus(self)
+    }
+
     /// Obtains whether the element associated with this handle is currently focused.
     pub fn is_focused(&self, cx: &WindowContext) -> bool {
         self.id.is_focused(cx)

@@ -1,14 +1,21 @@
 use crate::Workspace;
 use gpui::{
-    div, px, AnyView, Component, Div, EventEmitter, ParentElement, Render, StatefulInteractivity,
-    StatelessInteractive, Styled, Subscription, View, ViewContext,
+    div, px, AnyView, Component, Div, EventEmitter, FocusHandle, ParentElement, Render,
+    StatefulInteractivity, StatelessInteractive, Styled, Subscription, View, ViewContext,
+    WindowContext,
 };
 use std::{any::TypeId, sync::Arc};
 use ui::v_stack;
 
+pub struct ActiveModal {
+    modal: AnyView,
+    subscription: Subscription,
+    previous_focus_handle: Option<FocusHandle>,
+    focus_handle: FocusHandle,
+}
+
 pub struct ModalLayer {
-    open_modal: Option<AnyView>,
-    subscription: Option<Subscription>,
+    active_modal: Option<ActiveModal>,
     registered_modals: Vec<(
         TypeId,
         Box<
@@ -19,6 +26,10 @@ pub struct ModalLayer {
     )>,
 }
 
+pub trait Modal: Render + EventEmitter<ModalEvent> {
+    fn focus(&self, cx: &mut WindowContext);
+}
+
 pub enum ModalEvent {
     Dismissed,
 }
@@ -26,16 +37,15 @@ pub enum ModalEvent {
 impl ModalLayer {
     pub fn new() -> Self {
         Self {
-            open_modal: None,
-            subscription: None,
+            active_modal: None,
             registered_modals: Vec::new(),
         }
     }
 
     pub fn register_modal<A: 'static, V, B>(&mut self, action: A, build_view: B)
     where
-        V: EventEmitter<ModalEvent> + Render,
-        B: Fn(&mut Workspace, &mut ViewContext<Workspace>) -> Option<View<V>> + 'static,
+        V: Modal,
+        B: Fn(&mut WindowContext) -> Option<View<V>> + 'static,
     {
         let build_view = Arc::new(build_view);
 
@@ -45,29 +55,56 @@ impl ModalLayer {
                 let build_view = build_view.clone();
 
                 div.on_action(move |workspace, event: &A, cx| {
-                    let Some(new_modal) = (build_view)(workspace, cx) else {
+                    let previous_focus = cx.focused();
+                    if let Some(active_modal) = &workspace.modal_layer().active_modal {
+                        if active_modal.modal.clone().downcast::<V>().is_ok() {
+                            workspace.modal_layer().hide_modal(cx);
+                            return;
+                        }
+                    }
+                    let Some(new_modal) = (build_view)(cx) else {
                         return;
                     };
-                    workspace.modal_layer().show_modal(new_modal, cx);
+                    workspace
+                        .modal_layer()
+                        .show_modal(previous_focus, new_modal, cx);
                 })
             }),
         ));
     }
 
-    pub fn show_modal<V>(&mut self, new_modal: View<V>, cx: &mut ViewContext<Workspace>)
-    where
+    pub fn show_modal<V>(
+        &mut self,
+        previous_focus: Option<FocusHandle>,
+        new_modal: View<V>,
+        cx: &mut ViewContext<Workspace>,
+    ) where
         V: EventEmitter<ModalEvent> + Render,
     {
-        self.subscription = Some(cx.subscribe(&new_modal, |this, modal, e, cx| match e {
-            ModalEvent::Dismissed => this.modal_layer().hide_modal(cx),
-        }));
-        self.open_modal = Some(new_modal.into());
+        self.active_modal = Some(ActiveModal {
+            modal: new_modal.clone().into(),
+            subscription: cx.subscribe(&new_modal, |this, modal, e, cx| match e {
+                ModalEvent::Dismissed => this.modal_layer().hide_modal(cx),
+            }),
+            previous_focus_handle: previous_focus,
+            focus_handle: cx.focus_handle(),
+        });
         cx.notify();
     }
 
     pub fn hide_modal(&mut self, cx: &mut ViewContext<Workspace>) {
-        self.open_modal.take();
-        self.subscription.take();
+        dbg!("hiding...");
+        if let Some(active_modal) = self.active_modal.take() {
+            dbg!("something");
+            if let Some(previous_focus) = active_modal.previous_focus_handle {
+                dbg!("oohthing");
+                if active_modal.focus_handle.contains_focused(cx) {
+                    dbg!("aahthing");
+                    previous_focus.focus(cx);
+                }
+            }
+        }
+
         cx.notify();
     }
 
@@ -81,7 +118,7 @@ impl ModalLayer {
             parent = (action)(parent);
         }
 
-        parent.when_some(self.open_modal.as_ref(), |parent, open_modal| {
+        parent.when_some(self.active_modal.as_ref(), |parent, open_modal| {
             let container1 = div()
                 .absolute()
                 .flex()
@@ -92,10 +129,13 @@ impl ModalLayer {
                 .left_0()
                 .z_index(400);
 
-            // transparent layer
-            let container2 = v_stack().h(px(0.0)).relative().top_20();
+            let container2 = v_stack()
+                .h(px(0.0))
+                .relative()
+                .top_20()
+                .track_focus(&open_modal.focus_handle);
 
-            parent.child(container1.child(container2.child(open_modal.clone())))
+            parent.child(container1.child(container2.child(open_modal.modal.clone())))
         })
     }
 }

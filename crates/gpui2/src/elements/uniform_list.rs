@@ -9,6 +9,9 @@ use smallvec::SmallVec;
 use std::{cmp, ops::Range, sync::Arc};
 use taffy::style::Overflow;
 
+/// uniform_list provides lazy rendering for a set of items that are of uniform height.
+/// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
+/// uniform_list will only render the visibile subset of items.
 pub fn uniform_list<Id, V, C>(
     id: Id,
     item_count: usize,
@@ -20,9 +23,12 @@ where
     C: Component<V>,
 {
     let id = id.into();
+    let mut style = StyleRefinement::default();
+    style.overflow.y = Some(Overflow::Hidden);
+
     UniformList {
         id: id.clone(),
-        style: Default::default(),
+        style,
         item_count,
         render_items: Box::new(move |view, visible_range, cx| {
             f(view, visible_range, cx)
@@ -123,6 +129,7 @@ impl<V: 'static> Element<V> for UniformList<V> {
         let max_items = self.item_count;
         let item_size = element_state.item_size;
         let rem_size = cx.rem_size();
+
         cx.request_measured_layout(
             self.computed_style(),
             rem_size,
@@ -132,15 +139,12 @@ impl<V: 'static> Element<V> for UniformList<V> {
                     .width
                     .unwrap_or(match available_space.width {
                         AvailableSpace::Definite(x) => x,
-                        AvailableSpace::MinContent => item_size.width,
-                        AvailableSpace::MaxContent => item_size.width,
+                        AvailableSpace::MinContent | AvailableSpace::MaxContent => item_size.width,
                     });
                 let height = match available_space.height {
                     AvailableSpace::Definite(x) => desired_height.min(x),
-                    AvailableSpace::MinContent => desired_height,
-                    AvailableSpace::MaxContent => desired_height,
+                    AvailableSpace::MinContent | AvailableSpace::MaxContent => desired_height,
                 };
-                dbg!(known_dimensions, available_space, size(width, height));
                 size(width, height)
             },
         )
@@ -171,7 +175,6 @@ impl<V: 'static> Element<V> for UniformList<V> {
                 let item_height = self
                     .measure_first_item(view_state, Some(padded_bounds.size.width), cx)
                     .height;
-                dbg!(item_height, padded_bounds);
                 if let Some(scroll_handle) = self.scroll_handle.clone() {
                     scroll_handle.0.lock().replace(ScrollHandleState {
                         item_height,
@@ -184,7 +187,6 @@ impl<V: 'static> Element<V> for UniformList<V> {
                 } else {
                     0
                 };
-                dbg!(visible_item_count);
                 let scroll_offset = element_state
                     .interactive
                     .scroll_offset()
@@ -288,4 +290,12 @@ impl<V: 'static> Component<V> for UniformList<V> {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{self as gpui, TestAppContext};
+
+    #[gpui::test]
+    fn test_uniform_list(cx: &mut TestAppContext) {}
 }

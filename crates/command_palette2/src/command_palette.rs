@@ -4,7 +4,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, div, Action, AnyElement, AnyWindowHandle, AppContext, BorrowWindow, Component, Div,
     Element, EventEmitter, FocusHandle, Keystroke, ParentElement, Render, StatelessInteractive,
-    Styled, View, ViewContext, VisualContext, WeakView,
+    Styled, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
 use std::cmp::{self, Reverse};
@@ -14,7 +14,7 @@ use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
 };
-use workspace::{ModalEvent, Workspace};
+use workspace::{Modal, ModalEvent, Workspace};
 use zed_actions::OpenZedURL;
 
 actions!(Toggle);
@@ -24,7 +24,7 @@ pub fn init(cx: &mut AppContext) {
 
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
-            workspace.modal_layer().register_modal(Toggle, |_, cx| {
+            workspace.modal_layer().register_modal(Toggle, |cx| {
                 let Some(previous_focus_handle) = cx.focused() else {
                     return None;
                 };
@@ -73,7 +73,13 @@ impl CommandPalette {
         Self { picker }
     }
 }
+
 impl EventEmitter<ModalEvent> for CommandPalette {}
+impl Modal for CommandPalette {
+    fn focus(&self, cx: &mut WindowContext) {
+        self.picker.update(cx, |picker, cx| picker.focus(cx));
+    }
+}
 
 impl Render for CommandPalette {
     type Element = Div<Self>;
@@ -147,7 +153,6 @@ impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = Div<Picker<Self>>;
 
     fn match_count(&self) -> usize {
-        dbg!(self.matches.len());
         self.matches.len()
     }
 
@@ -254,7 +259,6 @@ impl PickerDelegate for CommandPaletteDelegate {
             picker
                 .update(&mut cx, |picker, _| {
                     let delegate = &mut picker.delegate;
-                    dbg!(&matches);
                     delegate.commands = commands;
                     delegate.matches = matches;
                     if delegate.matches.is_empty() {
@@ -269,6 +273,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+        cx.focus(&self.previous_focus_handle);
         self.command_palette
             .update(cx, |_, cx| cx.emit(ModalEvent::Dismissed))
             .log_err();

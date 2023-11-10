@@ -8,22 +8,24 @@ use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::{h_stack, modal, v_stack, Label, LabelColor};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{ModalEvent, Workspace};
+use workspace::{Modal, ModalEvent, Workspace};
 
 actions!(Toggle);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
-        |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
-            workspace
-                .modal_layer()
-                .register_modal(Toggle, |workspace, cx| {
-                    let editor = workspace
-                        .active_item(cx)
-                        .and_then(|active_item| active_item.downcast::<Editor>())?;
+        |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
+            let handle = cx.view().downgrade();
 
-                    Some(cx.build_view(|cx| GoToLine::new(editor, cx)))
-                });
+            workspace.modal_layer().register_modal(Toggle, move |cx| {
+                let workspace = handle.upgrade()?;
+                let editor = workspace
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|active_item| active_item.downcast::<Editor>())?;
+
+                Some(cx.build_view(|cx| GoToLine::new(editor, cx)))
+            });
         },
     )
     .detach();
@@ -44,14 +46,15 @@ pub enum Event {
 impl EventEmitter<Event> for GoToLine {}
 
 impl EventEmitter<ModalEvent> for GoToLine {}
+impl Modal for GoToLine {
+    fn focus(&self, cx: &mut WindowContext) {
+        self.line_editor.update(cx, |editor, cx| editor.focus(cx))
+    }
+}
 
 impl GoToLine {
     pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
-        let line_editor = cx.build_view(|cx| {
-            let editor = Editor::single_line(cx);
-            editor.focus(cx);
-            editor
-        });
+        let line_editor = cx.build_view(|cx| Editor::single_line(cx));
         let line_editor_change = cx.subscribe(&line_editor, Self::on_line_editor_event);
 
         let editor = active_editor.read(cx);
