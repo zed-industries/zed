@@ -209,7 +209,7 @@
   "ensure_final_newline_on_save": true,
   // Whether or not to perform a buffer format before saving
   "format_on_save": "on",
-  // How to perform a buffer format. This setting can take two values:
+  // How to perform a buffer format. This setting can take 4 values:
   //
   // 1. Format code using the current language server:
   //     "formatter": "language_server"
