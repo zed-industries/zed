@@ -387,26 +387,6 @@ actions!(
     UnfoldLines,
 );
 
-// impl_actions!(
-//     editor,
-//     [
-//         SelectNext,
-//         SelectPrevious,
-//         SelectAllMatches,
-//         SelectToBeginningOfLine,
-//         SelectToEndOfLine,
-//         ToggleCodeActions,
-//         MovePageUp,
-//         MovePageDown,
-//         ConfirmCompletion,
-//         ConfirmCodeAction,
-//         ToggleComments,
-//         FoldAt,
-//         UnfoldAt,
-//         GutterHover
-//     ]
-// );
-
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
