@@ -11,6 +11,7 @@ use std::str::FromStr;
 use anyhow::{anyhow, Context, Result};
 use convert_case::{Case, Casing};
 use gpui::serde_json;
+use json_comments::StripComments;
 use log::LevelFilter;
 use serde::Deserialize;
 use simplelog::SimpleLogger;
@@ -111,7 +112,8 @@ fn main() -> Result<()> {
                 }
             };
 
-            let vscode_theme: VsCodeTheme = serde_json::from_reader(theme_file)
+            let theme_without_comments = StripComments::new(theme_file);
+            let vscode_theme: VsCodeTheme = serde_json::from_reader(theme_without_comments)
                 .context(format!("failed to parse theme {theme_file_path:?}"))?;
 
             let converter = VsCodeThemeConverter::new(vscode_theme, theme_metadata);
