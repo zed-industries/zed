@@ -36,8 +36,9 @@ impl ModalLayer {
         let previous_focus = cx.focused();
 
         if let Some(active_modal) = &self.active_modal {
-            if active_modal.modal.clone().downcast::<V>().is_ok() {
-                self.hide_modal(cx);
+            let is_close = active_modal.modal.clone().downcast::<V>().is_ok();
+            self.hide_modal(cx);
+            if is_close {
                 return;
             }
         }

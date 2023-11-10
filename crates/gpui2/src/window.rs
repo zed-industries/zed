@@ -407,6 +407,10 @@ impl<'a> WindowContext<'a> {
 
     /// Move focus to the element associated with the given `FocusHandle`.
     pub fn focus(&mut self, handle: &FocusHandle) {
+        if self.window.focus == Some(handle.id) {
+            return;
+        }
+
         if self.window.last_blur.is_none() {
             self.window.last_blur = Some(self.window.focus);
         }

@@ -268,7 +268,6 @@ impl PickerDelegate for CommandPaletteDelegate {
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
-        cx.focus(&self.previous_focus_handle);
         self.command_palette
             .update(cx, |_, cx| cx.emit(ModalEvent::Dismissed))
             .log_err();
