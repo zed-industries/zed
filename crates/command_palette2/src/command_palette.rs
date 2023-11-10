@@ -8,7 +8,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use std::cmp::{self, Reverse};
 use theme::ActiveTheme;
-use ui::{modal, Label};
+use ui::{modal, v_stack, Label};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
@@ -76,8 +76,8 @@ impl Modal for CommandPalette {
 impl Render for CommandPalette {
     type Element = Div<Self>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        modal(cx).w_96().child(self.picker.clone())
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+        v_stack().w_96().child(self.picker.clone())
     }
 }
 
