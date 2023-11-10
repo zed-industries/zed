@@ -550,7 +550,7 @@ pub struct Workspace {
     last_active_center_pane: Option<WeakView<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
     status_bar: View<StatusBar>,
-    modal_layer: ModalLayer,
+    modal_layer: View<ModalLayer>,
     //     titlebar_item: Option<AnyViewHandle>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
@@ -702,7 +702,7 @@ impl Workspace {
         });
 
         let workspace_handle = cx.view().downgrade();
-        let modal_layer = ModalLayer::new();
+        let modal_layer = cx.build_view(|cx| ModalLayer::new());
 
         // todo!()
         // cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
@@ -3526,7 +3526,8 @@ impl Workspace {
     where
         B: FnOnce(&mut ViewContext<V>) -> V,
     {
-        self.modal_layer.toggle_modal(cx, build)
+        self.modal_layer
+            .update(cx, |modal_layer, cx| modal_layer.toggle_modal(cx, build))
     }
 }
 
@@ -3768,7 +3769,7 @@ impl Render for Workspace {
                         .border_t()
                         .border_b()
                         .border_color(cx.theme().colors().border)
-                        .child(self.modal_layer.wrapper_element(cx))
+                        .child(self.modal_layer.clone())
                         // .children(
                         //     Some(
                         //         Panel::new("project-panel-outer", cx)
