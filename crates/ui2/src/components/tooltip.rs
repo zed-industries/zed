@@ -1,6 +1,8 @@
 use gpui::{div, Div, ParentElement, Render, SharedString, Styled, ViewContext};
 use theme2::ActiveTheme;
 
+use crate::StyledExt;
+
 #[derive(Clone, Debug)]
 pub struct TextTooltip {
     title: SharedString,
@@ -16,16 +18,13 @@ impl Render for TextTooltip {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let theme = cx.theme();
         div()
-            .bg(theme.colors().background)
-            .rounded_lg()
-            .border()
+            .elevation_2(cx)
             .font("Zed Sans")
-            .border_color(theme.colors().border)
-            .text_color(theme.colors().text)
-            .pl_2()
-            .pr_2()
+            .text_ui()
+            .text_color(cx.theme().colors().text)
+            .py_1()
+            .px_2()
             .child(self.title.clone())
     }
 }
