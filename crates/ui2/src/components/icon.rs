@@ -97,6 +97,8 @@ pub enum Icon {
     BellRing,
     MailOpen,
     AtSign,
+    WholeWord,
+    CaseSensitive,
 }
 
 impl Icon {
@@ -155,6 +157,8 @@ impl Icon {
             Icon::BellRing => "icons/bell-ring.svg",
             Icon::MailOpen => "icons/mail-open.svg",
             Icon::AtSign => "icons/at-sign.svg",
+            Icon::WholeWord => "icons/word_search.svg",
+            Icon::CaseSensitive => "icons/case_insensitive.svg",
         }
     }
 }

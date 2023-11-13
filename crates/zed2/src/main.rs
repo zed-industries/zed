@@ -194,7 +194,7 @@ fn main() {
         // project_panel::init(Assets, cx);
         // channel::init(&client, user_store.clone(), cx);
         // diagnostics::init(cx);
-        // search::init(cx);
+        search::init(cx);
         // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         // vim::init(cx);
         // terminal_view::init(cx);

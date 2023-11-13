@@ -37,7 +37,7 @@ db = { package = "db2", path = "../db2" }
 editor = { package="editor2", path = "../editor2" }
 # feedback = { path = "../feedback" }
 # file_finder = { path = "../file_finder" }
-# search = { path = "../search" }
+search = { package = "search2", path = "../search2" }
 fs = { package = "fs2", path = "../fs2" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }

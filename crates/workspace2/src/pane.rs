@@ -1909,7 +1909,7 @@ impl Render for Pane {
         v_stack()
             .size_full()
             .child(self.render_tab_bar(cx))
-            .child(div() /* todo!(toolbar) */)
+            .child(self.toolbar.clone())
             .child(if let Some(item) = self.active_item() {
                 div().flex_1().child(item.to_any())
             } else {

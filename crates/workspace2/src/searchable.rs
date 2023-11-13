@@ -1,7 +1,8 @@
 use std::{any::Any, sync::Arc};
 
 use gpui::{
-    AnyView, AppContext, EventEmitter, Subscription, Task, View, ViewContext, WindowContext,
+    AnyView, AppContext, EventEmitter, Subscription, Task, View, ViewContext, WeakView,
+    WindowContext,
 };
 use project2::search::SearchQuery;
 
@@ -129,8 +130,7 @@ pub trait SearchableItemHandle: ItemHandle {
 // todo!("here is where we need to use AnyWeakView");
 impl<T: SearchableItem> SearchableItemHandle for View<T> {
     fn downgrade(&self) -> Box<dyn WeakSearchableItemHandle> {
-        // Box::new(self.downgrade())
-        todo!()
+        Box::new(self.downgrade())
     }
 
     fn boxed_clone(&self) -> Box<dyn SearchableItemHandle> {
@@ -252,16 +252,15 @@ pub trait WeakSearchableItemHandle: WeakItemHandle {
     // fn into_any(self) -> AnyWeakView;
 }
 
-// todo!()
-// impl<T: SearchableItem> WeakSearchableItemHandle for WeakView<T> {
-//     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
-//         Some(Box::new(self.upgrade(cx)?))
-//     }
+impl<T: SearchableItem> WeakSearchableItemHandle for WeakView<T> {
+    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.upgrade()?))
+    }
 
-//     // fn into_any(self) -> AnyView {
-//     //     self.into_any()
-//     // }
-// }
+    // fn into_any(self) -> AnyView {
+    //     self.into_any()
+    // }
+}
 
 impl PartialEq for Box<dyn WeakSearchableItemHandle> {
     fn eq(&self, other: &Self) -> bool {

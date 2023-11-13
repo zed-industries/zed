@@ -68,7 +68,7 @@ use std::{
     time::Duration,
 };
 use theme2::ActiveTheme;
-pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
+pub use toolbar::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 use ui::{h_stack, Label};
 use util::ResultExt;
 use uuid::Uuid;

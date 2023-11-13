@@ -86,6 +86,7 @@ members = [
     "crates/rpc",
     "crates/rpc2",
     "crates/search",
+    "crates/search2",
     "crates/settings",
     "crates/settings2",
     "crates/snippet",
