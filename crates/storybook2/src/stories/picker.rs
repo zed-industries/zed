@@ -44,6 +44,10 @@ impl PickerDelegate for Delegate {
         self.candidates.len()
     }
 
+    fn placeholder_text(&self) -> Arc<str> {
+        "Test".into()
+    }
+
     fn render_match(
         &self,
         ix: usize,
