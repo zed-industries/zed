@@ -1,15 +1,8 @@
-use crate::{PlayerColors, SyntaxTheme};
 use gpui::Hsla;
 use refineable::Refineable;
 use std::sync::Arc;
 
-#[derive(Clone)]
-pub struct SystemColors {
-    pub transparent: Hsla,
-    pub mac_os_traffic_light_red: Hsla,
-    pub mac_os_traffic_light_yellow: Hsla,
-    pub mac_os_traffic_light_green: Hsla,
-}
+use crate::{PlayerColors, SyntaxTheme, SystemColors};
 
 #[derive(Refineable, Clone, Debug)]
 #[refineable(Debug, serde::Deserialize)]

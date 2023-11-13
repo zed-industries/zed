@@ -1,6 +1,6 @@
 use gpui::{hsla, Hsla, Rgba};
 
-use crate::colors::{StatusColors, SystemColors, ThemeColors};
+use crate::colors::{SystemColors, ThemeColors};
 use crate::scale::{ColorScaleSet, ColorScales};
 use crate::syntax::SyntaxTheme;
 use crate::{ColorScale, PlayerColor, PlayerColors};
@@ -99,7 +99,7 @@ impl PlayerColors {
     }
 }
 
-fn neutral() -> ColorScaleSet {
+pub(crate) fn neutral() -> ColorScaleSet {
     slate()
 }
 
@@ -452,7 +452,7 @@ pub fn default_color_scales() -> ColorScales {
     }
 }
 
-fn gray() -> ColorScaleSet {
+pub(crate) fn gray() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Gray",
         light: [
@@ -516,7 +516,7 @@ fn gray() -> ColorScaleSet {
     .unwrap()
 }
 
-fn mauve() -> ColorScaleSet {
+pub(crate) fn mauve() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Mauve",
         light: [
@@ -580,7 +580,7 @@ fn mauve() -> ColorScaleSet {
     .unwrap()
 }
 
-fn slate() -> ColorScaleSet {
+pub(crate) fn slate() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Slate",
         light: [
@@ -644,7 +644,7 @@ fn slate() -> ColorScaleSet {
     .unwrap()
 }
 
-fn sage() -> ColorScaleSet {
+pub(crate) fn sage() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Sage",
         light: [
@@ -708,7 +708,7 @@ fn sage() -> ColorScaleSet {
     .unwrap()
 }
 
-fn olive() -> ColorScaleSet {
+pub(crate) fn olive() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Olive",
         light: [
@@ -772,7 +772,7 @@ fn olive() -> ColorScaleSet {
     .unwrap()
 }
 
-fn sand() -> ColorScaleSet {
+pub(crate) fn sand() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Sand",
         light: [
@@ -836,7 +836,7 @@ fn sand() -> ColorScaleSet {
     .unwrap()
 }
 
-fn gold() -> ColorScaleSet {
+pub(crate) fn gold() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Gold",
         light: [
@@ -900,7 +900,7 @@ fn gold() -> ColorScaleSet {
     .unwrap()
 }
 
-fn bronze() -> ColorScaleSet {
+pub(crate) fn bronze() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Bronze",
         light: [
@@ -964,7 +964,7 @@ fn bronze() -> ColorScaleSet {
     .unwrap()
 }
 
-fn brown() -> ColorScaleSet {
+pub(crate) fn brown() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Brown",
         light: [
@@ -1028,7 +1028,7 @@ fn brown() -> ColorScaleSet {
     .unwrap()
 }
 
-fn yellow() -> ColorScaleSet {
+pub(crate) fn yellow() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Yellow",
         light: [
@@ -1092,7 +1092,7 @@ fn yellow() -> ColorScaleSet {
     .unwrap()
 }
 
-fn amber() -> ColorScaleSet {
+pub(crate) fn amber() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Amber",
         light: [
@@ -1156,7 +1156,7 @@ fn amber() -> ColorScaleSet {
     .unwrap()
 }
 
-fn orange() -> ColorScaleSet {
+pub(crate) fn orange() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Orange",
         light: [
@@ -1220,7 +1220,7 @@ fn orange() -> ColorScaleSet {
     .unwrap()
 }
 
-fn tomato() -> ColorScaleSet {
+pub(crate) fn tomato() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Tomato",
         light: [
@@ -1284,7 +1284,7 @@ fn tomato() -> ColorScaleSet {
     .unwrap()
 }
 
-fn red() -> ColorScaleSet {
+pub(crate) fn red() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Red",
         light: [
@@ -1348,7 +1348,7 @@ fn red() -> ColorScaleSet {
     .unwrap()
 }
 
-fn ruby() -> ColorScaleSet {
+pub(crate) fn ruby() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Ruby",
         light: [
@@ -1412,7 +1412,7 @@ fn ruby() -> ColorScaleSet {
     .unwrap()
 }
 
-fn crimson() -> ColorScaleSet {
+pub(crate) fn crimson() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Crimson",
         light: [
@@ -1476,7 +1476,7 @@ fn crimson() -> ColorScaleSet {
     .unwrap()
 }
 
-fn pink() -> ColorScaleSet {
+pub(crate) fn pink() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Pink",
         light: [
@@ -1540,7 +1540,7 @@ fn pink() -> ColorScaleSet {
     .unwrap()
 }
 
-fn plum() -> ColorScaleSet {
+pub(crate) fn plum() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Plum",
         light: [
@@ -1604,7 +1604,7 @@ fn plum() -> ColorScaleSet {
     .unwrap()
 }
 
-fn purple() -> ColorScaleSet {
+pub(crate) fn purple() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Purple",
         light: [
@@ -1668,7 +1668,7 @@ fn purple() -> ColorScaleSet {
     .unwrap()
 }
 
-fn violet() -> ColorScaleSet {
+pub(crate) fn violet() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Violet",
         light: [
@@ -1732,7 +1732,7 @@ fn violet() -> ColorScaleSet {
     .unwrap()
 }
 
-fn iris() -> ColorScaleSet {
+pub(crate) fn iris() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Iris",
         light: [
@@ -1796,7 +1796,7 @@ fn iris() -> ColorScaleSet {
     .unwrap()
 }
 
-fn indigo() -> ColorScaleSet {
+pub(crate) fn indigo() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Indigo",
         light: [
@@ -1860,7 +1860,7 @@ fn indigo() -> ColorScaleSet {
     .unwrap()
 }
 
-fn blue() -> ColorScaleSet {
+pub(crate) fn blue() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Blue",
         light: [
@@ -1924,7 +1924,7 @@ fn blue() -> ColorScaleSet {
     .unwrap()
 }
 
-fn cyan() -> ColorScaleSet {
+pub(crate) fn cyan() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Cyan",
         light: [
@@ -1988,7 +1988,7 @@ fn cyan() -> ColorScaleSet {
     .unwrap()
 }
 
-fn teal() -> ColorScaleSet {
+pub(crate) fn teal() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Teal",
         light: [
@@ -2052,7 +2052,7 @@ fn teal() -> ColorScaleSet {
     .unwrap()
 }
 
-fn jade() -> ColorScaleSet {
+pub(crate) fn jade() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Jade",
         light: [
@@ -2116,7 +2116,7 @@ fn jade() -> ColorScaleSet {
     .unwrap()
 }
 
-fn green() -> ColorScaleSet {
+pub(crate) fn green() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Green",
         light: [
@@ -2180,7 +2180,7 @@ fn green() -> ColorScaleSet {
     .unwrap()
 }
 
-fn grass() -> ColorScaleSet {
+pub(crate) fn grass() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Grass",
         light: [
@@ -2244,7 +2244,7 @@ fn grass() -> ColorScaleSet {
     .unwrap()
 }
 
-fn lime() -> ColorScaleSet {
+pub(crate) fn lime() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Lime",
         light: [
@@ -2308,7 +2308,7 @@ fn lime() -> ColorScaleSet {
     .unwrap()
 }
 
-fn mint() -> ColorScaleSet {
+pub(crate) fn mint() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Mint",
         light: [
@@ -2372,7 +2372,7 @@ fn mint() -> ColorScaleSet {
     .unwrap()
 }
 
-fn sky() -> ColorScaleSet {
+pub(crate) fn sky() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Sky",
         light: [
@@ -2436,7 +2436,7 @@ fn sky() -> ColorScaleSet {
     .unwrap()
 }
 
-fn black() -> ColorScaleSet {
+pub(crate) fn black() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Black",
         light: [
@@ -2500,7 +2500,7 @@ fn black() -> ColorScaleSet {
     .unwrap()
 }
 
-fn white() -> ColorScaleSet {
+pub(crate) fn white() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "White",
         light: [
