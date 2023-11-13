@@ -43,7 +43,7 @@ impl ThemeRegistry {
             };
             theme_colors.refine(&user_theme.styles.colors);
 
-            let mut status_colors = StatusColors::default();
+            let mut status_colors = StatusColors::dark();
             status_colors.refine(&user_theme.styles.status);
 
             let mut syntax_colors = match user_theme.appearance {

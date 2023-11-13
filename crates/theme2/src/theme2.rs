@@ -5,6 +5,7 @@ mod players;
 mod registry;
 mod scale;
 mod settings;
+mod styles;
 mod syntax;
 #[cfg(not(feature = "importing-themes"))]
 mod themes;
@@ -20,6 +21,7 @@ pub use players::*;
 pub use registry::*;
 pub use scale::*;
 pub use settings::*;
+pub use styles::*;
 pub use syntax::*;
 #[cfg(not(feature = "importing-themes"))]
 pub use themes::*;

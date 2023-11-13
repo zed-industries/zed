@@ -114,27 +114,6 @@ impl Default for SystemColors {
     }
 }
 
-impl Default for StatusColors {
-    fn default() -> Self {
-        Self {
-            conflict: red().dark().step_9(),
-            created: grass().dark().step_9(),
-            deleted: red().dark().step_9(),
-            error: red().dark().step_9(),
-            hidden: neutral().dark().step_9(),
-            hint: blue().dark().step_9(),
-            ignored: neutral().dark().step_9(),
-            info: blue().dark().step_9(),
-            modified: yellow().dark().step_9(),
-            predictive: neutral().dark_alpha().step_9(),
-            renamed: blue().dark().step_9(),
-            success: grass().dark().step_9(),
-            unreachable: neutral().dark().step_10(),
-            warning: yellow().dark().step_9(),
-        }
-    }
-}
-
 impl SyntaxTheme {
     pub fn default_light() -> Self {
         Self {
