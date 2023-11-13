@@ -89,27 +89,3 @@ impl ModalLayer {
         })
     }
 }
-
-// impl Render for ModalLayer {
-//     type Element = Div<Self>;
-
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-//         let mut div = div();
-//         for (type_id, build_view) in cx.global::<ModalRegistry>().registered_modals {
-//             div = div.useful_on_action(
-//                 type_id,
-//                 Box::new(|this, _: dyn Any, phase, cx: &mut ViewContext<Self>| {
-//                     if phase == DispatchPhase::Capture {
-//                         return;
-//                     }
-//                     self.workspace.update(cx, |workspace, cx| {
-//                         self.open_modal = Some(build_view(workspace, cx));
-//                     });
-//                     cx.notify();
-//                 }),
-//             )
-//         }
-
-//         div
-//     }
-// }

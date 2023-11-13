@@ -39,8 +39,8 @@ use gpui::{
     actions, div, point, rems, size, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, Component, Div, Entity, EntityId, EventEmitter, FocusHandle,
     GlobalPixels, Model, ModelContext, ParentElement, Point, Render, Size, StatefulInteractive,
-    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds,
-    WindowContext, WindowHandle, WindowOptions,
+    StatelessInteractive, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -246,102 +246,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     //                 .detach();
     //             }
     //         }
-    //     });
-    //     cx.add_async_action(Workspace::open);
-
-    //     cx.add_async_action(Workspace::follow_next_collaborator);
-    //     cx.add_async_action(Workspace::close);
-    //     cx.add_async_action(Workspace::close_inactive_items_and_panes);
-    //     cx.add_async_action(Workspace::close_all_items_and_panes);
-    //     cx.add_global_action(Workspace::close_global);
-    //     cx.add_global_action(restart);
-    //     cx.add_async_action(Workspace::save_all);
-    //     cx.add_action(Workspace::add_folder_to_project);
-    //     cx.add_action(
-    //         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
-    //             let pane = workspace.active_pane().clone();
-    //             workspace.unfollow(&pane, cx);
-    //         },
-    //     );
-    //     cx.add_action(
-    //         |workspace: &mut Workspace, action: &Save, cx: &mut ViewContext<Workspace>| {
-    //             workspace
-    //                 .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
-    //                 .detach_and_log_err(cx);
-    //         },
-    //     );
-    //     cx.add_action(
-    //         |workspace: &mut Workspace, _: &SaveAs, cx: &mut ViewContext<Workspace>| {
-    //             workspace
-    //                 .save_active_item(SaveIntent::SaveAs, cx)
-    //                 .detach_and_log_err(cx);
-    //         },
-    //     );
-    //     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
-    //         workspace.activate_previous_pane(cx)
-    //     });
-    //     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
-    //         workspace.activate_next_pane(cx)
-    //     });
-
-    //     cx.add_action(
-    //         |workspace: &mut Workspace, action: &ActivatePaneInDirection, cx| {
-    //             workspace.activate_pane_in_direction(action.0, cx)
-    //         },
-    //     );
-
-    //     cx.add_action(
-    //         |workspace: &mut Workspace, action: &SwapPaneInDirection, cx| {
-    //             workspace.swap_pane_in_direction(action.0, cx)
-    //         },
-    //     );
-
-    //     cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftDock, cx| {
-    //         workspace.toggle_dock(DockPosition::Left, cx);
-    //     });
-    //     cx.add_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
-    //         workspace.toggle_dock(DockPosition::Right, cx);
-    //     });
-    //     cx.add_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
-    //         workspace.toggle_dock(DockPosition::Bottom, cx);
-    //     });
-    //     cx.add_action(|workspace: &mut Workspace, _: &CloseAllDocks, cx| {
-    //         workspace.close_all_docks(cx);
-    //     });
-    //     cx.add_action(Workspace::activate_pane_at_index);
-    //     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
-    //         workspace.reopen_closed_item(cx).detach();
-    //     });
-    //     cx.add_action(|workspace: &mut Workspace, _: &GoBack, cx| {
-    //         workspace
-    //             .go_back(workspace.active_pane().downgrade(), cx)
-    //             .detach();
-    //     });
-    //     cx.add_action(|workspace: &mut Workspace, _: &GoForward, cx| {
-    //         workspace
-    //             .go_forward(workspace.active_pane().downgrade(), cx)
-    //             .detach();
-    //     });
-
-    //     cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
-    //         cx.spawn(|workspace, mut cx| async move {
-    //             let err = install_cli::install_cli(&cx)
-    //                 .await
-    //                 .context("Failed to create CLI symlink");
-
-    //             workspace.update(&mut cx, |workspace, cx| {
-    //                 if matches!(err, Err(_)) {
-    //                     err.notify_err(workspace, cx);
-    //                 } else {
-    //                     workspace.show_notification(1, cx, |cx| {
-    //                         cx.build_view(|_| {
-    //                             MessageNotification::new("Successfully installed the `zed` binary")
-    //                         })
-    //                     });
-    //                 }
-    //             })
-    //         })
-    //         .detach();
     //     });
 }
 
@@ -1653,7 +1557,8 @@ impl Workspace {
                         focus_center = true;
                     }
                 } else {
-                    // cx.focus(active_panel.as_any());
+                    let focus_handle = &active_panel.focus_handle(cx);
+                    cx.focus(focus_handle);
                     reveal_dock = true;
                 }
             }
@@ -3350,6 +3255,103 @@ impl Workspace {
         })
     }
 
+    fn actions(div: Div<Self>) -> Div<Self> {
+        div
+            //     cx.add_async_action(Workspace::open);
+            //     cx.add_async_action(Workspace::follow_next_collaborator);
+            //     cx.add_async_action(Workspace::close);
+            //     cx.add_async_action(Workspace::close_inactive_items_and_panes);
+            //     cx.add_async_action(Workspace::close_all_items_and_panes);
+            //     cx.add_global_action(Workspace::close_global);
+            //     cx.add_global_action(restart);
+            //     cx.add_async_action(Workspace::save_all);
+            //     cx.add_action(Workspace::add_folder_to_project);
+            //     cx.add_action(
+            //         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
+            //             let pane = workspace.active_pane().clone();
+            //             workspace.unfollow(&pane, cx);
+            //         },
+            //     );
+            //     cx.add_action(
+            //         |workspace: &mut Workspace, action: &Save, cx: &mut ViewContext<Workspace>| {
+            //             workspace
+            //                 .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
+            //                 .detach_and_log_err(cx);
+            //         },
+            //     );
+            //     cx.add_action(
+            //         |workspace: &mut Workspace, _: &SaveAs, cx: &mut ViewContext<Workspace>| {
+            //             workspace
+            //                 .save_active_item(SaveIntent::SaveAs, cx)
+            //                 .detach_and_log_err(cx);
+            //         },
+            //     );
+            //     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
+            //         workspace.activate_previous_pane(cx)
+            //     });
+            //     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
+            //         workspace.activate_next_pane(cx)
+            //     });
+            //     cx.add_action(
+            //         |workspace: &mut Workspace, action: &ActivatePaneInDirection, cx| {
+            //             workspace.activate_pane_in_direction(action.0, cx)
+            //         },
+            //     );
+            //     cx.add_action(
+            //         |workspace: &mut Workspace, action: &SwapPaneInDirection, cx| {
+            //             workspace.swap_pane_in_direction(action.0, cx)
+            //         },
+            //     );
+            .on_action(|this, e: &ToggleLeftDock, cx| {
+                println!("TOGGLING DOCK");
+                this.toggle_dock(DockPosition::Left, cx);
+            })
+        //     cx.add_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
+        //         workspace.toggle_dock(DockPosition::Right, cx);
+        //     });
+        //     cx.add_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
+        //         workspace.toggle_dock(DockPosition::Bottom, cx);
+        //     });
+        //     cx.add_action(|workspace: &mut Workspace, _: &CloseAllDocks, cx| {
+        //         workspace.close_all_docks(cx);
+        //     });
+        //     cx.add_action(Workspace::activate_pane_at_index);
+        //     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
+        //         workspace.reopen_closed_item(cx).detach();
+        //     });
+        //     cx.add_action(|workspace: &mut Workspace, _: &GoBack, cx| {
+        //         workspace
+        //             .go_back(workspace.active_pane().downgrade(), cx)
+        //             .detach();
+        //     });
+        //     cx.add_action(|workspace: &mut Workspace, _: &GoForward, cx| {
+        //         workspace
+        //             .go_forward(workspace.active_pane().downgrade(), cx)
+        //             .detach();
+        //     });
+
+        //     cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
+        //         cx.spawn(|workspace, mut cx| async move {
+        //             let err = install_cli::install_cli(&cx)
+        //                 .await
+        //                 .context("Failed to create CLI symlink");
+
+        //             workspace.update(&mut cx, |workspace, cx| {
+        //                 if matches!(err, Err(_)) {
+        //                     err.notify_err(workspace, cx);
+        //                 } else {
+        //                     workspace.show_notification(1, cx, |cx| {
+        //                         cx.build_view(|_| {
+        //                             MessageNotification::new("Successfully installed the `zed` binary")
+        //                         })
+        //                     });
+        //                 }
+        //             })
+        //         })
+        //         .detach();
+        //     });
+    }
+
     // todo!()
     //     #[cfg(any(test, feature = "test-support"))]
     //     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
@@ -3628,7 +3630,7 @@ impl Render for Workspace {
             .text_color(cx.theme().colors().text)
             .bg(cx.theme().colors().background)
             .child(self.render_titlebar(cx))
-            .child(
+            .child(Workspace::actions(
                 // todo! should this be a component a view?
                 self.modal_layer
                     .wrapper_element(cx)
@@ -3717,7 +3719,7 @@ impl Render for Workspace {
                        //     )
                        //     .filter(|_| self.is_assistant_panel_open()),
                        // ),
-            )
+            ))
             .child(self.status_bar.clone())
             // .when(self.debug.show_toast, |this| {
             //     this.child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))

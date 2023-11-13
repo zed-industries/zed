@@ -1,7 +1,7 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
-    div, Action, AnyView, AppContext, Div, Entity, EntityId, EventEmitter, ParentElement, Render,
-    Subscription, View, ViewContext, WeakView, WindowContext,
+    div, Action, AnyView, AppContext, Div, Entity, EntityId, EventEmitter, FocusHandle,
+    ParentElement, Render, Subscription, View, ViewContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -34,6 +34,7 @@ pub trait Panel: Render + EventEmitter<PanelEvent> {
     fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
     fn has_focus(&self, cx: &WindowContext) -> bool;
+    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -51,6 +52,7 @@ pub trait PanelHandle: Send + Sync {
     fn icon_tooltip(&self, cx: &WindowContext) -> (String, Option<Box<dyn Action>>);
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
     fn has_focus(&self, cx: &WindowContext) -> bool;
+    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
     fn to_any(&self) -> AnyView;
 }
 
@@ -116,6 +118,10 @@ where
 
     fn to_any(&self) -> AnyView {
         self.clone().into()
+    }
+
+    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
+        self.read(cx).focus_handle(cx).clone()
     }
 }
 
@@ -727,6 +733,10 @@ pub mod test {
 
         fn has_focus(&self, _cx: &WindowContext) -> bool {
             self.has_focus
+        }
+
+        fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
+            unimplemented!()
         }
     }
 }

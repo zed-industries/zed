@@ -9,10 +9,10 @@ use file_associations::FileAssociations;
 use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, svg, uniform_list, Action, AppContext, AssetSource, AsyncAppContext,
-    AsyncWindowContext, ClipboardItem, Div, Element, Entity, EventEmitter, FocusHandle, Model,
-    ParentElement as _, Pixels, Point, PromptLevel, Render, StatefulInteractive,
-    StatefulInteractivity, Styled, Task, UniformListScrollHandle, View, ViewContext,
-    VisualContext as _, WeakView, WindowContext,
+    AsyncWindowContext, ClipboardItem, Div, Element, Entity, EventEmitter, FocusEnabled,
+    FocusHandle, Model, ParentElement as _, Pixels, Point, PromptLevel, Render,
+    StatefulInteractive, StatefulInteractivity, Styled, Task, UniformListScrollHandle, View,
+    ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -131,6 +131,7 @@ pub fn init_settings(cx: &mut AppContext) {
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
     file_associations::init(assets, cx);
+
     // cx.add_action(ProjectPanel::expand_selected_entry);
     // cx.add_action(ProjectPanel::collapse_selected_entry);
     // cx.add_action(ProjectPanel::collapse_all_entries);
@@ -1437,7 +1438,7 @@ impl ProjectPanel {
 }
 
 impl Render for ProjectPanel {
-    type Element = Div<Self, StatefulInteractivity<Self>>;
+    type Element = Div<Self, StatefulInteractivity<Self>, FocusEnabled<Self>>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         enum ProjectPanel {}
@@ -1447,31 +1448,36 @@ impl Render for ProjectPanel {
         let has_worktree = self.visible_entries.len() != 0;
 
         if has_worktree {
-            div().id("project-panel").child(
-                uniform_list(
-                    "entries",
-                    self.visible_entries
-                        .iter()
-                        .map(|(_, worktree_entries)| worktree_entries.len())
-                        .sum(),
-                    |this: &mut Self, range, cx| {
-                        let mut items = SmallVec::new();
-                        this.for_each_visible_entry(range, cx, |id, details, cx| {
-                            items.push(Self::render_entry(
-                                id,
-                                details,
-                                &this.filename_editor,
-                                // &mut dragged_entry_destination,
-                                cx,
-                            ));
-                        });
-                        items
-                    },
+            div()
+                .id("project-panel")
+                .track_focus(&self.focus_handle)
+                .child(
+                    uniform_list(
+                        "entries",
+                        self.visible_entries
+                            .iter()
+                            .map(|(_, worktree_entries)| worktree_entries.len())
+                            .sum(),
+                        |this: &mut Self, range, cx| {
+                            let mut items = SmallVec::new();
+                            this.for_each_visible_entry(range, cx, |id, details, cx| {
+                                items.push(Self::render_entry(
+                                    id,
+                                    details,
+                                    &this.filename_editor,
+                                    // &mut dragged_entry_destination,
+                                    cx,
+                                ));
+                            });
+                            items
+                        },
+                    )
+                    .track_scroll(self.list.clone()),
                 )
-                .track_scroll(self.list.clone()),
-            )
         } else {
-            v_stack().id("empty-project_panel")
+            v_stack()
+                .id("empty-project_panel")
+                .track_focus(&self.focus_handle)
         }
     }
 }
@@ -1535,6 +1541,10 @@ impl workspace::dock::Panel for ProjectPanel {
 
     fn persistent_name(&self) -> &'static str {
         "Project Panel"
+    }
+
+    fn focus_handle(&self, _cx: &WindowContext) -> FocusHandle {
+        self.focus_handle.clone()
     }
 
     // fn is_focus_event(event: &Self::Event) -> bool {
