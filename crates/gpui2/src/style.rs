@@ -228,7 +228,7 @@ impl Style {
         }
     }
 
-    pub fn apply_text_style<C, F, R>(&self, cx: &mut C, f: F) -> R
+    pub fn with_text_style<C, F, R>(&self, cx: &mut C, f: F) -> R
     where
         C: BorrowAppContext,
         F: FnOnce(&mut C) -> R,

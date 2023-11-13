@@ -1,5 +1,6 @@
 mod div;
 mod img;
+mod node;
 mod svg;
 mod text;
 mod uniform_list;

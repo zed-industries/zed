@@ -1068,7 +1068,7 @@ impl<G: 'static> DerefMut for GlobalLease<G> {
 
 /// Contains state associated with an active drag operation, started by dragging an element
 /// within the window or by dragging into the app from the underlying platform.
-pub(crate) struct AnyDrag {
+pub struct AnyDrag {
     pub view: AnyView,
     pub cursor_offset: Point<Pixels>,
 }
