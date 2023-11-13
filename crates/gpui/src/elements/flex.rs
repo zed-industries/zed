@@ -67,14 +67,21 @@ impl<V: 'static> Flex<V> {
     where
         Tag: 'static,
     {
+        // Don't assume that this initialization is what scroll_state really is in other panes:
+        // `element_state` is shared and there could be init races.
         let scroll_state = cx.element_state::<Tag, Rc<ScrollState>>(
             element_id,
             Rc::new(ScrollState {
-                scroll_to: Cell::new(scroll_to),
-                scroll_position: Default::default(),
                 type_tag: TypeTag::new::<Tag>(),
+                scroll_to: Default::default(),
+                scroll_position: Default::default(),
             }),
         );
+        // Set scroll_to separately, because the default state is already picked as `None` by other panes
+        // by the time we start setting it here, hence update all others' state too.
+        scroll_state.update(cx, |this, _| {
+            this.scroll_to.set(scroll_to);
+        });
         self.scroll_state = Some((scroll_state, cx.handle().id()));
         self
     }
