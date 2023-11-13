@@ -401,7 +401,7 @@ impl List {
         v_stack()
             .w_full()
             .py_1()
-            .children(self.header.map(|header| header))
+            .children(self.header)
             .child(list_content)
     }
 }

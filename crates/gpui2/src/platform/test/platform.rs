@@ -182,7 +182,8 @@ impl Platform for TestPlatform {
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
-        unimplemented!()
+        // todo()
+        true
     }
 
     fn write_to_clipboard(&self, _item: crate::ClipboardItem) {

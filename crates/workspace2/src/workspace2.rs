@@ -3448,27 +3448,27 @@ impl Workspace {
         })
     }
 
-    // todo!()
-    //     #[cfg(any(test, feature = "test-support"))]
-    //     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
-    //         use node_runtime::FakeNodeRuntime;
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
+        use gpui::Context;
+        use node_runtime::FakeNodeRuntime;
 
-    //         let client = project.read(cx).client();
-    //         let user_store = project.read(cx).user_store();
+        let client = project.read(cx).client();
+        let user_store = project.read(cx).user_store();
 
-    //         let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
-    //         let app_state = Arc::new(AppState {
-    //             languages: project.read(cx).languages().clone(),
-    //             workspace_store,
-    //             client,
-    //             user_store,
-    //             fs: project.read(cx).fs().clone(),
-    //             build_window_options: |_, _, _| Default::default(),
-    //             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
-    //             node_runtime: FakeNodeRuntime::new(),
-    //         });
-    //         Self::new(0, project, app_state, cx)
-    //     }
+        let workspace_store = cx.build_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let app_state = Arc::new(AppState {
+            languages: project.read(cx).languages().clone(),
+            workspace_store,
+            client,
+            user_store,
+            fs: project.read(cx).fs().clone(),
+            build_window_options: |_, _, _| Default::default(),
+            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
+            node_runtime: FakeNodeRuntime::new(),
+        });
+        Self::new(0, project, app_state, cx)
+    }
 
     //     fn render_dock(&self, position: DockPosition, cx: &WindowContext) -> Option<AnyElement<Self>> {
     //         let dock = match position {

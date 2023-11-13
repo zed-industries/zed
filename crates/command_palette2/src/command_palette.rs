@@ -6,9 +6,12 @@ use gpui::{
     WeakView, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
-use std::cmp::{self, Reverse};
+use std::{
+    cmp::{self, Reverse},
+    sync::Arc,
+};
 use theme::ActiveTheme;
-use ui::{modal, Label};
+use ui::{v_stack, HighlightedLabel, StyledExt};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
@@ -76,8 +79,8 @@ impl Modal for CommandPalette {
 impl Render for CommandPalette {
     type Element = Div<Self>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        modal(cx).w_96().child(self.picker.clone())
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+        v_stack().w_96().child(self.picker.clone())
     }
 }
 
@@ -146,6 +149,10 @@ impl CommandPaletteDelegate {
 
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = Div<Picker<Self>>;
+
+    fn placeholder_text(&self) -> Arc<str> {
+        "Execute a command...".into()
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -296,25 +303,25 @@ impl PickerDelegate for CommandPaletteDelegate {
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Self::ListItem {
         let colors = cx.theme().colors();
-        let Some(command) = self
-            .matches
-            .get(ix)
-            .and_then(|m| self.commands.get(m.candidate_id))
-        else {
+        let Some(r#match) = self.matches.get(ix) else {
+            return div();
+        };
+        let Some(command) = self.commands.get(r#match.candidate_id) else {
             return div();
         };
 
         div()
+            .px_1()
             .text_color(colors.text)
-            .when(selected, |s| {
-                s.border_l_10().border_color(colors.terminal_ansi_yellow)
-            })
-            .hover(|style| {
-                style
-                    .bg(colors.element_active)
-                    .text_color(colors.text_accent)
-            })
-            .child(Label::new(command.name.clone()))
+            .text_ui()
+            .bg(colors.ghost_element_background)
+            .rounded_md()
+            .when(selected, |this| this.bg(colors.ghost_element_selected))
+            .hover(|this| this.bg(colors.ghost_element_hover))
+            .child(HighlightedLabel::new(
+                command.name.clone(),
+                r#match.positions.clone(),
+            ))
     }
 
     // fn render_match(
