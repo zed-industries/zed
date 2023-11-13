@@ -312,15 +312,15 @@ mod tests {
     #[test]
     fn test_parse_context() {
         let mut expected = KeyContext::default();
-        expected.set("foo", "bar");
         expected.add("baz");
+        expected.set("foo", "bar");
         assert_eq!(KeyContext::parse("baz foo=bar").unwrap(), expected);
-        assert_eq!(KeyContext::parse("foo = bar baz").unwrap(), expected);
+        assert_eq!(KeyContext::parse("baz foo = bar").unwrap(), expected);
         assert_eq!(
             KeyContext::parse("  baz foo   =   bar baz").unwrap(),
             expected
         );
-        assert_eq!(KeyContext::parse(" foo = bar baz").unwrap(), expected);
+        assert_eq!(KeyContext::parse(" baz foo = bar").unwrap(), expected);
     }
 
     #[test]
