@@ -1,6 +1,6 @@
 use crate::{
     build_action_from_type, Action, Bounds, DispatchPhase, Element, FocusEvent, FocusHandle,
-    FocusId, KeyContext, KeyDownEvent, KeyMatch, Keymap, KeystrokeMatcher, MouseDownEvent, Pixels,
+    FocusId, KeyContext, KeyMatch, Keymap, Keystroke, KeystrokeMatcher, MouseDownEvent, Pixels,
     Style, StyleRefinement, ViewContext, WindowContext,
 };
 use collections::HashMap;
@@ -9,11 +9,11 @@ use refineable::Refineable;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
+    rc::Rc,
     sync::Arc,
 };
 use util::ResultExt;
 
-type KeyListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
 pub type FocusListeners<V> = SmallVec<[FocusListener<V>; 2]>;
 pub type FocusListener<V> =
     Box<dyn Fn(&mut V, &FocusHandle, &FocusEvent, &mut ViewContext<V>) + 'static>;
@@ -21,7 +21,7 @@ pub type FocusListener<V> =
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct DispatchNodeId(usize);
 
-pub struct KeyDispatcher {
+pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
     context_stack: Vec<KeyContext>,
     nodes: Vec<DispatchNode>,
@@ -31,19 +31,22 @@ pub struct KeyDispatcher {
 }
 
 #[derive(Default)]
-pub struct DispatchNode {
-    key_listeners: SmallVec<[KeyListener; 2]>,
-    action_listeners: SmallVec<[ActionListener; 16]>,
-    context: KeyContext,
+pub(crate) struct DispatchNode {
+    pub key_listeners: SmallVec<[KeyListener; 2]>,
+    pub action_listeners: SmallVec<[ActionListener; 16]>,
+    pub context: KeyContext,
     parent: Option<DispatchNodeId>,
 }
 
-struct ActionListener {
-    action_type: TypeId,
-    listener: Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
+type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
+
+#[derive(Clone)]
+pub(crate) struct ActionListener {
+    pub(crate) action_type: TypeId,
+    pub(crate) listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
 }
 
-impl KeyDispatcher {
+impl DispatchTree {
     pub fn new(keymap: Arc<Mutex<Keymap>>) -> Self {
         Self {
             node_stack: Vec::new(),
@@ -97,7 +100,7 @@ impl KeyDispatcher {
     pub fn on_action(
         &mut self,
         action_type: TypeId,
-        listener: Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
+        listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
     ) {
         self.active_node().action_listeners.push(ActionListener {
             action_type,
@@ -140,143 +143,40 @@ impl KeyDispatcher {
         actions
     }
 
-    pub fn dispatch_key(&mut self, target: FocusId, event: &dyn Any, cx: &mut WindowContext) {
-        if let Some(target_node_id) = self.focusable_node_ids.get(&target).copied() {
-            self.dispatch_key_on_node(target_node_id, event, cx);
-        }
-    }
-
-    fn dispatch_key_on_node(
+    pub fn dispatch_key(
         &mut self,
-        node_id: DispatchNodeId,
-        event: &dyn Any,
-        cx: &mut WindowContext,
-    ) {
-        let dispatch_path = self.dispatch_path(node_id);
-
-        // Capture phase
-        self.context_stack.clear();
-        cx.propagate_event = true;
-
-        for node_id in &dispatch_path {
-            let node = &self.nodes[node_id.0];
-            if !node.context.is_empty() {
-                self.context_stack.push(node.context.clone());
-            }
-
-            for key_listener in &node.key_listeners {
-                key_listener(event, DispatchPhase::Capture, cx);
-                if !cx.propagate_event {
-                    return;
-                }
-            }
+        keystroke: &Keystroke,
+        context: &[KeyContext],
+    ) -> Option<Box<dyn Action>> {
+        if !self
+            .keystroke_matchers
+            .contains_key(self.context_stack.as_slice())
+        {
+            let keystroke_contexts = self.context_stack.iter().cloned().collect();
+            self.keystroke_matchers.insert(
+                keystroke_contexts,
+                KeystrokeMatcher::new(self.keymap.clone()),
+            );
         }
 
-        // Bubble phase
-        for node_id in dispatch_path.iter().rev() {
-            let node = &self.nodes[node_id.0];
-
-            // Handle low level key events
-            for key_listener in &node.key_listeners {
-                key_listener(event, DispatchPhase::Bubble, cx);
-                if !cx.propagate_event {
-                    return;
-                }
+        let keystroke_matcher = self
+            .keystroke_matchers
+            .get_mut(self.context_stack.as_slice())
+            .unwrap();
+        if let KeyMatch::Some(action) = keystroke_matcher.match_keystroke(keystroke, context) {
+            // Clear all pending keystrokes when an action has been found.
+            for keystroke_matcher in self.keystroke_matchers.values_mut() {
+                keystroke_matcher.clear_pending();
             }
 
-            // Match keystrokes
-            if !node.context.is_empty() {
-                if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-                    if !self
-                        .keystroke_matchers
-                        .contains_key(self.context_stack.as_slice())
-                    {
-                        let keystroke_contexts = self.context_stack.iter().cloned().collect();
-                        self.keystroke_matchers.insert(
-                            keystroke_contexts,
-                            KeystrokeMatcher::new(self.keymap.clone()),
-                        );
-                    }
-
-                    let keystroke_matcher = self
-                        .keystroke_matchers
-                        .get_mut(self.context_stack.as_slice())
-                        .unwrap();
-                    if let KeyMatch::Some(action) = keystroke_matcher
-                        .match_keystroke(&key_down_event.keystroke, self.context_stack.as_slice())
-                    {
-                        // Clear all pending keystrokes when an action has been found.
-                        for keystroke_matcher in self.keystroke_matchers.values_mut() {
-                            keystroke_matcher.clear_pending();
-                        }
-
-                        self.dispatch_action_on_node(*node_id, action, cx);
-                        if !cx.propagate_event {
-                            return;
-                        }
-                    }
-                }
-
-                self.context_stack.pop();
-            }
+            Some(action)
+        } else {
+            None
         }
     }
 
-    pub fn dispatch_action(
-        &self,
-        target: FocusId,
-        action: Box<dyn Action>,
-        cx: &mut WindowContext,
-    ) {
-        if let Some(target_node_id) = self.focusable_node_ids.get(&target).copied() {
-            self.dispatch_action_on_node(target_node_id, action, cx);
-        }
-    }
-
-    fn dispatch_action_on_node(
-        &self,
-        node_id: DispatchNodeId,
-        action: Box<dyn Action>,
-        cx: &mut WindowContext,
-    ) {
-        let dispatch_path = self.dispatch_path(node_id);
-
-        // Capture phase
-        for node_id in &dispatch_path {
-            let node = &self.nodes[node_id.0];
-            for ActionListener {
-                action_type,
-                listener,
-            } in &node.action_listeners
-            {
-                let any_action = action.as_any();
-                if *action_type == any_action.type_id() {
-                    listener(any_action, DispatchPhase::Capture, cx);
-                    if !cx.propagate_event {
-                        return;
-                    }
-                }
-            }
-        }
-
-        // Bubble phase
-        for node_id in dispatch_path.iter().rev() {
-            let node = &self.nodes[node_id.0];
-            for ActionListener {
-                action_type,
-                listener,
-            } in &node.action_listeners
-            {
-                let any_action = action.as_any();
-                if *action_type == any_action.type_id() {
-                    cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
-                    listener(any_action, DispatchPhase::Bubble, cx);
-                    if !cx.propagate_event {
-                        return;
-                    }
-                }
-            }
-        }
+    pub fn node(&self, node_id: DispatchNodeId) -> &DispatchNode {
+        &self.nodes[node_id.0]
     }
 
     fn active_node(&mut self) -> &mut DispatchNode {
@@ -288,8 +188,7 @@ impl KeyDispatcher {
         *self.node_stack.last().unwrap()
     }
 
-    /// Returns the DispatchNodeIds from the root of the tree to the given target node id.
-    fn dispatch_path(&self, target: DispatchNodeId) -> SmallVec<[DispatchNodeId; 32]> {
+    pub fn dispatch_path(&self, target: DispatchNodeId) -> SmallVec<[DispatchNodeId; 32]> {
         let mut dispatch_path: SmallVec<[DispatchNodeId; 32]> = SmallVec::new();
         let mut current_node_id = Some(target);
         while let Some(node_id) = current_node_id {
@@ -298,6 +197,10 @@ impl KeyDispatcher {
         }
         dispatch_path.reverse(); // Reverse the path so it goes from the root to the focused node.
         dispatch_path
+    }
+
+    pub fn focusable_node_id(&self, target: FocusId) -> Option<DispatchNodeId> {
+        self.focusable_node_ids.get(&target).copied()
     }
 }
 

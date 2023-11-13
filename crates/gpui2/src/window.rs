@@ -1,14 +1,15 @@
 use crate::{
-    px, size, Action, AnyBox, AnyDrag, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
-    Bounds, BoxShadow, Context, Corners, CursorStyle, DevicePixels, DisplayId, Edges, Effect,
-    Entity, EntityId, EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId,
-    Hsla, ImageData, InputEvent, IsZero, KeyContext, KeyDispatcher, LayoutId, Model, ModelContext,
-    Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
-    Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
-    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    key_dispatch::ActionListener, px, size, Action, AnyBox, AnyDrag, AnyView, AppContext,
+    AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
+    DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
+    EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
+    InputEvent, IsZero, KeyContext, KeyDownEvent, LayoutId, Model, ModelContext, Modifiers,
+    MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
+    SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
+    WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -89,9 +90,7 @@ impl FocusId {
     pub(crate) fn contains(&self, other: Self, cx: &WindowContext) -> bool {
         cx.window
             .current_frame
-            .key_dispatcher
-            .as_ref()
-            .unwrap()
+            .dispatch_tree
             .focus_contains(*self, other)
     }
 }
@@ -213,7 +212,7 @@ pub struct Window {
 pub(crate) struct Frame {
     element_states: HashMap<GlobalElementId, AnyBox>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
-    pub(crate) key_dispatcher: Option<KeyDispatcher>,
+    pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
     pub(crate) scene_builder: SceneBuilder,
     z_index_stack: StackingOrder,
@@ -222,11 +221,11 @@ pub(crate) struct Frame {
 }
 
 impl Frame {
-    pub fn new(key_dispatcher: KeyDispatcher) -> Self {
+    pub fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
             element_states: HashMap::default(),
             mouse_listeners: HashMap::default(),
-            key_dispatcher: Some(key_dispatcher),
+            dispatch_tree,
             focus_listeners: Vec::new(),
             scene_builder: SceneBuilder::default(),
             z_index_stack: StackingOrder::default(),
@@ -302,8 +301,8 @@ impl Window {
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             element_id_stack: GlobalElementId::default(),
-            previous_frame: Frame::new(KeyDispatcher::new(cx.keymap.clone())),
-            current_frame: Frame::new(KeyDispatcher::new(cx.keymap.clone())),
+            previous_frame: Frame::new(DispatchTree::new(cx.keymap.clone())),
+            current_frame: Frame::new(DispatchTree::new(cx.keymap.clone())),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
             default_prevented: true,
@@ -423,9 +422,14 @@ impl<'a> WindowContext<'a> {
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
         if let Some(focus_handle) = self.focused() {
             self.defer(move |cx| {
-                let dispatcher = cx.window.current_frame.key_dispatcher.take().unwrap();
-                dispatcher.dispatch_action(focus_handle.id, action, cx);
-                cx.window.current_frame.key_dispatcher = Some(dispatcher);
+                if let Some(node_id) = cx
+                    .window
+                    .current_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_handle.id)
+                {
+                    cx.dispatch_action_on_node(node_id, action);
+                }
             })
         }
     }
@@ -723,12 +727,14 @@ impl<'a> WindowContext<'a> {
         &mut self,
         handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let key_dispatcher = self.window.current_frame.key_dispatcher.as_mut().unwrap();
-        key_dispatcher.on_key_event(Box::new(move |event, phase, cx| {
-            if let Some(event) = event.downcast_ref::<Event>() {
-                handler(event, phase, cx)
-            }
-        }));
+        self.window
+            .current_frame
+            .dispatch_tree
+            .on_key_event(Rc::new(move |event, phase, cx| {
+                if let Some(event) = event.downcast_ref::<Event>() {
+                    handler(event, phase, cx)
+                }
+            }));
     }
 
     /// Register an action listener on the window for the current frame. The type of action
@@ -742,10 +748,9 @@ impl<'a> WindowContext<'a> {
         action_type: TypeId,
         handler: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let key_dispatcher = self.window.current_frame.key_dispatcher.as_mut().unwrap();
-        key_dispatcher.on_action(
+        self.window.current_frame.dispatch_tree.on_action(
             action_type,
-            Box::new(move |action, phase, cx| handler(action, phase, cx)),
+            Rc::new(move |action, phase, cx| handler(action, phase, cx)),
         );
     }
 
@@ -1110,7 +1115,7 @@ impl<'a> WindowContext<'a> {
         frame.element_states.clear();
         frame.mouse_listeners.values_mut().for_each(Vec::clear);
         frame.focus_listeners.clear();
-        frame.key_dispatcher.as_mut().map(KeyDispatcher::clear);
+        frame.dispatch_tree.clear();
     }
 
     /// Dispatch a mouse or keyboard event on the window.
@@ -1172,63 +1177,172 @@ impl<'a> WindowContext<'a> {
         };
 
         if let Some(any_mouse_event) = event.mouse_event() {
-            if let Some(mut handlers) = self
-                .window
-                .current_frame
-                .mouse_listeners
-                .remove(&any_mouse_event.type_id())
-            {
-                // Because handlers may add other handlers, we sort every time.
-                handlers.sort_by(|(a, _), (b, _)| a.cmp(b));
+            self.dispatch_mouse_event(any_mouse_event);
+        } else if let Some(any_key_event) = event.keyboard_event() {
+            self.dispatch_key_event(any_key_event);
+        }
 
-                // Capture phase, events bubble from back to front. Handlers for this phase are used for
-                // special purposes, such as detecting events outside of a given Bounds.
-                for (_, handler) in &mut handlers {
-                    handler(any_mouse_event, DispatchPhase::Capture, self);
+        !self.app.propagate_event
+    }
+
+    fn dispatch_mouse_event(&mut self, event: &dyn Any) {
+        if let Some(mut handlers) = self
+            .window
+            .current_frame
+            .mouse_listeners
+            .remove(&event.type_id())
+        {
+            // Because handlers may add other handlers, we sort every time.
+            handlers.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+            // Capture phase, events bubble from back to front. Handlers for this phase are used for
+            // special purposes, such as detecting events outside of a given Bounds.
+            for (_, handler) in &mut handlers {
+                handler(event, DispatchPhase::Capture, self);
+                if !self.app.propagate_event {
+                    break;
+                }
+            }
+
+            // Bubble phase, where most normal handlers do their work.
+            if self.app.propagate_event {
+                for (_, handler) in handlers.iter_mut().rev() {
+                    handler(event, DispatchPhase::Bubble, self);
                     if !self.app.propagate_event {
                         break;
                     }
                 }
+            }
 
-                // Bubble phase, where most normal handlers do their work.
-                if self.app.propagate_event {
-                    for (_, handler) in handlers.iter_mut().rev() {
-                        handler(any_mouse_event, DispatchPhase::Bubble, self);
-                        if !self.app.propagate_event {
-                            break;
-                        }
-                    }
-                }
+            if self.app.propagate_event && event.downcast_ref::<MouseUpEvent>().is_some() {
+                self.active_drag = None;
+            }
 
-                if self.app.propagate_event
-                    && any_mouse_event.downcast_ref::<MouseUpEvent>().is_some()
-                {
-                    self.active_drag = None;
-                }
-
-                // Just in case any handlers added new handlers, which is weird, but possible.
-                handlers.extend(
-                    self.window
-                        .current_frame
-                        .mouse_listeners
-                        .get_mut(&any_mouse_event.type_id())
-                        .into_iter()
-                        .flat_map(|handlers| handlers.drain(..)),
-                );
+            // Just in case any handlers added new handlers, which is weird, but possible.
+            handlers.extend(
                 self.window
                     .current_frame
                     .mouse_listeners
-                    .insert(any_mouse_event.type_id(), handlers);
+                    .get_mut(&event.type_id())
+                    .into_iter()
+                    .flat_map(|handlers| handlers.drain(..)),
+            );
+            self.window
+                .current_frame
+                .mouse_listeners
+                .insert(event.type_id(), handlers);
+        }
+    }
+
+    fn dispatch_key_event(&mut self, event: &dyn Any) {
+        if let Some(node_id) = self.window.focus.and_then(|focus_id| {
+            self.window
+                .current_frame
+                .dispatch_tree
+                .focusable_node_id(focus_id)
+        }) {
+            let dispatch_path = self
+                .window
+                .current_frame
+                .dispatch_tree
+                .dispatch_path(node_id);
+
+            // Capture phase
+            let mut context_stack: SmallVec<[KeyContext; 16]> = SmallVec::new();
+            self.propagate_event = true;
+
+            for node_id in &dispatch_path {
+                let node = self.window.current_frame.dispatch_tree.node(*node_id);
+
+                if !node.context.is_empty() {
+                    context_stack.push(node.context.clone());
+                }
+
+                for key_listener in node.key_listeners.clone() {
+                    key_listener(event, DispatchPhase::Capture, self);
+                    if !self.propagate_event {
+                        return;
+                    }
+                }
             }
-        } else if let Some(any_key_event) = event.keyboard_event() {
-            if let Some(focus_id) = self.window.focus {
-                let mut dispatcher = self.window.current_frame.key_dispatcher.take().unwrap();
-                dispatcher.dispatch_key(focus_id, any_key_event, self);
-                self.window.current_frame.key_dispatcher = Some(dispatcher);
+
+            // Bubble phase
+            for node_id in dispatch_path.iter().rev() {
+                // Handle low level key events
+                let node = self.window.current_frame.dispatch_tree.node(*node_id);
+                for key_listener in node.key_listeners.clone() {
+                    key_listener(event, DispatchPhase::Bubble, self);
+                    if !self.propagate_event {
+                        return;
+                    }
+                }
+
+                // Match keystrokes
+                let node = self.window.current_frame.dispatch_tree.node(*node_id);
+                if !node.context.is_empty() {
+                    if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
+                        if let Some(action) = self
+                            .window
+                            .current_frame
+                            .dispatch_tree
+                            .dispatch_key(&key_down_event.keystroke, &context_stack)
+                        {
+                            self.dispatch_action_on_node(*node_id, action);
+                            if !self.propagate_event {
+                                return;
+                            }
+                        }
+                    }
+
+                    context_stack.pop();
+                }
+            }
+        }
+    }
+
+    fn dispatch_action_on_node(&mut self, node_id: DispatchNodeId, action: Box<dyn Action>) {
+        let dispatch_path = self
+            .window
+            .current_frame
+            .dispatch_tree
+            .dispatch_path(node_id);
+
+        // Capture phase
+        for node_id in &dispatch_path {
+            let node = self.window.current_frame.dispatch_tree.node(*node_id);
+            for ActionListener {
+                action_type,
+                listener,
+            } in node.action_listeners.clone()
+            {
+                let any_action = action.as_any();
+                if action_type == any_action.type_id() {
+                    listener(any_action, DispatchPhase::Capture, self);
+                    if !self.propagate_event {
+                        return;
+                    }
+                }
             }
         }
 
-        !self.app.propagate_event
+        // Bubble phase
+        for node_id in dispatch_path.iter().rev() {
+            let node = self.window.current_frame.dispatch_tree.node(*node_id);
+            for ActionListener {
+                action_type,
+                listener,
+            } in node.action_listeners.clone()
+            {
+                let any_action = action.as_any();
+                if action_type == any_action.type_id() {
+                    self.propagate_event = false; // Actions stop propagation by default during the bubble phase
+                    listener(any_action, DispatchPhase::Bubble, self);
+                    if !self.propagate_event {
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     /// Register the given handler to be invoked whenever the global of the given type
@@ -1261,9 +1375,7 @@ impl<'a> WindowContext<'a> {
         if let Some(focus_id) = self.window.focus {
             self.window
                 .current_frame
-                .key_dispatcher
-                .as_ref()
-                .unwrap()
+                .dispatch_tree
                 .available_actions(focus_id)
         } else {
             Vec::new()
@@ -1926,17 +2038,20 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
     ) -> R {
         let window = &mut self.window;
-        let old_dispatcher = window.previous_frame.key_dispatcher.as_mut().unwrap();
-        let current_dispatcher = window.current_frame.key_dispatcher.as_mut().unwrap();
 
-        current_dispatcher.push_node(context, old_dispatcher);
+        window
+            .current_frame
+            .dispatch_tree
+            .push_node(context, &mut window.previous_frame.dispatch_tree);
         if let Some(focus_handle) = focus_handle.as_ref() {
-            current_dispatcher.make_focusable(focus_handle.id);
+            window
+                .current_frame
+                .dispatch_tree
+                .make_focusable(focus_handle.id);
         }
         let result = f(focus_handle, self);
 
-        let current_dispatcher = self.window.current_frame.key_dispatcher.as_mut().unwrap();
-        current_dispatcher.pop_node();
+        self.window.current_frame.dispatch_tree.pop_node();
 
         result
     }

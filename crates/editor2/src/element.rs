@@ -15,12 +15,12 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
-    black, hsla, point, px, relative, size, transparent_black, Action, ActionListener, AnyElement,
-    AvailableSpace, BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase,
-    Edges, Element, ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, Hsla,
-    InputHandler, KeyContext, KeyDownEvent, KeyMatch, Line, LineLayout, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size,
-    Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext, WrappedLineLayout,
+    black, hsla, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
+    BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element,
+    ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, Hsla, InputHandler,
+    KeyContext, KeyDownEvent, KeyMatch, Line, LineLayout, Modifiers, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size, Style, TextRun,
+    TextStyle, TextSystem, ViewContext, WindowContext, WrappedLineLayout,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
