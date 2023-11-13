@@ -10,7 +10,7 @@ use serde_json::json;
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
-use gpui::{json, View, ViewContext};
+use gpui::{View, ViewContext, VisualTestContext};
 use indoc::indoc;
 use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageQueries};
 use lsp::{notification, request};
@@ -19,7 +19,7 @@ use project::Project;
 use smol::stream::StreamExt;
 use workspace::{AppState, Workspace, WorkspaceHandle};
 
-use super::editor_test_context::EditorTestContext;
+use super::editor_test_context::{AssertionContextManager, EditorTestContext};
 
 pub struct EditorLspTestContext<'a> {
     pub cx: EditorTestContext<'a>,
@@ -34,8 +34,6 @@ impl<'a> EditorLspTestContext<'a> {
         capabilities: lsp::ServerCapabilities,
         cx: &'a mut gpui::TestAppContext,
     ) -> EditorLspTestContext<'a> {
-        use json::json;
-
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
@@ -70,9 +68,10 @@ impl<'a> EditorLspTestContext<'a> {
             .await;
 
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let workspace = window.root(cx);
+        let workspace = window.root_view(cx).unwrap();
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
         project
-            .update(cx, |project, cx| {
+            .update(&mut cx, |project, cx| {
                 project.find_or_create_local_worktree("/root", true, cx)
             })
             .await
@@ -82,7 +81,7 @@ impl<'a> EditorLspTestContext<'a> {
 
         let file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
         let item = workspace
-            .update(cx, |workspace, cx| {
+            .update(&mut cx, |workspace, cx| {
                 workspace.open_path(file, None, true, cx)
             })
             .await
@@ -92,7 +91,7 @@ impl<'a> EditorLspTestContext<'a> {
             item.act_as::<Editor>(cx)
                 .expect("Opened test file wasn't an editor")
         });
-        editor.update(cx, |_, cx| cx.focus_self());
+        editor.update(&mut cx, |editor, cx| editor.focus(cx));
 
         let lsp = fake_servers.next().await.unwrap();
 
@@ -101,6 +100,7 @@ impl<'a> EditorLspTestContext<'a> {
                 cx,
                 window: window.into(),
                 editor,
+                assertion_cx: AssertionContextManager::new(),
             },
             lsp,
             workspace,
@@ -258,7 +258,7 @@ impl<'a> EditorLspTestContext<'a> {
     where
         F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
-        self.workspace.update(self.cx.cx, update)
+        self.workspace.update(&mut self.cx.cx, update)
     }
 
     pub fn handle_request<T, F, Fut>(

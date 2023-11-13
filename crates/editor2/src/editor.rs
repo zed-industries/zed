@@ -10056,76 +10056,76 @@ pub fn diagnostic_style(
     }
 }
 
-// pub fn combine_syntax_and_fuzzy_match_highlights(
-//     text: &str,
-//     default_style: HighlightStyle,
-//     syntax_ranges: impl Iterator<Item = (Range<usize>, HighlightStyle)>,
-//     match_indices: &[usize],
-// ) -> Vec<(Range<usize>, HighlightStyle)> {
-//     let mut result = Vec::new();
-//     let mut match_indices = match_indices.iter().copied().peekable();
+pub fn combine_syntax_and_fuzzy_match_highlights(
+    text: &str,
+    default_style: HighlightStyle,
+    syntax_ranges: impl Iterator<Item = (Range<usize>, HighlightStyle)>,
+    match_indices: &[usize],
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut result = Vec::new();
+    let mut match_indices = match_indices.iter().copied().peekable();
 
-//     for (range, mut syntax_highlight) in syntax_ranges.chain([(usize::MAX..0, Default::default())])
-//     {
-//         syntax_highlight.weight = None;
+    for (range, mut syntax_highlight) in syntax_ranges.chain([(usize::MAX..0, Default::default())])
+    {
+        syntax_highlight.font_weight = None;
 
-//         // Add highlights for any fuzzy match characters before the next
-//         // syntax highlight range.
-//         while let Some(&match_index) = match_indices.peek() {
-//             if match_index >= range.start {
-//                 break;
-//             }
-//             match_indices.next();
-//             let end_index = char_ix_after(match_index, text);
-//             let mut match_style = default_style;
-//             match_style.weight = Some(FontWeight::BOLD);
-//             result.push((match_index..end_index, match_style));
-//         }
+        // Add highlights for any fuzzy match characters before the next
+        // syntax highlight range.
+        while let Some(&match_index) = match_indices.peek() {
+            if match_index >= range.start {
+                break;
+            }
+            match_indices.next();
+            let end_index = char_ix_after(match_index, text);
+            let mut match_style = default_style;
+            match_style.font_weight = Some(FontWeight::BOLD);
+            result.push((match_index..end_index, match_style));
+        }
 
-//         if range.start == usize::MAX {
-//             break;
-//         }
+        if range.start == usize::MAX {
+            break;
+        }
 
-//         // Add highlights for any fuzzy match characters within the
-//         // syntax highlight range.
-//         let mut offset = range.start;
-//         while let Some(&match_index) = match_indices.peek() {
-//             if match_index >= range.end {
-//                 break;
-//             }
+        // Add highlights for any fuzzy match characters within the
+        // syntax highlight range.
+        let mut offset = range.start;
+        while let Some(&match_index) = match_indices.peek() {
+            if match_index >= range.end {
+                break;
+            }
 
-//             match_indices.next();
-//             if match_index > offset {
-//                 result.push((offset..match_index, syntax_highlight));
-//             }
+            match_indices.next();
+            if match_index > offset {
+                result.push((offset..match_index, syntax_highlight));
+            }
 
-//             let mut end_index = char_ix_after(match_index, text);
-//             while let Some(&next_match_index) = match_indices.peek() {
-//                 if next_match_index == end_index && next_match_index < range.end {
-//                     end_index = char_ix_after(next_match_index, text);
-//                     match_indices.next();
-//                 } else {
-//                     break;
-//                 }
-//             }
+            let mut end_index = char_ix_after(match_index, text);
+            while let Some(&next_match_index) = match_indices.peek() {
+                if next_match_index == end_index && next_match_index < range.end {
+                    end_index = char_ix_after(next_match_index, text);
+                    match_indices.next();
+                } else {
+                    break;
+                }
+            }
 
-//             let mut match_style = syntax_highlight;
-//             match_style.weight = Some(FontWeight::BOLD);
-//             result.push((match_index..end_index, match_style));
-//             offset = end_index;
-//         }
+            let mut match_style = syntax_highlight;
+            match_style.font_weight = Some(FontWeight::BOLD);
+            result.push((match_index..end_index, match_style));
+            offset = end_index;
+        }
 
-//         if offset < range.end {
-//             result.push((offset..range.end, syntax_highlight));
-//         }
-//     }
+        if offset < range.end {
+            result.push((offset..range.end, syntax_highlight));
+        }
+    }
 
-//     fn char_ix_after(ix: usize, text: &str) -> usize {
-//         ix + text[ix..].chars().next().unwrap().len_utf8()
-//     }
+    fn char_ix_after(ix: usize, text: &str) -> usize {
+        ix + text[ix..].chars().next().unwrap().len_utf8()
+    }
 
-//     result
-// }
+    result
+}
 
 // pub fn styled_runs_for_code_label<'a>(
 //     label: &'a CodeLabel,

@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
-use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
+use std::{future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 #[derive(Clone)]
 pub struct TestAppContext {
@@ -132,6 +132,18 @@ impl TestAppContext {
         cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window))
     }
 
+    pub fn add_window_view<F, V>(&mut self, build_window: F) -> (View<V>, VisualTestContext)
+    where
+        F: FnOnce(&mut ViewContext<V>) -> V,
+        V: Render,
+    {
+        let mut cx = self.app.borrow_mut();
+        let window = cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window));
+        drop(cx);
+        let view = window.root_view(self).unwrap();
+        (view, VisualTestContext::from_window(*window.deref(), self))
+    }
+
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
@@ -158,7 +170,7 @@ impl TestAppContext {
         Some(read(lock.try_global()?, &lock))
     }
 
-    pub fn set_global<G: 'static, R>(&mut self, global: G) {
+    pub fn set_global<G: 'static>(&mut self, global: G) {
         let mut lock = self.app.borrow_mut();
         lock.set_global(global);
     }
@@ -274,6 +286,72 @@ impl<T: Send> Model<T> {
         rx.try_next()
             .expect("no event received")
             .expect("model was dropped")
+    }
+}
+
+impl<V> View<V> {
+    pub fn condition<Evt>(
+        &self,
+        cx: &TestAppContext,
+        mut predicate: impl FnMut(&V, &AppContext) -> bool,
+    ) -> impl Future<Output = ()>
+    where
+        Evt: 'static,
+        V: EventEmitter<Evt>,
+    {
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (tx, mut rx) = postage::mpsc::channel(1024);
+        let timeout_duration = Duration::from_millis(100); //todo!() cx.condition_duration();
+
+        let mut cx = cx.app.borrow_mut();
+        let subscriptions = (
+            cx.observe(self, {
+                let mut tx = tx.clone();
+                move |_, _| {
+                    tx.blocking_send(()).ok();
+                }
+            }),
+            cx.subscribe(self, {
+                let mut tx = tx.clone();
+                move |_, _: &Evt, _| {
+                    tx.blocking_send(()).ok();
+                }
+            }),
+        );
+
+        let cx = cx.this.upgrade().unwrap();
+        let handle = self.downgrade();
+
+        async move {
+            crate::util::timeout(timeout_duration, async move {
+                loop {
+                    {
+                        let cx = cx.borrow();
+                        let cx = &*cx;
+                        if predicate(
+                            handle
+                                .upgrade()
+                                .expect("view dropped with pending condition")
+                                .read(cx),
+                            cx,
+                        ) {
+                            break;
+                        }
+                    }
+
+                    // todo!(start_waiting)
+                    // cx.borrow().foreground_executor().start_waiting();
+                    rx.recv()
+                        .await
+                        .expect("view dropped with pending condition");
+                    // cx.borrow().foreground_executor().finish_waiting();
+                }
+            })
+            .await
+            .expect("condition timed out");
+            drop(subscriptions);
+        }
     }
 }
 

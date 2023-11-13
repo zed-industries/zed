@@ -4200,24 +4200,24 @@ impl ViewId {
     }
 }
 
-// pub trait WorkspaceHandle {
-//     fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath>;
-// }
+pub trait WorkspaceHandle {
+    fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath>;
+}
 
-// impl WorkspaceHandle for View<Workspace> {
-//     fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath> {
-//         self.read(cx)
-//             .worktrees(cx)
-//             .flat_map(|worktree| {
-//                 let worktree_id = worktree.read(cx).id();
-//                 worktree.read(cx).files(true, 0).map(move |f| ProjectPath {
-//                     worktree_id,
-//                     path: f.path.clone(),
-//                 })
-//             })
-//             .collect::<Vec<_>>()
-//     }
-// }
+impl WorkspaceHandle for View<Workspace> {
+    fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath> {
+        self.read(cx)
+            .worktrees(cx)
+            .flat_map(|worktree| {
+                let worktree_id = worktree.read(cx).id();
+                worktree.read(cx).files(true, 0).map(move |f| ProjectPath {
+                    worktree_id,
+                    path: f.path.clone(),
+                })
+            })
+            .collect::<Vec<_>>()
+    }
+}
 
 // impl std::fmt::Debug for OpenPaths {
 //     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
