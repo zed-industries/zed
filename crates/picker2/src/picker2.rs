@@ -1,8 +1,7 @@
 use editor::Editor;
 use gpui::{
-    div, uniform_list, Component, Div, FocusEnabled, ParentElement, Render, StatefulInteractivity,
-    StatelessInteractive, Styled, Task, UniformListScrollHandle, View, ViewContext, VisualContext,
-    WindowContext,
+    div, uniform_list, Component, Div, ParentElement, Render, StatelessInteractive, Styled, Task,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
 use ui::{prelude::*, v_stack, Divider, Label, LabelColor};
@@ -140,13 +139,11 @@ impl<D: PickerDelegate> Picker<D> {
 }
 
 impl<D: PickerDelegate> Render for Picker<D> {
-    type Element = Div<Self, StatefulInteractivity<Self>, FocusEnabled<Self>>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
             .context("picker")
-            .id("picker-container")
-            .focusable()
             .size_full()
             .elevation_2(cx)
             .on_action(Self::select_next)

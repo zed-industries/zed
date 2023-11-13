@@ -9,7 +9,7 @@ use file_associations::FileAssociations;
 use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, rems, svg, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
-    ClipboardItem, Component, Div, Entity, EventEmitter, FocusEnabled, FocusHandle, Model,
+    ClipboardItem, Component, Div, Entity, EventEmitter, FocusHandle, FocusableKeyDispatch, Model,
     ParentElement as _, Pixels, Point, PromptLevel, Render, StatefulInteractive,
     StatefulInteractivity, StatelessInteractive, Styled, Task, UniformListScrollHandle, View,
     ViewContext, VisualContext as _, WeakView, WindowContext,
@@ -1431,7 +1431,7 @@ impl ProjectPanel {
 }
 
 impl Render for ProjectPanel {
-    type Element = Div<Self, StatefulInteractivity<Self>, FocusEnabled<Self>>;
+    type Element = Div<Self, StatefulInteractivity<Self>, FocusableKeyDispatch<Self>>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let theme = cx.theme();

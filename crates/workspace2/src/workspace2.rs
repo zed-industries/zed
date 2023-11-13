@@ -37,10 +37,10 @@ use futures::{
 };
 use gpui::{
     actions, div, point, rems, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
-    AsyncAppContext, AsyncWindowContext, Bounds, Component, DispatchContext, Div, Entity, EntityId,
-    EventEmitter, FocusHandle, GlobalPixels, Model, ModelContext, ParentElement, Point, Render,
-    Size, StatefulInteractive, StatefulInteractivity, StatelessInteractive, Styled, Subscription,
-    Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
+    AsyncAppContext, AsyncWindowContext, Bounds, Component, Div, Entity, EntityId, EventEmitter,
+    FocusHandle, GlobalPixels, KeyContext, Model, ModelContext, ParentElement, Point, Render, Size,
+    StatefulInteractive, StatelessInteractive, StatelessInteractivity, Styled, Subscription, Task,
+    View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
     WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
@@ -438,8 +438,8 @@ pub struct Workspace {
     workspace_actions: Vec<
         Box<
             dyn Fn(
-                Div<Workspace, StatefulInteractivity<Workspace>>,
-            ) -> Div<Workspace, StatefulInteractivity<Workspace>>,
+                Div<Workspace, StatelessInteractivity<Workspace>>,
+            ) -> Div<Workspace, StatelessInteractivity<Workspace>>,
         >,
     >,
     zoomed: Option<AnyWeakView>,
@@ -3427,8 +3427,8 @@ impl Workspace {
 
     fn add_workspace_actions_listeners(
         &self,
-        mut div: Div<Workspace, StatefulInteractivity<Workspace>>,
-    ) -> Div<Workspace, StatefulInteractivity<Workspace>> {
+        mut div: Div<Workspace, StatelessInteractivity<Workspace>>,
+    ) -> Div<Workspace, StatelessInteractivity<Workspace>> {
         for action in self.workspace_actions.iter() {
             div = (action)(div)
         }
@@ -3656,108 +3656,107 @@ impl Render for Workspace {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let mut context = DispatchContext::default();
-        context.insert("Workspace");
-        cx.with_key_dispatch_context(context, |cx| {
-            div()
-                .relative()
-                .size_full()
-                .flex()
-                .flex_col()
-                .font("Zed Sans")
-                .gap_0()
-                .justify_start()
-                .items_start()
-                .text_color(cx.theme().colors().text)
-                .bg(cx.theme().colors().background)
-                .child(self.render_titlebar(cx))
-                .child(
-                    // todo! should this be a component a view?
-                    self.add_workspace_actions_listeners(div().id("workspace"))
-                        .relative()
-                        .flex_1()
-                        .w_full()
-                        .flex()
-                        .overflow_hidden()
-                        .border_t()
-                        .border_b()
-                        .border_color(cx.theme().colors().border)
-                        .child(self.modal_layer.clone())
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .flex_1()
-                                .h_full()
-                                .child(div().flex().flex_1().child(self.left_dock.clone()))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .flex_1()
-                                        .child(self.center.render(
-                                            &self.project,
-                                            &self.follower_states,
-                                            self.active_call(),
-                                            &self.active_pane,
-                                            self.zoomed.as_ref(),
-                                            &self.app_state,
-                                            cx,
-                                        ))
-                                        .child(
-                                            div().flex().flex_1().child(self.bottom_dock.clone()),
-                                        ),
-                                )
-                                .child(div().flex().flex_1().child(self.right_dock.clone())),
-                        ),
-                )
-                .child(self.status_bar.clone())
-                // .when(self.debug.show_toast, |this| {
-                //     this.child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))
-                // })
-                // .children(
-                //     Some(
-                //         div()
-                //             .absolute()
-                //             .top(px(50.))
-                //             .left(px(640.))
-                //             .z_index(8)
-                //             .child(LanguageSelector::new("language-selector")),
-                //     )
-                //     .filter(|_| self.is_language_selector_open()),
-                // )
-                .z_index(8)
-                // Debug
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .z_index(9)
-                        .absolute()
-                        .top_20()
-                        .left_1_4()
-                        .w_40()
-                        .gap_2(), // .when(self.show_debug, |this| {
-                                  //     this.child(Button::<Workspace>::new("Toggle User Settings").on_click(
-                                  //         Arc::new(|workspace, cx| workspace.debug_toggle_user_settings(cx)),
-                                  //     ))
-                                  //     .child(
-                                  //         Button::<Workspace>::new("Toggle Toasts").on_click(Arc::new(
-                                  //             |workspace, cx| workspace.debug_toggle_toast(cx),
-                                  //         )),
-                                  //     )
-                                  //     .child(
-                                  //         Button::<Workspace>::new("Toggle Livestream").on_click(Arc::new(
-                                  //             |workspace, cx| workspace.debug_toggle_livestream(cx),
-                                  //         )),
-                                  //     )
-                                  // })
-                                  // .child(
-                                  //     Button::<Workspace>::new("Toggle Debug")
-                                  //         .on_click(Arc::new(|workspace, cx| workspace.toggle_debug(cx))),
-                                  // ),
-                )
-        })
+        let mut context = KeyContext::default();
+        context.add("Workspace");
+
+        self.add_workspace_actions_listeners(div())
+            .context(context)
+            .relative()
+            .size_full()
+            .flex()
+            .flex_col()
+            .font("Zed Sans")
+            .gap_0()
+            .justify_start()
+            .items_start()
+            .text_color(cx.theme().colors().text)
+            .bg(cx.theme().colors().background)
+            .child(self.render_titlebar(cx))
+            .child(
+                // todo! should this be a component a view?
+                div()
+                    .id("workspace")
+                    .relative()
+                    .flex_1()
+                    .w_full()
+                    .flex()
+                    .overflow_hidden()
+                    .border_t()
+                    .border_b()
+                    .border_color(cx.theme().colors().border)
+                    .child(self.modal_layer.clone())
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .flex_1()
+                            .h_full()
+                            .child(div().flex().flex_1().child(self.left_dock.clone()))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .child(self.center.render(
+                                        &self.project,
+                                        &self.follower_states,
+                                        self.active_call(),
+                                        &self.active_pane,
+                                        self.zoomed.as_ref(),
+                                        &self.app_state,
+                                        cx,
+                                    ))
+                                    .child(div().flex().flex_1().child(self.bottom_dock.clone())),
+                            )
+                            .child(div().flex().flex_1().child(self.right_dock.clone())),
+                    ),
+            )
+            .child(self.status_bar.clone())
+            // .when(self.debug.show_toast, |this| {
+            //     this.child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))
+            // })
+            // .children(
+            //     Some(
+            //         div()
+            //             .absolute()
+            //             .top(px(50.))
+            //             .left(px(640.))
+            //             .z_index(8)
+            //             .child(LanguageSelector::new("language-selector")),
+            //     )
+            //     .filter(|_| self.is_language_selector_open()),
+            // )
+            .z_index(8)
+            // Debug
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .z_index(9)
+                    .absolute()
+                    .top_20()
+                    .left_1_4()
+                    .w_40()
+                    .gap_2(), // .when(self.show_debug, |this| {
+                              //     this.child(Button::<Workspace>::new("Toggle User Settings").on_click(
+                              //         Arc::new(|workspace, cx| workspace.debug_toggle_user_settings(cx)),
+                              //     ))
+                              //     .child(
+                              //         Button::<Workspace>::new("Toggle Toasts").on_click(Arc::new(
+                              //             |workspace, cx| workspace.debug_toggle_toast(cx),
+                              //         )),
+                              //     )
+                              //     .child(
+                              //         Button::<Workspace>::new("Toggle Livestream").on_click(Arc::new(
+                              //             |workspace, cx| workspace.debug_toggle_livestream(cx),
+                              //         )),
+                              //     )
+                              // })
+                              // .child(
+                              //     Button::<Workspace>::new("Toggle Debug")
+                              //         .on_click(Arc::new(|workspace, cx| workspace.toggle_debug(cx))),
+                              // ),
+            )
     }
 }
 // todo!()
