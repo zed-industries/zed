@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    colors::{StatusColors, SystemColors, ThemeColors, ThemeStyles},
-    default_color_scales, Appearance, PlayerColors, SyntaxTheme, Theme, ThemeFamily,
+    default_color_scales, Appearance, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme,
+    ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 fn zed_pro_daylight() -> Theme {
@@ -12,10 +12,10 @@ fn zed_pro_daylight() -> Theme {
         appearance: Appearance::Light,
         styles: ThemeStyles {
             system: SystemColors::default(),
-            colors: ThemeColors::default_light(),
+            colors: ThemeColors::light(),
             status: StatusColors::light(),
-            player: PlayerColors::default_light(),
-            syntax: Arc::new(SyntaxTheme::default_light()),
+            player: PlayerColors::light(),
+            syntax: Arc::new(SyntaxTheme::light()),
         },
     }
 }
@@ -27,10 +27,10 @@ pub(crate) fn zed_pro_moonlight() -> Theme {
         appearance: Appearance::Dark,
         styles: ThemeStyles {
             system: SystemColors::default(),
-            colors: ThemeColors::default_dark(),
+            colors: ThemeColors::dark(),
             status: StatusColors::dark(),
-            player: PlayerColors::default(),
-            syntax: Arc::new(SyntaxTheme::default_dark()),
+            player: PlayerColors::dark(),
+            syntax: Arc::new(SyntaxTheme::dark()),
         },
     }
 }

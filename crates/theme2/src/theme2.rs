@@ -1,12 +1,9 @@
-mod colors;
 mod default_colors;
 mod default_theme;
-mod players;
 mod registry;
 mod scale;
 mod settings;
 mod styles;
-mod syntax;
 #[cfg(not(feature = "importing-themes"))]
 mod themes;
 mod user_theme;
@@ -14,15 +11,12 @@ mod user_theme;
 use std::sync::Arc;
 
 use ::settings::Settings;
-pub use colors::*;
 pub use default_colors::*;
 pub use default_theme::*;
-pub use players::*;
 pub use registry::*;
 pub use scale::*;
 pub use settings::*;
 pub use styles::*;
-pub use syntax::*;
 #[cfg(not(feature = "importing-themes"))]
 pub use themes::*;
 pub use user_theme::*;
