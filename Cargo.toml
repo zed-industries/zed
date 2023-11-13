@@ -20,6 +20,7 @@ members = [
     "crates/collab_ui",
     "crates/collections",
     "crates/command_palette",
+    "crates/command_palette2",
     "crates/component_test",
     "crates/context_menu",
     "crates/copilot",
@@ -111,7 +112,8 @@ members = [
     "crates/xtask",
     "crates/zed",
     "crates/zed2",
-    "crates/zed-actions"
+    "crates/zed-actions",
+    "crates/zed_actions2"
 ]
 default-members = ["crates/zed"]
 resolver = "2"

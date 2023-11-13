@@ -171,10 +171,9 @@ impl ProjectDiagnosticsEditor {
                         .entry(*language_server_id)
                         .or_default()
                         .insert(path.clone());
-                    let no_multiselections = this.editor.update(cx, |editor, cx| {
-                        editor.selections.all::<usize>(cx).len() <= 1
-                    });
-                    if no_multiselections && !this.is_dirty(cx) {
+                    if this.editor.read(cx).selections.all::<usize>(cx).is_empty()
+                        && !this.is_dirty(cx)
+                    {
                         this.update_excerpts(Some(*language_server_id), cx);
                     }
                 }

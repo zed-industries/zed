@@ -34,9 +34,9 @@ Material Design 3 has a some great visualizations of elevation that may be helpf
 
 The app background constitutes the lowest elevation layer, appearing behind all other surfaces and components. It is predominantly used for the background color of the app.
 
-### UI Surface
+### Surface
 
-The UI Surface, located above the app background, is the standard level for all elements
+The Surface elevation level, located above the app background, is the standard level for all elements
 
 Example Elements: Title Bar, Panel, Tab Bar, Editor
 

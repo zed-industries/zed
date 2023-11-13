@@ -10,6 +10,7 @@ doctest = false
 
 [dependencies]
 editor = { package = "editor2", path = "../editor2" }
+ui = { package = "ui2", path = "../ui2" }
 gpui = { package = "gpui2", path = "../gpui2" }
 menu = { package = "menu2", path = "../menu2" }
 settings = { package = "settings2", path = "../settings2" }

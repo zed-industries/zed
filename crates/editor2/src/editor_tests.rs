@@ -1,3 +1,7 @@
+use gpui::TestAppContext;
+use language::language_settings::{AllLanguageSettings, AllLanguageSettingsContent};
+use settings::SettingsStore;
+
 // use super::*;
 // use crate::{
 //     scroll::scroll_amount::ScrollAmount,
@@ -8152,16 +8156,16 @@
 //     });
 // }
 
-// pub(crate) fn update_test_language_settings(
-//     cx: &mut TestAppContext,
-//     f: impl Fn(&mut AllLanguageSettingsContent),
-// ) {
-//     cx.update(|cx| {
-//         cx.update_global::<SettingsStore, _, _>(|store, cx| {
-//             store.update_user_settings::<AllLanguageSettings>(cx, f);
-//         });
-//     });
-// }
+pub(crate) fn update_test_language_settings(
+    cx: &mut TestAppContext,
+    f: impl Fn(&mut AllLanguageSettingsContent),
+) {
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings::<AllLanguageSettings>(cx, f);
+        });
+    });
+}
 
 // pub(crate) fn update_test_project_settings(
 //     cx: &mut TestAppContext,
