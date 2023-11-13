@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use gpui::SharedString;
+use gpui::{HighlightStyle, SharedString};
 use refineable::Refineable;
 
 use crate::{
@@ -27,20 +27,46 @@ impl ThemeRegistry {
         }
     }
 
+    #[allow(unused)]
     fn insert_user_theme_familes(&mut self, families: impl IntoIterator<Item = UserThemeFamily>) {
         for family in families.into_iter() {
             self.insert_user_themes(family.themes);
         }
     }
 
+    #[allow(unused)]
     fn insert_user_themes(&mut self, themes: impl IntoIterator<Item = UserTheme>) {
         self.insert_themes(themes.into_iter().map(|user_theme| {
             let mut theme_colors = match user_theme.appearance {
                 Appearance::Light => ThemeColors::default_light(),
                 Appearance::Dark => ThemeColors::default_dark(),
             };
-
             theme_colors.refine(&user_theme.styles.colors);
+
+            let mut status_colors = StatusColors::default();
+            status_colors.refine(&user_theme.styles.status);
+
+            let mut syntax_colors = match user_theme.appearance {
+                Appearance::Light => SyntaxTheme::default_light(),
+                Appearance::Dark => SyntaxTheme::default_dark(),
+            };
+            if let Some(user_syntax) = user_theme.styles.syntax {
+                syntax_colors.highlights = user_syntax
+                    .highlights
+                    .iter()
+                    .map(|(syntax_token, highlight)| {
+                        (
+                            syntax_token.clone(),
+                            HighlightStyle {
+                                color: highlight.color,
+                                font_style: highlight.font_style.map(Into::into),
+                                font_weight: highlight.font_weight.map(Into::into),
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+            }
 
             Theme {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -49,12 +75,9 @@ impl ThemeRegistry {
                 styles: ThemeStyles {
                     system: SystemColors::default(),
                     colors: theme_colors,
-                    status: StatusColors::default(),
+                    status: status_colors,
                     player: PlayerColors::default(),
-                    syntax: match user_theme.appearance {
-                        Appearance::Light => Arc::new(SyntaxTheme::default_light()),
-                        Appearance::Dark => Arc::new(SyntaxTheme::default_dark()),
-                    },
+                    syntax: Arc::new(syntax_colors),
                 },
             }
         }));
@@ -83,6 +106,8 @@ impl Default for ThemeRegistry {
         };
 
         this.insert_theme_families([zed_pro_family()]);
+
+        #[cfg(not(feature = "importing-themes"))]
         this.insert_user_theme_familes(crate::all_user_themes());
 
         this

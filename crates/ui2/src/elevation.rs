@@ -11,43 +11,53 @@ pub enum Elevation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElevationIndex {
-    AppBackground,
-    UISurface,
+    Background,
+    Surface,
     ElevatedSurface,
     Wash,
-    ModalSurfaces,
+    ModalSurface,
     DraggedElement,
 }
 
 impl ElevationIndex {
     pub fn z_index(self) -> u32 {
         match self {
-            ElevationIndex::AppBackground => 0,
-            ElevationIndex::UISurface => 100,
+            ElevationIndex::Background => 0,
+            ElevationIndex::Surface => 100,
             ElevationIndex::ElevatedSurface => 200,
             ElevationIndex::Wash => 300,
-            ElevationIndex::ModalSurfaces => 400,
+            ElevationIndex::ModalSurface => 400,
             ElevationIndex::DraggedElement => 900,
         }
     }
 
     pub fn shadow(self) -> SmallVec<[BoxShadow; 2]> {
         match self {
-            ElevationIndex::AppBackground => smallvec![],
+            ElevationIndex::Surface => smallvec![],
 
-            ElevationIndex::UISurface => smallvec![BoxShadow {
+            ElevationIndex::ElevatedSurface => smallvec![BoxShadow {
                 color: hsla(0., 0., 0., 0.12),
                 offset: point(px(0.), px(1.)),
                 blur_radius: px(3.),
                 spread_radius: px(0.),
             }],
 
-            _ => smallvec![BoxShadow {
-                color: hsla(0., 0., 0., 0.32),
-                offset: point(px(1.), px(3.)),
-                blur_radius: px(12.),
-                spread_radius: px(0.),
-            }],
+            ElevationIndex::ModalSurface => smallvec![
+                BoxShadow {
+                    color: hsla(0., 0., 0., 0.12),
+                    offset: point(px(0.), px(1.)),
+                    blur_radius: px(3.),
+                    spread_radius: px(0.),
+                },
+                BoxShadow {
+                    color: hsla(0., 0., 0., 0.16),
+                    offset: point(px(3.), px(1.)),
+                    blur_radius: px(12.),
+                    spread_radius: px(0.),
+                },
+            ],
+
+            _ => smallvec![],
         }
     }
 }

@@ -2,8 +2,9 @@ use std::fmt::{self, Debug};
 
 use gpui::{Hsla, Rgba};
 use theme::{
-    Appearance, PlayerColor, PlayerColors, StatusColors, SyntaxTheme, SystemColors,
-    ThemeColorsRefinement, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, PlayerColor, PlayerColors, StatusColorsRefinement, SystemColors,
+    ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 struct RawSyntaxPrinter<'a>(&'a str);
@@ -27,6 +28,17 @@ struct IntoPrinter<'a, D: Debug>(&'a D);
 impl<'a, D: Debug> Debug for IntoPrinter<'a, D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}.into()", self.0)
+    }
+}
+
+pub struct OptionPrinter<'a, T>(&'a Option<T>);
+
+impl<'a, T: Debug> Debug for OptionPrinter<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(value) => write!(f, "Some({:?})", value),
+            None => write!(f, "None"),
+        }
     }
 }
 
@@ -92,6 +104,17 @@ impl<'a> Debug for UserThemeStylesRefinementPrinter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("UserThemeStylesRefinement")
             .field("colors", &ThemeColorsRefinementPrinter(&self.0.colors))
+            .field("status", &StatusColorsRefinementPrinter(&self.0.status))
+            .field(
+                "syntax",
+                &OptionPrinter(
+                    &self
+                        .0
+                        .syntax
+                        .as_ref()
+                        .map(|syntax| UserSyntaxThemePrinter(syntax)),
+                ),
+            )
             .finish()
     }
 }
@@ -250,23 +273,39 @@ impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
     }
 }
 
-pub struct StatusColorsPrinter<'a>(&'a StatusColors);
+pub struct StatusColorsRefinementPrinter<'a>(&'a StatusColorsRefinement);
 
-impl<'a> Debug for StatusColorsPrinter<'a> {
+impl<'a> Debug for StatusColorsRefinementPrinter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("StatusColors")
-            .field("conflict", &HslaPrinter(self.0.conflict))
-            .field("created", &HslaPrinter(self.0.created))
-            .field("deleted", &HslaPrinter(self.0.deleted))
-            .field("error", &HslaPrinter(self.0.error))
-            .field("hidden", &HslaPrinter(self.0.hidden))
-            .field("ignored", &HslaPrinter(self.0.ignored))
-            .field("info", &HslaPrinter(self.0.info))
-            .field("modified", &HslaPrinter(self.0.modified))
-            .field("renamed", &HslaPrinter(self.0.renamed))
-            .field("success", &HslaPrinter(self.0.success))
-            .field("warning", &HslaPrinter(self.0.warning))
-            .finish()
+        let status_colors = vec![
+            ("conflict", self.0.conflict),
+            ("created", self.0.created),
+            ("deleted", self.0.deleted),
+            ("error", self.0.error),
+            ("hidden", self.0.hidden),
+            ("ignored", self.0.ignored),
+            ("info", self.0.info),
+            ("modified", self.0.modified),
+            ("renamed", self.0.renamed),
+            ("success", self.0.success),
+            ("warning", self.0.warning),
+        ];
+
+        f.write_str("StatusColorsRefinement {")?;
+
+        for (color_name, color) in status_colors {
+            if let Some(color) = color {
+                f.write_str(color_name)?;
+                f.write_str(": ")?;
+                f.write_str("Some(")?;
+                HslaPrinter(color).fmt(f)?;
+                f.write_str(")")?;
+                f.write_str(",")?;
+            }
+        }
+
+        f.write_str("..Default::default()")?;
+        f.write_str("}")
     }
 }
 
@@ -299,11 +338,11 @@ impl<'a> Debug for PlayerColorPrinter<'a> {
     }
 }
 
-pub struct SyntaxThemePrinter<'a>(&'a SyntaxTheme);
+pub struct UserSyntaxThemePrinter<'a>(&'a UserSyntaxTheme);
 
-impl<'a> Debug for SyntaxThemePrinter<'a> {
+impl<'a> Debug for UserSyntaxThemePrinter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SyntaxTheme")
+        f.debug_struct("UserSyntaxTheme")
             .field(
                 "highlights",
                 &VecPrinter(
@@ -312,11 +351,49 @@ impl<'a> Debug for SyntaxThemePrinter<'a> {
                         .highlights
                         .iter()
                         .map(|(token, highlight)| {
-                            (IntoPrinter(token), HslaPrinter(highlight.color.unwrap()))
+                            (IntoPrinter(token), UserHighlightStylePrinter(&highlight))
                         })
                         .collect(),
                 ),
             )
             .finish()
+    }
+}
+
+pub struct UserHighlightStylePrinter<'a>(&'a UserHighlightStyle);
+
+impl<'a> Debug for UserHighlightStylePrinter<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("UserHighlightStyle {")?;
+
+        if let Some(color) = self.0.color {
+            f.write_str("color")?;
+            f.write_str(": ")?;
+            f.write_str("Some(")?;
+            HslaPrinter(color).fmt(f)?;
+            f.write_str(")")?;
+            f.write_str(",")?;
+        }
+
+        if let Some(font_style) = self.0.font_style {
+            f.write_str("font_style")?;
+            f.write_str(": ")?;
+            f.write_str("Some(")?;
+            write!(f, "UserFontStyle::{:?}", font_style)?;
+            f.write_str(")")?;
+            f.write_str(",")?;
+        }
+
+        if let Some(font_weight) = self.0.font_weight.as_ref() {
+            f.write_str("font_weight")?;
+            f.write_str(": ")?;
+            f.write_str("Some(")?;
+            write!(f, "UserFontWeight({:?})", font_weight.0)?;
+            f.write_str(")")?;
+            f.write_str(",")?;
+        }
+
+        f.write_str("..Default::default()")?;
+        f.write_str("}")
     }
 }

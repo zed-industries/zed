@@ -1,7 +1,7 @@
 use crate::{
-    display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
-    movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
-    Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
+    editor_settings::SeedQuerySetting, link_go_to_definition::hide_link_definition,
+    persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor, EditorSettings, Event,
+    ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
 };
 use anyhow::{Context, Result};
 use collections::HashSet;
@@ -13,8 +13,8 @@ use gpui::{
     ViewHandle, WeakViewHandle,
 };
 use language::{
-    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
-    SelectionGoal,
+    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
+    Point, SelectionGoal,
 };
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
@@ -937,24 +937,28 @@ impl SearchableItem for Editor {
     }
 
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
-        let display_map = self.snapshot(cx).display_snapshot;
+        let setting = settings::get::<EditorSettings>(cx).seed_search_query_from_cursor;
+        let snapshot = &self.snapshot(cx).buffer_snapshot;
         let selection = self.selections.newest::<usize>(cx);
-        if selection.start == selection.end {
-            let point = selection.start.to_display_point(&display_map);
-            let range = surrounding_word(&display_map, point);
-            let range = range.start.to_offset(&display_map, Bias::Left)
-                ..range.end.to_offset(&display_map, Bias::Right);
-            let text: String = display_map.buffer_snapshot.text_for_range(range).collect();
-            if text.trim().is_empty() {
-                String::new()
-            } else {
-                text
+
+        match setting {
+            SeedQuerySetting::Never => String::new(),
+            SeedQuerySetting::Selection | SeedQuerySetting::Always if !selection.is_empty() => {
+                snapshot
+                    .text_for_range(selection.start..selection.end)
+                    .collect()
             }
-        } else {
-            display_map
-                .buffer_snapshot
-                .text_for_range(selection.start..selection.end)
-                .collect()
+            SeedQuerySetting::Selection => String::new(),
+            SeedQuerySetting::Always => {
+                let (range, kind) = snapshot.surrounding_word(selection.start);
+                if kind == Some(CharKind::Word) {
+                    let text: String = snapshot.text_for_range(range).collect();
+                    if !text.trim().is_empty() {
+                        return text;
+                    }
+                }
+                String::new()
+            }
         }
     }
 

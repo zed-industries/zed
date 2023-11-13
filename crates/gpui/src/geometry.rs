@@ -136,7 +136,7 @@ impl ToJson for RectF {
 }
 
 #[derive(Refineable, Debug)]
-#[refineable(debug)]
+#[refineable(Debug)]
 pub struct Point<T: Clone + Default + Debug> {
     pub x: T,
     pub y: T,
@@ -161,7 +161,7 @@ impl<T: Clone + Default + Debug> Into<taffy::geometry::Point<T>> for Point<T> {
 }
 
 #[derive(Refineable, Clone, Debug)]
-#[refineable(debug)]
+#[refineable(Debug)]
 pub struct Size<T: Clone + Default + Debug> {
     pub width: T,
     pub height: T,
@@ -227,7 +227,7 @@ impl Size<Length> {
 }
 
 #[derive(Clone, Default, Refineable, Debug)]
-#[refineable(debug)]
+#[refineable(Debug)]
 pub struct Edges<T: Clone + Default + Debug> {
     pub top: T,
     pub right: T,

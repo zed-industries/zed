@@ -1,5 +1,6 @@
 use super::{AbsoluteLength, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
+use smallvec::SmallVec;
 use std::fmt::Debug;
 use taffy::{
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
@@ -12,6 +13,7 @@ pub struct TaffyLayoutEngine {
     taffy: Taffy,
     children_to_parents: HashMap<LayoutId, LayoutId>,
     absolute_layout_bounds: HashMap<LayoutId, Bounds<Pixels>>,
+    computed_layouts: HashSet<LayoutId>,
 }
 
 static EXPECT_MESSAGE: &'static str =
@@ -23,7 +25,15 @@ impl TaffyLayoutEngine {
             taffy: Taffy::new(),
             children_to_parents: HashMap::default(),
             absolute_layout_bounds: HashMap::default(),
+            computed_layouts: HashSet::default(),
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.taffy.clear();
+        self.children_to_parents.clear();
+        self.absolute_layout_bounds.clear();
+        self.computed_layouts.clear();
     }
 
     pub fn request_layout(
@@ -115,6 +125,7 @@ impl TaffyLayoutEngine {
     }
 
     pub fn compute_layout(&mut self, id: LayoutId, available_space: Size<AvailableSpace>) {
+        // Leaving this here until we have a better instrumentation approach.
         // println!("Laying out {} children", self.count_all_children(id)?);
         // println!("Max layout depth: {}", self.max_depth(0, id)?);
 
@@ -124,6 +135,22 @@ impl TaffyLayoutEngine {
         //     println!("N{} --> N{}", u64::from(a), u64::from(b));
         // }
         // println!("");
+        //
+
+        if !self.computed_layouts.insert(id) {
+            let mut stack = SmallVec::<[LayoutId; 64]>::new();
+            stack.push(id);
+            while let Some(id) = stack.pop() {
+                self.absolute_layout_bounds.remove(&id);
+                stack.extend(
+                    self.taffy
+                        .children(id.into())
+                        .expect(EXPECT_MESSAGE)
+                        .into_iter()
+                        .map(Into::into),
+                );
+            }
+        }
 
         // let started_at = std::time::Instant::now();
         self.taffy
@@ -397,7 +424,7 @@ where
     }
 }
 
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq)]
 pub enum AvailableSpace {
     /// The amount of space available is the specified number of pixels
     Definite(Pixels),

@@ -1275,11 +1275,10 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.0.83"
+version = "1.0.84"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1174fb0b6ec23863f8b971027804a42614e347eafb0a95bf0b12cdae21fc4d0"
+checksum = "0f8e7c90afad890484a21653d08b6e209ae34770fb5ee298f9c699fcc1e5c856"
 dependencies = [
- "jobserver",
  "libc",
 ]
 
@@ -1878,6 +1877,30 @@ dependencies = [
  "util",
  "workspace",
  "zed-actions",
+]
+
+[[package]]
+name = "command_palette2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "ctor",
+ "editor2",
+ "env_logger 0.9.3",
+ "fuzzy2",
+ "gpui2",
+ "language2",
+ "picker2",
+ "project2",
+ "serde",
+ "serde_json",
+ "settings2",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
+ "zed_actions2",
 ]
 
 [[package]]
@@ -2781,6 +2804,7 @@ dependencies = [
  "tree-sitter-html",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+ "ui2",
  "unindent",
  "util",
  "workspace2",
@@ -4371,15 +4395,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
 
 [[package]]
-name = "jobserver"
-version = "0.1.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "936cfd212a0155903bcbc060e316fb6cc7cbf2e1907329391ebadc1fe0ce77c2"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "journal"
 version = "0.1.0"
 dependencies = [
@@ -4432,6 +4447,12 @@ checksum = "c5f195fe497f702db0f318b07fdd68edb16955aed830df8363d837542f8f935a"
 dependencies = [
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "json_comments"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dbbfed4e59ba9750e15ba154fdfd9329cee16ff3df539c2666b70f58cc32105"
 
 [[package]]
 name = "jwt"
@@ -6129,6 +6150,7 @@ dependencies = [
  "serde_json",
  "settings2",
  "theme2",
+ "ui2",
  "util",
 ]
 
@@ -9155,10 +9177,13 @@ dependencies = [
  "anyhow",
  "convert_case 0.6.0",
  "gpui2",
+ "indexmap 1.9.3",
+ "json_comments",
  "log",
  "rust-embed",
  "serde",
  "simplelog",
+ "strum",
  "theme2",
  "uuid 1.4.1",
 ]
@@ -11362,6 +11387,7 @@ dependencies = [
  "cli",
  "client2",
  "collections",
+ "command_palette2",
  "copilot2",
  "ctor",
  "db2",
@@ -11448,6 +11474,15 @@ dependencies = [
  "util",
  "uuid 1.4.1",
  "workspace2",
+ "zed_actions2",
+]
+
+[[package]]
+name = "zed_actions2"
+version = "0.1.0"
+dependencies = [
+ "gpui2",
+ "serde",
 ]
 
 [[package]]

@@ -422,7 +422,10 @@
             }
         },
         {
-            "scope": ["string.interpolated.dollar.shell", "string.interpolated.backtick.shell"],
+            "scope": [
+                "string.interpolated.dollar.shell",
+                "string.interpolated.backtick.shell"
+            ],
             "settings": {
                 "foreground": "#427b58"
             }
@@ -488,13 +491,19 @@
 
         {
             "name": "coloring of the Java import and package identifiers",
-            "scope": ["storage.modifier.import.java", "storage.modifier.package.java"],
+            "scope": [
+                "storage.modifier.import.java",
+                "storage.modifier.package.java"
+            ],
             "settings": {
                 "foreground": "#665c54"
             }
         },
         {
-            "scope": ["keyword.other.import.java", "keyword.other.package.java"],
+            "scope": [
+                "keyword.other.import.java",
+                "keyword.other.package.java"
+            ],
             "settings": {
                 "foreground": "#427b58"
             }
@@ -627,7 +636,9 @@
         },
         {
             "name": "JSON Level 0",
-            "scope": ["source.json meta.structure.dictionary.json support.type.property-name.json"],
+            "scope": [
+                "source.json meta.structure.dictionary.json support.type.property-name.json"
+            ],
             "settings": {
                 "foreground": "#79740e"
             }
@@ -760,7 +771,10 @@
             }
         },
         {
-            "scope": ["source.go keyword.interface", "source.go keyword.struct"],
+            "scope": [
+                "source.go keyword.interface",
+                "source.go keyword.struct"
+            ],
             "settings": {
                 "foreground": "#076678"
             }
@@ -787,7 +801,10 @@
 
         {
             "name": "ReasonML String",
-            "scope": ["source.reason string.double", "source.reason string.regexp"],
+            "scope": [
+                "source.reason string.double",
+                "source.reason string.regexp"
+            ],
             "settings": {
                 "foreground": "#79740e"
             }
@@ -808,7 +825,10 @@
         },
         {
             "name": "ReasonML property",
-            "scope": ["source.reason support.property-value", "source.reason entity.name.filename"],
+            "scope": [
+                "source.reason support.property-value",
+                "source.reason entity.name.filename"
+            ],
             "settings": {
                 "foreground": "#af3a03"
             }
@@ -830,7 +850,9 @@
         },
         {
             "name": "Powershell function attribute",
-            "scope": ["source.powershell support.function.attribute.powershell"],
+            "scope": [
+                "source.powershell support.function.attribute.powershell"
+            ],
             "settings": {
                 "foreground": "#665c54"
             }

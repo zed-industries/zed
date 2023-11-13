@@ -184,6 +184,10 @@ impl AnyView {
             .compute_layout(layout_id, available_space);
         (self.paint)(self, &mut rendered_element, cx);
     }
+
+    pub(crate) fn draw_dispatch_stack(&self, cx: &mut WindowContext) {
+        (self.initialize)(self, cx);
+    }
 }
 
 impl<V: 'static> Component<V> for AnyView {

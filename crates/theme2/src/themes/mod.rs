@@ -6,8 +6,8 @@ mod ayu;
 mod dracula;
 mod gruvbox;
 mod night_owl;
+mod noctis;
 mod nord;
-mod notctis;
 mod palenight;
 mod rose_pine;
 mod solarized;
@@ -18,8 +18,8 @@ pub use ayu::*;
 pub use dracula::*;
 pub use gruvbox::*;
 pub use night_owl::*;
+pub use noctis::*;
 pub use nord::*;
-pub use notctis::*;
 pub use palenight::*;
 pub use rose_pine::*;
 pub use solarized::*;
@@ -37,7 +37,7 @@ pub(crate) fn all_user_themes() -> Vec<UserThemeFamily> {
         dracula(),
         solarized(),
         nord(),
-        notctis(),
+        noctis(),
         ayu(),
         gruvbox(),
     ]

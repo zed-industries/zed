@@ -94,7 +94,6 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
 
     fn on_mouse_down_out(
         mut self,
-        button: MouseButton,
         handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + 'static,
     ) -> Self
     where
@@ -103,10 +102,7 @@ pub trait StatelessInteractive<V: 'static>: Element<V> {
         self.stateless_interactivity()
             .mouse_down_listeners
             .push(Box::new(move |view, event, bounds, phase, cx| {
-                if phase == DispatchPhase::Capture
-                    && event.button == button
-                    && !bounds.contains_point(&event.position)
-                {
+                if phase == DispatchPhase::Capture && !bounds.contains_point(&event.position) {
                     handler(view, event, cx)
                 }
             }));
