@@ -1,12 +1,16 @@
 use gpui::{
-    actions, div, Div, Focusable, FocusableKeyDispatch, KeyBinding, ParentElement, Render,
-    StatefulInteractivity, StatelessInteractive, Styled, View, VisualContext, WindowContext,
+    actions, div, Div, FocusHandle, Focusable, FocusableKeyDispatch, KeyBinding, ParentElement,
+    Render, StatefulInteractivity, StatelessInteractive, Styled, View, VisualContext,
+    WindowContext,
 };
 use theme2::ActiveTheme;
 
 actions!(ActionA, ActionB, ActionC);
 
-pub struct FocusStory {}
+pub struct FocusStory {
+    child_1_focus: FocusHandle,
+    child_2_focus: FocusHandle,
+}
 
 impl FocusStory {
     pub fn view(cx: &mut WindowContext) -> View<Self> {
@@ -16,7 +20,10 @@ impl FocusStory {
             KeyBinding::new("cmd-c", ActionC, None),
         ]);
 
-        cx.build_view(move |cx| Self {})
+        cx.build_view(move |cx| Self {
+            child_1_focus: cx.focus_handle(),
+            child_2_focus: cx.focus_handle(),
+        })
     }
 }
 
@@ -31,8 +38,6 @@ impl Render for FocusStory {
         let color_4 = theme.status().conflict;
         let color_5 = theme.status().ignored;
         let color_6 = theme.status().renamed;
-        let child_1 = cx.focus_handle();
-        let child_2 = cx.focus_handle();
 
         div()
             .id("parent")
@@ -56,7 +61,7 @@ impl Render for FocusStory {
             .focus_in(|style| style.bg(color_3))
             .child(
                 div()
-                    .track_focus(&child_1)
+                    .track_focus(&self.child_1_focus)
                     .context("child-1")
                     .on_action(|_, action: &ActionB, cx| {
                         println!("Action B dispatched on child 1 during");
@@ -76,7 +81,7 @@ impl Render for FocusStory {
             )
             .child(
                 div()
-                    .track_focus(&child_2)
+                    .track_focus(&self.child_2_focus)
                     .context("child-2")
                     .on_action(|_, action: &ActionC, cx| {
                         println!("Action C dispatched on child 2");
