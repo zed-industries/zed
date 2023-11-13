@@ -1,8 +1,7 @@
 use editor::Editor;
 use gpui::{
-    div, uniform_list, Component, Div, FocusableKeyDispatch, ParentElement, Render,
-    StatefulInteractivity, StatelessInteractive, Styled, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WindowContext,
+    div, uniform_list, Component, Div, ParentElement, Render, StatelessInteractive, Styled, Task,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WindowContext,
 };
 use std::cmp;
 use theme::ActiveTheme;
@@ -137,13 +136,11 @@ impl<D: PickerDelegate> Picker<D> {
 }
 
 impl<D: PickerDelegate> Render for Picker<D> {
-    type Element = Div<Self, StatefulInteractivity<Self>, FocusableKeyDispatch<Self>>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
             .context("picker")
-            .id("picker-container")
-            .focusable()
             .size_full()
             .on_action(Self::select_next)
             .on_action(Self::select_prev)

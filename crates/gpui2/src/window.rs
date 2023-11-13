@@ -1,5 +1,5 @@
 use crate::{
-    key_dispatch::ActionListener, px, size, Action, AnyBox, AnyDrag, AnyView, AppContext,
+    key_dispatch::DispatchActionListener, px, size, Action, AnyBox, AnyDrag, AnyView, AppContext,
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
     DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
     EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
@@ -1306,7 +1306,7 @@ impl<'a> WindowContext<'a> {
         // Capture phase
         for node_id in &dispatch_path {
             let node = self.window.current_frame.dispatch_tree.node(*node_id);
-            for ActionListener {
+            for DispatchActionListener {
                 action_type,
                 listener,
             } in node.action_listeners.clone()
@@ -1324,7 +1324,7 @@ impl<'a> WindowContext<'a> {
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
             let node = self.window.current_frame.dispatch_tree.node(*node_id);
-            for ActionListener {
+            for DispatchActionListener {
                 action_type,
                 listener,
             } in node.action_listeners.clone()

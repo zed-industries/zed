@@ -128,7 +128,7 @@ impl<V: 'static> Div<V, StatefulInteractivity<V>, NonFocusableKeyDispatch> {
     pub fn focusable(self) -> Div<V, StatefulInteractivity<V>, FocusableKeyDispatch<V>> {
         Div {
             interactivity: self.interactivity,
-            key_dispatch: FocusableKeyDispatch::new(),
+            key_dispatch: FocusableKeyDispatch::new(self.key_dispatch),
             children: self.children,
             group: self.group,
             base_style: self.base_style,
@@ -141,7 +141,7 @@ impl<V: 'static> Div<V, StatefulInteractivity<V>, NonFocusableKeyDispatch> {
     ) -> Div<V, StatefulInteractivity<V>, FocusableKeyDispatch<V>> {
         Div {
             interactivity: self.interactivity,
-            key_dispatch: FocusableKeyDispatch::tracked(handle),
+            key_dispatch: FocusableKeyDispatch::tracked(self.key_dispatch, handle),
             children: self.children,
             group: self.group,
             base_style: self.base_style,
@@ -172,7 +172,7 @@ impl<V: 'static> Div<V, StatelessInteractivity<V>, NonFocusableKeyDispatch> {
     ) -> Div<V, StatefulInteractivity<V>, FocusableKeyDispatch<V>> {
         Div {
             interactivity: self.interactivity.into_stateful(handle),
-            key_dispatch: handle.clone().into(),
+            key_dispatch: FocusableKeyDispatch::tracked(self.key_dispatch, handle),
             children: self.children,
             group: self.group,
             base_style: self.base_style,

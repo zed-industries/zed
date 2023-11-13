@@ -33,7 +33,7 @@ pub(crate) struct DispatchTree {
 #[derive(Default)]
 pub(crate) struct DispatchNode {
     pub key_listeners: SmallVec<[KeyListener; 2]>,
-    pub action_listeners: SmallVec<[ActionListener; 16]>,
+    pub action_listeners: SmallVec<[DispatchActionListener; 16]>,
     pub context: KeyContext,
     parent: Option<DispatchNodeId>,
 }
@@ -41,7 +41,7 @@ pub(crate) struct DispatchNode {
 type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
 
 #[derive(Clone)]
-pub(crate) struct ActionListener {
+pub(crate) struct DispatchActionListener {
     pub(crate) action_type: TypeId,
     pub(crate) listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
 }
@@ -102,10 +102,12 @@ impl DispatchTree {
         action_type: TypeId,
         listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
     ) {
-        self.active_node().action_listeners.push(ActionListener {
-            action_type,
-            listener,
-        });
+        self.active_node()
+            .action_listeners
+            .push(DispatchActionListener {
+                action_type,
+                listener,
+            });
     }
 
     pub fn make_focusable(&mut self, focus_id: FocusId) {
@@ -135,7 +137,7 @@ impl DispatchTree {
         if let Some(node) = self.focusable_node_ids.get(&target) {
             for node_id in self.dispatch_path(*node) {
                 let node = &self.nodes[node_id.0];
-                for ActionListener { action_type, .. } in &node.action_listeners {
+                for DispatchActionListener { action_type, .. } in &node.action_listeners {
                     actions.extend(build_action_from_type(action_type).log_err());
                 }
             }
@@ -148,21 +150,15 @@ impl DispatchTree {
         keystroke: &Keystroke,
         context: &[KeyContext],
     ) -> Option<Box<dyn Action>> {
-        if !self
-            .keystroke_matchers
-            .contains_key(self.context_stack.as_slice())
-        {
-            let keystroke_contexts = self.context_stack.iter().cloned().collect();
+        if !self.keystroke_matchers.contains_key(context) {
+            let keystroke_contexts = context.iter().cloned().collect();
             self.keystroke_matchers.insert(
                 keystroke_contexts,
                 KeystrokeMatcher::new(self.keymap.clone()),
             );
         }
 
-        let keystroke_matcher = self
-            .keystroke_matchers
-            .get_mut(self.context_stack.as_slice())
-            .unwrap();
+        let keystroke_matcher = self.keystroke_matchers.get_mut(context).unwrap();
         if let KeyMatch::Some(action) = keystroke_matcher.match_keystroke(keystroke, context) {
             // Clear all pending keystrokes when an action has been found.
             for keystroke_matcher in self.keystroke_matchers.values_mut() {
@@ -274,7 +270,7 @@ pub trait KeyDispatch<V: 'static>: 'static {
 }
 
 pub struct FocusableKeyDispatch<V> {
-    pub key_context: KeyContext,
+    pub non_focusable: NonFocusableKeyDispatch,
     pub focus_handle: Option<FocusHandle>,
     pub focus_listeners: FocusListeners<V>,
     pub focus_style: StyleRefinement,
@@ -283,9 +279,9 @@ pub struct FocusableKeyDispatch<V> {
 }
 
 impl<V> FocusableKeyDispatch<V> {
-    pub fn new() -> Self {
+    pub fn new(non_focusable: NonFocusableKeyDispatch) -> Self {
         Self {
-            key_context: KeyContext::default(),
+            non_focusable,
             focus_handle: None,
             focus_listeners: FocusListeners::default(),
             focus_style: StyleRefinement::default(),
@@ -294,9 +290,9 @@ impl<V> FocusableKeyDispatch<V> {
         }
     }
 
-    pub fn tracked(handle: &FocusHandle) -> Self {
+    pub fn tracked(non_focusable: NonFocusableKeyDispatch, handle: &FocusHandle) -> Self {
         Self {
-            key_context: KeyContext::default(),
+            non_focusable,
             focus_handle: Some(handle.clone()),
             focus_listeners: FocusListeners::default(),
             focus_style: StyleRefinement::default(),
@@ -316,24 +312,11 @@ impl<V: 'static> KeyDispatch<V> for FocusableKeyDispatch<V> {
     }
 
     fn key_context(&self) -> &KeyContext {
-        &self.key_context
+        &self.non_focusable.key_context
     }
 
     fn key_context_mut(&mut self) -> &mut KeyContext {
-        &mut self.key_context
-    }
-}
-
-impl<V> From<FocusHandle> for FocusableKeyDispatch<V> {
-    fn from(value: FocusHandle) -> Self {
-        Self {
-            key_context: KeyContext::default(),
-            focus_handle: Some(value),
-            focus_listeners: FocusListeners::default(),
-            focus_style: StyleRefinement::default(),
-            focus_in_style: StyleRefinement::default(),
-            in_focus_style: StyleRefinement::default(),
-        }
+        &mut self.non_focusable.key_context
     }
 }
 

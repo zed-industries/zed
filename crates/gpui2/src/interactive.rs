@@ -1247,9 +1247,10 @@ mod test {
         fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> Self::Element {
             div().id("testview").child(
                 div()
+                    .context("test")
+                    .track_focus(&self.focus_handle)
                     .on_key_down(|this: &mut TestView, _, _, _| this.saw_key_down = true)
-                    .on_action(|this: &mut TestView, _: &TestAction, _| this.saw_action = true)
-                    .track_focus(&self.focus_handle),
+                    .on_action(|this: &mut TestView, _: &TestAction, _| this.saw_action = true),
             )
         }
     }
