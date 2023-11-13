@@ -8,11 +8,11 @@ use file_associations::FileAssociations;
 
 use anyhow::{anyhow, Result};
 use gpui::{
-    actions, div, px, svg, uniform_list, Action, AppContext, AssetSource, AsyncAppContext,
-    AsyncWindowContext, ClipboardItem, Div, Element, Entity, EventEmitter, FocusEnabled,
+    actions, div, px, rems, svg, uniform_list, Action, AppContext, AssetSource, AsyncAppContext,
+    AsyncWindowContext, ClipboardItem, Component, Div, Element, Entity, EventEmitter, FocusEnabled,
     FocusHandle, Model, ParentElement as _, Pixels, Point, PromptLevel, Render,
-    StatefulInteractive, StatefulInteractivity, Styled, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    StatefulInteractive, StatefulInteractivity, StatelessInteractive, Styled, Task,
+    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -132,25 +132,6 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
     file_associations::init(assets, cx);
 
-    // cx.add_action(ProjectPanel::expand_selected_entry);
-    // cx.add_action(ProjectPanel::collapse_selected_entry);
-    // cx.add_action(ProjectPanel::collapse_all_entries);
-    // cx.add_action(ProjectPanel::select_prev);
-    // cx.add_action(ProjectPanel::select_next);
-    // cx.add_action(ProjectPanel::new_file);
-    // cx.add_action(ProjectPanel::new_directory);
-    // cx.add_action(ProjectPanel::rename);
-    // cx.add_async_action(ProjectPanel::delete);
-    // cx.add_async_action(ProjectPanel::confirm);
-    // cx.add_async_action(ProjectPanel::open_file);
-    // cx.add_action(ProjectPanel::cancel);
-    // cx.add_action(ProjectPanel::cut);
-    // cx.add_action(ProjectPanel::copy);
-    // cx.add_action(ProjectPanel::copy_path);
-    // cx.add_action(ProjectPanel::copy_relative_path);
-    // cx.add_action(ProjectPanel::reveal_in_finder);
-    // cx.add_action(ProjectPanel::open_in_terminal);
-    // cx.add_action(ProjectPanel::new_search_in_directory);
     // cx.add_action(
     //     |this: &mut ProjectPanel, action: &Paste, cx: &mut ViewContext<ProjectPanel>| {
     //         this.paste(action, cx);
@@ -1366,15 +1347,22 @@ impl ProjectPanel {
             .git_status
             .as_ref()
             .map(|status| match status {
-                GitFileStatus::Added => theme.styles.status.created,
-                GitFileStatus::Modified => theme.styles.status.modified,
-                GitFileStatus::Conflict => theme.styles.status.conflict,
+                GitFileStatus::Added => theme.status().created,
+                GitFileStatus::Modified => theme.status().modified,
+                GitFileStatus::Conflict => theme.status().conflict,
             })
-            .unwrap_or(theme.styles.status.info);
+            .unwrap_or(theme.status().info);
 
         h_stack()
             .child(if let Some(icon) = &details.icon {
-                div().child(svg().path(icon.to_string()))
+                div().child(
+                    // todo!() Marshall: Can we use our `IconElement` component here?
+                    svg()
+                        .size(rems(0.9375))
+                        .flex_none()
+                        .path(icon.to_string())
+                        .text_color(cx.theme().colors().icon),
+                )
             } else {
                 div()
             })
@@ -1390,11 +1378,10 @@ impl ProjectPanel {
     }
 
     fn render_entry(
+        &self,
         entry_id: ProjectEntryId,
         details: EntryDetails,
-        editor: &View<Editor>,
         // dragged_entry_destination: &mut Option<Arc<Path>>,
-        // theme: &theme::ProjectPanel,
         cx: &mut ViewContext<Self>,
     ) -> Div<Self, StatefulInteractivity<Self>> {
         let kind = details.kind;
@@ -1402,9 +1389,18 @@ impl ProjectPanel {
         const INDENT_SIZE: Pixels = px(16.0);
         let padding = INDENT_SIZE + details.depth as f32 * px(settings.indent_size);
         let show_editor = details.is_editing && !details.is_processing;
+        let is_selected = self
+            .selection
+            .map_or(false, |selection| selection.entry_id == entry_id);
 
-        Self::render_entry_visual_element(&details, Some(editor), padding, cx)
+        Self::render_entry_visual_element(&details, Some(&self.filename_editor), padding, cx)
             .id(entry_id.to_proto() as usize)
+            .w_full()
+            .cursor_pointer()
+            .when(is_selected, |this| {
+                this.bg(cx.theme().colors().element_selected)
+            })
+            .hover(|style| style.bg(cx.theme().colors().element_hover))
             .on_click(move |this, event, cx| {
                 if !show_editor {
                     if kind.is_dir() {
@@ -1441,7 +1437,6 @@ impl Render for ProjectPanel {
     type Element = Div<Self, StatefulInteractivity<Self>, FocusEnabled<Self>>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
-        enum ProjectPanel {}
         let theme = cx.theme();
         let last_worktree_root_id = self.last_worktree_root_id;
 
@@ -1449,8 +1444,28 @@ impl Render for ProjectPanel {
 
         if has_worktree {
             div()
-                .size_full()
                 .id("project-panel")
+                .size_full()
+                .context("ProjectPanel")
+                .on_action(Self::select_next)
+                .on_action(Self::select_prev)
+                .on_action(Self::expand_selected_entry)
+                .on_action(Self::collapse_selected_entry)
+                .on_action(Self::collapse_all_entries)
+                .on_action(Self::new_file)
+                .on_action(Self::new_directory)
+                .on_action(Self::rename)
+                // .on_action(Self::delete)
+                // .on_action(Self::confirm)
+                // .on_action(Self::open_file)
+                .on_action(Self::cancel)
+                .on_action(Self::cut)
+                .on_action(Self::copy)
+                .on_action(Self::copy_path)
+                .on_action(Self::copy_relative_path)
+                .on_action(Self::reveal_in_finder)
+                .on_action(Self::open_in_terminal)
+                .on_action(Self::new_search_in_directory)
                 .track_focus(&self.focus_handle)
                 .child(
                     uniform_list(
@@ -1462,11 +1477,8 @@ impl Render for ProjectPanel {
                         |this: &mut Self, range, cx| {
                             let mut items = SmallVec::new();
                             this.for_each_visible_entry(range, cx, |id, details, cx| {
-                                items.push(Self::render_entry(
-                                    id,
-                                    details,
-                                    &this.filename_editor,
-                                    // &mut dragged_entry_destination,
+                                items.push(this.render_entry(
+                                    id, details, // &mut dragged_entry_destination,
                                     cx,
                                 ));
                             });
