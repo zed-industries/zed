@@ -175,19 +175,6 @@ impl DispatchTree {
         }
     }
 
-    pub fn node(&self, node_id: DispatchNodeId) -> &DispatchNode {
-        &self.nodes[node_id.0]
-    }
-
-    fn active_node(&mut self) -> &mut DispatchNode {
-        let active_node_id = self.active_node_id();
-        &mut self.nodes[active_node_id.0]
-    }
-
-    fn active_node_id(&self) -> DispatchNodeId {
-        *self.node_stack.last().unwrap()
-    }
-
     pub fn dispatch_path(&self, target: DispatchNodeId) -> SmallVec<[DispatchNodeId; 32]> {
         let mut dispatch_path: SmallVec<[DispatchNodeId; 32]> = SmallVec::new();
         let mut current_node_id = Some(target);
@@ -199,8 +186,21 @@ impl DispatchTree {
         dispatch_path
     }
 
+    pub fn node(&self, node_id: DispatchNodeId) -> &DispatchNode {
+        &self.nodes[node_id.0]
+    }
+
+    fn active_node(&mut self) -> &mut DispatchNode {
+        let active_node_id = self.active_node_id();
+        &mut self.nodes[active_node_id.0]
+    }
+
     pub fn focusable_node_id(&self, target: FocusId) -> Option<DispatchNodeId> {
         self.focusable_node_ids.get(&target).copied()
+    }
+
+    fn active_node_id(&self) -> DispatchNodeId {
+        *self.node_stack.last().unwrap()
     }
 }
 
