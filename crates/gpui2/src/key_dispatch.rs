@@ -202,6 +202,11 @@ impl KeyDispatcher {
                     if let KeyMatch::Some(action) = keystroke_matcher
                         .match_keystroke(&key_down_event.keystroke, self.context_stack.as_slice())
                     {
+                        // Clear all pending keystrokes when an action has been found.
+                        for keystroke_matcher in self.keystroke_matchers.values_mut() {
+                            keystroke_matcher.clear_pending();
+                        }
+
                         self.dispatch_action_on_node(*node_id, action, cx);
                         if !cx.propagate_event {
                             return;
