@@ -1405,15 +1405,20 @@ impl Pane {
             .items_center()
             .justify_center()
             // todo!("Nate - I need to do some work to balance all the items in the tab once things stablize")
-            .when(close_right, |this| this.pl_3().pr_1())
-            .when(!close_right, |this| this.pr_1().pr_3())
+            .map(|this| {
+                if close_right {
+                    this.pl_3().pr_1()
+                } else {
+                    this.pr_1().pr_3()
+                }
+            })
             .py_1()
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
-            .when(ix < self.active_item_index, |this| this.border_l())
-            .when(ix > self.active_item_index, |this| this.border_r())
-            .when(ix == self.active_item_index, |this| {
-                this.border_l().border_r()
+            .map(|this| match ix.cmp(&self.active_item_index) {
+                cmp::Ordering::Less => this.border_l(),
+                cmp::Ordering::Equal => this.border_r(),
+                cmp::Ordering::Greater => this.border_l().border_r(),
             })
             // .hover(|h| h.bg(tab_hover_bg))
             // .active(|a| a.bg(tab_active_bg))
