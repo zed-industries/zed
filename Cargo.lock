@@ -2012,7 +2012,7 @@ dependencies = [
  "serde_derive",
  "settings2",
  "smol",
- "theme",
+ "theme2",
  "util",
 ]
 
@@ -2768,7 +2768,6 @@ dependencies = [
  "copilot2",
  "ctor",
  "db2",
- "drag_and_drop",
  "env_logger 0.9.3",
  "futures 0.3.28",
  "fuzzy2",

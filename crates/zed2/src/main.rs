@@ -9,6 +9,7 @@ use backtrace::Backtrace;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::UserStore;
 use db::kvp::KEY_VALUE_STORE;
+use editor::Editor;
 use fs::RealFs;
 use futures::StreamExt;
 use gpui::{Action, App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};

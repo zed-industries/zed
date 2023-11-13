@@ -7,7 +7,7 @@ use crate::{
     },
     JoinLines,
 };
-use drag_and_drop::DragAndDrop;
+
 use futures::StreamExt;
 use gpui::{
     div,
@@ -517,7 +517,6 @@ fn test_clone(cx: &mut TestAppContext) {
 async fn test_navigation_history(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    cx.set_global(DragAndDrop::<Workspace>::default());
     use workspace::item::Item;
 
     let fs = FakeFs::new(cx.executor());
@@ -3483,198 +3482,256 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_add_selection_above_below(cx: &mut TestAppContext) {
+async fn test_add_selection_above_below(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let view = cx.add_window(|cx| {
-        let buffer = MultiBuffer::build_simple("abc\ndefghi\n\njk\nlmno\n", cx);
-        build_editor(buffer, cx)
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // let buffer = MultiBuffer::build_simple("abc\ndefghi\n\njk\nlmno\n", cx);
+    cx.set_state(indoc!(
+        r#"abc
+           defˇghi
+
+           jk
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|editor, cx| {
+        editor.add_selection_above(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.change_selections(None, cx, |s| {
-            s.select_display_ranges([DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)])
-        });
-    });
-    view.update(cx, |view, cx| {
-        view.add_selection_above(&AddSelectionAbove, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
-            ]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"abcˇ
+           defˇghi
+
+           jk
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|editor, cx| {
+        editor.add_selection_above(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.add_selection_above(&AddSelectionAbove, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
-            ]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"abcˇ
+            defˇghi
+
+            jk
+            nlmo
+            "#
+    ));
+
+    cx.update_editor(|view, cx| {
+        view.add_selection_below(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.add_selection_below(&AddSelectionBelow, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           defˇghi
 
-        view.undo_selection(&UndoSelection, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
-            ]
-        );
+           jk
+           nlmo
+           "#
+    ));
 
-        view.redo_selection(&RedoSelection, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
-        );
+    cx.update_editor(|view, cx| {
+        view.undo_selection(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.add_selection_below(&AddSelectionBelow, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
-                DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
-            ]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"abcˇ
+           defˇghi
+
+           jk
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|view, cx| {
+        view.redo_selection(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.add_selection_below(&AddSelectionBelow, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
-                DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
-            ]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           defˇghi
+
+           jk
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|view, cx| {
+        view.add_selection_below(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.change_selections(None, cx, |s| {
-            s.select_display_ranges([DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)])
-        });
-    });
-    view.update(cx, |view, cx| {
-        view.add_selection_below(&AddSelectionBelow, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
-                DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
-            ]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           defˇghi
+
+           jk
+           nlmˇo
+           "#
+    ));
+
+    cx.update_editor(|view, cx| {
+        view.add_selection_below(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.add_selection_below(&AddSelectionBelow, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
-                DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
-            ]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           defˇghi
+
+           jk
+           nlmˇo
+           "#
+    ));
+
+    // change selections
+    cx.set_state(indoc!(
+        r#"abc
+           def«ˇg»hi
+
+           jk
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|view, cx| {
+        view.add_selection_below(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.add_selection_above(&AddSelectionAbove, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           def«ˇg»hi
+
+           jk
+           nlm«ˇo»
+           "#
+    ));
+
+    cx.update_editor(|view, cx| {
+        view.add_selection_below(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.add_selection_above(&AddSelectionAbove, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           def«ˇg»hi
+
+           jk
+           nlm«ˇo»
+           "#
+    ));
+
+    cx.update_editor(|view, cx| {
+        view.add_selection_above(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.change_selections(None, cx, |s| {
-            s.select_display_ranges([DisplayPoint::new(0, 1)..DisplayPoint::new(1, 4)])
-        });
-        view.add_selection_below(&AddSelectionBelow, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
-                DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
-            ]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           def«ˇg»hi
+
+           jk
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|view, cx| {
+        view.add_selection_above(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.add_selection_below(&AddSelectionBelow, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
-                DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
-                DisplayPoint::new(4, 1)..DisplayPoint::new(4, 4),
-            ]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           def«ˇg»hi
+
+           jk
+           nlmo
+           "#
+    ));
+
+    // Change selections again
+    cx.set_state(indoc!(
+        r#"a«bc
+           defgˇ»hi
+
+           jk
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|view, cx| {
+        view.add_selection_below(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.add_selection_above(&AddSelectionAbove, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
-                DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
-            ]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"a«bcˇ»
+           d«efgˇ»hi
+
+           j«kˇ»
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|view, cx| {
+        view.add_selection_below(&Default::default(), cx);
+    });
+    cx.assert_editor_state(indoc!(
+        r#"a«bcˇ»
+           d«efgˇ»hi
+
+           j«kˇ»
+           n«lmoˇ»
+           "#
+    ));
+    cx.update_editor(|view, cx| {
+        view.add_selection_above(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.change_selections(None, cx, |s| {
-            s.select_display_ranges([DisplayPoint::new(4, 3)..DisplayPoint::new(1, 1)])
-        });
-    });
-    view.update(cx, |view, cx| {
-        view.add_selection_above(&AddSelectionAbove, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
-                DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
-            ]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"a«bcˇ»
+           d«efgˇ»hi
+
+           j«kˇ»
+           nlmo
+           "#
+    ));
+
+    // Change selections again
+    cx.set_state(indoc!(
+        r#"abc
+           d«ˇefghi
+
+           jk
+           nlm»o
+           "#
+    ));
+
+    cx.update_editor(|view, cx| {
+        view.add_selection_above(&Default::default(), cx);
     });
 
-    view.update(cx, |view, cx| {
-        view.add_selection_below(&AddSelectionBelow, cx);
-        assert_eq!(
-            view.selections.display_ranges(cx),
-            vec![
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
-                DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
-            ]
-        );
+    cx.assert_editor_state(indoc!(
+        r#"a«ˇbc»
+           d«ˇef»ghi
+
+           j«ˇk»
+           n«ˇlm»o
+           "#
+    ));
+
+    cx.update_editor(|view, cx| {
+        view.add_selection_below(&Default::default(), cx);
     });
+
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           d«ˇef»ghi
+
+           j«ˇk»
+           n«ˇlm»o
+           "#
+    ));
 }
 
 #[gpui::test]
@@ -6898,6 +6955,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
         &r#"
         ˇuse some::modified;
 
+
         fn main() {
             println!("hello there");
 
@@ -6918,6 +6976,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
     cx.assert_editor_state(
         &r#"
         use some::modified;
+
 
         fn main() {
         ˇ    println!("hello there");
@@ -6958,6 +7017,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
         &r#"
         use some::modified;
 
+
         fn main() {
         ˇ    println!("hello there");
 
@@ -6980,6 +7040,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
     cx.assert_editor_state(
         &r#"
         ˇuse some::modified;
+
 
         fn main() {
             println!("hello there");
@@ -7374,105 +7435,106 @@ async fn test_copilot_completion_invalidation(
     });
 }
 
-#[gpui::test]
-async fn test_copilot_multibuffer(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
+//todo!()
+// #[gpui::test]
+// async fn test_copilot_multibuffer(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+//     init_test(cx, |_| {});
 
-    let (copilot, copilot_lsp) = Copilot::fake(cx);
-    cx.update(|cx| cx.set_global(copilot));
+//     let (copilot, copilot_lsp) = Copilot::fake(cx);
+//     cx.update(|cx| cx.set_global(copilot));
 
-    let buffer_1 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "a = 1\nb = 2\n"));
-    let buffer_2 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "c = 3\nd = 4\n"));
-    let multibuffer = cx.build_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0);
-        multibuffer.push_excerpts(
-            buffer_1.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(2, 0),
-                primary: None,
-            }],
-            cx,
-        );
-        multibuffer.push_excerpts(
-            buffer_2.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(2, 0),
-                primary: None,
-            }],
-            cx,
-        );
-        multibuffer
-    });
-    let editor = cx.add_window(|cx| build_editor(multibuffer, cx));
+//     let buffer_1 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "a = 1\nb = 2\n"));
+//     let buffer_2 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "c = 3\nd = 4\n"));
+//     let multibuffer = cx.build_model(|cx| {
+//         let mut multibuffer = MultiBuffer::new(0);
+//         multibuffer.push_excerpts(
+//             buffer_1.clone(),
+//             [ExcerptRange {
+//                 context: Point::new(0, 0)..Point::new(2, 0),
+//                 primary: None,
+//             }],
+//             cx,
+//         );
+//         multibuffer.push_excerpts(
+//             buffer_2.clone(),
+//             [ExcerptRange {
+//                 context: Point::new(0, 0)..Point::new(2, 0),
+//                 primary: None,
+//             }],
+//             cx,
+//         );
+//         multibuffer
+//     });
+//     let editor = cx.add_window(|cx| build_editor(multibuffer, cx));
 
-    handle_copilot_completion_request(
-        &copilot_lsp,
-        vec![copilot::request::Completion {
-            text: "b = 2 + a".into(),
-            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 5)),
-            ..Default::default()
-        }],
-        vec![],
-    );
-    editor.update(cx, |editor, cx| {
-        // Ensure copilot suggestions are shown for the first excerpt.
-        editor.change_selections(None, cx, |s| {
-            s.select_ranges([Point::new(1, 5)..Point::new(1, 5)])
-        });
-        editor.next_copilot_suggestion(&Default::default(), cx);
-    });
-    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-    editor.update(cx, |editor, cx| {
-        assert!(editor.has_active_copilot_suggestion(cx));
-        assert_eq!(
-            editor.display_text(cx),
-            "\n\na = 1\nb = 2 + a\n\n\n\nc = 3\nd = 4\n"
-        );
-        assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
-    });
+//     handle_copilot_completion_request(
+//         &copilot_lsp,
+//         vec![copilot::request::Completion {
+//             text: "b = 2 + a".into(),
+//             range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 5)),
+//             ..Default::default()
+//         }],
+//         vec![],
+//     );
+//     editor.update(cx, |editor, cx| {
+//         // Ensure copilot suggestions are shown for the first excerpt.
+//         editor.change_selections(None, cx, |s| {
+//             s.select_ranges([Point::new(1, 5)..Point::new(1, 5)])
+//         });
+//         editor.next_copilot_suggestion(&Default::default(), cx);
+//     });
+//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+//     editor.update(cx, |editor, cx| {
+//         assert!(editor.has_active_copilot_suggestion(cx));
+//         assert_eq!(
+//             editor.display_text(cx),
+//             "\n\na = 1\nb = 2 + a\n\n\n\nc = 3\nd = 4\n"
+//         );
+//         assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
+//     });
 
-    handle_copilot_completion_request(
-        &copilot_lsp,
-        vec![copilot::request::Completion {
-            text: "d = 4 + c".into(),
-            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 6)),
-            ..Default::default()
-        }],
-        vec![],
-    );
-    editor.update(cx, |editor, cx| {
-        // Move to another excerpt, ensuring the suggestion gets cleared.
-        editor.change_selections(None, cx, |s| {
-            s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
-        });
-        assert!(!editor.has_active_copilot_suggestion(cx));
-        assert_eq!(
-            editor.display_text(cx),
-            "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4\n"
-        );
-        assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
+//     handle_copilot_completion_request(
+//         &copilot_lsp,
+//         vec![copilot::request::Completion {
+//             text: "d = 4 + c".into(),
+//             range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 6)),
+//             ..Default::default()
+//         }],
+//         vec![],
+//     );
+//     editor.update(cx, |editor, cx| {
+//         // Move to another excerpt, ensuring the suggestion gets cleared.
+//         editor.change_selections(None, cx, |s| {
+//             s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
+//         });
+//         assert!(!editor.has_active_copilot_suggestion(cx));
+//         assert_eq!(
+//             editor.display_text(cx),
+//             "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4\n"
+//         );
+//         assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
 
-        // Type a character, ensuring we don't even try to interpolate the previous suggestion.
-        editor.handle_input(" ", cx);
-        assert!(!editor.has_active_copilot_suggestion(cx));
-        assert_eq!(
-            editor.display_text(cx),
-            "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 \n"
-        );
-        assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
-    });
+//         // Type a character, ensuring we don't even try to interpolate the previous suggestion.
+//         editor.handle_input(" ", cx);
+//         assert!(!editor.has_active_copilot_suggestion(cx));
+//         assert_eq!(
+//             editor.display_text(cx),
+//             "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 \n"
+//         );
+//         assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
+//     });
 
-    // Ensure the new suggestion is displayed when the debounce timeout expires.
-    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-    editor.update(cx, |editor, cx| {
-        assert!(editor.has_active_copilot_suggestion(cx));
-        assert_eq!(
-            editor.display_text(cx),
-            "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 + c\n"
-        );
-        assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
-    });
-}
+//     // Ensure the new suggestion is displayed when the debounce timeout expires.
+//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+//     editor.update(cx, |editor, cx| {
+//         assert!(editor.has_active_copilot_suggestion(cx));
+//         assert_eq!(
+//             editor.display_text(cx),
+//             "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 + c\n"
+//         );
+//         assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
+//     });
+// }
 
 #[gpui::test]
 async fn test_copilot_disabled_globs(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {

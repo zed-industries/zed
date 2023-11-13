@@ -2023,24 +2023,24 @@ impl Editor {
         dispatch_context
     }
 
-    //     pub fn new_file(
-    //         workspace: &mut Workspace,
-    //         _: &workspace::NewFile,
-    //         cx: &mut ViewContext<Workspace>,
-    //     ) {
-    //         let project = workspace.project().clone();
-    //         if project.read(cx).is_remote() {
-    //             cx.propagate();
-    //         } else if let Some(buffer) = project
-    //             .update(cx, |project, cx| project.create_buffer("", None, cx))
-    //             .log_err()
-    //         {
-    //             workspace.add_item(
-    //                 Box::new(cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
-    //                 cx,
-    //             );
-    //         }
-    //     }
+    pub fn new_file(
+        workspace: &mut Workspace,
+        _: &workspace::NewFile,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let project = workspace.project().clone();
+        if project.read(cx).is_remote() {
+            cx.propagate();
+        } else if let Some(buffer) = project
+            .update(cx, |project, cx| project.create_buffer("", None, cx))
+            .log_err()
+        {
+            workspace.add_item(
+                Box::new(cx.build_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
+                cx,
+            );
+        }
+    }
 
     //     pub fn new_file_in_direction(
     //         workspace: &mut Workspace,
@@ -2124,17 +2124,17 @@ impl Editor {
     //         )
     //     }
 
-    //     pub fn mode(&self) -> EditorMode {
-    //         self.mode
-    //     }
+    pub fn mode(&self) -> EditorMode {
+        self.mode
+    }
 
-    //     pub fn collaboration_hub(&self) -> Option<&dyn CollaborationHub> {
-    //         self.collaboration_hub.as_deref()
-    //     }
+    pub fn collaboration_hub(&self) -> Option<&dyn CollaborationHub> {
+        self.collaboration_hub.as_deref()
+    }
 
-    //     pub fn set_collaboration_hub(&mut self, hub: Box<dyn CollaborationHub>) {
-    //         self.collaboration_hub = Some(hub);
-    //     }
+    pub fn set_collaboration_hub(&mut self, hub: Box<dyn CollaborationHub>) {
+        self.collaboration_hub = Some(hub);
+    }
 
     pub fn set_placeholder_text(
         &mut self,

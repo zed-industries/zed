@@ -1,8 +1,8 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, BackgroundExecutor, Context,
-    EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent, Keystroke, Model, ModelContext,
-    Render, Result, Task, TestDispatcher, TestPlatform, View, ViewContext, VisualContext,
-    WindowContext, WindowHandle, WindowOptions,
+    div, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, BackgroundExecutor,
+    Context, Div, EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent, Keystroke, Model,
+    ModelContext, Render, Result, Task, TestDispatcher, TestPlatform, View, ViewContext,
+    VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -130,6 +130,14 @@ impl TestAppContext {
     {
         let mut cx = self.app.borrow_mut();
         cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window))
+    }
+
+    pub fn add_empty_window(&mut self) -> AnyWindowHandle {
+        let mut cx = self.app.borrow_mut();
+        cx.open_window(WindowOptions::default(), |cx| {
+            cx.build_view(|_| EmptyView {})
+        })
+        .any_handle
     }
 
     pub fn add_window_view<F, V>(&mut self, build_window: F) -> (View<V>, VisualTestContext)
@@ -454,5 +462,25 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         self.window
             .update(self.cx, |_, cx| cx.replace_root_view(build_view))
             .unwrap()
+    }
+}
+
+impl AnyWindowHandle {
+    pub fn build_view<V: Render + 'static>(
+        &self,
+        cx: &mut TestAppContext,
+        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+    ) -> View<V> {
+        self.update(cx, |_, cx| cx.build_view(build_view)).unwrap()
+    }
+}
+
+pub struct EmptyView {}
+
+impl Render for EmptyView {
+    type Element = Div<Self>;
+
+    fn render(&mut self, _cx: &mut crate::ViewContext<Self>) -> Self::Element {
+        div()
     }
 }

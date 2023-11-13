@@ -1,11 +1,14 @@
+use std::ops::Range;
+
 use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     tests::TestServer,
 };
-use client::{Collaborator, UserId};
+use client::{Collaborator, ParticipantIndex, UserId};
 use collections::HashMap;
+use editor::{Anchor, Editor, ToOffset};
 use futures::future;
-use gpui::{BackgroundExecutor, Model, TestAppContext};
+use gpui::{BackgroundExecutor, Model, TestAppContext, ViewContext};
 use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
 
 #[gpui::test]

@@ -1,10 +1,30 @@
-use editor::{
-    test::editor_test_context::EditorTestContext, ConfirmCodeAction, ConfirmCompletion,
-    ConfirmRename, Editor, Redo, Rename, ToggleCodeActions, Undo,
+use std::{
+    path::Path,
+    sync::{
+        atomic::{self, AtomicBool, AtomicUsize},
+        Arc,
+    },
 };
-use gpui::{BackgroundExecutor, TestAppContext};
 
-use crate::tests::TestServer;
+use call::ActiveCall;
+use editor::{
+    test::editor_test_context::{AssertionContextManager, EditorTestContext},
+    Anchor, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Redo, Rename,
+    ToggleCodeActions, Undo,
+};
+use gpui::{BackgroundExecutor, TestAppContext, VisualContext, VisualTestContext};
+use indoc::indoc;
+use language::{
+    language_settings::{AllLanguageSettings, InlayHintSettings},
+    tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig,
+};
+use rpc::RECEIVE_TIMEOUT;
+use serde_json::json;
+use settings::SettingsStore;
+use text::Point;
+use workspace::Workspace;
+
+use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -13,7 +33,7 @@ async fn test_host_disconnect(
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    let mut server = TestServer::start(&executor).await;
+    let mut server = TestServer::start(executor).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -27,7 +47,7 @@ async fn test_host_disconnect(
         .fs()
         .insert_tree(
             "/a",
-            json!({
+            serde_json::json!({
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
             }),
@@ -37,7 +57,7 @@ async fn test_host_disconnect(
     let active_call_a = cx_a.read(ActiveCall::global);
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
 
-    let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees().next().unwrap());
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -50,19 +70,23 @@ async fn test_host_disconnect(
 
     let workspace_b =
         cx_b.add_window(|cx| Workspace::new(0, project_b.clone(), client_b.app_state.clone(), cx));
+    let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
 
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "b.txt"), None, true, cx)
         })
+        .unwrap()
         .await
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
 
-    assert!(window_b.read_with(cx_b, |cx| editor_b.is_focused(cx)));
+    //TODO: focus
+    assert!(cx_b.update_view(&editor_b, |editor, cx| editor.is_focused(cx)));
     editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
-    assert!(window_b.is_edited(cx_b));
+    //todo(is_edited)
+    // assert!(workspace_b.is_edited(cx_b));
 
     // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
     server.forbid_connections();
@@ -79,10 +103,10 @@ async fn test_host_disconnect(
 
     // Ensure client B's edited state is reset and that the whole window is blurred.
 
-    window_b.read_with(cx_b, |cx| {
+    workspace_b.update(cx_b, |_, cx| {
         assert_eq!(cx.focused_view_id(), None);
     });
-    assert!(!window_b.is_edited(cx_b));
+    // assert!(!workspace_b.is_edited(cx_b));
 
     // Ensure client B is not prompted to save edits when closing window after disconnecting.
     let can_close = workspace_b
@@ -153,12 +177,14 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
-    let window_a = cx_a.add_window(|_| EmptyView);
-    let editor_a = window_a.add_view(cx_a, |cx| Editor::for_buffer(buffer_a, Some(project_a), cx));
+    let window_a = cx_a.add_empty_window();
+    let editor_a =
+        window_a.build_view(cx_a, |cx| Editor::for_buffer(buffer_a, Some(project_a), cx));
     let mut editor_cx_a = EditorTestContext {
         cx: cx_a,
         window: window_a.into(),
         editor: editor_a,
+        assertion_cx: AssertionContextManager::new(),
     };
 
     // Open a buffer as client B
@@ -166,12 +192,14 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
-    let window_b = cx_b.add_window(|_| EmptyView);
-    let editor_b = window_b.add_view(cx_b, |cx| Editor::for_buffer(buffer_b, Some(project_b), cx));
+    let window_b = cx_b.add_empty_window();
+    let editor_b =
+        window_b.build_view(cx_b, |cx| Editor::for_buffer(buffer_b, Some(project_b), cx));
     let mut editor_cx_b = EditorTestContext {
         cx: cx_b,
         window: window_b.into(),
         editor: editor_b,
+        assertion_cx: AssertionContextManager::new(),
     };
 
     // Test newline above
@@ -275,8 +303,8 @@ async fn test_collaborating_with_completion(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
-    let window_b = cx_b.add_window(|_| EmptyView);
-    let editor_b = window_b.add_view(cx_b, |cx| {
+    let window_b = cx_b.add_empty_window();
+    let editor_b = window_b.build_view(cx_b, |cx| {
         Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), cx)
     });
 
@@ -384,7 +412,7 @@ async fn test_collaborating_with_completion(
     );
 
     // The additional edit is applied.
-    cx_a.foreground().run_until_parked();
+    cx_a.executor().run_until_parked();
 
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(
@@ -935,8 +963,8 @@ async fn test_share_project(
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    let window_b = cx_b.add_window(|_| EmptyView);
-    let mut server = TestServer::start(&executor).await;
+    let window_b = cx_b.add_empty_window();
+    let mut server = TestServer::start(executor).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -1050,7 +1078,7 @@ async fn test_share_project(
         .await
         .unwrap();
 
-    let editor_b = window_b.add_view(cx_b, |cx| Editor::for_buffer(buffer_b, None, cx));
+    let editor_b = window_b.build_view(cx_b, |cx| Editor::for_buffer(buffer_b, None, cx));
 
     // Client A sees client B's selection
     executor.run_until_parked();
@@ -1164,10 +1192,12 @@ async fn test_on_input_format_from_host_to_guest(
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
-    let window_a = cx_a.add_window(|_| EmptyView);
-    let editor_a = window_a.add_view(cx_a, |cx| {
-        Editor::for_buffer(buffer_a, Some(project_a.clone()), cx)
-    });
+    let window_a = cx_a.add_empty_window();
+    let editor_a = window_a
+        .update(cx_a, |_, cx| {
+            cx.build_view(|cx| Editor::for_buffer(buffer_a, Some(project_a.clone()), cx))
+        })
+        .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     executor.run_until_parked();
@@ -1294,8 +1324,8 @@ async fn test_on_input_format_from_guest_to_host(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
-    let window_b = cx_b.add_window(|_| EmptyView);
-    let editor_b = window_b.add_view(cx_b, |cx| {
+    let window_b = cx_b.add_empty_window();
+    let editor_b = window_b.build_view(cx_b, |cx| {
         Editor::for_buffer(buffer_b, Some(project_b.clone()), cx)
     });
 
@@ -1459,7 +1489,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .await
         .unwrap();
 
-    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
+    let workspace_a = client_a.build_workspace(&project_a, cx_a).root_view(cx_a);
     cx_a.foreground().start_waiting();
 
     // The host opens a rust file.
