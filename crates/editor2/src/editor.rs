@@ -97,7 +97,7 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::IconButton;
+use ui::{IconButton, StyledExt};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::ItemEvent, searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace,
@@ -1555,6 +1555,7 @@ impl CodeActionsMenu {
                         let colors = cx.theme().colors();
                         div()
                             .px_2()
+                            .text_ui()
                             .text_color(colors.text)
                             .when(selected, |style| {
                                 style
@@ -1582,7 +1583,7 @@ impl CodeActionsMenu {
                     .collect()
             },
         )
-        .bg(cx.theme().colors().element_background)
+        .elevation_1(cx)
         .px_2()
         .py_1()
         .with_width_from_item(

@@ -5,8 +5,7 @@ use gpui::{
     WindowContext,
 };
 use std::cmp;
-use theme::ActiveTheme;
-use ui::v_stack;
+use ui::{prelude::*, v_stack, Divider};
 
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
@@ -145,6 +144,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .id("picker-container")
             .focusable()
             .size_full()
+            .elevation_2(cx)
             .on_action(Self::select_next)
             .on_action(Self::select_prev)
             .on_action(Self::select_first)
@@ -153,23 +153,15 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(Self::confirm)
             .on_action(Self::secondary_confirm)
             .child(
-                v_stack().gap_px().child(
-                    v_stack()
-                        .py_0p5()
-                        .px_1()
-                        .child(div().px_2().py_0p5().child(self.editor.clone())),
-                ),
-            )
-            .child(
-                div()
-                    .h_px()
-                    .w_full()
-                    .bg(cx.theme().colors().element_background),
-            )
-            .child(
                 v_stack()
                     .py_0p5()
                     .px_1()
+                    .child(div().px_1().py_0p5().child(self.editor.clone())),
+            )
+            .child(Divider::horizontal())
+            .child(
+                v_stack()
+                    .p_1()
                     .grow()
                     .child(
                         uniform_list("candidates", self.delegate.match_count(), {
