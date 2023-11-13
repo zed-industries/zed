@@ -66,7 +66,7 @@ fn build_bridge(swift_target: &SwiftTarget) {
         .arg("--disable-automatic-resolution")
         .args(["--configuration", &env::var("PROFILE").unwrap()])
         .args(["--triple", &swift_target.target.triple])
-        .args(["--build-path".into(), swift_target_folder])
+        .args(["--scratch-path".into(), swift_target_folder])
         .current_dir(&swift_package_root)
         .status()
         .unwrap()
