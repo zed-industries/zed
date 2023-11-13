@@ -76,7 +76,10 @@ impl ThemeRegistry {
                     system: SystemColors::default(),
                     colors: theme_colors,
                     status: status_colors,
-                    player: PlayerColors::default(),
+                    player: match user_theme.appearance {
+                        Appearance::Light => PlayerColors::light(),
+                        Appearance::Dark => PlayerColors::dark(),
+                    },
                     syntax: Arc::new(syntax_colors),
                 },
             }
