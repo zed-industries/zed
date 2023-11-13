@@ -1513,7 +1513,7 @@ impl Snapshot {
         self.entries_by_id.get(&entry_id, &()).is_some()
     }
 
-    pub(crate) fn insert_entry(&mut self, entry: proto::Entry) -> Result<Entry> {
+    fn insert_entry(&mut self, entry: proto::Entry) -> Result<Entry> {
         let entry = Entry::try_from((&self.root_char_bag, entry))?;
         let old_entry = self.entries_by_id.insert_or_replace(
             PathEntry {
@@ -2075,9 +2075,7 @@ impl LocalSnapshot {
         // TODO kb choose the correct ignore stack for custom `is_abs_path_included(..) = true` cases
         let mut ignore_stack = IgnoreStack::none();
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
-            if !self.is_abs_path_included(parent_abs_path)
-                && self.is_abs_path_ignored(parent_abs_path, &ignore_stack, true)
-            {
+            if !self.is_abs_path_ignored(parent_abs_path, &ignore_stack, true) {
                 ignore_stack = IgnoreStack::all();
                 break;
             } else if let Some(ignore) = ignore {
@@ -2085,9 +2083,7 @@ impl LocalSnapshot {
             }
         }
 
-        if !self.is_abs_path_included(abs_path)
-            && self.is_abs_path_ignored(abs_path, &ignore_stack, is_dir)
-        {
+        if !self.is_abs_path_ignored(abs_path, &ignore_stack, is_dir) {
             ignore_stack = IgnoreStack::all();
         }
         ignore_stack
@@ -2241,7 +2237,7 @@ impl BackgroundScannerState {
         let ignore_stack = self.snapshot.ignore_stack_for_abs_path(&abs_path, true);
         let mut ancestor_inodes = self.snapshot.ancestor_inodes_for_path(&path);
         let mut containing_repository = None;
-        if !ignore_stack.is_all() {
+        if !ignore_stack.is_all() || self.snapshot.is_abs_path_included(&abs_path) {
             if let Some((workdir_path, repo)) = self.snapshot.local_repo_for_path(&path) {
                 if let Ok(repo_path) = path.strip_prefix(&workdir_path.0) {
                     containing_repository = Some((
@@ -2326,18 +2322,7 @@ impl BackgroundScannerState {
         self.scanned_dirs.insert(parent_entry_id);
         let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
         let mut entries_by_id_edits = Vec::new();
-
         for entry in entries {
-            let abs_path = self.snapshot.abs_path.join(&entry.path);
-            let ignore_stack = self
-                .snapshot
-                .ignore_stack_for_abs_path(&abs_path, entry.is_dir());
-            let actual_ignored =
-                self.snapshot
-                    .is_abs_path_ignored(&abs_path, &ignore_stack, entry.is_dir());
-            if entry.path.to_string_lossy().contains("node_modules") {
-                dbg!("@@@@@@@@@", &entry, actual_ignored, ignore_stack.is_all());
-            }
             entries_by_id_edits.push(Edit::Insert(PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
@@ -3555,9 +3540,7 @@ impl BackgroundScanner {
 
                     if entry.is_dir() {
                         if let Some(job) = new_jobs.next().expect("missing scan job for entry") {
-                            job.ignore_stack = if entry.is_ignored
-                                && !self.is_abs_path_included(&entry_abs_path)
-                            {
+                            job.ignore_stack = if entry.is_ignored {
                                 IgnoreStack::all()
                             } else {
                                 ignore_stack.clone()
@@ -3623,9 +3606,7 @@ impl BackgroundScanner {
                     new_jobs.push(Some(ScanJob {
                         path: child_path,
                         is_external: child_entry.is_external,
-                        ignore_stack: if child_entry.is_ignored
-                            && !self.is_abs_path_included(&child_abs_path)
-                        {
+                        ignore_stack: if child_entry.is_ignored {
                             IgnoreStack::all()
                         } else {
                             ignore_stack.clone()
@@ -3923,8 +3904,7 @@ impl BackgroundScanner {
             let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
             entry.is_ignored = self.is_abs_path_ignored(&abs_path, &ignore_stack, entry.is_dir());
             if entry.is_dir() {
-                let child_ignore_stack = if entry.is_ignored && self.is_abs_path_included(&abs_path)
-                {
+                let child_ignore_stack = if entry.is_ignored {
                     IgnoreStack::all()
                 } else {
                     ignore_stack.clone()
