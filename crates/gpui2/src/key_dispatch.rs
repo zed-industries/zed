@@ -305,7 +305,7 @@ pub trait KeyDispatch<V: 'static>: 'static {
         cx: &mut ViewContext<V>,
         f: impl FnOnce(Option<FocusHandle>, &mut ViewContext<V>) -> R,
     ) -> R {
-        if let Some(focusable) = self.as_focusable_mut() {
+        let focus_handle = if let Some(focusable) = self.as_focusable_mut() {
             let focus_handle = focusable
                 .focus_handle
                 .get_or_insert_with(|| focus_handle.unwrap_or_else(|| cx.focus_handle()))
@@ -316,11 +316,12 @@ pub trait KeyDispatch<V: 'static>: 'static {
                     listener(view, &focus_handle, event, cx)
                 });
             }
-
-            cx.with_key_dispatch(self.key_context().clone(), Some(focus_handle), f)
+            Some(focus_handle)
         } else {
-            f(None, cx)
-        }
+            None
+        };
+
+        cx.with_key_dispatch(self.key_context().clone(), focus_handle, f)
     }
 
     fn refine_style(&self, style: &mut Style, cx: &WindowContext) {
