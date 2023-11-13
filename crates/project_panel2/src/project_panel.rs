@@ -31,7 +31,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme as _;
-use ui::{h_stack, v_stack};
+use ui::{h_stack, v_stack, Label};
 use unicase::UniCase;
 use util::TryFutureExt;
 use workspace::{
@@ -1382,7 +1382,7 @@ impl ProjectPanel {
                 if let (Some(editor), true) = (editor, show_editor) {
                     div().child(editor.clone())
                 } else {
-                    div().child(details.filename.clone())
+                    div().child(Label::new(details.filename.clone()))
                 }
                 .ml_1(),
             )
@@ -1449,6 +1449,7 @@ impl Render for ProjectPanel {
 
         if has_worktree {
             div()
+                .size_full()
                 .id("project-panel")
                 .track_focus(&self.focus_handle)
                 .child(
@@ -1472,6 +1473,7 @@ impl Render for ProjectPanel {
                             items
                         },
                     )
+                    .size_full()
                     .track_scroll(self.list.clone()),
                 )
         } else {

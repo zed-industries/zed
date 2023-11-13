@@ -238,6 +238,24 @@ pub fn blue() -> Hsla {
     }
 }
 
+pub fn green() -> Hsla {
+    Hsla {
+        h: 0.33,
+        s: 1.,
+        l: 0.5,
+        a: 1.,
+    }
+}
+
+pub fn yellow() -> Hsla {
+    Hsla {
+        h: 0.16,
+        s: 1.,
+        l: 0.5,
+        a: 1.,
+    }
+}
+
 impl Hsla {
     /// Returns true if the HSLA color is fully transparent, false otherwise.
     pub fn is_transparent(&self) -> bool {

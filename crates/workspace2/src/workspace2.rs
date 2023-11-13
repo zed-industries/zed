@@ -3642,45 +3642,30 @@ impl Render for Workspace {
                     .border_t()
                     .border_b()
                     .border_color(cx.theme().colors().border)
-                    // .children(
-                    //     Some(
-                    //         Panel::new("project-panel-outer", cx)
-                    //             .side(PanelSide::Left)
-                    //             .child(ProjectPanel::new("project-panel-inner")),
-                    //     )
-                    //     .filter(|_| self.is_project_panel_open()),
-                    // )
-                    // .children(
-                    //     Some(
-                    //         Panel::new("collab-panel-outer", cx)
-                    //             .child(CollabPanel::new("collab-panel-inner"))
-                    //             .side(PanelSide::Left),
-                    //     )
-                    //     .filter(|_| self.is_collab_panel_open()),
-                    // )
-                    // .child(NotificationToast::new(
-                    //     "maxbrunsfeld has requested to add you as a contact.".into(),
-                    // ))
                     .child(
-                        div().flex().flex_col().flex_1().h_full().child(
-                            div().flex().flex_1().child(self.center.render(
-                                &self.project,
-                                &self.follower_states,
-                                self.active_call(),
-                                &self.active_pane,
-                                self.zoomed.as_ref(),
-                                &self.app_state,
-                                cx,
-                            )),
-                        ), // .children(
-                           //     Some(
-                           //         Panel::new("terminal-panel", cx)
-                           //             .child(Terminal::new())
-                           //             .allowed_sides(PanelAllowedSides::BottomOnly)
-                           //             .side(PanelSide::Bottom),
-                           //     )
-                           //     .filter(|_| self.is_terminal_open()),
-                           // ),
+                        div()
+                            .flex()
+                            .flex_row()
+                            .flex_1()
+                            .h_full()
+                            .child(div().flex().flex_1().child(self.left_dock.clone()))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .child(self.center.render(
+                                        &self.project,
+                                        &self.follower_states,
+                                        self.active_call(),
+                                        &self.active_pane,
+                                        self.zoomed.as_ref(),
+                                        &self.app_state,
+                                        cx,
+                                    ))
+                                    .child(div().flex().flex_1().child(self.bottom_dock.clone())),
+                            )
+                            .child(div().flex().flex_1().child(self.right_dock.clone())),
                     ), // .children(
                        //     Some(
                        //         Panel::new("chat-panel-outer", cx)
