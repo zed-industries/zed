@@ -911,7 +911,6 @@ async fn test_ignore_inclusions_and_exclusions(cx: &mut TestAppContext) {
             store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
                 project_settings.scan_exclude_files =
                     vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()];
-                project_settings.scan_include_files = vec!["**/node_modules".to_string()];
             });
         });
     });

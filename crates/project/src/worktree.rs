@@ -221,7 +221,6 @@ pub struct LocalSnapshot {
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
     scan_exclude_files: Vec<PathMatcher>,
-    scan_include_files: Vec<PathMatcher>,
 }
 
 struct BackgroundScannerState {
@@ -322,20 +321,7 @@ impl Worktree {
                     })
             })
             .collect::<Vec<_>>();
-            let scan_include_files = project_settings.scan_include_files.iter()
-            .filter_map(|pattern| {
-                PathMatcher::new(pattern)
-                    .map(Some)
-                    .unwrap_or_else(|e| {
-                        log::error!(
-                            "Skipping pattern {pattern} in `scan_include_files` project settings due to parsing error: {e:#}"
-                        );
-                        None
-                    })
-            })
-            .collect::<Vec<_>>();
             let mut snapshot = LocalSnapshot {
-                scan_include_files,
                 scan_exclude_files,
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),
@@ -2072,7 +2058,6 @@ impl LocalSnapshot {
             }
         }
 
-        // TODO kb choose the correct ignore stack for custom `is_abs_path_included(..) = true` cases
         let mut ignore_stack = IgnoreStack::none();
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
             if !self.is_abs_path_ignored(parent_abs_path, &ignore_stack, true) {
@@ -2179,12 +2164,6 @@ impl LocalSnapshot {
         paths
     }
 
-    fn is_abs_path_included(&self, abs_path: &Path) -> bool {
-        self.scan_include_files
-            .iter()
-            .any(|include_matcher| include_matcher.is_match(abs_path))
-    }
-
     fn is_abs_path_ignored(
         &self,
         abs_path: &Path,
@@ -2218,8 +2197,8 @@ impl LocalSnapshot {
 }
 
 impl BackgroundScannerState {
-    fn should_scan_directory(&self, entry: &Entry, entry_abs_path: &Path) -> bool {
-        (!entry.is_external && (!entry.is_ignored || self.snapshot.is_abs_path_included(entry_abs_path)))
+    fn should_scan_directory(&self, entry: &Entry) -> bool {
+        !entry.is_external
             || entry.path.file_name() == Some(&*DOT_GIT)
             || self.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
             || self
@@ -2237,15 +2216,13 @@ impl BackgroundScannerState {
         let ignore_stack = self.snapshot.ignore_stack_for_abs_path(&abs_path, true);
         let mut ancestor_inodes = self.snapshot.ancestor_inodes_for_path(&path);
         let mut containing_repository = None;
-        if !ignore_stack.is_all() || self.snapshot.is_abs_path_included(&abs_path) {
-            if let Some((workdir_path, repo)) = self.snapshot.local_repo_for_path(&path) {
-                if let Ok(repo_path) = path.strip_prefix(&workdir_path.0) {
-                    containing_repository = Some((
-                        workdir_path,
-                        repo.repo_ptr.clone(),
-                        repo.repo_ptr.lock().staged_statuses(repo_path),
-                    ));
-                }
+        if let Some((workdir_path, repo)) = self.snapshot.local_repo_for_path(&path) {
+            if let Ok(repo_path) = path.strip_prefix(&workdir_path.0) {
+                containing_repository = Some((
+                    workdir_path,
+                    repo.repo_ptr.clone(),
+                    repo.repo_ptr.lock().staged_statuses(repo_path),
+                ));
             }
         }
         if !ancestor_inodes.contains(&entry.inode) {
@@ -3622,19 +3599,17 @@ impl BackgroundScanner {
             } else {
                 child_entry.is_ignored =
                     self.is_abs_path_ignored(&child_abs_path, &ignore_stack, false);
-                if !child_entry.is_ignored || self.is_abs_path_included(&child_abs_path) {
-                    if let Some((repository_dir, repository, staged_statuses)) =
-                        &job.containing_repository
-                    {
-                        if let Ok(repo_path) = child_entry.path.strip_prefix(&repository_dir.0) {
-                            let repo_path = RepoPath(repo_path.into());
-                            child_entry.git_status = combine_git_statuses(
-                                staged_statuses.get(&repo_path).copied(),
-                                repository
-                                    .lock()
-                                    .unstaged_status(&repo_path, child_entry.mtime),
-                            );
-                        }
+                if let Some((repository_dir, repository, staged_statuses)) =
+                    &job.containing_repository
+                {
+                    if let Ok(repo_path) = child_entry.path.strip_prefix(&repository_dir.0) {
+                        let repo_path = RepoPath(repo_path.into());
+                        child_entry.git_status = combine_git_statuses(
+                            staged_statuses.get(&repo_path).copied(),
+                            repository
+                                .lock()
+                                .unstaged_status(&repo_path, child_entry.mtime),
+                        );
                     }
                 }
             }
@@ -3649,8 +3624,7 @@ impl BackgroundScanner {
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                let entry_abs_path = root_abs_path.join(&entry.path);
-                if state.should_scan_directory(&entry, &entry_abs_path) {
+                if state.should_scan_directory(&entry) {
                     job_ix += 1;
                 } else {
                     log::debug!("defer scanning directory {:?}", entry.path);
@@ -3744,9 +3718,7 @@ impl BackgroundScanner {
                             .is_abs_path_ignored(&abs_path, &ignore_stack, is_dir);
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
 
-                    if !is_dir
-                        && (!fs_entry.is_ignored || state.snapshot.is_abs_path_included(&abs_path))
-                    {
+                    if !is_dir {
                         if let Some((work_dir, repo)) = state.snapshot.local_repo_for_path(&path) {
                             if let Ok(repo_path) = path.strip_prefix(work_dir.0) {
                                 let repo_path = RepoPath(repo_path.into());
@@ -3757,7 +3729,7 @@ impl BackgroundScanner {
                     }
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, fs_entry.is_dir()) {
-                        if state.should_scan_directory(&fs_entry, &abs_path) {
+                        if state.should_scan_directory(&fs_entry) {
                             state.enqueue_scan_dir(abs_path, &fs_entry, scan_queue_tx);
                         } else {
                             fs_entry.kind = EntryKind::UnloadedDir;
@@ -3910,14 +3882,10 @@ impl BackgroundScanner {
                     ignore_stack.clone()
                 };
 
-                // Scan any directories that were previously ignored and weren't
-                // previously scanned.
-                if was_ignored
-                    && (!entry.is_ignored || self.is_abs_path_included(&abs_path))
-                    && entry.kind.is_unloaded()
-                {
+                // Scan any directories that were previously ignored and weren't previously scanned.
+                if was_ignored && !entry.is_ignored && entry.kind.is_unloaded() {
                     let state = self.state.lock();
-                    if state.should_scan_directory(&entry, &abs_path) {
+                    if state.should_scan_directory(&entry) {
                         state.enqueue_scan_dir(abs_path.clone(), &entry, &job.scan_queue);
                     }
                 }
@@ -4087,10 +4055,6 @@ impl BackgroundScanner {
         }
 
         smol::Timer::after(Duration::from_millis(100)).await;
-    }
-
-    fn is_abs_path_included(&self, abs_path: &Path) -> bool {
-        self.state.lock().snapshot.is_abs_path_included(abs_path)
     }
 
     fn is_abs_path_ignored(
