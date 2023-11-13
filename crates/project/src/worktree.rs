@@ -3598,7 +3598,7 @@ impl BackgroundScanner {
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                if state.should_scan_directory(&entry, &job.path.join(&entry.path)) {
+                if state.should_scan_directory(&entry, &root_abs_path.join(&entry.path)) {
                     job_ix += 1;
                 } else {
                     log::debug!("defer scanning directory {:?}", entry.path);
