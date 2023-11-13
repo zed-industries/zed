@@ -1889,18 +1889,18 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         focus_handle: Option<FocusHandle>,
         f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
     ) -> R {
-        let mut old_dispatcher = self.window.previous_frame.key_dispatcher.take().unwrap();
-        let mut current_dispatcher = self.window.current_frame.key_dispatcher.take().unwrap();
+        let window = &mut self.window;
+        let old_dispatcher = window.previous_frame.key_dispatcher.as_mut().unwrap();
+        let current_dispatcher = window.current_frame.key_dispatcher.as_mut().unwrap();
 
-        current_dispatcher.push_node(context, &mut old_dispatcher);
+        current_dispatcher.push_node(context, old_dispatcher);
         if let Some(focus_handle) = focus_handle.as_ref() {
             current_dispatcher.make_focusable(focus_handle.id);
         }
         let result = f(focus_handle, self);
-        current_dispatcher.pop_node();
 
-        self.window.previous_frame.key_dispatcher = Some(old_dispatcher);
-        self.window.current_frame.key_dispatcher = Some(current_dispatcher);
+        let current_dispatcher = self.window.current_frame.key_dispatcher.as_mut().unwrap();
+        current_dispatcher.pop_node();
 
         result
     }
