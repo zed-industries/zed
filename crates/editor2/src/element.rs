@@ -16,11 +16,11 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
     black, hsla, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
-    BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchContext, DispatchPhase,
-    Edges, Element, ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, Hsla,
-    InputHandler, KeyDownEvent, KeyListener, KeyMatch, Line, LineLayout, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size,
-    Style, TextRun, TextStyle, TextSystem, ViewContext, WindowContext, WrappedLineLayout,
+    BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element,
+    ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, Hsla, InputHandler,
+    KeyContext, KeyDownEvent, KeyMatch, Line, LineLayout, Modifiers, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, ShapedGlyph, Size, Style, TextRun,
+    TextStyle, TextSystem, ViewContext, WindowContext, WrappedLineLayout,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -2459,11 +2459,170 @@ impl Element<Editor> for EditorElement {
 
         let dispatch_context = editor.dispatch_context(cx);
         cx.with_element_id(cx.view().entity_id(), |global_id, cx| {
-            cx.with_key_dispatch_context(dispatch_context, |cx| {
-                cx.with_key_listeners(build_key_listeners(global_id), |cx| {
-                    cx.with_focus(editor.focus_handle.clone(), |_| {})
-                });
-            })
+            cx.with_key_dispatch(
+                dispatch_context,
+                Some(editor.focus_handle.clone()),
+                |_, cx| {
+                    register_action(cx, Editor::move_left);
+                    register_action(cx, Editor::move_right);
+                    register_action(cx, Editor::move_down);
+                    register_action(cx, Editor::move_up);
+                    // on_action(cx, Editor::new_file); todo!()
+                    // on_action(cx, Editor::new_file_in_direction); todo!()
+                    register_action(cx, Editor::cancel);
+                    register_action(cx, Editor::newline);
+                    register_action(cx, Editor::newline_above);
+                    register_action(cx, Editor::newline_below);
+                    register_action(cx, Editor::backspace);
+                    register_action(cx, Editor::delete);
+                    register_action(cx, Editor::tab);
+                    register_action(cx, Editor::tab_prev);
+                    register_action(cx, Editor::indent);
+                    register_action(cx, Editor::outdent);
+                    register_action(cx, Editor::delete_line);
+                    register_action(cx, Editor::join_lines);
+                    register_action(cx, Editor::sort_lines_case_sensitive);
+                    register_action(cx, Editor::sort_lines_case_insensitive);
+                    register_action(cx, Editor::reverse_lines);
+                    register_action(cx, Editor::shuffle_lines);
+                    register_action(cx, Editor::convert_to_upper_case);
+                    register_action(cx, Editor::convert_to_lower_case);
+                    register_action(cx, Editor::convert_to_title_case);
+                    register_action(cx, Editor::convert_to_snake_case);
+                    register_action(cx, Editor::convert_to_kebab_case);
+                    register_action(cx, Editor::convert_to_upper_camel_case);
+                    register_action(cx, Editor::convert_to_lower_camel_case);
+                    register_action(cx, Editor::delete_to_previous_word_start);
+                    register_action(cx, Editor::delete_to_previous_subword_start);
+                    register_action(cx, Editor::delete_to_next_word_end);
+                    register_action(cx, Editor::delete_to_next_subword_end);
+                    register_action(cx, Editor::delete_to_beginning_of_line);
+                    register_action(cx, Editor::delete_to_end_of_line);
+                    register_action(cx, Editor::cut_to_end_of_line);
+                    register_action(cx, Editor::duplicate_line);
+                    register_action(cx, Editor::move_line_up);
+                    register_action(cx, Editor::move_line_down);
+                    register_action(cx, Editor::transpose);
+                    register_action(cx, Editor::cut);
+                    register_action(cx, Editor::copy);
+                    register_action(cx, Editor::paste);
+                    register_action(cx, Editor::undo);
+                    register_action(cx, Editor::redo);
+                    register_action(cx, Editor::move_page_up);
+                    register_action(cx, Editor::move_page_down);
+                    register_action(cx, Editor::next_screen);
+                    register_action(cx, Editor::scroll_cursor_top);
+                    register_action(cx, Editor::scroll_cursor_center);
+                    register_action(cx, Editor::scroll_cursor_bottom);
+                    register_action(cx, |editor, _: &LineDown, cx| {
+                        editor.scroll_screen(&ScrollAmount::Line(1.), cx)
+                    });
+                    register_action(cx, |editor, _: &LineUp, cx| {
+                        editor.scroll_screen(&ScrollAmount::Line(-1.), cx)
+                    });
+                    register_action(cx, |editor, _: &HalfPageDown, cx| {
+                        editor.scroll_screen(&ScrollAmount::Page(0.5), cx)
+                    });
+                    register_action(cx, |editor, _: &HalfPageUp, cx| {
+                        editor.scroll_screen(&ScrollAmount::Page(-0.5), cx)
+                    });
+                    register_action(cx, |editor, _: &PageDown, cx| {
+                        editor.scroll_screen(&ScrollAmount::Page(1.), cx)
+                    });
+                    register_action(cx, |editor, _: &PageUp, cx| {
+                        editor.scroll_screen(&ScrollAmount::Page(-1.), cx)
+                    });
+                    register_action(cx, Editor::move_to_previous_word_start);
+                    register_action(cx, Editor::move_to_previous_subword_start);
+                    register_action(cx, Editor::move_to_next_word_end);
+                    register_action(cx, Editor::move_to_next_subword_end);
+                    register_action(cx, Editor::move_to_beginning_of_line);
+                    register_action(cx, Editor::move_to_end_of_line);
+                    register_action(cx, Editor::move_to_start_of_paragraph);
+                    register_action(cx, Editor::move_to_end_of_paragraph);
+                    register_action(cx, Editor::move_to_beginning);
+                    register_action(cx, Editor::move_to_end);
+                    register_action(cx, Editor::select_up);
+                    register_action(cx, Editor::select_down);
+                    register_action(cx, Editor::select_left);
+                    register_action(cx, Editor::select_right);
+                    register_action(cx, Editor::select_to_previous_word_start);
+                    register_action(cx, Editor::select_to_previous_subword_start);
+                    register_action(cx, Editor::select_to_next_word_end);
+                    register_action(cx, Editor::select_to_next_subword_end);
+                    register_action(cx, Editor::select_to_beginning_of_line);
+                    register_action(cx, Editor::select_to_end_of_line);
+                    register_action(cx, Editor::select_to_start_of_paragraph);
+                    register_action(cx, Editor::select_to_end_of_paragraph);
+                    register_action(cx, Editor::select_to_beginning);
+                    register_action(cx, Editor::select_to_end);
+                    register_action(cx, Editor::select_all);
+                    register_action(cx, |editor, action, cx| {
+                        editor.select_all_matches(action, cx).log_err();
+                    });
+                    register_action(cx, Editor::select_line);
+                    register_action(cx, Editor::split_selection_into_lines);
+                    register_action(cx, Editor::add_selection_above);
+                    register_action(cx, Editor::add_selection_below);
+                    register_action(cx, |editor, action, cx| {
+                        editor.select_next(action, cx).log_err();
+                    });
+                    register_action(cx, |editor, action, cx| {
+                        editor.select_previous(action, cx).log_err();
+                    });
+                    register_action(cx, Editor::toggle_comments);
+                    register_action(cx, Editor::select_larger_syntax_node);
+                    register_action(cx, Editor::select_smaller_syntax_node);
+                    register_action(cx, Editor::move_to_enclosing_bracket);
+                    register_action(cx, Editor::undo_selection);
+                    register_action(cx, Editor::redo_selection);
+                    register_action(cx, Editor::go_to_diagnostic);
+                    register_action(cx, Editor::go_to_prev_diagnostic);
+                    register_action(cx, Editor::go_to_hunk);
+                    register_action(cx, Editor::go_to_prev_hunk);
+                    register_action(cx, Editor::go_to_definition);
+                    register_action(cx, Editor::go_to_definition_split);
+                    register_action(cx, Editor::go_to_type_definition);
+                    register_action(cx, Editor::go_to_type_definition_split);
+                    register_action(cx, Editor::fold);
+                    register_action(cx, Editor::fold_at);
+                    register_action(cx, Editor::unfold_lines);
+                    register_action(cx, Editor::unfold_at);
+                    register_action(cx, Editor::fold_selected_ranges);
+                    register_action(cx, Editor::show_completions);
+                    register_action(cx, Editor::toggle_code_actions);
+                    // on_action(cx, Editor::open_excerpts); todo!()
+                    register_action(cx, Editor::toggle_soft_wrap);
+                    register_action(cx, Editor::toggle_inlay_hints);
+                    register_action(cx, Editor::reveal_in_finder);
+                    register_action(cx, Editor::copy_path);
+                    register_action(cx, Editor::copy_relative_path);
+                    register_action(cx, Editor::copy_highlight_json);
+                    register_action(cx, |editor, action, cx| {
+                        editor
+                            .format(action, cx)
+                            .map(|task| task.detach_and_log_err(cx));
+                    });
+                    register_action(cx, Editor::restart_language_server);
+                    register_action(cx, Editor::show_character_palette);
+                    // on_action(cx, Editor::confirm_completion); todo!()
+                    register_action(cx, |editor, action, cx| {
+                        editor
+                            .confirm_code_action(action, cx)
+                            .map(|task| task.detach_and_log_err(cx));
+                    });
+                    // on_action(cx, Editor::rename); todo!()
+                    // on_action(cx, Editor::confirm_rename); todo!()
+                    // on_action(cx, Editor::find_all_references); todo!()
+                    register_action(cx, Editor::next_copilot_suggestion);
+                    register_action(cx, Editor::previous_copilot_suggestion);
+                    register_action(cx, Editor::copilot_suggest);
+                    register_action(cx, Editor::context_menu_first);
+                    register_action(cx, Editor::context_menu_prev);
+                    register_action(cx, Editor::context_menu_next);
+                    register_action(cx, Editor::context_menu_last);
+                },
+            )
         });
     }
 
@@ -3998,212 +4157,14 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
 //     }
 // }
 
-fn build_key_listeners(
-    global_element_id: GlobalElementId,
-) -> impl IntoIterator<Item = (TypeId, KeyListener<Editor>)> {
-    [
-        build_action_listener(Editor::move_left),
-        build_action_listener(Editor::move_right),
-        build_action_listener(Editor::move_down),
-        build_action_listener(Editor::move_up),
-        // build_action_listener(Editor::new_file), todo!()
-        // build_action_listener(Editor::new_file_in_direction), todo!()
-        build_action_listener(Editor::cancel),
-        build_action_listener(Editor::newline),
-        build_action_listener(Editor::newline_above),
-        build_action_listener(Editor::newline_below),
-        build_action_listener(Editor::backspace),
-        build_action_listener(Editor::delete),
-        build_action_listener(Editor::tab),
-        build_action_listener(Editor::tab_prev),
-        build_action_listener(Editor::indent),
-        build_action_listener(Editor::outdent),
-        build_action_listener(Editor::delete_line),
-        build_action_listener(Editor::join_lines),
-        build_action_listener(Editor::sort_lines_case_sensitive),
-        build_action_listener(Editor::sort_lines_case_insensitive),
-        build_action_listener(Editor::reverse_lines),
-        build_action_listener(Editor::shuffle_lines),
-        build_action_listener(Editor::convert_to_upper_case),
-        build_action_listener(Editor::convert_to_lower_case),
-        build_action_listener(Editor::convert_to_title_case),
-        build_action_listener(Editor::convert_to_snake_case),
-        build_action_listener(Editor::convert_to_kebab_case),
-        build_action_listener(Editor::convert_to_upper_camel_case),
-        build_action_listener(Editor::convert_to_lower_camel_case),
-        build_action_listener(Editor::delete_to_previous_word_start),
-        build_action_listener(Editor::delete_to_previous_subword_start),
-        build_action_listener(Editor::delete_to_next_word_end),
-        build_action_listener(Editor::delete_to_next_subword_end),
-        build_action_listener(Editor::delete_to_beginning_of_line),
-        build_action_listener(Editor::delete_to_end_of_line),
-        build_action_listener(Editor::cut_to_end_of_line),
-        build_action_listener(Editor::duplicate_line),
-        build_action_listener(Editor::move_line_up),
-        build_action_listener(Editor::move_line_down),
-        build_action_listener(Editor::transpose),
-        build_action_listener(Editor::cut),
-        build_action_listener(Editor::copy),
-        build_action_listener(Editor::paste),
-        build_action_listener(Editor::undo),
-        build_action_listener(Editor::redo),
-        build_action_listener(Editor::move_page_up),
-        build_action_listener(Editor::move_page_down),
-        build_action_listener(Editor::next_screen),
-        build_action_listener(Editor::scroll_cursor_top),
-        build_action_listener(Editor::scroll_cursor_center),
-        build_action_listener(Editor::scroll_cursor_bottom),
-        build_action_listener(|editor, _: &LineDown, cx| {
-            editor.scroll_screen(&ScrollAmount::Line(1.), cx)
-        }),
-        build_action_listener(|editor, _: &LineUp, cx| {
-            editor.scroll_screen(&ScrollAmount::Line(-1.), cx)
-        }),
-        build_action_listener(|editor, _: &HalfPageDown, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(0.5), cx)
-        }),
-        build_action_listener(|editor, _: &HalfPageUp, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(-0.5), cx)
-        }),
-        build_action_listener(|editor, _: &PageDown, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(1.), cx)
-        }),
-        build_action_listener(|editor, _: &PageUp, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(-1.), cx)
-        }),
-        build_action_listener(Editor::move_to_previous_word_start),
-        build_action_listener(Editor::move_to_previous_subword_start),
-        build_action_listener(Editor::move_to_next_word_end),
-        build_action_listener(Editor::move_to_next_subword_end),
-        build_action_listener(Editor::move_to_beginning_of_line),
-        build_action_listener(Editor::move_to_end_of_line),
-        build_action_listener(Editor::move_to_start_of_paragraph),
-        build_action_listener(Editor::move_to_end_of_paragraph),
-        build_action_listener(Editor::move_to_beginning),
-        build_action_listener(Editor::move_to_end),
-        build_action_listener(Editor::select_up),
-        build_action_listener(Editor::select_down),
-        build_action_listener(Editor::select_left),
-        build_action_listener(Editor::select_right),
-        build_action_listener(Editor::select_to_previous_word_start),
-        build_action_listener(Editor::select_to_previous_subword_start),
-        build_action_listener(Editor::select_to_next_word_end),
-        build_action_listener(Editor::select_to_next_subword_end),
-        build_action_listener(Editor::select_to_beginning_of_line),
-        build_action_listener(Editor::select_to_end_of_line),
-        build_action_listener(Editor::select_to_start_of_paragraph),
-        build_action_listener(Editor::select_to_end_of_paragraph),
-        build_action_listener(Editor::select_to_beginning),
-        build_action_listener(Editor::select_to_end),
-        build_action_listener(Editor::select_all),
-        build_action_listener(|editor, action, cx| {
-            editor.select_all_matches(action, cx).log_err();
-        }),
-        build_action_listener(Editor::select_line),
-        build_action_listener(Editor::split_selection_into_lines),
-        build_action_listener(Editor::add_selection_above),
-        build_action_listener(Editor::add_selection_below),
-        build_action_listener(|editor, action, cx| {
-            editor.select_next(action, cx).log_err();
-        }),
-        build_action_listener(|editor, action, cx| {
-            editor.select_previous(action, cx).log_err();
-        }),
-        build_action_listener(Editor::toggle_comments),
-        build_action_listener(Editor::select_larger_syntax_node),
-        build_action_listener(Editor::select_smaller_syntax_node),
-        build_action_listener(Editor::move_to_enclosing_bracket),
-        build_action_listener(Editor::undo_selection),
-        build_action_listener(Editor::redo_selection),
-        build_action_listener(Editor::go_to_diagnostic),
-        build_action_listener(Editor::go_to_prev_diagnostic),
-        build_action_listener(Editor::go_to_hunk),
-        build_action_listener(Editor::go_to_prev_hunk),
-        build_action_listener(Editor::go_to_definition),
-        build_action_listener(Editor::go_to_definition_split),
-        build_action_listener(Editor::go_to_type_definition),
-        build_action_listener(Editor::go_to_type_definition_split),
-        build_action_listener(Editor::fold),
-        build_action_listener(Editor::fold_at),
-        build_action_listener(Editor::unfold_lines),
-        build_action_listener(Editor::unfold_at),
-        build_action_listener(Editor::fold_selected_ranges),
-        build_action_listener(Editor::show_completions),
-        build_action_listener(Editor::toggle_code_actions),
-        // build_action_listener(Editor::open_excerpts), todo!()
-        build_action_listener(Editor::toggle_soft_wrap),
-        build_action_listener(Editor::toggle_inlay_hints),
-        build_action_listener(Editor::reveal_in_finder),
-        build_action_listener(Editor::copy_path),
-        build_action_listener(Editor::copy_relative_path),
-        build_action_listener(Editor::copy_highlight_json),
-        build_action_listener(|editor, action, cx| {
-            editor
-                .format(action, cx)
-                .map(|task| task.detach_and_log_err(cx));
-        }),
-        build_action_listener(Editor::restart_language_server),
-        build_action_listener(Editor::show_character_palette),
-        // build_action_listener(Editor::confirm_completion), todo!()
-        build_action_listener(|editor, action, cx| {
-            editor
-                .confirm_code_action(action, cx)
-                .map(|task| task.detach_and_log_err(cx));
-        }),
-        // build_action_listener(Editor::rename), todo!()
-        // build_action_listener(Editor::confirm_rename), todo!()
-        // build_action_listener(Editor::find_all_references), todo!()
-        build_action_listener(Editor::next_copilot_suggestion),
-        build_action_listener(Editor::previous_copilot_suggestion),
-        build_action_listener(Editor::copilot_suggest),
-        build_action_listener(Editor::context_menu_first),
-        build_action_listener(Editor::context_menu_prev),
-        build_action_listener(Editor::context_menu_next),
-        build_action_listener(Editor::context_menu_last),
-        build_key_listener(
-            move |editor, key_down: &KeyDownEvent, dispatch_context, phase, cx| {
-                if phase == DispatchPhase::Bubble {
-                    if let KeyMatch::Some(action) = cx.match_keystroke(
-                        &global_element_id,
-                        &key_down.keystroke,
-                        dispatch_context,
-                    ) {
-                        return Some(action);
-                    }
-                }
-
-                None
-            },
-        ),
-    ]
-}
-
-fn build_key_listener<T: 'static>(
-    listener: impl Fn(
-            &mut Editor,
-            &T,
-            &[&DispatchContext],
-            DispatchPhase,
-            &mut ViewContext<Editor>,
-        ) -> Option<Box<dyn Action>>
-        + 'static,
-) -> (TypeId, KeyListener<Editor>) {
-    (
-        TypeId::of::<T>(),
-        Box::new(move |editor, event, dispatch_context, phase, cx| {
-            let key_event = event.downcast_ref::<T>()?;
-            listener(editor, key_event, dispatch_context, phase, cx)
-        }),
-    )
-}
-
-fn build_action_listener<T: Action>(
+fn register_action<T: Action>(
+    cx: &mut ViewContext<Editor>,
     listener: impl Fn(&mut Editor, &T, &mut ViewContext<Editor>) + 'static,
-) -> (TypeId, KeyListener<Editor>) {
-    build_key_listener(move |editor, action: &T, dispatch_context, phase, cx| {
+) {
+    cx.on_action(TypeId::of::<T>(), move |editor, action, phase, cx| {
+        let action = action.downcast_ref().unwrap();
         if phase == DispatchPhase::Bubble {
             listener(editor, action, cx);
         }
-        None
     })
 }
