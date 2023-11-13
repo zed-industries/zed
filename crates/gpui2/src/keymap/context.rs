@@ -1,8 +1,9 @@
 use crate::SharedString;
 use anyhow::{anyhow, Result};
 use smallvec::SmallVec;
+use std::fmt;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
+#[derive(Clone, Default, Eq, PartialEq, Hash)]
 pub struct KeyContext(SmallVec<[ContextEntry; 8]>);
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -96,6 +97,23 @@ impl KeyContext {
             .find(|entry| entry.key.as_ref() == key)?
             .value
             .as_ref()
+    }
+}
+
+impl fmt::Debug for KeyContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut entries = self.0.iter().peekable();
+        while let Some(entry) = entries.next() {
+            if let Some(ref value) = entry.value {
+                write!(f, "{}={}", entry.key, value)?;
+            } else {
+                write!(f, "{}", entry.key)?;
+            }
+            if entries.peek().is_some() {
+                write!(f, " ")?;
+            }
+        }
+        Ok(())
     }
 }
 

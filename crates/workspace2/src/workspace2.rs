@@ -39,7 +39,7 @@ use gpui::{
     actions, div, point, rems, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
     AsyncAppContext, AsyncWindowContext, Bounds, Component, Div, Entity, EntityId, EventEmitter,
     FocusHandle, GlobalPixels, KeyContext, Model, ModelContext, ParentElement, Point, Render, Size,
-    StatefulInteractive, StatefulInteractivity, StatelessInteractive, Styled, Subscription, Task,
+    StatefulInteractive, StatelessInteractive, StatelessInteractivity, Styled, Subscription, Task,
     View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
     WindowOptions,
 };
@@ -534,8 +534,8 @@ pub struct Workspace {
     workspace_actions: Vec<
         Box<
             dyn Fn(
-                Div<Workspace, StatefulInteractivity<Workspace>>,
-            ) -> Div<Workspace, StatefulInteractivity<Workspace>>,
+                Div<Workspace, StatelessInteractivity<Workspace>>,
+            ) -> Div<Workspace, StatelessInteractivity<Workspace>>,
         >,
     >,
     zoomed: Option<AnyWeakView>,
@@ -3514,8 +3514,8 @@ impl Workspace {
 
     fn add_workspace_actions_listeners(
         &self,
-        mut div: Div<Workspace, StatefulInteractivity<Workspace>>,
-    ) -> Div<Workspace, StatefulInteractivity<Workspace>> {
+        mut div: Div<Workspace, StatelessInteractivity<Workspace>>,
+    ) -> Div<Workspace, StatelessInteractivity<Workspace>> {
         for action in self.workspace_actions.iter() {
             div = (action)(div)
         }
@@ -3746,7 +3746,7 @@ impl Render for Workspace {
         let mut context = KeyContext::default();
         context.add("Workspace");
 
-        div()
+        self.add_workspace_actions_listeners(div())
             .context(context)
             .relative()
             .size_full()
@@ -3761,7 +3761,8 @@ impl Render for Workspace {
             .child(self.render_titlebar(cx))
             .child(
                 // todo! should this be a component a view?
-                self.add_workspace_actions_listeners(div().id("workspace"))
+                div()
+                    .id("workspace")
                     .relative()
                     .flex_1()
                     .w_full()
