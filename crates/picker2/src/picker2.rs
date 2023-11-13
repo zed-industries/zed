@@ -10,7 +10,7 @@ pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
     scroll_handle: UniformListScrollHandle,
     editor: View<Editor>,
-    pending_update_matches: Option<Task<Option<()>>>,
+    pending_update_matches: Option<Task<()>>,
 }
 
 pub trait PickerDelegate: Sized + 'static {
@@ -42,12 +42,14 @@ impl<D: PickerDelegate> Picker<D> {
             editor
         });
         cx.subscribe(&editor, Self::on_input_editor_event).detach();
-        Self {
+        let mut this = Self {
             delegate,
             scroll_handle: UniformListScrollHandle::new(),
             pending_update_matches: None,
             editor,
-        }
+        };
+        this.update_matches("".to_string(), cx);
+        this
     }
 
     pub fn focus(&self, cx: &mut WindowContext) {
@@ -126,7 +128,7 @@ impl<D: PickerDelegate> Picker<D> {
             this.update(&mut cx, |this, cx| {
                 this.matches_updated(cx);
             })
-            .ok()
+            .ok();
         }));
     }
 
