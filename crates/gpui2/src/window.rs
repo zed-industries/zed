@@ -389,10 +389,6 @@ impl<'a> WindowContext<'a> {
     pub fn focus(&mut self, handle: &FocusHandle) {
         let focus_id = handle.id;
 
-        if self.window.focus == Some(focus_id) {
-            return;
-        }
-
         if self.window.last_blur.is_none() {
             self.window.last_blur = Some(self.window.focus);
         }
