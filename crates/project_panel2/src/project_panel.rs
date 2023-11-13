@@ -8,11 +8,11 @@ use file_associations::FileAssociations;
 
 use anyhow::{anyhow, Result};
 use gpui::{
-    actions, div, px, rems, svg, uniform_list, Action, AppContext, AssetSource, AsyncAppContext,
-    AsyncWindowContext, ClipboardItem, Component, Div, Element, Entity, EventEmitter, FocusEnabled,
-    FocusHandle, Model, ParentElement as _, Pixels, Point, PromptLevel, Render,
-    StatefulInteractive, StatefulInteractivity, StatelessInteractive, Styled, Task,
-    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    actions, div, px, rems, svg, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
+    ClipboardItem, Component, Div, Entity, EventEmitter, FocusEnabled, FocusHandle, Model,
+    ParentElement as _, Pixels, Point, PromptLevel, Render, StatefulInteractive,
+    StatefulInteractivity, StatelessInteractive, Styled, Task, UniformListScrollHandle, View,
+    ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -33,7 +33,7 @@ use std::{
 use theme::ActiveTheme as _;
 use ui::{h_stack, v_stack, Label};
 use unicase::UniCase;
-use util::TryFutureExt;
+use util::{maybe, TryFutureExt};
 use workspace::{
     dock::{DockPosition, PanelEvent},
     Workspace,
@@ -131,12 +131,6 @@ pub fn init_settings(cx: &mut AppContext) {
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
     file_associations::init(assets, cx);
-
-    // cx.add_action(
-    //     |this: &mut ProjectPanel, action: &Paste, cx: &mut ViewContext<ProjectPanel>| {
-    //         this.paste(action, cx);
-    //     },
-    // );
 }
 
 #[derive(Debug)]
@@ -560,22 +554,18 @@ impl ProjectPanel {
         }
     }
 
-    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(task) = self.confirm_edit(cx) {
-            return Some(task);
+            task.detach_and_log_err(cx);
         }
-
-        None
     }
 
-    fn open_file(&mut self, _: &Open, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+    fn open_file(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
                 self.open_entry(entry.id, true, cx);
             }
         }
-
-        None
     }
 
     fn confirm_edit(&mut self, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -781,27 +771,32 @@ impl ProjectPanel {
         }
     }
 
-    fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-        let Selection { entry_id, .. } = self.selection?;
-        let path = self.project.read(cx).path_for_entry(entry_id, cx)?.path;
-        let file_name = path.file_name()?;
+    fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
+        maybe!({
+            let Selection { entry_id, .. } = self.selection?;
+            let path = self.project.read(cx).path_for_entry(entry_id, cx)?.path;
+            let file_name = path.file_name()?;
 
-        let mut answer = cx.prompt(
-            PromptLevel::Info,
-            &format!("Delete {file_name:?}?"),
-            &["Delete", "Cancel"],
-        );
-        Some(cx.spawn(|this, mut cx| async move {
-            if answer.await != Ok(0) {
-                return Ok(());
-            }
-            this.update(&mut cx, |this, cx| {
-                this.project
-                    .update(cx, |project, cx| project.delete_entry(entry_id, cx))
-                    .ok_or_else(|| anyhow!("no such entry"))
-            })??
-            .await
-        }))
+            let answer = cx.prompt(
+                PromptLevel::Info,
+                &format!("Delete {file_name:?}?"),
+                &["Delete", "Cancel"],
+            );
+
+            cx.spawn(|this, mut cx| async move {
+                if answer.await != Ok(0) {
+                    return Ok(());
+                }
+                this.update(&mut cx, |this, cx| {
+                    this.project
+                        .update(cx, |project, cx| project.delete_entry(entry_id, cx))
+                        .ok_or_else(|| anyhow!("no such entry"))
+                })??
+                .await
+            })
+            .detach_and_log_err(cx);
+            Some(())
+        });
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
@@ -878,8 +873,9 @@ impl ProjectPanel {
         }
     }
 
-    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) -> Option<()> {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
+    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+        maybe!({
+            let (worktree, entry) = self.selected_entry(cx)?;
             let clipboard_entry = self.clipboard_entry?;
             if clipboard_entry.worktree_id() != worktree.id() {
                 return None;
@@ -923,15 +919,16 @@ impl ProjectPanel {
                 if let Some(task) = self.project.update(cx, |project, cx| {
                     project.rename_entry(clipboard_entry.entry_id(), new_path, cx)
                 }) {
-                    task.detach_and_log_err(cx)
+                    task.detach_and_log_err(cx);
                 }
             } else if let Some(task) = self.project.update(cx, |project, cx| {
                 project.copy_entry(clipboard_entry.entry_id(), new_path, cx)
             }) {
-                task.detach_and_log_err(cx)
+                task.detach_and_log_err(cx);
             }
-        }
-        None
+
+            Some(())
+        });
     }
 
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
@@ -1368,7 +1365,7 @@ impl ProjectPanel {
             })
             .child(
                 if let (Some(editor), true) = (editor, show_editor) {
-                    div().child(editor.clone())
+                    div().w_full().child(editor.clone())
                 } else {
                     div().child(Label::new(details.filename.clone()))
                 }
@@ -1455,14 +1452,15 @@ impl Render for ProjectPanel {
                 .on_action(Self::new_file)
                 .on_action(Self::new_directory)
                 .on_action(Self::rename)
-                // .on_action(Self::delete)
-                // .on_action(Self::confirm)
-                // .on_action(Self::open_file)
+                .on_action(Self::delete)
+                .on_action(Self::confirm)
+                .on_action(Self::open_file)
                 .on_action(Self::cancel)
                 .on_action(Self::cut)
                 .on_action(Self::copy)
                 .on_action(Self::copy_path)
                 .on_action(Self::copy_relative_path)
+                .on_action(Self::paste)
                 .on_action(Self::reveal_in_finder)
                 .on_action(Self::open_in_terminal)
                 .on_action(Self::new_search_in_directory)
