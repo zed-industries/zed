@@ -156,13 +156,12 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 v_stack()
                     .py_0p5()
                     .px_1()
-                    .child(div().px_2().py_0p5().child(self.editor.clone())),
+                    .child(div().px_1().py_0p5().child(self.editor.clone())),
             )
             .child(Divider::horizontal())
             .child(
                 v_stack()
-                    .py_0p5()
-                    .px_1()
+                    .p_1()
                     .grow()
                     .child(
                         uniform_list("candidates", self.delegate.match_count(), {

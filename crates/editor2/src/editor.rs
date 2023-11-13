@@ -1555,6 +1555,7 @@ impl CodeActionsMenu {
                         let colors = cx.theme().colors();
                         div()
                             .px_2()
+                            .text_ui()
                             .text_color(colors.text)
                             .when(selected, |style| {
                                 style
