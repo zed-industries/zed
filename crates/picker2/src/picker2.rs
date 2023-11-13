@@ -4,7 +4,7 @@ use gpui::{
     StatelessInteractive, Styled, Task, UniformListScrollHandle, View, ViewContext, VisualContext,
     WindowContext,
 };
-use std::cmp;
+use std::{cmp, sync::Arc};
 use ui::{prelude::*, v_stack, Divider, Label, LabelColor};
 
 pub struct Picker<D: PickerDelegate> {

@@ -2,11 +2,14 @@ use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, div, Action, AppContext, Component, Div, EventEmitter, FocusHandle, Keystroke,
-    ParentElement, Render, SharedString, StatelessInteractive, Styled, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    ParentElement, Render, StatelessInteractive, Styled, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
-use std::cmp::{self, Reverse};
+use std::{
+    cmp::{self, Reverse},
+    sync::Arc,
+};
 use theme::ActiveTheme;
 use ui::{v_stack, HighlightedLabel, StyledExt};
 use util::{
