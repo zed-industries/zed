@@ -12,6 +12,7 @@ pub struct ProjectSettings {
     pub git: GitSettings,
     // TODO kb better names and docs and tests
     // TODO kb how to react on their changes?
+    // TODO kb /something/node_modules/ does not match `"**/node_modules/**"` glob!!!
     #[serde(default)]
     pub scan_exclude_files: Vec<String>,
 }

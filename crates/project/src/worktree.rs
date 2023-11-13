@@ -2060,7 +2060,7 @@ impl LocalSnapshot {
 
         let mut ignore_stack = IgnoreStack::none();
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
-            if !self.is_abs_path_ignored(parent_abs_path, &ignore_stack, true) {
+            if !ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
                 ignore_stack = IgnoreStack::all();
                 break;
             } else if let Some(ignore) = ignore {
@@ -2068,7 +2068,7 @@ impl LocalSnapshot {
             }
         }
 
-        if !self.is_abs_path_ignored(abs_path, &ignore_stack, is_dir) {
+        if !ignore_stack.is_abs_path_ignored(abs_path, is_dir) {
             ignore_stack = IgnoreStack::all();
         }
         ignore_stack
@@ -2164,41 +2164,16 @@ impl LocalSnapshot {
         paths
     }
 
-    fn is_abs_path_ignored(
-        &self,
-        abs_path: &Path,
-        ignore_stack: &IgnoreStack,
-        is_dir: bool,
-    ) -> bool {
-        if self
-            .scan_exclude_files
+    fn is_abs_path_excluded(&self, abs_path: &Path) -> bool {
+        self.scan_exclude_files
             .iter()
             .any(|exclude_matcher| exclude_matcher.is_match(abs_path))
-        {
-            return true;
-        } else if is_dir && abs_path.file_name() == Some(OsStr::new(".git")) {
-            return true;
-        }
-
-        match ignore_stack {
-            IgnoreStack::None => false,
-            IgnoreStack::All => true,
-            IgnoreStack::Some {
-                abs_base_path,
-                ignore,
-                parent: prev,
-            } => match ignore.matched(abs_path.strip_prefix(abs_base_path).unwrap(), is_dir) {
-                ignore::Match::None => self.is_abs_path_ignored(abs_path, &prev, is_dir),
-                ignore::Match::Ignore(_) => true,
-                ignore::Match::Whitelist(_) => false,
-            },
-        }
     }
 }
 
 impl BackgroundScannerState {
-    fn should_scan_directory(&self, entry: &Entry) -> bool {
-        !entry.is_external
+    fn should_scan_directory(&self, entry: &Entry, entry_abs_path: &Path) -> bool {
+        !entry.is_external && !self.snapshot.is_abs_path_excluded(entry_abs_path)
             || entry.path.file_name() == Some(&*DOT_GIT)
             || self.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
             || self
@@ -2216,13 +2191,17 @@ impl BackgroundScannerState {
         let ignore_stack = self.snapshot.ignore_stack_for_abs_path(&abs_path, true);
         let mut ancestor_inodes = self.snapshot.ancestor_inodes_for_path(&path);
         let mut containing_repository = None;
-        if let Some((workdir_path, repo)) = self.snapshot.local_repo_for_path(&path) {
-            if let Ok(repo_path) = path.strip_prefix(&workdir_path.0) {
-                containing_repository = Some((
-                    workdir_path,
-                    repo.repo_ptr.clone(),
-                    repo.repo_ptr.lock().staged_statuses(repo_path),
-                ));
+        if !matches!(ignore_stack.as_ref(), &IgnoreStack::All)
+            && !self.snapshot.is_abs_path_excluded(&abs_path)
+        {
+            if let Some((workdir_path, repo)) = self.snapshot.local_repo_for_path(&path) {
+                if let Ok(repo_path) = path.strip_prefix(&workdir_path.0) {
+                    containing_repository = Some((
+                        workdir_path,
+                        repo.repo_ptr.clone(),
+                        repo.repo_ptr.lock().staged_statuses(repo_path),
+                    ));
+                }
             }
         }
         if !ancestor_inodes.contains(&entry.inode) {
@@ -3140,10 +3119,7 @@ impl BackgroundScanner {
                 let ignore_stack = state
                     .snapshot
                     .ignore_stack_for_abs_path(&root_abs_path, true);
-                if state
-                    .snapshot
-                    .is_abs_path_ignored(&root_abs_path, &ignore_stack, true)
-                {
+                if ignore_stack.is_abs_path_ignored(&root_abs_path, true) {
                     root_entry.is_ignored = true;
                     state.insert_entry(root_entry.clone(), self.fs.as_ref());
                 }
@@ -3513,7 +3489,7 @@ impl BackgroundScanner {
                 for entry in &mut new_entries {
                     let entry_abs_path = root_abs_path.join(&entry.path);
                     entry.is_ignored =
-                        self.is_abs_path_ignored(&entry_abs_path, &ignore_stack, entry.is_dir());
+                        ignore_stack.is_abs_path_ignored(&entry_abs_path, entry.is_dir());
 
                     if entry.is_dir() {
                         if let Some(job) = new_jobs.next().expect("missing scan job for entry") {
@@ -3572,8 +3548,7 @@ impl BackgroundScanner {
             }
 
             if child_entry.is_dir() {
-                child_entry.is_ignored =
-                    self.is_abs_path_ignored(&child_abs_path, &ignore_stack, true);
+                child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
 
                 // Avoid recursing until crash in the case of a recursive symlink
                 if !job.ancestor_inodes.contains(&child_entry.inode) {
@@ -3597,8 +3572,7 @@ impl BackgroundScanner {
                     new_jobs.push(None);
                 }
             } else {
-                child_entry.is_ignored =
-                    self.is_abs_path_ignored(&child_abs_path, &ignore_stack, false);
+                child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
                 if let Some((repository_dir, repository, staged_statuses)) =
                     &job.containing_repository
                 {
@@ -3624,7 +3598,7 @@ impl BackgroundScanner {
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                if state.should_scan_directory(&entry) {
+                if state.should_scan_directory(&entry, &job.path.join(&entry.path)) {
                     job_ix += 1;
                 } else {
                     log::debug!("defer scanning directory {:?}", entry.path);
@@ -3712,13 +3686,12 @@ impl BackgroundScanner {
                         state.snapshot.root_char_bag,
                     );
                     let is_dir = fs_entry.is_dir();
-                    fs_entry.is_ignored =
-                        state
-                            .snapshot
-                            .is_abs_path_ignored(&abs_path, &ignore_stack, is_dir);
+                    fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
 
-                    if !is_dir {
+                    if !is_dir
+                        && !(fs_entry.is_ignored || state.snapshot.is_abs_path_excluded(&abs_path))
+                    {
                         if let Some((work_dir, repo)) = state.snapshot.local_repo_for_path(&path) {
                             if let Ok(repo_path) = path.strip_prefix(work_dir.0) {
                                 let repo_path = RepoPath(repo_path.into());
@@ -3729,7 +3702,7 @@ impl BackgroundScanner {
                     }
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, fs_entry.is_dir()) {
-                        if state.should_scan_directory(&fs_entry) {
+                        if state.should_scan_directory(&fs_entry, &abs_path) {
                             state.enqueue_scan_dir(abs_path, &fs_entry, scan_queue_tx);
                         } else {
                             fs_entry.kind = EntryKind::UnloadedDir;
@@ -3874,7 +3847,7 @@ impl BackgroundScanner {
         for mut entry in snapshot.child_entries(path).cloned() {
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
-            entry.is_ignored = self.is_abs_path_ignored(&abs_path, &ignore_stack, entry.is_dir());
+            entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
             if entry.is_dir() {
                 let child_ignore_stack = if entry.is_ignored {
                     IgnoreStack::all()
@@ -3885,7 +3858,7 @@ impl BackgroundScanner {
                 // Scan any directories that were previously ignored and weren't previously scanned.
                 if was_ignored && !entry.is_ignored && entry.kind.is_unloaded() {
                     let state = self.state.lock();
-                    if state.should_scan_directory(&entry) {
+                    if state.should_scan_directory(&entry, &abs_path) {
                         state.enqueue_scan_dir(abs_path.clone(), &entry, &job.scan_queue);
                     }
                 }
@@ -4055,18 +4028,6 @@ impl BackgroundScanner {
         }
 
         smol::Timer::after(Duration::from_millis(100)).await;
-    }
-
-    fn is_abs_path_ignored(
-        &self,
-        abs_path: &Path,
-        ignore_stack: &IgnoreStack,
-        is_dir: bool,
-    ) -> bool {
-        self.state
-            .lock()
-            .snapshot
-            .is_abs_path_ignored(abs_path, ignore_stack, is_dir)
     }
 }
 
