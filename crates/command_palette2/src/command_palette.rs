@@ -2,13 +2,13 @@ use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, div, Action, AppContext, Component, Div, EventEmitter, FocusHandle, Keystroke,
-    ParentElement, Render, StatelessInteractive, Styled, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    ParentElement, Render, SharedString, StatelessInteractive, Styled, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
 use std::cmp::{self, Reverse};
 use theme::ActiveTheme;
-use ui::{v_stack, Label, StyledExt};
+use ui::{v_stack, HighlightedLabel, StyledExt};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
@@ -146,6 +146,10 @@ impl CommandPaletteDelegate {
 
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = Div<Picker<Self>>;
+
+    fn placeholder_text(&self) -> Arc<str> {
+        "Execute a command...".into()
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -296,11 +300,10 @@ impl PickerDelegate for CommandPaletteDelegate {
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Self::ListItem {
         let colors = cx.theme().colors();
-        let Some(command) = self
-            .matches
-            .get(ix)
-            .and_then(|m| self.commands.get(m.candidate_id))
-        else {
+        let Some(r#match) = self.matches.get(ix) else {
+            return div();
+        };
+        let Some(command) = self.commands.get(r#match.candidate_id) else {
             return div();
         };
 
@@ -312,7 +315,10 @@ impl PickerDelegate for CommandPaletteDelegate {
             .rounded_md()
             .when(selected, |this| this.bg(colors.ghost_element_selected))
             .hover(|this| this.bg(colors.ghost_element_hover))
-            .child(Label::new(command.name.clone()))
+            .child(HighlightedLabel::new(
+                command.name.clone(),
+                r#match.positions.clone(),
+            ))
     }
 
     // fn render_match(
