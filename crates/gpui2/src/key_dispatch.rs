@@ -1,7 +1,7 @@
 use crate::{
     build_action_from_type, Action, Bounds, DispatchPhase, Element, FocusEvent, FocusHandle,
-    FocusId, KeyContext, KeyMatch, Keymap, Keystroke, KeystrokeMatcher, MouseDownEvent, Pixels,
-    Style, StyleRefinement, ViewContext, WindowContext,
+    FocusId, KeyBinding, KeyContext, KeyMatch, Keymap, Keystroke, KeystrokeMatcher, MouseDownEvent,
+    Pixels, Style, StyleRefinement, ViewContext, WindowContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -143,6 +143,15 @@ impl DispatchTree {
             }
         }
         actions
+    }
+
+    pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
+        self.keymap
+            .lock()
+            .bindings_for_action(action.type_id())
+            .filter(|candidate| candidate.action.partial_eq(action))
+            .cloned()
+            .collect()
     }
 
     pub fn dispatch_key(

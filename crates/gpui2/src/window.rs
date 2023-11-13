@@ -3,13 +3,13 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
     DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
     EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputEvent, IsZero, KeyContext, KeyDownEvent, LayoutId, Model, ModelContext, Modifiers,
-    MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
-    SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model, ModelContext,
+    Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
+    Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -1376,6 +1376,13 @@ impl<'a> WindowContext<'a> {
         } else {
             Vec::new()
         }
+    }
+
+    pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
+        self.window
+            .current_frame
+            .dispatch_tree
+            .bindings_for_action(action)
     }
 }
 
