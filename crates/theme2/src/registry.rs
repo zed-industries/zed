@@ -38,17 +38,17 @@ impl ThemeRegistry {
     fn insert_user_themes(&mut self, themes: impl IntoIterator<Item = UserTheme>) {
         self.insert_themes(themes.into_iter().map(|user_theme| {
             let mut theme_colors = match user_theme.appearance {
-                Appearance::Light => ThemeColors::default_light(),
-                Appearance::Dark => ThemeColors::default_dark(),
+                Appearance::Light => ThemeColors::light(),
+                Appearance::Dark => ThemeColors::dark(),
             };
             theme_colors.refine(&user_theme.styles.colors);
 
-            let mut status_colors = StatusColors::default();
+            let mut status_colors = StatusColors::dark();
             status_colors.refine(&user_theme.styles.status);
 
             let mut syntax_colors = match user_theme.appearance {
-                Appearance::Light => SyntaxTheme::default_light(),
-                Appearance::Dark => SyntaxTheme::default_dark(),
+                Appearance::Light => SyntaxTheme::light(),
+                Appearance::Dark => SyntaxTheme::dark(),
             };
             if let Some(user_syntax) = user_theme.styles.syntax {
                 syntax_colors.highlights = user_syntax
@@ -76,7 +76,10 @@ impl ThemeRegistry {
                     system: SystemColors::default(),
                     colors: theme_colors,
                     status: status_colors,
-                    player: PlayerColors::default(),
+                    player: match user_theme.appearance {
+                        Appearance::Light => PlayerColors::light(),
+                        Appearance::Dark => PlayerColors::dark(),
+                    },
                     syntax: Arc::new(syntax_colors),
                 },
             }
