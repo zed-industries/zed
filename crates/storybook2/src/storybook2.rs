@@ -48,7 +48,7 @@ fn main() {
     let args = Args::parse();
 
     let story_selector = args.story.clone();
-    let theme_name = args.theme.unwrap_or("Zed Pro Moonlight".to_string());
+    let theme_name = args.theme.unwrap_or("One Dark".to_string());
 
     let asset_source = Arc::new(Assets);
     gpui::App::production(asset_source).run(move |cx| {

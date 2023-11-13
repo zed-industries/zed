@@ -6,8 +6,8 @@ use gpui::{HighlightStyle, SharedString};
 use refineable::Refineable;
 
 use crate::{
-    zed_pro_family, Appearance, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme,
-    ThemeColors, ThemeFamily, ThemeStyles, UserTheme, UserThemeFamily,
+    one_themes::one_family, Appearance, PlayerColors, StatusColors, SyntaxTheme, SystemColors,
+    Theme, ThemeColors, ThemeFamily, ThemeStyles, UserTheme, UserThemeFamily,
 };
 
 pub struct ThemeRegistry {
@@ -108,7 +108,7 @@ impl Default for ThemeRegistry {
             themes: HashMap::default(),
         };
 
-        this.insert_theme_families([zed_pro_family()]);
+        this.insert_theme_families([one_family()]);
 
         #[cfg(not(feature = "importing-themes"))]
         this.insert_user_theme_familes(crate::all_user_themes());
