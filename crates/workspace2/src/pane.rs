@@ -1401,20 +1401,27 @@ impl Pane {
             // .on_drop(|_view, state: View<DraggedTab>, cx| {
             //     eprintln!("{:?}", state.read(cx));
             // })
-            .px_2()
-            .py_0p5()
             .flex()
             .items_center()
             .justify_center()
+            // todo!("Nate - I need to do some work to balance all the items in the tab once things stablize")
+            .when(close_right, |this| this.pl_3().pr_1())
+            .when(!close_right, |this| this.pr_1().pr_3())
+            .py_1()
             .bg(tab_bg)
-            .hover(|h| h.bg(tab_hover_bg))
-            .active(|a| a.bg(tab_active_bg))
+            .border_color(cx.theme().colors().border)
+            .when(ix < self.active_item_index, |this| this.border_l())
+            .when(ix > self.active_item_index, |this| this.border_r())
+            .when(ix == self.active_item_index, |this| {
+                this.border_l().border_r()
+            })
+            // .hover(|h| h.bg(tab_hover_bg))
+            // .active(|a| a.bg(tab_active_bg))
             .child(
                 div()
-                    .px_1()
                     .flex()
                     .items_center()
-                    .gap_1p5()
+                    .gap_1()
                     .text_color(text_color)
                     .children(if item.has_conflict(cx) {
                         Some(
