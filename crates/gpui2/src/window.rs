@@ -713,6 +713,42 @@ impl<'a> WindowContext<'a> {
             ))
     }
 
+    /// Register a key event listener on the window for the current frame. The type of event
+    /// is determined by the first parameter of the given listener. When the next frame is rendered
+    /// the listener will be cleared.
+    ///
+    /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
+    /// a specific need to register a global listener.
+    pub fn on_key_event<Event: 'static>(
+        &mut self,
+        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
+    ) {
+        let key_dispatcher = self.window.current_frame.key_dispatcher.as_mut().unwrap();
+        key_dispatcher.on_key_event(Box::new(move |event, phase, cx| {
+            if let Some(event) = event.downcast_ref::<Event>() {
+                handler(event, phase, cx)
+            }
+        }));
+    }
+
+    /// Register an action listener on the window for the current frame. The type of action
+    /// is determined by the first parameter of the given listener. When the next frame is rendered
+    /// the listener will be cleared.
+    ///
+    /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
+    /// a specific need to register a global listener.
+    pub fn on_action(
+        &mut self,
+        action_type: TypeId,
+        handler: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
+    ) {
+        let key_dispatcher = self.window.current_frame.key_dispatcher.as_mut().unwrap();
+        key_dispatcher.on_action(
+            action_type,
+            Box::new(move |action, phase, cx| handler(action, phase, cx)),
+        );
+    }
+
     /// The position of the mouse relative to the window.
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.window.mouse_position
@@ -1953,6 +1989,32 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 handler(view, event, phase, cx);
             })
         });
+    }
+
+    pub fn on_key_event<Event: 'static>(
+        &mut self,
+        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + 'static,
+    ) {
+        let handle = self.view();
+        self.window_cx.on_key_event(move |event, phase, cx| {
+            handle.update(cx, |view, cx| {
+                handler(view, event, phase, cx);
+            })
+        });
+    }
+
+    pub fn on_action(
+        &mut self,
+        action_type: TypeId,
+        handler: impl Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + 'static,
+    ) {
+        let handle = self.view();
+        self.window_cx
+            .on_action(action_type, move |action, phase, cx| {
+                handle.update(cx, |view, cx| {
+                    handler(view, action, phase, cx);
+                })
+            });
     }
 
     /// Set an input handler, such as [ElementInputHandler], which interfaces with the

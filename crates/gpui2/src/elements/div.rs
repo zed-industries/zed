@@ -234,6 +234,7 @@ where
                 element_state.focus_handle.take(),
                 cx,
                 |focus_handle, cx| {
+                    this.interactivity.initialize(cx);
                     element_state.focus_handle = focus_handle;
                     for child in &mut this.children {
                         child.initialize(view_state, cx);

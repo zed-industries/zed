@@ -69,6 +69,7 @@ impl KeyDispatcher {
         });
         self.node_stack.push(node_id);
         if !context.is_empty() {
+            self.active_node().context = context.clone();
             self.context_stack.push(context);
             if let Some((context_stack, matcher)) = old_dispatcher
                 .keystroke_matchers
@@ -153,6 +154,7 @@ impl KeyDispatcher {
         // Capture phase
         self.context_stack.clear();
         cx.propagate_event = true;
+
         for node_id in &dispatch_path {
             let node = &self.nodes[node_id.0];
             if !node.context.is_empty() {
@@ -193,18 +195,16 @@ impl KeyDispatcher {
                         );
                     }
 
-                    if let Some(keystroke_matcher) = self
+                    let keystroke_matcher = self
                         .keystroke_matchers
                         .get_mut(self.context_stack.as_slice())
+                        .unwrap();
+                    if let KeyMatch::Some(action) = keystroke_matcher
+                        .match_keystroke(&key_down_event.keystroke, self.context_stack.as_slice())
                     {
-                        if let KeyMatch::Some(action) = keystroke_matcher.match_keystroke(
-                            &key_down_event.keystroke,
-                            self.context_stack.as_slice(),
-                        ) {
-                            self.dispatch_action_on_node(*node_id, action, cx);
-                            if !cx.propagate_event {
-                                return;
-                            }
+                        self.dispatch_action_on_node(*node_id, action, cx);
+                        if !cx.propagate_event {
+                            return;
                         }
                     }
                 }
@@ -236,10 +236,17 @@ impl KeyDispatcher {
         // Capture phase
         for node_id in &dispatch_path {
             let node = &self.nodes[node_id.0];
-            for ActionListener { listener, .. } in &node.action_listeners {
-                listener(&action, DispatchPhase::Capture, cx);
-                if !cx.propagate_event {
-                    return;
+            for ActionListener {
+                action_type,
+                listener,
+            } in &node.action_listeners
+            {
+                let any_action = action.as_any();
+                if *action_type == any_action.type_id() {
+                    listener(any_action, DispatchPhase::Capture, cx);
+                    if !cx.propagate_event {
+                        return;
+                    }
                 }
             }
         }
@@ -247,11 +254,18 @@ impl KeyDispatcher {
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
             let node = &self.nodes[node_id.0];
-            for ActionListener { listener, .. } in &node.action_listeners {
-                cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
-                listener(&action, DispatchPhase::Capture, cx);
-                if !cx.propagate_event {
-                    return;
+            for ActionListener {
+                action_type,
+                listener,
+            } in &node.action_listeners
+            {
+                let any_action = action.as_any();
+                if *action_type == any_action.type_id() {
+                    cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
+                    listener(any_action, DispatchPhase::Bubble, cx);
+                    if !cx.propagate_event {
+                        return;
+                    }
                 }
             }
         }

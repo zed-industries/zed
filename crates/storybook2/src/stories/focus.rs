@@ -39,10 +39,10 @@ impl Render for FocusStory {
             .focusable()
             .context("parent")
             .on_action(|_, action: &ActionA, cx| {
-                println!("Action A dispatched on parent during");
+                println!("Action A dispatched on parent");
             })
             .on_action(|_, action: &ActionB, cx| {
-                println!("Action B dispatched on parent during");
+                println!("Action B dispatched on parent");
             })
             .on_focus(|_, _, _| println!("Parent focused"))
             .on_blur(|_, _, _| println!("Parent blurred"))
@@ -79,7 +79,7 @@ impl Render for FocusStory {
                     .track_focus(&child_2)
                     .context("child-2")
                     .on_action(|_, action: &ActionC, cx| {
-                        println!("Action C dispatched on child 2 during");
+                        println!("Action C dispatched on child 2");
                     })
                     .w_full()
                     .h_6()
