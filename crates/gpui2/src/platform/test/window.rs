@@ -1,10 +1,14 @@
-use std::{rc::Rc, sync::Arc};
+use std::{
+    rc::Rc,
+    sync::{self, Arc},
+};
 
+use collections::HashMap;
 use parking_lot::Mutex;
 
 use crate::{
-    px, Pixels, PlatformAtlas, PlatformDisplay, PlatformWindow, Point, Scene, Size,
-    WindowAppearance, WindowBounds, WindowOptions,
+    px, AtlasKey, AtlasTextureId, AtlasTile, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformWindow, Point, Scene, Size, TileId, WindowAppearance, WindowBounds, WindowOptions,
 };
 
 #[derive(Default)]
@@ -30,7 +34,7 @@ impl TestWindow {
             current_scene: Default::default(),
             display,
 
-            sprite_atlas: Arc::new(TestAtlas),
+            sprite_atlas: Arc::new(TestAtlas::new()),
             handlers: Default::default(),
         }
     }
@@ -154,26 +158,71 @@ impl PlatformWindow for TestWindow {
         self.current_scene.lock().replace(scene);
     }
 
-    fn sprite_atlas(&self) -> std::sync::Arc<dyn crate::PlatformAtlas> {
+    fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.sprite_atlas.clone()
     }
 }
 
-pub struct TestAtlas;
+pub struct TestAtlasState {
+    next_id: u32,
+    tiles: HashMap<AtlasKey, AtlasTile>,
+}
+
+pub struct TestAtlas(Mutex<TestAtlasState>);
+
+impl TestAtlas {
+    pub fn new() -> Self {
+        TestAtlas(Mutex::new(TestAtlasState {
+            next_id: 0,
+            tiles: HashMap::default(),
+        }))
+    }
+}
 
 impl PlatformAtlas for TestAtlas {
     fn get_or_insert_with<'a>(
         &self,
-        _key: &crate::AtlasKey,
-        _build: &mut dyn FnMut() -> anyhow::Result<(
+        key: &crate::AtlasKey,
+        build: &mut dyn FnMut() -> anyhow::Result<(
             Size<crate::DevicePixels>,
             std::borrow::Cow<'a, [u8]>,
         )>,
     ) -> anyhow::Result<crate::AtlasTile> {
-        todo!()
+        let mut state = self.0.lock();
+        if let Some(tile) = state.tiles.get(key) {
+            return Ok(tile.clone());
+        }
+
+        state.next_id += 1;
+        let texture_id = state.next_id;
+        state.next_id += 1;
+        let tile_id = state.next_id;
+
+        drop(state);
+        let (size, _) = build()?;
+        let mut state = self.0.lock();
+
+        state.tiles.insert(
+            key.clone(),
+            crate::AtlasTile {
+                texture_id: AtlasTextureId {
+                    index: texture_id,
+                    kind: crate::AtlasTextureKind::Path,
+                },
+                tile_id: TileId(tile_id),
+                bounds: crate::Bounds {
+                    origin: Point::zero(),
+                    size,
+                },
+            },
+        );
+
+        Ok(state.tiles[key].clone())
     }
 
     fn clear(&self) {
-        todo!()
+        let mut state = self.0.lock();
+        state.tiles = HashMap::default();
+        state.next_id = 0;
     }
 }

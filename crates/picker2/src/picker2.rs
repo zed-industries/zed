@@ -1,11 +1,10 @@
 use editor::Editor;
 use gpui::{
-    div, uniform_list, Component, Div, FocusEnabled, ParentElement, Render, StatefulInteractivity,
-    StatelessInteractive, Styled, Task, UniformListScrollHandle, View, ViewContext, VisualContext,
-    WindowContext,
+    div, uniform_list, Component, Div, ParentElement, Render, StatelessInteractive, Styled, Task,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WindowContext,
 };
-use std::cmp;
-use ui::{prelude::*, v_stack, Divider};
+use std::{cmp, sync::Arc};
+use ui::{prelude::*, v_stack, Divider, Label, LabelColor};
 
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
@@ -21,7 +20,7 @@ pub trait PickerDelegate: Sized + 'static {
     fn selected_index(&self) -> usize;
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
 
-    // fn placeholder_text(&self) -> Arc<str>;
+    fn placeholder_text(&self) -> Arc<str>;
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
@@ -37,7 +36,11 @@ pub trait PickerDelegate: Sized + 'static {
 
 impl<D: PickerDelegate> Picker<D> {
     pub fn new(delegate: D, cx: &mut ViewContext<Self>) -> Self {
-        let editor = cx.build_view(|cx| Editor::single_line(cx));
+        let editor = cx.build_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text(delegate.placeholder_text(), cx);
+            editor
+        });
         cx.subscribe(&editor, Self::on_input_editor_event).detach();
         Self {
             delegate,
@@ -136,13 +139,11 @@ impl<D: PickerDelegate> Picker<D> {
 }
 
 impl<D: PickerDelegate> Render for Picker<D> {
-    type Element = Div<Self, StatefulInteractivity<Self>, FocusEnabled<Self>>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
             .context("picker")
-            .id("picker-container")
-            .focusable()
             .size_full()
             .elevation_2(cx)
             .on_action(Self::select_next)
@@ -159,23 +160,35 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     .child(div().px_1().py_0p5().child(self.editor.clone())),
             )
             .child(Divider::horizontal())
-            .child(
-                v_stack()
-                    .p_1()
-                    .grow()
-                    .child(
-                        uniform_list("candidates", self.delegate.match_count(), {
-                            move |this: &mut Self, visible_range, cx| {
-                                let selected_ix = this.delegate.selected_index();
-                                visible_range
-                                    .map(|ix| this.delegate.render_match(ix, ix == selected_ix, cx))
-                                    .collect()
-                            }
-                        })
-                        .track_scroll(self.scroll_handle.clone()),
-                    )
-                    .max_h_72()
-                    .overflow_hidden(),
-            )
+            .when(self.delegate.match_count() > 0, |el| {
+                el.child(
+                    v_stack()
+                        .p_1()
+                        .grow()
+                        .child(
+                            uniform_list("candidates", self.delegate.match_count(), {
+                                move |this: &mut Self, visible_range, cx| {
+                                    let selected_ix = this.delegate.selected_index();
+                                    visible_range
+                                        .map(|ix| {
+                                            this.delegate.render_match(ix, ix == selected_ix, cx)
+                                        })
+                                        .collect()
+                                }
+                            })
+                            .track_scroll(self.scroll_handle.clone()),
+                        )
+                        .max_h_72()
+                        .overflow_hidden(),
+                )
+            })
+            .when(self.delegate.match_count() == 0, |el| {
+                el.child(
+                    v_stack()
+                        .p_1()
+                        .grow()
+                        .child(Label::new("No matches").color(LabelColor::Muted)),
+                )
+            })
     }
 }

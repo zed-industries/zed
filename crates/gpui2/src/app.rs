@@ -641,14 +641,19 @@ impl AppContext {
                 // The window might change focus multiple times in an effect cycle.
                 // We only honor effects for the most recently focused handle.
                 if cx.window.focus == focused {
+                    // if someone calls focus multiple times in one frame with the same handle
+                    // the first apply_focus_changed_effect will have taken the last blur already
+                    // and run the rest of this, so we can return.
+                    let Some(last_blur) = cx.window.last_blur.take() else {
+                        return;
+                    };
+
                     let focused = focused
                         .map(|id| FocusHandle::for_id(id, &cx.window.focus_handles).unwrap());
-                    let blurred = cx
-                        .window
-                        .last_blur
-                        .take()
-                        .unwrap()
-                        .and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
+
+                    let blurred =
+                        last_blur.and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
+
                     let focus_changed = focused.is_some() || blurred.is_some();
                     let event = FocusEvent { focused, blurred };
 

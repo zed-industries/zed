@@ -7,12 +7,12 @@ use gpui::{AppContext, ViewContext};
 use rand::Rng;
 use theme2::ActiveTheme;
 
-use crate::HighlightedText;
+use crate::{binding, HighlightedText};
 use crate::{
     Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
-    HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, Livestream,
-    MicStatus, ModifierKeys, Notification, PaletteItem, Player, PlayerCallStatus,
-    PlayerWithCallStatus, PublicPlayer, ScreenShareStatus, Symbol, Tab, Toggle, VideoStatus,
+    HighlightedLine, Icon, KeyBinding, Label, LabelColor, ListEntry, ListEntrySize, Livestream,
+    MicStatus, Notification, PaletteItem, Player, PlayerCallStatus, PlayerWithCallStatus,
+    PublicPlayer, ScreenShareStatus, Symbol, Tab, Toggle, VideoStatus,
 };
 use crate::{ListItem, NotificationAction};
 
@@ -701,46 +701,16 @@ pub fn static_collab_panel_channels() -> Vec<ListItem> {
 
 pub fn example_editor_actions() -> Vec<PaletteItem> {
     vec![
-        PaletteItem::new("New File").keybinding(Keybinding::new(
-            "N".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Open File").keybinding(Keybinding::new(
-            "O".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Save File").keybinding(Keybinding::new(
-            "S".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Cut").keybinding(Keybinding::new(
-            "X".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Copy").keybinding(Keybinding::new(
-            "C".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Paste").keybinding(Keybinding::new(
-            "V".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Undo").keybinding(Keybinding::new(
-            "Z".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Redo").keybinding(Keybinding::new(
-            "Z".to_string(),
-            ModifierKeys::new().command(true).shift(true),
-        )),
-        PaletteItem::new("Find").keybinding(Keybinding::new(
-            "F".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Replace").keybinding(Keybinding::new(
-            "R".to_string(),
-            ModifierKeys::new().command(true),
-        )),
+        PaletteItem::new("New File").keybinding(KeyBinding::new(binding("cmd-n"))),
+        PaletteItem::new("Open File").keybinding(KeyBinding::new(binding("cmd-o"))),
+        PaletteItem::new("Save File").keybinding(KeyBinding::new(binding("cmd-s"))),
+        PaletteItem::new("Cut").keybinding(KeyBinding::new(binding("cmd-x"))),
+        PaletteItem::new("Copy").keybinding(KeyBinding::new(binding("cmd-c"))),
+        PaletteItem::new("Paste").keybinding(KeyBinding::new(binding("cmd-v"))),
+        PaletteItem::new("Undo").keybinding(KeyBinding::new(binding("cmd-z"))),
+        PaletteItem::new("Redo").keybinding(KeyBinding::new(binding("cmd-shift-z"))),
+        PaletteItem::new("Find").keybinding(KeyBinding::new(binding("cmd-f"))),
+        PaletteItem::new("Replace").keybinding(KeyBinding::new(binding("cmd-r"))),
         PaletteItem::new("Jump to Line"),
         PaletteItem::new("Select All"),
         PaletteItem::new("Deselect All"),

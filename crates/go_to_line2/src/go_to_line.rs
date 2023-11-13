@@ -1,8 +1,7 @@
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     actions, div, AppContext, Div, EventEmitter, ParentElement, Render, SharedString,
-    StatefulInteractivity, StatelessInteractive, Styled, Subscription, View, ViewContext,
-    VisualContext, WindowContext,
+    StatelessInteractive, Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
 };
 use text::{Bias, Point};
 use theme::ActiveTheme;
@@ -146,11 +145,11 @@ impl GoToLine {
 }
 
 impl Render for GoToLine {
-    type Element = Div<Self, StatefulInteractivity<Self>>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         modal(cx)
-            .id("go to line")
+            .context("GoToLine")
             .on_action(Self::cancel)
             .on_action(Self::confirm)
             .w_96()
