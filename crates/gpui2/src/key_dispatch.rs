@@ -58,6 +58,9 @@ impl KeyDispatcher {
     pub fn clear(&mut self) {
         self.node_stack.clear();
         self.nodes.clear();
+        self.context_stack.clear();
+        self.focusable_node_ids.clear();
+        self.keystroke_matchers.clear();
     }
 
     pub fn push_node(&mut self, context: KeyContext, old_dispatcher: &mut Self) {
