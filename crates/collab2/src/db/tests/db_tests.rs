@@ -510,7 +510,7 @@ fn test_fuzzy_like_string() {
 
 #[gpui::test]
 async fn test_fuzzy_search_users(cx: &mut TestAppContext) {
-    let test_db = TestDb::postgres(cx.executor().clone());
+    let test_db = TestDb::postgres(cx.executor());
     let db = test_db.db();
     for (i, github_login) in [
         "California",

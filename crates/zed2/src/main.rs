@@ -9,6 +9,7 @@ use backtrace::Backtrace;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::UserStore;
 use db::kvp::KEY_VALUE_STORE;
+use editor::Editor;
 use fs::RealFs;
 use futures::StreamExt;
 use gpui::{Action, App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
@@ -357,8 +358,7 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
         } else {
             cx.update(|cx| {
                 workspace::open_new(app_state, cx, |workspace, cx| {
-                    // todo!(editor)
-                    // Editor::new_file(workspace, &Default::default(), cx)
+                    Editor::new_file(workspace, &Default::default(), cx)
                 })
                 .detach();
             })?;

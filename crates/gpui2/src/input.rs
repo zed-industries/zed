@@ -45,7 +45,7 @@ impl<V: 'static> ElementInputHandler<V> {
     /// containing view.
     pub fn new(element_bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) -> Self {
         ElementInputHandler {
-            view: cx.view(),
+            view: cx.view().clone(),
             element_bounds,
             cx: cx.to_async(),
         }

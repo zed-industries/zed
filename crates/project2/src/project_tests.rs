@@ -89,7 +89,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
 async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/the-root",
         json!({
@@ -189,7 +189,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         }))
         .await;
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/the-root",
         json!({
@@ -547,7 +547,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         }))
         .await;
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/the-root",
         json!({
@@ -734,7 +734,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -826,7 +826,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
 async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -914,7 +914,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         }))
         .await;
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -1046,7 +1046,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         }))
         .await;
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
 
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
@@ -1125,7 +1125,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
         }))
         .await;
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/dir", json!({ "a.rs": "x" })).await;
 
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
@@ -1215,7 +1215,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
         }))
         .await;
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
 
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
@@ -1279,7 +1279,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
         }))
         .await;
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/dir", json!({ "a.rs": "", "b.js": "" }))
         .await;
 
@@ -1401,7 +1401,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     "
     .unindent();
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/dir", json!({ "a.rs": text })).await;
 
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
@@ -1671,7 +1671,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
         "let three = 3;\n",
     );
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/dir", json!({ "a.rs": text })).await;
 
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
@@ -1734,7 +1734,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
 async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/dir", json!({ "a.rs": "one two three" }))
         .await;
 
@@ -1813,7 +1813,7 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
     "
     .unindent();
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -1959,7 +1959,7 @@ async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAp
     "
     .unindent();
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -2067,7 +2067,7 @@ async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
     "
     .unindent();
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -2187,7 +2187,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     );
     let mut fake_servers = language.set_fake_lsp_adapter(Default::default()).await;
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -2299,7 +2299,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         }))
         .await;
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -2396,7 +2396,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         }))
         .await;
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -2451,7 +2451,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     );
     let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -2559,7 +2559,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
 async fn test_save_file(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -2591,7 +2591,7 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
 async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -2622,7 +2622,7 @@ async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
 async fn test_save_as(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/dir", json!({})).await;
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
@@ -2830,7 +2830,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
 async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -2881,7 +2881,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
 async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -2927,7 +2927,7 @@ async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
 async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -3074,7 +3074,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let initial_contents = "aaa\nbbbbb\nc\n";
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -3154,7 +3154,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
 async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -3216,7 +3216,7 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
 async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/the-dir",
         json!({
@@ -3479,7 +3479,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         }))
         .await;
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -3596,7 +3596,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
 async fn test_search(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -3655,7 +3655,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
 
     let search_query = "file";
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -3767,7 +3767,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
 
     let search_query = "file";
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({
@@ -3878,7 +3878,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
 
     let search_query = "file";
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/dir",
         json!({

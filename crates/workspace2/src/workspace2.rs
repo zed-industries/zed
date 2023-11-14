@@ -1319,53 +1319,56 @@ impl Workspace {
     //         }))
     //     }
 
-    //     pub fn prepare_to_close(
-    //         &mut self,
-    //         quitting: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<Result<bool>> {
-    //         let active_call = self.active_call().cloned();
-    //         let window = cx.window();
+    pub fn prepare_to_close(
+        &mut self,
+        quitting: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<bool>> {
+        //todo!(saveing)
+        // let active_call = self.active_call().cloned();
+        // let window = cx.window();
 
-    //         cx.spawn(|this, mut cx| async move {
-    //             let workspace_count = cx
-    //                 .windows()
-    //                 .into_iter()
-    //                 .filter(|window| window.root_is::<Workspace>())
-    //                 .count();
+        cx.spawn(|this, mut cx| async move {
+            // let workspace_count = cx
+            //     .windows()
+            //     .into_iter()
+            //     .filter(|window| window.root_is::<Workspace>())
+            //     .count();
 
-    //             if let Some(active_call) = active_call {
-    //                 if !quitting
-    //                     && workspace_count == 1
-    //                     && active_call.read_with(&cx, |call, _| call.room().is_some())
-    //                 {
-    //                     let answer = window.prompt(
-    //                         PromptLevel::Warning,
-    //                         "Do you want to leave the current call?",
-    //                         &["Close window and hang up", "Cancel"],
-    //                         &mut cx,
-    //                     );
+            // if let Some(active_call) = active_call {
+            //     if !quitting
+            //         && workspace_count == 1
+            //         && active_call.read_with(&cx, |call, _| call.room().is_some())
+            //     {
+            //         let answer = window.prompt(
+            //             PromptLevel::Warning,
+            //             "Do you want to leave the current call?",
+            //             &["Close window and hang up", "Cancel"],
+            //             &mut cx,
+            //         );
 
-    //                     if let Some(mut answer) = answer {
-    //                         if answer.next().await == Some(1) {
-    //                             return anyhow::Ok(false);
-    //                         } else {
-    //                             active_call
-    //                                 .update(&mut cx, |call, cx| call.hang_up(cx))
-    //                                 .await
-    //                                 .log_err();
-    //                         }
-    //                     }
-    //                 }
-    //             }
+            //         if let Some(mut answer) = answer {
+            //             if answer.next().await == Some(1) {
+            //                 return anyhow::Ok(false);
+            //             } else {
+            //                 active_call
+            //                     .update(&mut cx, |call, cx| call.hang_up(cx))
+            //                     .await
+            //                     .log_err();
+            //             }
+            //         }
+            //     }
+            // }
 
-    //             Ok(this
-    //                 .update(&mut cx, |this, cx| {
-    //                     this.save_all_internal(SaveIntent::Close, cx)
-    //                 })?
-    //                 .await?)
-    //         })
-    //     }
+            Ok(
+                false, // this
+                      // .update(&mut cx, |this, cx| {
+                      //     this.save_all_internal(SaveIntent::Close, cx)
+                      // })?
+                      // .await?
+            )
+        })
+    }
 
     //     fn save_all(
     //         &mut self,
@@ -4201,24 +4204,24 @@ impl ViewId {
     }
 }
 
-// pub trait WorkspaceHandle {
-//     fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath>;
-// }
+pub trait WorkspaceHandle {
+    fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath>;
+}
 
-// impl WorkspaceHandle for View<Workspace> {
-//     fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath> {
-//         self.read(cx)
-//             .worktrees(cx)
-//             .flat_map(|worktree| {
-//                 let worktree_id = worktree.read(cx).id();
-//                 worktree.read(cx).files(true, 0).map(move |f| ProjectPath {
-//                     worktree_id,
-//                     path: f.path.clone(),
-//                 })
-//             })
-//             .collect::<Vec<_>>()
-//     }
-// }
+impl WorkspaceHandle for View<Workspace> {
+    fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath> {
+        self.read(cx)
+            .worktrees(cx)
+            .flat_map(|worktree| {
+                let worktree_id = worktree.read(cx).id();
+                worktree.read(cx).files(true, 0).map(move |f| ProjectPath {
+                    worktree_id,
+                    path: f.path.clone(),
+                })
+            })
+            .collect::<Vec<_>>()
+    }
+}
 
 // impl std::fmt::Debug for OpenPaths {
 //     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
