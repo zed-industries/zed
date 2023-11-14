@@ -32,9 +32,7 @@ pub struct CommandPalette {
 
 impl CommandPalette {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        dbg!("registering command palette toggle");
         workspace.register_action(|workspace, _: &Toggle, cx| {
-            dbg!("got cmd-shift-p");
             let Some(previous_focus_handle) = cx.focused() else {
                 return;
             };

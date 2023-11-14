@@ -1076,9 +1076,6 @@ where
                     })
                 }
 
-                if !self.key_context.is_empty() {
-                    dbg!(&self.key_context, self.action_listeners.len());
-                }
                 for (action_type, listener) in self.action_listeners.drain(..) {
                     cx.on_action(action_type, listener)
                 }

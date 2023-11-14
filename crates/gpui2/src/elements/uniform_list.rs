@@ -193,7 +193,11 @@ impl<V: 'static> Element<V> for UniformList<V> {
         };
 
         let mut interactivity = mem::take(&mut self.interactivity);
-        let shared_scroll_offset = element_state.interactive.scroll_offset.clone().unwrap();
+        let shared_scroll_offset = element_state
+            .interactive
+            .scroll_offset
+            .get_or_insert_with(Arc::default)
+            .clone();
 
         interactivity.paint(
             bounds,
