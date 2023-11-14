@@ -196,12 +196,12 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui::{Node, Render};
+    use gpui::{Div, Render};
 
     pub struct LabelStory;
 
     impl Render for LabelStory {
-        type Element = Node<Self>;
+        type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

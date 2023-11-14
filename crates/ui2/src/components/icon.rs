@@ -204,7 +204,7 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui::{Node, Render};
+    use gpui::{Div, Render};
     use strum::IntoEnumIterator;
 
     use crate::Story;
@@ -214,7 +214,7 @@ mod stories {
     pub struct IconStory;
 
     impl Render for IconStory {
-        type Element = Node<Self>;
+        type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let icons = Icon::iter();

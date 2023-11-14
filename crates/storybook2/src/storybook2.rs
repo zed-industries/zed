@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use gpui::{
-    div, px, size, AnyView, AppContext, Bounds, Node, Render, ViewContext, VisualContext,
+    div, px, size, AnyView, AppContext, Bounds, Div, Render, ViewContext, VisualContext,
     WindowBounds, WindowOptions,
 };
 use log::LevelFilter;
@@ -107,7 +107,7 @@ impl StoryWrapper {
 }
 
 impl Render for StoryWrapper {
-    type Element = Node<Self>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()

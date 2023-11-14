@@ -1,12 +1,12 @@
 use crate::story::Story;
-use gpui::{prelude::*, px, Node, Render};
+use gpui::{prelude::*, px, Div, Render};
 use theme2::{default_color_scales, ColorScaleStep};
 use ui::prelude::*;
 
 pub struct ColorsStory;
 
 impl Render for ColorsStory {
-    type Element = Node<Self>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let color_scales = default_color_scales();

@@ -1,5 +1,5 @@
 use gpui::{
-    div, prelude::*, px, Node, Render, SharedString, Stateful, Styled, View, WindowContext,
+    div, prelude::*, px, Div, Render, SharedString, Stateful, Styled, View, WindowContext,
 };
 use theme2::ActiveTheme;
 
@@ -12,7 +12,7 @@ impl ScrollStory {
 }
 
 impl Render for ScrollStory {
-    type Element = Stateful<Self, Node<Self>>;
+    type Element = Stateful<Self, Div<Self>>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let theme = cx.theme();

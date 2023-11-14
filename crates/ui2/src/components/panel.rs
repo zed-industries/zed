@@ -126,12 +126,12 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{Label, Story};
-    use gpui::{InteractiveComponent, Node, Render};
+    use gpui::{InteractiveComponent, Div, Render};
 
     pub struct PanelStory;
 
     impl Render for PanelStory {
-        type Element = Node<Self>;
+        type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

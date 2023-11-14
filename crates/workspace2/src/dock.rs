@@ -1,6 +1,6 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
-    div, Action, AnyView, AppContext, Entity, EntityId, EventEmitter, Node, ParentComponent,
+    div, Action, AnyView, AppContext, Entity, EntityId, EventEmitter, Div, ParentComponent,
     Render, Subscription, View, ViewContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
@@ -419,7 +419,7 @@ impl Dock {
 }
 
 impl Render for Dock {
-    type Element = Node<Self>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         todo!()
@@ -621,7 +621,7 @@ impl PanelButtons {
 // }
 
 impl Render for PanelButtons {
-    type Element = Node<Self>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         // todo!()
@@ -647,7 +647,7 @@ impl StatusItemView for PanelButtons {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::*;
-    use gpui::{div, Node, ViewContext, WindowContext};
+    use gpui::{div, Div, ViewContext, WindowContext};
 
     pub struct TestPanel {
         pub position: DockPosition,
@@ -672,7 +672,7 @@ pub mod test {
     }
 
     impl Render for TestPanel {
-        type Element = Node<Self>;
+        type Element = Div<Self>;
 
         fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
             div()

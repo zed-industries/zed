@@ -158,13 +158,13 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui::{Node, Render};
+    use gpui::{Div, Render};
     use itertools::Itertools;
 
     pub struct KeybindingStory;
 
     impl Render for KeybindingStory {
-        type Element = Node<Self>;
+        type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let all_modifier_permutations = ModifierKey::iter().permutations(2);

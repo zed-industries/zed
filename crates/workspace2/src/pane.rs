@@ -8,7 +8,7 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
     actions, prelude::*, register_action, AppContext, AsyncWindowContext, Component, EntityId,
-    EventEmitter, FocusHandle, Model, Node, PromptLevel, Render, Task, View, ViewContext,
+    EventEmitter, FocusHandle, Model, Div, PromptLevel, Render, Task, View, ViewContext,
     VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
@@ -1901,7 +1901,7 @@ impl Pane {
 // }
 
 impl Render for Pane {
-    type Element = Node<Self>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack()
@@ -2926,7 +2926,7 @@ struct DraggedTab {
 }
 
 impl Render for DraggedTab {
-    type Element = Node<Self>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div().w_8().h_4().bg(gpui::red())

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::DateTime;
-use gpui::{px, relative, Node, Render, Size, View, VisualContext};
+use gpui::{px, relative, Div, Render, Size, View, VisualContext};
 use settings2::Settings;
 use theme2::ThemeSettings;
 
@@ -192,9 +192,9 @@ impl Workspace {
 }
 
 impl Render for Workspace {
-    type Element = Node<Self>;
+    type Element = Div<Self>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Node<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
         let root_group = PaneGroup::new_panes(
             vec![Pane::new(
                 "pane-0",
@@ -388,7 +388,7 @@ mod stories {
     }
 
     impl Render for WorkspaceStory {
-        type Element = Node<Self>;
+        type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             div().child(self.workspace.clone())

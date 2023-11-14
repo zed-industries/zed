@@ -538,37 +538,37 @@ pub type KeyUpListener<V> =
 pub type ActionListener<V> =
     Box<dyn Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + 'static>;
 
-pub fn div<V: 'static>() -> Node<V> {
-    Node {
+pub fn div<V: 'static>() -> Div<V> {
+    Div {
         interactivity: Interactivity::default(),
         children: SmallVec::default(),
     }
 }
 
-pub struct Node<V> {
+pub struct Div<V> {
     interactivity: Interactivity<V>,
     children: SmallVec<[AnyElement<V>; 2]>,
 }
 
-impl<V> Styled for Node<V> {
+impl<V> Styled for Div<V> {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
     }
 }
 
-impl<V: 'static> InteractiveComponent<V> for Node<V> {
+impl<V: 'static> InteractiveComponent<V> for Div<V> {
     fn interactivity(&mut self) -> &mut Interactivity<V> {
         &mut self.interactivity
     }
 }
 
-impl<V: 'static> ParentComponent<V> for Node<V> {
+impl<V: 'static> ParentComponent<V> for Div<V> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
 }
 
-impl<V: 'static> Element<V> for Node<V> {
+impl<V: 'static> Element<V> for Div<V> {
     type ElementState = NodeState;
 
     fn element_id(&self) -> Option<ElementId> {
@@ -671,7 +671,7 @@ impl<V: 'static> Element<V> for Node<V> {
     }
 }
 
-impl<V: 'static> Component<V> for Node<V> {
+impl<V: 'static> Component<V> for Div<V> {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }

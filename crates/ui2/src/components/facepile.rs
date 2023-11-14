@@ -33,12 +33,12 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{static_players, Story};
-    use gpui::{Node, Render};
+    use gpui::{Div, Render};
 
     pub struct FacepileStory;
 
     impl Render for FacepileStory {
-        type Element = Node<Self>;
+        type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let players = static_players();

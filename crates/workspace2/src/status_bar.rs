@@ -2,7 +2,7 @@ use std::any::TypeId;
 
 use crate::{ItemHandle, Pane};
 use gpui::{
-    div, AnyView, Component, Node, ParentComponent, Render, Styled, Subscription, View,
+    div, AnyView, Component, Div, ParentComponent, Render, Styled, Subscription, View,
     ViewContext, WindowContext,
 };
 use theme2::ActiveTheme;
@@ -34,7 +34,7 @@ pub struct StatusBar {
 }
 
 impl Render for StatusBar {
-    type Element = Node<Self>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()

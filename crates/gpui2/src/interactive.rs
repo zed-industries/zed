@@ -1,5 +1,5 @@
 use crate::{
-    div, point, Component, FocusHandle, Keystroke, Modifiers, Node, Pixels, Point, Render,
+    div, point, Component, FocusHandle, Keystroke, Modifiers, Div, Pixels, Point, Render,
     ViewContext,
 };
 use smallvec::SmallVec;
@@ -194,7 +194,7 @@ impl Deref for MouseExitEvent {
 pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
 
 impl Render for ExternalPaths {
-    type Element = Node<Self>;
+    type Element = Div<Self>;
 
     fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
         div() // Intentionally left empty because the platform will render icons for the dragged files
@@ -286,7 +286,7 @@ pub struct FocusEvent {
 #[cfg(test)]
 mod test {
     use crate::{
-        self as gpui, div, FocusHandle, InteractiveComponent, KeyBinding, Keystroke, Node,
+        self as gpui, div, FocusHandle, InteractiveComponent, KeyBinding, Keystroke, Div,
         ParentComponent, Render, Stateful, TestAppContext, VisualContext,
     };
 
@@ -299,7 +299,7 @@ mod test {
     actions!(TestAction);
 
     impl Render for TestView {
-        type Element = Stateful<Self, Node<Self>>;
+        type Element = Stateful<Self, Div<Self>>;
 
         fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> Self::Element {
             div().id("testview").child(

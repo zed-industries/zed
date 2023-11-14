@@ -1,5 +1,5 @@
 use crate::{h_stack, prelude::*, HighlightedText};
-use gpui::{prelude::*, Node};
+use gpui::{prelude::*, Div};
 use std::path::PathBuf;
 
 #[derive(Clone)]
@@ -16,7 +16,7 @@ impl Breadcrumb {
         Self { path, symbols }
     }
 
-    fn render_separator<V: 'static>(&self, cx: &WindowContext) -> Node<V> {
+    fn render_separator<V: 'static>(&self, cx: &WindowContext) -> Div<V> {
         div()
             .child(" › ")
             .text_color(cx.theme().colors().text_muted)
@@ -77,7 +77,7 @@ mod stories {
     pub struct BreadcrumbStory;
 
     impl Render for BreadcrumbStory {
-        type Element = Node<Self>;
+        type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

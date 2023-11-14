@@ -159,7 +159,7 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui::{Node, Render};
+    use gpui::{Div, Render};
 
     use crate::{ModifierKeys, Story};
 
@@ -168,7 +168,7 @@ mod stories {
     pub struct PaletteStory;
 
     impl Render for PaletteStory {
-        type Element = Node<Self>;
+        type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             {

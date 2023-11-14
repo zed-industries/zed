@@ -38,7 +38,7 @@ use futures::{
 use gpui::{
     actions, div, point, prelude::*, rems, size, Action, AnyModel, AnyView, AnyWeakView,
     AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Component, Entity, EntityId,
-    EventEmitter, FocusHandle, GlobalPixels, KeyContext, Model, ModelContext, Node,
+    EventEmitter, FocusHandle, GlobalPixels, KeyContext, Model, ModelContext, Div,
     ParentComponent, Point, Render, Size, Styled, Subscription, Task, View, ViewContext, WeakView,
     WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
@@ -529,7 +529,7 @@ pub enum Event {
 pub struct Workspace {
     weak_self: WeakView<Self>,
     focus_handle: FocusHandle,
-    workspace_actions: Vec<Box<dyn Fn(Node<Workspace>) -> Node<Workspace>>>,
+    workspace_actions: Vec<Box<dyn Fn(Div<Workspace>) -> Div<Workspace>>>,
     zoomed: Option<AnyWeakView>,
     zoomed_position: Option<DockPosition>,
     center: PaneGroup,
@@ -3503,7 +3503,7 @@ impl Workspace {
         }));
     }
 
-    fn add_workspace_actions_listeners(&self, mut div: Node<Workspace>) -> Node<Workspace> {
+    fn add_workspace_actions_listeners(&self, mut div: Div<Workspace>) -> Div<Workspace> {
         for action in self.workspace_actions.iter() {
             div = (action)(div)
         }
@@ -3728,7 +3728,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
 impl EventEmitter<Event> for Workspace {}
 
 impl Render for Workspace {
-    type Element = Node<Self>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let mut context = KeyContext::default();

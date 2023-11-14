@@ -73,7 +73,7 @@ mod stories {
     use std::path::PathBuf;
     use std::str::FromStr;
 
-    use gpui::{Node, Render};
+    use gpui::{Div, Render};
 
     use crate::{Breadcrumb, HighlightedText, Icon, IconButton, Story, Symbol};
 
@@ -82,7 +82,7 @@ mod stories {
     pub struct ToolbarStory;
 
     impl Render for ToolbarStory {
-        type Element = Node<Self>;
+        type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

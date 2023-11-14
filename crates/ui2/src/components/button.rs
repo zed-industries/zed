@@ -236,13 +236,13 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{h_stack, v_stack, LabelColor, Story};
-    use gpui::{rems, Node, Render};
+    use gpui::{rems, Div, Render};
     use strum::IntoEnumIterator;
 
     pub struct ButtonStory;
 
     impl Render for ButtonStory {
-        type Element = Node<Self>;
+        type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let states = InteractionState::iter();

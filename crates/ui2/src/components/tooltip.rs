@@ -1,4 +1,4 @@
-use gpui::{div, Node, ParentComponent, Render, SharedString, Styled, ViewContext};
+use gpui::{div, Div, ParentComponent, Render, SharedString, Styled, ViewContext};
 use theme2::ActiveTheme;
 
 #[derive(Clone, Debug)]
@@ -13,7 +13,7 @@ impl TextTooltip {
 }
 
 impl Render for TextTooltip {
-    type Element = Node<Self>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let theme = cx.theme();

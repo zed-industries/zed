@@ -1,11 +1,11 @@
-use gpui::Node;
+use gpui::Div;
 
 use crate::{prelude::*, v_stack};
 
 /// Create an elevated surface.
 ///
 /// Must be used inside of a relative parent element
-pub fn elevated_surface<V: 'static>(level: ElevationIndex, cx: &mut ViewContext<V>) -> Node<V> {
+pub fn elevated_surface<V: 'static>(level: ElevationIndex, cx: &mut ViewContext<V>) -> Div<V> {
     let colors = cx.theme().colors();
 
     // let shadow = BoxShadow {
@@ -23,6 +23,6 @@ pub fn elevated_surface<V: 'static>(level: ElevationIndex, cx: &mut ViewContext<
         .shadow(level.shadow())
 }
 
-pub fn modal<V: 'static>(cx: &mut ViewContext<V>) -> Node<V> {
+pub fn modal<V: 'static>(cx: &mut ViewContext<V>) -> Div<V> {
     elevated_surface(ElevationIndex::ModalSurface, cx)
 }
