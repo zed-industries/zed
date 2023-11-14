@@ -3,8 +3,15 @@ use crate::{
     PlatformDisplay, PlatformTextSystem, TestDisplay, TestWindow, WindowOptions,
 };
 use anyhow::{anyhow, Result};
+use collections::VecDeque;
+use futures::channel::oneshot;
 use parking_lot::Mutex;
-use std::{rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    path::PathBuf,
+    rc::{Rc, Weak},
+    sync::Arc,
+};
 
 pub struct TestPlatform {
     background_executor: BackgroundExecutor,
@@ -13,18 +20,60 @@ pub struct TestPlatform {
     active_window: Arc<Mutex<Option<AnyWindowHandle>>>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
+    pub(crate) prompts: RefCell<TestPrompts>,
+    weak: Weak<Self>,
+}
+
+#[derive(Default)]
+pub(crate) struct TestPrompts {
+    multiple_choice: VecDeque<oneshot::Sender<usize>>,
+    new_path: VecDeque<(PathBuf, oneshot::Sender<Option<PathBuf>>)>,
 }
 
 impl TestPlatform {
-    pub fn new(executor: BackgroundExecutor, foreground_executor: ForegroundExecutor) -> Self {
-        TestPlatform {
+    pub fn new(executor: BackgroundExecutor, foreground_executor: ForegroundExecutor) -> Rc<Self> {
+        Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,
             foreground_executor,
-
+            prompts: Default::default(),
             active_cursor: Default::default(),
             active_display: Rc::new(TestDisplay::new()),
             active_window: Default::default(),
-        }
+            weak: weak.clone(),
+        })
+    }
+
+    pub(crate) fn simulate_new_path_selection(
+        &self,
+        select_path: impl FnOnce(&std::path::Path) -> Option<std::path::PathBuf>,
+    ) {
+        let (path, tx) = self
+            .prompts
+            .borrow_mut()
+            .new_path
+            .pop_front()
+            .expect("no pending new path prompt");
+        tx.send(select_path(&path)).ok();
+    }
+
+    pub(crate) fn simulate_prompt_answer(&self, response_ix: usize) {
+        let tx = self
+            .prompts
+            .borrow_mut()
+            .multiple_choice
+            .pop_front()
+            .expect("no pending multiple choice prompt");
+        tx.send(response_ix).ok();
+    }
+
+    pub(crate) fn has_pending_prompt(&self) -> bool {
+        !self.prompts.borrow().multiple_choice.is_empty()
+    }
+
+    pub(crate) fn prompt(&self) -> oneshot::Receiver<usize> {
+        let (tx, rx) = oneshot::channel();
+        self.prompts.borrow_mut().multiple_choice.push_back(tx);
+        rx
     }
 }
 
@@ -88,7 +137,11 @@ impl Platform for TestPlatform {
         options: WindowOptions,
     ) -> Box<dyn crate::PlatformWindow> {
         *self.active_window.lock() = Some(handle);
-        Box::new(TestWindow::new(options, self.active_display.clone()))
+        Box::new(TestWindow::new(
+            options,
+            self.weak.clone(),
+            self.active_display.clone(),
+        ))
     }
 
     fn set_display_link_output_callback(
@@ -118,15 +171,20 @@ impl Platform for TestPlatform {
     fn prompt_for_paths(
         &self,
         _options: crate::PathPromptOptions,
-    ) -> futures::channel::oneshot::Receiver<Option<Vec<std::path::PathBuf>>> {
+    ) -> oneshot::Receiver<Option<Vec<std::path::PathBuf>>> {
         unimplemented!()
     }
 
     fn prompt_for_new_path(
         &self,
-        _directory: &std::path::Path,
-    ) -> futures::channel::oneshot::Receiver<Option<std::path::PathBuf>> {
-        unimplemented!()
+        directory: &std::path::Path,
+    ) -> oneshot::Receiver<Option<std::path::PathBuf>> {
+        let (tx, rx) = oneshot::channel();
+        self.prompts
+            .borrow_mut()
+            .new_path
+            .push_back((directory.to_path_buf(), tx));
+        rx
     }
 
     fn reveal_path(&self, _path: &std::path::Path) {

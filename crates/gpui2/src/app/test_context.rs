@@ -14,6 +14,7 @@ pub struct TestAppContext {
     pub background_executor: BackgroundExecutor,
     pub foreground_executor: ForegroundExecutor,
     pub dispatcher: TestDispatcher,
+    pub test_platform: Rc<TestPlatform>,
 }
 
 impl Context for TestAppContext {
@@ -77,17 +78,15 @@ impl TestAppContext {
         let arc_dispatcher = Arc::new(dispatcher.clone());
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
-        let platform = Rc::new(TestPlatform::new(
-            background_executor.clone(),
-            foreground_executor.clone(),
-        ));
+        let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
         let http_client = util::http::FakeHttpClient::with_404_response();
         Self {
-            app: AppContext::new(platform, asset_source, http_client),
+            app: AppContext::new(platform.clone(), asset_source, http_client),
             background_executor,
             foreground_executor,
             dispatcher: dispatcher.clone(),
+            test_platform: platform,
         }
     }
 
@@ -154,17 +153,17 @@ impl TestAppContext {
 
     pub fn simulate_new_path_selection(
         &self,
-        _select_path: impl FnOnce(&std::path::Path) -> Option<std::path::PathBuf>,
+        select_path: impl FnOnce(&std::path::Path) -> Option<std::path::PathBuf>,
     ) {
-        //
+        self.test_platform.simulate_new_path_selection(select_path);
     }
 
-    pub fn simulate_prompt_answer(&self, _button_ix: usize) {
-        //
+    pub fn simulate_prompt_answer(&self, button_ix: usize) {
+        self.test_platform.simulate_prompt_answer(button_ix);
     }
 
     pub fn has_pending_prompt(&self) -> bool {
-        false
+        self.test_platform.has_pending_prompt()
     }
 
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>

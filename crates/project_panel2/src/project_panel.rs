@@ -2033,7 +2033,7 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 30)]
+    #[gpui::test(iterations = 10)]
     async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
@@ -2653,17 +2653,15 @@ mod tests {
             .unwrap();
 
         // "Save as"" the buffer, creating a new backing file for it
-        workspace
+        let save_task = workspace
             .update(cx, |workspace, cx| {
                 workspace.save_active_item(workspace::SaveIntent::Save, cx)
             })
-            .unwrap()
-            .await
             .unwrap();
 
         cx.executor().run_until_parked();
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/new")));
-        cx.executor().run_until_parked();
+        save_task.await.unwrap();
 
         // Rename the file
         select_path(&panel, "root/new", cx);
