@@ -57,10 +57,7 @@ use zed2::{
 mod open_listener;
 
 fn main() {
-    //TODO!(figure out what the linker issues are here)
-    // https://github.com/rust-lang/rust/issues/47384
-    // https://github.com/mmastrac/rust-ctor/issues/280
-    menu::unused();
+    menu::init();
     let http = http::client();
     init_paths();
     init_logger();
