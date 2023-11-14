@@ -1,9 +1,9 @@
 use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
-    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, KeyContext,
-    KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled,
-    Task, View, ViewContext, Visibility,
+    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusEvent, FocusHandle,
+    KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    StyleRefinement, Styled, Task, View, ViewContext, Visibility,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -371,14 +371,12 @@ pub trait StatefulInteractiveComponent<V: 'static, E: Element<V>>: InteractiveCo
     }
 }
 
-pub trait FocusableComponent<V> {
-    fn focusability(&mut self) -> &mut Focusability<V>;
-
+pub trait FocusableComponent<V: 'static>: InteractiveComponent<V> {
     fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
     {
-        self.focusability().focus_style = f(StyleRefinement::default());
+        self.interactivity().focus_style = f(StyleRefinement::default());
         self
     }
 
@@ -386,7 +384,7 @@ pub trait FocusableComponent<V> {
     where
         Self: Sized,
     {
-        self.focusability().focus_in_style = f(StyleRefinement::default());
+        self.interactivity().focus_in_style = f(StyleRefinement::default());
         self
     }
 
@@ -394,7 +392,7 @@ pub trait FocusableComponent<V> {
     where
         Self: Sized,
     {
-        self.focusability().in_focus_style = f(StyleRefinement::default());
+        self.interactivity().in_focus_style = f(StyleRefinement::default());
         self
     }
 
@@ -405,13 +403,13 @@ pub trait FocusableComponent<V> {
     where
         Self: Sized,
     {
-        self.focusability()
-            .focus_listeners
-            .push(Box::new(move |view, focus_handle, event, cx| {
+        self.interactivity().focus_listeners.push(Box::new(
+            move |view, focus_handle, event, cx| {
                 if event.focused.as_ref() == Some(focus_handle) {
                     listener(view, event, cx)
                 }
-            }));
+            },
+        ));
         self
     }
 
@@ -422,13 +420,13 @@ pub trait FocusableComponent<V> {
     where
         Self: Sized,
     {
-        self.focusability()
-            .focus_listeners
-            .push(Box::new(move |view, focus_handle, event, cx| {
+        self.interactivity().focus_listeners.push(Box::new(
+            move |view, focus_handle, event, cx| {
                 if event.blurred.as_ref() == Some(focus_handle) {
                     listener(view, event, cx)
                 }
-            }));
+            },
+        ));
         self
     }
 
@@ -439,9 +437,8 @@ pub trait FocusableComponent<V> {
     where
         Self: Sized,
     {
-        self.focusability()
-            .focus_listeners
-            .push(Box::new(move |view, focus_handle, event, cx| {
+        self.interactivity().focus_listeners.push(Box::new(
+            move |view, focus_handle, event, cx| {
                 let descendant_blurred = event
                     .blurred
                     .as_ref()
@@ -454,7 +451,8 @@ pub trait FocusableComponent<V> {
                 if !descendant_blurred && descendant_focused {
                     listener(view, event, cx)
                 }
-            }));
+            },
+        ));
         self
     }
 
@@ -465,9 +463,8 @@ pub trait FocusableComponent<V> {
     where
         Self: Sized,
     {
-        self.focusability()
-            .focus_listeners
-            .push(Box::new(move |view, focus_handle, event, cx| {
+        self.interactivity().focus_listeners.push(Box::new(
+            move |view, focus_handle, event, cx| {
                 let descendant_blurred = event
                     .blurred
                     .as_ref()
@@ -479,7 +476,8 @@ pub trait FocusableComponent<V> {
                 if descendant_blurred && !descendant_focused {
                     listener(view, event, cx)
                 }
-            }));
+            },
+        ));
         self
     }
 }
@@ -524,11 +522,6 @@ pub type KeyUpListener<V> =
 
 pub type ActionListener<V> =
     Box<dyn Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + 'static>;
-
-pub struct FocusEvent {
-    pub blurred: Option<FocusHandle>,
-    pub focused: Option<FocusHandle>,
-}
 
 pub struct Node<V> {
     interactivity: Interactivity<V>,
@@ -658,8 +651,9 @@ pub struct NodeState {
 pub struct Interactivity<V> {
     element_id: Option<ElementId>,
     key_context: KeyContext,
-    tracked_focus_handle: Option<FocusHandle>,
     focusable: bool,
+    tracked_focus_handle: Option<FocusHandle>,
+    focus_listeners: FocusListeners<V>,
     scroll_offset: Point<Pixels>,
     group: Option<SharedString>,
     base_style: StyleRefinement,
@@ -1007,7 +1001,7 @@ where
         cx.with_element_id(self.element_id.clone(), |cx| {
             cx.with_key_dispatch(
                 self.key_context.clone(),
-                self.tracked_focus_handle.clone(),
+                element_state.focus_handle.clone(),
                 |_, cx| {
                     for listener in self.key_down_listeners.drain(..) {
                         cx.on_key_event(move |state, event: &KeyDownEvent, phase, cx| {
@@ -1023,6 +1017,15 @@ where
 
                     for (action_type, listener) in self.action_listeners.drain(..) {
                         cx.on_action(action_type, listener)
+                    }
+
+                    if let Some(focus_handle) = element_state.focus_handle.as_ref() {
+                        for listener in self.focus_listeners.drain(..) {
+                            let focus_handle = focus_handle.clone();
+                            cx.on_focus_changed(move |view, event, cx| {
+                                listener(view, &focus_handle, event, cx)
+                            });
+                        }
                     }
 
                     f(style, self.scroll_offset, cx)
@@ -1114,7 +1117,9 @@ impl<V: 'static> Default for Interactivity<V> {
         Self {
             element_id: None,
             key_context: KeyContext::default(),
+            focusable: false,
             tracked_focus_handle: None,
+            focus_listeners: SmallVec::default(),
             scroll_offset: Point::default(),
             group: None,
             base_style: StyleRefinement::default(),
@@ -1139,7 +1144,6 @@ impl<V: 'static> Default for Interactivity<V> {
             drag_listener: None,
             hover_listener: None,
             tooltip_builder: None,
-            focusable: false,
         }
     }
 }
@@ -1199,24 +1203,11 @@ impl GroupBounds {
 }
 
 pub struct Focusable<V, E> {
-    focusability: Focusability<V>,
     view_type: PhantomData<V>,
     element: E,
 }
 
-pub struct Focusability<V> {
-    focus_handle: Option<FocusHandle>,
-    focus_listeners: FocusListeners<V>,
-    focus_style: StyleRefinement,
-    focus_in_style: StyleRefinement,
-    in_focus_style: StyleRefinement,
-}
-
-impl<V, E> FocusableComponent<V> for Focusable<V, E> {
-    fn focusability(&mut self) -> &mut Focusability<V> {
-        &mut self.focusability
-    }
-}
+impl<V: 'static, E: InteractiveComponent<V>> FocusableComponent<V> for Focusable<V, E> {}
 
 impl<V, E> InteractiveComponent<V> for Focusable<V, E>
 where
@@ -1274,7 +1265,6 @@ where
 }
 
 pub struct Stateful<V, E> {
-    id: SharedString,
     view_type: PhantomData<V>,
     element: E,
 }
@@ -1297,11 +1287,7 @@ where
     }
 }
 
-impl<V, E: FocusableComponent<V>> FocusableComponent<V> for Stateful<V, E> {
-    fn focusability(&mut self) -> &mut Focusability<V> {
-        self.element.focusability()
-    }
-}
+impl<V: 'static, E: FocusableComponent<V>> FocusableComponent<V> for Stateful<V, E> {}
 
 impl<V, E> Element<V> for Stateful<V, E>
 where
