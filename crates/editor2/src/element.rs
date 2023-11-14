@@ -2007,7 +2007,6 @@ impl EditorElement {
                         anchor_x,
                         gutter_padding,
                         line_height,
-                        // scroll_x,
                         gutter_width,
                         em_width,
                         block_id,
@@ -2569,8 +2568,16 @@ impl Element<Editor> for EditorElement {
                             .confirm_code_action(action, cx)
                             .map(|task| task.detach_and_log_err(cx));
                     });
-                    // on_action(cx, Editor::rename); todo!()
-                    // on_action(cx, Editor::confirm_rename); todo!()
+                    register_action(cx, |editor, action, cx| {
+                        editor
+                            .rename(action, cx)
+                            .map(|task| task.detach_and_log_err(cx));
+                    });
+                    register_action(cx, |editor, action, cx| {
+                        editor
+                            .confirm_rename(action, cx)
+                            .map(|task| task.detach_and_log_err(cx));
+                    });
                     register_action(cx, |editor, action, cx| {
                         editor
                             .find_all_references(action, cx)
