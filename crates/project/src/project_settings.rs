@@ -12,7 +12,7 @@ pub struct ProjectSettings {
     pub git: GitSettings,
     // TODO kb better names and docs and tests
     #[serde(default)]
-    pub scan_exclude_files: Vec<String>,
+    pub scan_exclude_files: Option<Vec<String>>,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

@@ -268,6 +268,18 @@
     // Whether to show warnings or not by default.
     "include_warnings": true
   },
+  // TODO kb docs
+  "scan_exclude_files": [
+    "**/.git",
+    "**/.svn",
+    "**/.hg",
+    "**/CVS",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/.classpath",
+    "**/.settings",
+    "**/target"
+  ],
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:

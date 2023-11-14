@@ -650,7 +650,7 @@ fn start_background_scan_tasks(
 }
 
 fn scan_exclude_files(project_settings: &ProjectSettings) -> Vec<PathMatcher> {
-    project_settings.scan_exclude_files.iter()
+    project_settings.scan_exclude_files.as_deref().unwrap_or(&[]).iter()
     .sorted()
     .filter_map(|pattern| {
         PathMatcher::new(pattern)

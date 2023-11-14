@@ -910,7 +910,7 @@ async fn test_ignore_inclusions_and_exclusions(cx: &mut TestAppContext) {
         cx.update_global::<SettingsStore, _, _>(|store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
                 project_settings.scan_exclude_files =
-                    vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()];
+                    Some(vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()]);
             });
         });
     });
