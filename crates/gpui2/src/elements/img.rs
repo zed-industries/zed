@@ -50,7 +50,7 @@ impl<V> Element<V> for Img<V> {
 
     fn initialize(
         &mut self,
-        view_state: &mut V,
+        _view_state: &mut V,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
@@ -59,7 +59,7 @@ impl<V> Element<V> for Img<V> {
 
     fn layout(
         &mut self,
-        view_state: &mut V,
+        _view_state: &mut V,
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) -> LayoutId {
@@ -71,7 +71,7 @@ impl<V> Element<V> for Img<V> {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        view: &mut V,
+        _view_state: &mut V,
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) {
@@ -80,7 +80,7 @@ impl<V> Element<V> for Img<V> {
             bounds.size,
             element_state,
             cx,
-            |style, scroll_offset, cx| {
+            |style, _scroll_offset, cx| {
                 let corner_radii = style.corner_radii;
 
                 if let Some(uri) = self.uri.clone() {

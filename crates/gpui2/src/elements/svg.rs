@@ -39,7 +39,7 @@ impl<V> Element<V> for Svg<V> {
 
     fn initialize(
         &mut self,
-        view_state: &mut V,
+        _view_state: &mut V,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
@@ -48,7 +48,7 @@ impl<V> Element<V> for Svg<V> {
 
     fn layout(
         &mut self,
-        view_state: &mut V,
+        _view_state: &mut V,
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) -> LayoutId {
@@ -60,7 +60,7 @@ impl<V> Element<V> for Svg<V> {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        view: &mut V,
+        _view_state: &mut V,
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) where

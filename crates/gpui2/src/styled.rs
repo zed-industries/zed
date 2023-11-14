@@ -1,10 +1,9 @@
 use crate::{
     self as gpui, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, Hsla, JustifyContent, Length, Position,
-    SharedString, Style, StyleRefinement, Visibility,
+    SharedString, StyleRefinement, Visibility,
 };
 use crate::{BoxShadow, TextStyleRefinement};
-use refineable::Refineable;
 use smallvec::{smallvec, SmallVec};
 use taffy::style::Overflow;
 

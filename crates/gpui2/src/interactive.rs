@@ -1,16 +1,9 @@
 use crate::{
-    div, point, px, AnyDrag, AnyTooltip, AnyView, AppContext, Bounds, Component, DispatchPhase,
-    FocusHandle, Keystroke, Modifiers, Node, Pixels, Point, Render, SharedString, StyleRefinement,
-    Task, ViewContext,
+    div, point, Component, FocusHandle, Keystroke, Modifiers, Node, Pixels, Point, Render,
+    ViewContext,
 };
 use smallvec::SmallVec;
-use std::{
-    any::Any, fmt::Debug, marker::PhantomData, ops::Deref, path::PathBuf, sync::Arc, time::Duration,
-};
-
-const DRAG_THRESHOLD: f64 = 2.;
-const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
-const TOOLTIP_OFFSET: Point<Pixels> = Point::new(px(10.0), px(8.0));
+use std::{any::Any, fmt::Debug, marker::PhantomData, ops::Deref, path::PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyDownEvent {
@@ -289,40 +282,6 @@ pub struct FocusEvent {
     pub blurred: Option<FocusHandle>,
     pub focused: Option<FocusHandle>,
 }
-
-pub type MouseDownListener<V> = Box<
-    dyn Fn(&mut V, &MouseDownEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>) + 'static,
->;
-pub type MouseUpListener<V> = Box<
-    dyn Fn(&mut V, &MouseUpEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>) + 'static,
->;
-
-pub type MouseMoveListener<V> = Box<
-    dyn Fn(&mut V, &MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>) + 'static,
->;
-
-pub type ScrollWheelListener<V> = Box<
-    dyn Fn(&mut V, &ScrollWheelEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
-        + 'static,
->;
-
-pub type ClickListener<V> = Box<dyn Fn(&mut V, &ClickEvent, &mut ViewContext<V>) + 'static>;
-
-pub(crate) type DragListener<V> =
-    Box<dyn Fn(&mut V, Point<Pixels>, &mut ViewContext<V>) -> AnyDrag + 'static>;
-
-pub(crate) type HoverListener<V> = Box<dyn Fn(&mut V, bool, &mut ViewContext<V>) + 'static>;
-
-pub(crate) type TooltipBuilder<V> = Arc<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static>;
-
-pub(crate) type KeyDownListener<V> =
-    Box<dyn Fn(&mut V, &KeyDownEvent, DispatchPhase, &mut ViewContext<V>) + 'static>;
-
-pub(crate) type KeyUpListener<V> =
-    Box<dyn Fn(&mut V, &KeyUpEvent, DispatchPhase, &mut ViewContext<V>) + 'static>;
-
-pub type ActionListener<V> =
-    Box<dyn Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + 'static>;
 
 #[cfg(test)]
 mod test {
