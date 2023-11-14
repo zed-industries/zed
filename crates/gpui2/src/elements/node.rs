@@ -386,7 +386,7 @@ pub trait FocusableComponent<V> {
     where
         Self: Sized,
     {
-        // self.focusability(). (f(StyleRefinement::default()));
+        self.focusability().in_focus_style = f(StyleRefinement::default());
         self
     }
 
@@ -523,7 +523,6 @@ pub struct FocusEvent {
 }
 
 pub struct Node<V> {
-    key_context: KeyContext,
     interactivity: Interactivity<V>,
     children: Vec<AnyElement<V>>,
 }
@@ -621,24 +620,27 @@ impl<V: 'static> Element<V> for Node<V> {
             (child_max - child_min).into()
         };
 
-        cx.with_z_index(z_index, |cx| {
-            cx.with_z_index(0, |cx| {
-                style.paint(bounds, cx);
-                self.interactivity.paint(bounds, cx);
-            });
-            cx.with_z_index(1, |cx| {
-                style.with_text_style(cx, |cx| {
-                    style.apply_overflow(bounds, cx, |cx| {
-                        let scroll_offset = self.interactivity.scroll_offset;
-                        cx.with_element_offset2(scroll_offset, |cx| {
-                            for child in &mut self.children {
-                                child.paint(view_state, cx);
-                            }
-                        });
+        let mut interactivity = mem::take(&mut self.interactivity);
+        interactivity.paint(bounds, cx, |cx| {
+            cx.with_z_index(z_index, |cx| {
+                cx.with_z_index(0, |cx| {
+                    style.paint(bounds, cx);
+                });
+                cx.with_z_index(1, |cx| {
+                    style.with_text_style(cx, |cx| {
+                        style.apply_overflow(bounds, cx, |cx| {
+                            let scroll_offset = self.interactivity.scroll_offset;
+                            cx.with_element_offset2(scroll_offset, |cx| {
+                                for child in &mut self.children {
+                                    child.paint(view_state, cx);
+                                }
+                            });
+                        })
                     })
-                })
+                });
             });
         });
+        self.interactivity = interactivity;
 
         if let Some(group) = self.interactivity.group.as_ref() {
             GroupBounds::pop(group, cx);
@@ -646,19 +648,15 @@ impl<V: 'static> Element<V> for Node<V> {
     }
 }
 
-pub struct ComputedStyle {
-    base: StyleRefinement,
-    focus: StyleRefinement,
-    hover: StyleRefinement,
-    active: StyleRefinement,
-}
-
-pub struct StyleCascade {
-    pub base: StyleRefinement,
-    pub focus: StyleRefinement,
-    pub hover: StyleRefinement,
-    pub dragged_over: StyleRefinement,
-    pub active: StyleRefinement,
+pub enum FocusState {
+    /// The current element is not focused, and does not contain or descend from the focused element.
+    None,
+    /// The current element is focused.
+    Focus,
+    /// The current element contains the focused element
+    FocusIn,
+    /// The current element descends from the focused element
+    InFocus,
 }
 
 pub struct Interactivity<V> {
@@ -666,10 +664,14 @@ pub struct Interactivity<V> {
     pub group_active: bool,
     pub hovered: bool,
     pub group_hovered: bool,
-    pub focused: bool,
+    pub focus: FocusState,
+    pub key_context: KeyContext,
+    pub focus_handle: Option<FocusHandle>,
     pub scroll_offset: Point<Pixels>,
     pub base_style: StyleRefinement,
     pub focus_style: StyleRefinement,
+    pub focus_in_style: StyleRefinement,
+    pub in_focus_style: StyleRefinement,
     pub hover_style: StyleRefinement,
     pub group_hover_style: Option<GroupStyle>,
     pub active_style: StyleRefinement,
@@ -696,8 +698,20 @@ impl<V: 'static> Interactivity<V> {
     fn compute_style(&self, bounds: Option<Bounds<Pixels>>, cx: &mut ViewContext<V>) -> Style {
         let mut style = Style::default();
         style.refine(&self.base_style);
-        if self.focused {
-            style.refine(&self.focus_style);
+
+        match self.focus {
+            FocusState::None => {}
+            FocusState::Focus => {
+                style.refine(&self.focus_style);
+                style.refine(&self.focus_in_style);
+                style.refine(&self.in_focus_style);
+            }
+            FocusState::FocusIn => {
+                style.refine(&self.focus_in_style);
+            }
+            FocusState::InFocus => {
+                style.refine(&self.in_focus_style);
+            }
         }
 
         if let Some(bounds) = bounds {
@@ -749,7 +763,12 @@ impl<V: 'static> Interactivity<V> {
         style
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<V>,
+        f: impl FnOnce(&mut ViewContext<V>),
+    ) {
         for listener in self.mouse_down_listeners.drain(..) {
             cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
@@ -824,6 +843,51 @@ impl<V: 'static> Interactivity<V> {
                     }
                 }
             });
+        }
+
+        cx.with_key_dispatch(
+            self.key_context.clone(),
+            self.focus_handle.clone(),
+            |_, cx| f(cx),
+        );
+    }
+}
+
+impl<V: 'static> Default for Interactivity<V> {
+    fn default() -> Self {
+        Self {
+            active: false,
+            group_active: false,
+            hovered: false,
+            group_hovered: false,
+            focus: FocusState::None,
+            key_context: KeyContext::default(),
+            focus_handle: None,
+            scroll_offset: Point::default(),
+            base_style: StyleRefinement::default(),
+            focus_style: StyleRefinement::default(),
+            focus_in_style: StyleRefinement::default(),
+            in_focus_style: StyleRefinement::default(),
+            hover_style: StyleRefinement::default(),
+            group_hover_style: None,
+            active_style: StyleRefinement::default(),
+            group_active_style: None,
+            drag_over_styles: SmallVec::new(),
+            group_drag_over_styles: SmallVec::new(),
+            group: None,
+            dispatch_context: KeyContext::default(),
+            mouse_down_listeners: SmallVec::new(),
+            mouse_up_listeners: SmallVec::new(),
+            mouse_move_listeners: SmallVec::new(),
+            scroll_wheel_listeners: SmallVec::new(),
+            key_down_listeners: SmallVec::new(),
+            key_up_listeners: SmallVec::new(),
+            action_listeners: SmallVec::new(),
+            drop_listeners: SmallVec::new(),
+            click_listeners: SmallVec::new(),
+            drag_listener: None,
+            hover_listener: None,
+            tooltip_builder: None,
         }
     }
 }
