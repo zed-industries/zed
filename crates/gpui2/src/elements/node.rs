@@ -11,12 +11,14 @@ use refineable::Refineable;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
+    fmt::Debug,
     marker::PhantomData,
     mem,
     sync::Arc,
     time::Duration,
 };
 use taffy::style::Overflow;
+use util::ResultExt;
 
 const DRAG_THRESHOLD: f64 = 2.;
 const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
@@ -30,10 +32,36 @@ pub struct GroupStyle {
 pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
     fn interactivity(&mut self) -> &mut Interactivity<V>;
 
-    fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    fn id(mut self, id: impl Into<ElementId>) -> Stateful<V, Self> {
+        self.interactivity().element_id = Some(id.into());
+
+        Stateful {
+            element: self,
+            view_type: PhantomData,
+        }
+    }
+
+    fn track_focus(mut self, focus_handle: FocusHandle) -> Focusable<V, Self> {
+        self.interactivity().focusable = true;
+        self.interactivity().tracked_focus_handle = Some(focus_handle);
+        Focusable {
+            element: self,
+            view_type: PhantomData,
+        }
+    }
+
+    fn key_context<C, E>(mut self, key_context: C) -> Self
     where
-        Self: Sized,
+        C: TryInto<KeyContext, Error = E>,
+        E: Debug,
     {
+        if let Some(key_context) = key_context.try_into().log_err() {
+            self.interactivity().key_context = key_context;
+        }
+        self
+    }
+
+    fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self {
         self.interactivity().hover_style = f(StyleRefinement::default());
         self
     }
@@ -42,10 +70,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
         mut self,
         group_name: impl Into<SharedString>,
         f: impl FnOnce(StyleRefinement) -> StyleRefinement,
-    ) -> Self
-    where
-        Self: Sized,
-    {
+    ) -> Self {
         self.interactivity().group_hover_style = Some(GroupStyle {
             group: group_name.into(),
             style: f(StyleRefinement::default()),
@@ -57,10 +82,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
         mut self,
         button: MouseButton,
         handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
+    ) -> Self {
         self.interactivity().mouse_down_listeners.push(Box::new(
             move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
@@ -78,10 +100,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
         mut self,
         button: MouseButton,
         handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
+    ) -> Self {
         self.interactivity().mouse_up_listeners.push(Box::new(
             move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
@@ -98,10 +117,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
     fn on_mouse_down_out(
         mut self,
         handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
+    ) -> Self {
         self.interactivity().mouse_down_listeners.push(Box::new(
             move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture && !bounds.contains_point(&event.position) {
@@ -116,10 +132,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
         mut self,
         button: MouseButton,
         handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
+    ) -> Self {
         self.interactivity().mouse_up_listeners.push(Box::new(
             move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
@@ -136,10 +149,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
     fn on_mouse_move(
         mut self,
         handler: impl Fn(&mut V, &MouseMoveEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
+    ) -> Self {
         self.interactivity().mouse_move_listeners.push(Box::new(
             move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
@@ -153,10 +163,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
     fn on_scroll_wheel(
         mut self,
         handler: impl Fn(&mut V, &ScrollWheelEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
+    ) -> Self {
         self.interactivity().scroll_wheel_listeners.push(Box::new(
             move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
@@ -171,10 +178,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
     fn capture_action<A: Action>(
         mut self,
         listener: impl Fn(&mut V, &A, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
+    ) -> Self {
         self.interactivity().action_listeners.push((
             TypeId::of::<A>(),
             Box::new(move |view, action, phase, cx| {
@@ -191,10 +195,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
     fn on_action<A: Action>(
         mut self,
         listener: impl Fn(&mut V, &A, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
+    ) -> Self {
         self.interactivity().action_listeners.push((
             TypeId::of::<A>(),
             Box::new(move |view, action, phase, cx| {
@@ -210,10 +211,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
     fn on_key_down(
         mut self,
         listener: impl Fn(&mut V, &KeyDownEvent, DispatchPhase, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
+    ) -> Self {
         self.interactivity()
             .key_down_listeners
             .push(Box::new(move |view, event, phase, cx| {
@@ -225,10 +223,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
     fn on_key_up(
         mut self,
         listener: impl Fn(&mut V, &KeyUpEvent, DispatchPhase, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
+    ) -> Self {
         self.interactivity()
             .key_up_listeners
             .push(Box::new(move |view, event, phase, cx| {
@@ -237,10 +232,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
         self
     }
 
-    fn drag_over<S: 'static>(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
+    fn drag_over<S: 'static>(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self {
         self.interactivity()
             .drag_over_styles
             .push((TypeId::of::<S>(), f(StyleRefinement::default())));
@@ -251,10 +243,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
         mut self,
         group_name: impl Into<SharedString>,
         f: impl FnOnce(StyleRefinement) -> StyleRefinement,
-    ) -> Self
-    where
-        Self: Sized,
-    {
+    ) -> Self {
         self.interactivity().group_drag_over_styles.push((
             TypeId::of::<S>(),
             GroupStyle {
@@ -268,10 +257,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
     fn on_drop<W: 'static>(
         mut self,
         listener: impl Fn(&mut V, View<W>, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
+    ) -> Self {
         self.interactivity().drop_listeners.push((
             TypeId::of::<W>(),
             Box::new(move |view, dragged_view, cx| {
@@ -283,6 +269,11 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
 }
 
 pub trait StatefulInteractiveComponent<V: 'static, E: Element<V>>: InteractiveComponent<V> {
+    fn focusable(mut self) -> Self {
+        self.interactivity().focusable = true;
+        self
+    }
+
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
@@ -522,6 +513,13 @@ pub type KeyUpListener<V> =
 
 pub type ActionListener<V> =
     Box<dyn Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + 'static>;
+
+pub fn node<V: 'static>() -> Node<V> {
+    Node {
+        interactivity: Interactivity::default(),
+        children: Vec::default(),
+    }
+}
 
 pub struct Node<V> {
     interactivity: Interactivity<V>,
@@ -1203,8 +1201,8 @@ impl GroupBounds {
 }
 
 pub struct Focusable<V, E> {
-    view_type: PhantomData<V>,
     element: E,
+    view_type: PhantomData<V>,
 }
 
 impl<V: 'static, E: InteractiveComponent<V>> FocusableComponent<V> for Focusable<V, E> {}
@@ -1265,8 +1263,8 @@ where
 }
 
 pub struct Stateful<V, E> {
-    view_type: PhantomData<V>,
     element: E,
+    view_type: PhantomData<V>,
 }
 
 impl<V, E> StatefulInteractiveComponent<V, E> for Stateful<V, E>
