@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use crate::{
     point, AnyElement, BorrowWindow, Bounds, Component, Element, ElementId, ElementInteractivity,
-    FocusHandle, FocusListeners, Focusable, FocusableKeyDispatch, GlobalElementId, GroupBounds,
+    FocusHandle, FocusListeners, Focusable, FocusableKeyDispatch, GroupBounds,
     InteractiveElementState, KeyContext, KeyDispatch, LayoutId, NonFocusableKeyDispatch, Overflow,
     ParentElement, Pixels, Point, SharedString, StatefulInteractive, StatefulInteractivity,
     StatelessInteractive, StatelessInteractivity, Style, StyleRefinement, Styled, ViewContext,
@@ -91,18 +91,6 @@ where
     pub fn overflow_hidden_y(mut self) -> Self {
         self.base_style.overflow.y = Some(Overflow::Hidden);
         self
-    }
-
-    fn with_element_id<R>(
-        &mut self,
-        cx: &mut ViewContext<V>,
-        f: impl FnOnce(&mut Self, Option<GlobalElementId>, &mut ViewContext<V>) -> R,
-    ) -> R {
-        if let Some(id) = self.id() {
-            cx.with_element_id(id, |global_id, cx| f(self, Some(global_id), cx))
-        } else {
-            f(self, None, cx)
-        }
     }
 
     pub fn compute_style(
@@ -229,14 +217,14 @@ where
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
         let mut element_state = element_state.unwrap_or_default();
-        self.with_element_id(cx, |this, _global_id, cx| {
-            this.key_dispatch.initialize(
+        cx.with_element_id(self.id(), |cx| {
+            self.key_dispatch.initialize(
                 element_state.focus_handle.take(),
                 cx,
                 |focus_handle, cx| {
-                    this.interactivity.initialize(cx);
+                    self.interactivity.initialize(cx);
                     element_state.focus_handle = focus_handle;
-                    for child in &mut this.children {
+                    for child in &mut self.children {
                         child.initialize(view_state, cx);
                     }
                 },
@@ -253,8 +241,8 @@ where
     ) -> LayoutId {
         let style = self.compute_style(Bounds::default(), element_state, cx);
         style.apply_text_style(cx, |cx| {
-            self.with_element_id(cx, |this, _global_id, cx| {
-                let layout_ids = this
+            cx.with_element_id(self.id(), |cx| {
+                let layout_ids = self
                     .children
                     .iter_mut()
                     .map(|child| child.layout(view_state, cx))
@@ -272,8 +260,8 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) {
-        self.with_element_id(cx, |this, _global_id, cx| {
-            let style = this.compute_style(bounds, element_state, cx);
+        cx.with_element_id(self.id(), |cx| {
+            let style = self.compute_style(bounds, element_state, cx);
             if style.visibility == Visibility::Hidden {
                 return;
             }
@@ -285,7 +273,7 @@ where
                 }
             }
 
-            if let Some(group) = this.group.clone() {
+            if let Some(group) = self.group.clone() {
                 GroupBounds::push(group, bounds, cx);
             }
 
@@ -308,8 +296,8 @@ where
             cx.with_z_index(z_index, |cx| {
                 cx.with_z_index(0, |cx| {
                     style.paint(bounds, cx);
-                    this.key_dispatch.paint(bounds, cx);
-                    this.interactivity.handle_events(
+                    self.key_dispatch.paint(bounds, cx);
+                    self.interactivity.handle_events(
                         bounds,
                         content_size,
                         style.overflow,
@@ -322,7 +310,7 @@ where
                         style.apply_overflow(bounds, cx, |cx| {
                             let scroll_offset = element_state.interactive.scroll_offset();
                             cx.with_element_offset(scroll_offset.unwrap_or_default(), |cx| {
-                                for child in &mut this.children {
+                                for child in &mut self.children {
                                     child.paint(view_state, cx);
                                 }
                             });
@@ -331,7 +319,7 @@ where
                 });
             });
 
-            if let Some(group) = this.group.as_ref() {
+            if let Some(group) = self.group.as_ref() {
                 GroupBounds::pop(group, cx);
             }
         })

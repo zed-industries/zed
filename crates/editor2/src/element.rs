@@ -2455,7 +2455,7 @@ impl Element<Editor> for EditorElement {
         editor.style = Some(self.style.clone()); // Long-term, we'd like to eliminate this.
 
         let dispatch_context = editor.dispatch_context(cx);
-        cx.with_element_id(cx.view().entity_id(), |global_id, cx| {
+        cx.with_element_id(Some(cx.view().entity_id()), |cx| {
             cx.with_key_dispatch(
                 dispatch_context,
                 Some(editor.focus_handle.clone()),

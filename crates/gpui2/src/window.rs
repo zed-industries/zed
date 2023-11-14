@@ -1537,16 +1537,19 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     /// used to associate state with identified elements across separate frames.
     fn with_element_id<R>(
         &mut self,
-        id: impl Into<ElementId>,
-        f: impl FnOnce(GlobalElementId, &mut Self) -> R,
+        id: Option<impl Into<ElementId>>,
+        f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let window = self.window_mut();
-        window.element_id_stack.push(id.into());
-        let global_id = window.element_id_stack.clone();
-        let result = f(global_id, self);
-        let window: &mut Window = self.borrow_mut();
-        window.element_id_stack.pop();
-        result
+        if let Some(id) = id.map(Into::into) {
+            let window = self.window_mut();
+            window.element_id_stack.push(id.into());
+            let result = f(self);
+            let window: &mut Window = self.borrow_mut();
+            window.element_id_stack.pop();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// Invoke the given function with the given content mask after intersecting it
@@ -1613,7 +1616,9 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     where
         S: 'static,
     {
-        self.with_element_id(id, |global_id, cx| {
+        self.with_element_id(Some(id), |cx| {
+            let global_id = cx.window().element_id_stack.clone();
+
             if let Some(any) = cx
                 .window_mut()
                 .current_frame
