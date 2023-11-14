@@ -197,22 +197,19 @@ impl ProjectPanel {
                 editor::Event::BufferEdited | editor::Event::SelectionsChanged { .. } => {
                     this.autoscroll(cx);
                 }
+                editor::Event::Blurred => {
+                    if this
+                        .edit_state
+                        .as_ref()
+                        .map_or(false, |state| state.processing_filename.is_none())
+                    {
+                        this.edit_state = None;
+                        this.update_visible_entries(None, cx);
+                    }
+                }
                 _ => {}
             })
             .detach();
-
-            // cx.observe_focus(&filename_editor, |this, _, is_focused, cx| {
-            //     if !is_focused
-            //         && this
-            //             .edit_state
-            //             .as_ref()
-            //             .map_or(false, |state| state.processing_filename.is_none())
-            //     {
-            //         this.edit_state = None;
-            //         this.update_visible_entries(None, cx);
-            //     }
-            // })
-            // .detach();
 
             // cx.observe_global::<FileAssociations, _>(|_, cx| {
             //     cx.notify();
@@ -2360,7 +2357,11 @@ mod tests {
         cx.executor().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src  <== selected", "    > test"]
+            &[
+                //
+                "v src  <== selected",
+                "    > test"
+            ]
         );
         panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
         panel.update(cx, |panel, cx| {
@@ -2368,7 +2369,12 @@ mod tests {
         });
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    > [EDITOR: '']  <== selected", "    > test"]
+            &[
+                //
+                "v src",
+                "    > [EDITOR: '']  <== selected",
+                "    > test"
+            ]
         );
         panel.update(cx, |panel, cx| {
             panel
@@ -2381,7 +2387,11 @@ mod tests {
         });
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    > test"],
+            &[
+                //
+                "v src",
+                "    > test"
+            ],
             "File list should be unchanged after failed folder create confirmation"
         );
 
@@ -2390,7 +2400,11 @@ mod tests {
         cx.executor().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    > test  <== selected"]
+            &[
+                //
+                "v src",
+                "    > test  <== selected"
+            ]
         );
         panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
         panel.update(cx, |panel, cx| {
