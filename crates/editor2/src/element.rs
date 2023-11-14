@@ -21,7 +21,7 @@ use gpui::{
     point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace, BorrowWindow,
     Bounds, Component, ContentMask, Corners, DispatchPhase, Edges, Element, ElementId,
     ElementInputHandler, Entity, Hsla, Line, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, ScrollWheelEvent, Size, Style, TextRun, TextStyle,
+    MouseUpEvent, ParentElement, Pixels, ScrollWheelEvent, Size, Style, Styled, TextRun, TextStyle,
     ViewContext, WindowContext,
 };
 use itertools::Itertools;
@@ -2057,12 +2057,18 @@ impl EditorElement {
                         }
 
                         h_stack()
+                            .size_full()
+                            .bg(gpui::red())
                             .child(filename.unwrap_or_else(|| "untitled".to_string()))
                             .children(parent_path)
                             .children(jump_icon) // .p_x(gutter_padding)
                     } else {
                         let text_style = style.text.clone();
-                        h_stack().child("⋯").children(jump_icon) // .p_x(gutter_padding)
+                        h_stack()
+                            .size_full()
+                            .bg(gpui::red())
+                            .child("⋯")
+                            .children(jump_icon) // .p_x(gutter_padding)
                     };
                     element.render()
                 }

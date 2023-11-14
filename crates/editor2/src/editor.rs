@@ -9974,6 +9974,8 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
         let message = message.clone();
         v_stack()
             .id(cx.block_id)
+            .size_full()
+            .bg(gpui::red())
             .children(highlighted_lines.iter().map(|(line, highlights)| {
                 div()
                     .child(HighlightedLabel::new(line.clone(), highlights.clone()))
