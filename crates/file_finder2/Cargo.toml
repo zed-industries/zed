@@ -1,0 +1,36 @@
+[package]
+name = "file_finder2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/file_finder.rs"
+doctest = false
+
+[dependencies]
+editor = { package = "editor2", path = "../editor2" }
+collections = { path = "../collections" }
+fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+menu = { package = "menu2", path = "../menu2" }
+picker = { package = "picker2", path = "../picker2" }
+project = { package = "project2", path = "../project2" }
+settings = { package = "settings2", path = "../settings2" }
+text = { package = "text2", path = "../text2" }
+util = { path = "../util" }
+theme = { package = "theme2", path = "../theme2" }
+workspace = { package = "workspace2", path = "../workspace2" }
+postage.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+language = { package = "language2", path = "../language2", features = ["test-support"] }
+workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
+theme = { package = "theme2", path = "../theme2", features = ["test-support"] }
+
+serde_json.workspace = true
+ctor.workspace = true
+env_logger.workspace = true

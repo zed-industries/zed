@@ -3541,6 +3541,10 @@ impl Workspace {
         div
     }
 
+    pub fn current_modal<V: Modal + 'static>(&mut self, cx: &ViewContext<Self>) -> Option<View<V>> {
+        self.modal_layer.read(cx).current_modal()
+    }
+
     pub fn toggle_modal<V: Modal, B>(&mut self, cx: &mut ViewContext<Self>, build: B)
     where
         B: FnOnce(&mut ViewContext<V>) -> V,

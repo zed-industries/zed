@@ -36,7 +36,7 @@ copilot = { package = "copilot2", path = "../copilot2" }
 db = { package = "db2", path = "../db2" }
 editor = { package="editor2", path = "../editor2" }
 # feedback = { path = "../feedback" }
-# file_finder = { path = "../file_finder" }
+file_finder = { package="file_finder2", path = "../file_finder2" }
 # search = { path = "../search" }
 fs = { package = "fs2", path = "../fs2" }
 fsevent = { path = "../fsevent" }
