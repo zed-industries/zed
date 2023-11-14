@@ -450,7 +450,7 @@ pub trait ElementInteractivity<V: 'static>: 'static {
         }
     }
 
-    fn paint(
+    fn handle_events(
         &mut self,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,

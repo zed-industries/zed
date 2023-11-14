@@ -152,6 +152,16 @@ impl<V: 'static> Element<V> for UniformList<V> {
         )
     }
 
+    fn prepaint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        view_state: &mut V,
+        element_state: &mut Self::ElementState,
+        cx: &mut ViewContext<V>,
+    ) {
+        todo!()
+    }
+
     fn paint(
         &mut self,
         bounds: crate::Bounds<crate::Pixels>,
@@ -229,7 +239,7 @@ impl<V: 'static> Element<V> for UniformList<V> {
             let overflow = point(style.overflow.x, Overflow::Scroll);
 
             cx.with_z_index(0, |cx| {
-                self.interactivity.paint(
+                self.interactivity.handle_events(
                     bounds,
                     content_size,
                     overflow,

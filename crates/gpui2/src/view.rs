@@ -147,6 +147,7 @@ pub struct AnyView {
     model: AnyModel,
     initialize: fn(&AnyView, &mut WindowContext) -> AnyBox,
     layout: fn(&AnyView, &mut AnyBox, &mut WindowContext) -> LayoutId,
+    prepaint: fn(&AnyView, &mut AnyBox, &mut WindowContext),
     paint: fn(&AnyView, &mut AnyBox, &mut WindowContext),
 }
 
@@ -156,6 +157,7 @@ impl AnyView {
             model: self.model.downgrade(),
             initialize: self.initialize,
             layout: self.layout,
+            prepaint: self.prepaint,
             paint: self.paint,
         }
     }
@@ -167,6 +169,7 @@ impl AnyView {
                 model,
                 initialize: self.initialize,
                 layout: self.layout,
+                prepaint: self.prepaint,
                 paint: self.paint,
             }),
         }
@@ -198,6 +201,7 @@ impl<V: Render> From<View<V>> for AnyView {
             model: value.model.into_any(),
             initialize: any_view::initialize::<V>,
             layout: any_view::layout::<V>,
+            prepaint: any_view::prepaint::<V>,
             paint: any_view::paint::<V>,
         }
     }
@@ -228,6 +232,16 @@ impl<ParentViewState: 'static> Element<ParentViewState> for AnyView {
         (self.layout)(self, rendered_element, cx)
     }
 
+    fn prepaint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        view_state: &mut ParentViewState,
+        rendered_element: &mut Self::ElementState,
+        cx: &mut ViewContext<ParentViewState>,
+    ) {
+        (self.prepaint)(self, rendered_element, cx)
+    }
+
     fn paint(
         &mut self,
         _bounds: Bounds<Pixels>,
@@ -243,6 +257,7 @@ pub struct AnyWeakView {
     model: AnyWeakModel,
     initialize: fn(&AnyView, &mut WindowContext) -> AnyBox,
     layout: fn(&AnyView, &mut AnyBox, &mut WindowContext) -> LayoutId,
+    prepaint: fn(&AnyView, &mut AnyBox, &mut WindowContext),
     paint: fn(&AnyView, &mut AnyBox, &mut WindowContext),
 }
 
@@ -253,6 +268,7 @@ impl AnyWeakView {
             model,
             initialize: self.initialize,
             layout: self.layout,
+            prepaint: self.prepaint,
             paint: self.paint,
         })
     }
@@ -264,6 +280,7 @@ impl<V: Render> From<WeakView<V>> for AnyWeakView {
             model: view.model.into(),
             initialize: any_view::initialize::<V>,
             layout: any_view::layout::<V>,
+            prepaint: any_view::prepaint::<V>,
             paint: any_view::paint::<V>,
         }
     }
@@ -306,6 +323,18 @@ mod any_view {
             let view = view.clone().downcast::<V>().unwrap();
             let element = element.downcast_mut::<AnyElement<V>>().unwrap();
             view.update(cx, |view, cx| element.layout(view, cx))
+        })
+    }
+
+    pub(crate) fn prepaint<V: Render>(
+        view: &AnyView,
+        element: &mut Box<dyn Any>,
+        cx: &mut WindowContext,
+    ) {
+        cx.with_element_id(view.model.entity_id, |_, cx| {
+            let view = view.clone().downcast::<V>().unwrap();
+            let element = element.downcast_mut::<AnyElement<V>>().unwrap();
+            view.update(cx, |view, cx| element.prepaint(view, cx))
         })
     }
 

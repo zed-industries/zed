@@ -10,6 +10,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     marker::PhantomData,
+    mem,
     sync::Arc,
 };
 
@@ -530,24 +531,6 @@ pub struct Node<V> {
     children: Vec<AnyElement<V>>,
 }
 
-pub struct Interactivity<V> {
-    group: Option<SharedString>,
-    pub dispatch_context: KeyContext,
-    pub mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
-    pub mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
-    pub mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
-    pub scroll_wheel_listeners: SmallVec<[ScrollWheelListener<V>; 2]>,
-    pub key_down_listeners: SmallVec<[KeyDownListener<V>; 2]>,
-    pub key_up_listeners: SmallVec<[KeyUpListener<V>; 2]>,
-    pub action_listeners: SmallVec<[(TypeId, ActionListener<V>); 8]>,
-    pub hover_style: StyleRefinement,
-    pub group_hover_style: Option<GroupStyle>,
-    drag_over_styles: SmallVec<[(TypeId, StyleRefinement); 2]>,
-    group_drag_over_styles: SmallVec<[(TypeId, GroupStyle); 2]>,
-    drop_listeners: SmallVec<[(TypeId, Box<DropListener<V>>); 2]>,
-    scroll_offset: Point<Pixels>,
-}
-
 impl<V> Node<V> {
     fn compute_style(&self) -> Style {
         let mut style = Style::default();
@@ -610,6 +593,20 @@ impl<V: 'static> Element<V> for Node<V> {
         })
     }
 
+    fn prepaint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        view_state: &mut V,
+        _: &mut Self::ElementState,
+        cx: &mut ViewContext<V>,
+    ) {
+        for child in &mut self.children {
+            child.prepaint(view_state, cx);
+        }
+        self.interactivity
+            .refine_style(&mut self.style, bounds, view_state, cx);
+    }
+
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -652,6 +649,7 @@ impl<V: 'static> Element<V> for Node<V> {
         cx.with_z_index(z_index, |cx| {
             cx.with_z_index(0, |cx| {
                 style.paint(bounds, cx);
+                self.interactivity.paint(bounds, cx);
             });
             cx.with_z_index(1, |cx| {
                 style.with_text_style(cx, |cx| {
@@ -669,6 +667,144 @@ impl<V: 'static> Element<V> for Node<V> {
 
         if let Some(group) = self.interactivity.group.as_ref() {
             GroupBounds::pop(group, cx);
+        }
+    }
+}
+
+pub struct Interactivity<V> {
+    pub hover_style: StyleRefinement,
+    pub group_hover_style: Option<GroupStyle>,
+    pub drag_over_styles: SmallVec<[(TypeId, StyleRefinement); 2]>,
+    pub group_drag_over_styles: SmallVec<[(TypeId, GroupStyle); 2]>,
+    group: Option<SharedString>,
+    pub dispatch_context: KeyContext,
+    pub mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
+    pub mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
+    pub mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
+    pub scroll_wheel_listeners: SmallVec<[ScrollWheelListener<V>; 2]>,
+    pub key_down_listeners: SmallVec<[KeyDownListener<V>; 2]>,
+    pub key_up_listeners: SmallVec<[KeyUpListener<V>; 2]>,
+    pub action_listeners: SmallVec<[(TypeId, ActionListener<V>); 8]>,
+    drop_listeners: SmallVec<[(TypeId, Box<DropListener<V>>); 2]>,
+    scroll_offset: Point<Pixels>,
+}
+
+impl<V: 'static> Interactivity<V> {
+    fn refine_style(
+        &self,
+        style: &mut StyleRefinement,
+        bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<V>,
+    ) {
+        let mouse_position = cx.mouse_position();
+        if let Some(group_hover) = self.group_hover_style.as_ref() {
+            if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
+                if group_bounds.contains_point(&mouse_position) {
+                    style.refine(&group_hover.style);
+                }
+            }
+        }
+        if bounds.contains_point(&mouse_position) {
+            style.refine(&self.hover_style);
+        }
+
+        if let Some(drag) = cx.active_drag.take() {
+            for (state_type, group_drag_style) in &self.group_drag_over_styles {
+                if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
+                    if *state_type == drag.view.entity_type()
+                        && group_bounds.contains_point(&mouse_position)
+                    {
+                        style.refine(&group_drag_style.style);
+                    }
+                }
+            }
+
+            for (state_type, drag_over_style) in &self.drag_over_styles {
+                if *state_type == drag.view.entity_type() && bounds.contains_point(&mouse_position)
+                {
+                    style.refine(drag_over_style);
+                }
+            }
+
+            cx.active_drag = Some(drag);
+        }
+    }
+
+    fn paint(&mut self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
+        for listener in self.mouse_down_listeners.drain(..) {
+            cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in self.mouse_up_listeners.drain(..) {
+            cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in self.mouse_move_listeners.drain(..) {
+            cx.on_mouse_event(move |state, event: &MouseMoveEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in self.scroll_wheel_listeners.drain(..) {
+            cx.on_mouse_event(move |state, event: &ScrollWheelEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        let hover_group_bounds = self
+            .group_hover_style
+            .as_ref()
+            .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
+
+        if let Some(group_bounds) = hover_group_bounds {
+            let hovered = group_bounds.contains_point(&cx.mouse_position());
+            cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
+                if phase == DispatchPhase::Capture {
+                    if group_bounds.contains_point(&event.position) != hovered {
+                        cx.notify();
+                    }
+                }
+            });
+        }
+
+        if self.hover_style.is_some()
+            || (cx.active_drag.is_some() && !self.drag_over_styles.is_empty())
+        {
+            let hovered = bounds.contains_point(&cx.mouse_position());
+            cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
+                if phase == DispatchPhase::Capture {
+                    if bounds.contains_point(&event.position) != hovered {
+                        cx.notify();
+                    }
+                }
+            });
+        }
+
+        if cx.active_drag.is_some() {
+            let drop_listeners = mem::take(&mut self.drop_listeners);
+            cx.on_mouse_event(move |view, event: &MouseUpEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                    if let Some(drag_state_type) =
+                        cx.active_drag.as_ref().map(|drag| drag.view.entity_type())
+                    {
+                        for (drop_state_type, listener) in &drop_listeners {
+                            if *drop_state_type == drag_state_type {
+                                let drag = cx
+                                    .active_drag
+                                    .take()
+                                    .expect("checked for type drag state type above");
+                                listener(view, drag.view.clone(), cx);
+                                cx.notify();
+                                cx.stop_propagation();
+                            }
+                        }
+                    }
+                }
+            });
         }
     }
 }

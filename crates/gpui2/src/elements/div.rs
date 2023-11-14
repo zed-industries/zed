@@ -265,6 +265,16 @@ where
         })
     }
 
+    fn prepaint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        view_state: &mut V,
+        element_state: &mut Self::ElementState,
+        cx: &mut ViewContext<V>,
+    ) {
+        todo!()
+    }
+
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -309,7 +319,7 @@ where
                 cx.with_z_index(0, |cx| {
                     style.paint(bounds, cx);
                     this.key_dispatch.paint(bounds, cx);
-                    this.interactivity.paint(
+                    this.interactivity.handle_events(
                         bounds,
                         content_size,
                         style.overflow,
