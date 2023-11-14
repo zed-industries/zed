@@ -69,7 +69,7 @@ use std::{
 };
 use theme2::ActiveTheme;
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use ui::{h_stack, Label};
+use ui::{h_stack, Button, ButtonVariant, Label, LabelColor};
 use util::ResultExt;
 use uuid::Uuid;
 use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -2644,19 +2644,35 @@ impl Workspace {
         h_stack()
             .id("titlebar")
             .justify_between()
-            .w_full()
-            .h(rems(1.75))
-            .bg(cx.theme().colors().title_bar_background)
             .when(
                 !matches!(cx.window_bounds(), WindowBounds::Fullscreen),
                 |s| s.pl_20(),
             )
+            .w_full()
+            .h(rems(1.75))
+            .bg(cx.theme().colors().title_bar_background)
             .on_click(|_, event, cx| {
                 if event.up.click_count == 2 {
                     cx.zoom_window();
                 }
             })
-            .child(h_stack().child(Label::new("Left side titlebar item"))) // self.titlebar_item
+            .child(
+                h_stack()
+                    // TODO - Add player menu
+                    .child(
+                        Button::new("player")
+                            .variant(ButtonVariant::Ghost)
+                            .color(Some(LabelColor::Player(0))),
+                    )
+                    // TODO - Add project menu
+                    .child(Button::new("project_name").variant(ButtonVariant::Ghost))
+                    // TODO - Add git menu
+                    .child(
+                        Button::new("branch_name")
+                            .variant(ButtonVariant::Ghost)
+                            .color(Some(LabelColor::Muted)),
+                    ),
+            ) // self.titlebar_item
             .child(h_stack().child(Label::new("Right side titlebar item")))
     }
 
