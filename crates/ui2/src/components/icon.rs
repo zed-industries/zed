@@ -1,7 +1,7 @@
 use gpui::{rems, svg, Hsla};
 use strum::EnumIter;
 
-use crate::prelude::*;
+use crate::{prelude::*, LabelColor};
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
@@ -14,15 +14,20 @@ pub enum IconSize {
 pub enum IconColor {
     #[default]
     Default,
-    Muted,
-    Disabled,
-    Placeholder,
     Accent,
+    Created,
+    Deleted,
+    Disabled,
     Error,
-    Warning,
-    Success,
+    Hidden,
     Info,
+    Modified,
+    Muted,
+    Placeholder,
+    Player(u32),
     Selected,
+    Success,
+    Warning,
 }
 
 impl IconColor {
@@ -38,6 +43,33 @@ impl IconColor {
             IconColor::Success => cx.theme().status().success,
             IconColor::Info => cx.theme().status().info,
             IconColor::Selected => cx.theme().colors().icon_accent,
+            IconColor::Player(i) => cx.theme().styles.player.0[i.clone() as usize].cursor,
+            IconColor::Created => cx.theme().status().created,
+            IconColor::Modified => cx.theme().status().modified,
+            IconColor::Deleted => cx.theme().status().deleted,
+            IconColor::Hidden => cx.theme().status().hidden,
+        }
+    }
+}
+
+impl From<LabelColor> for IconColor {
+    fn from(label: LabelColor) -> Self {
+        match label {
+            LabelColor::Default => IconColor::Default,
+            LabelColor::Muted => IconColor::Muted,
+            LabelColor::Disabled => IconColor::Disabled,
+            LabelColor::Placeholder => IconColor::Placeholder,
+            LabelColor::Accent => IconColor::Accent,
+            LabelColor::Error => IconColor::Error,
+            LabelColor::Warning => IconColor::Warning,
+            LabelColor::Success => IconColor::Success,
+            LabelColor::Info => IconColor::Info,
+            LabelColor::Selected => IconColor::Selected,
+            LabelColor::Player(i) => IconColor::Player(i),
+            LabelColor::Created => IconColor::Created,
+            LabelColor::Modified => IconColor::Modified,
+            LabelColor::Deleted => IconColor::Deleted,
+            LabelColor::Hidden => IconColor::Hidden,
         }
     }
 }
