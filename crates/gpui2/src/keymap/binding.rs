@@ -3,9 +3,19 @@ use anyhow::Result;
 use smallvec::SmallVec;
 
 pub struct KeyBinding {
-    action: Box<dyn Action>,
-    pub(super) keystrokes: SmallVec<[Keystroke; 2]>,
-    pub(super) context_predicate: Option<KeyBindingContextPredicate>,
+    pub(crate) action: Box<dyn Action>,
+    pub(crate) keystrokes: SmallVec<[Keystroke; 2]>,
+    pub(crate) context_predicate: Option<KeyBindingContextPredicate>,
+}
+
+impl Clone for KeyBinding {
+    fn clone(&self) -> Self {
+        KeyBinding {
+            action: self.action.boxed_clone(),
+            keystrokes: self.keystrokes.clone(),
+            context_predicate: self.context_predicate.clone(),
+        }
+    }
 }
 
 impl KeyBinding {

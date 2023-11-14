@@ -30,6 +30,7 @@ use std::{
 };
 use text::Selection;
 use theme::{ActiveTheme, Theme};
+use ui::{Label, LabelColor};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowEvent, FollowableEvents, FollowableItemHandle};
 use workspace::{
@@ -595,16 +596,19 @@ impl Item for Editor {
                 .flex_row()
                 .items_center()
                 .gap_2()
-                .child(self.title(cx).to_string())
+                .child(Label::new(self.title(cx).to_string()))
                 .children(detail.and_then(|detail| {
                     let path = path_for_buffer(&self.buffer, detail, false, cx)?;
                     let description = path.to_string_lossy();
 
                     Some(
-                        div()
-                            .text_color(theme.colors().text_muted)
-                            .text_xs()
-                            .child(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN)),
+                        div().child(
+                            Label::new(util::truncate_and_trailoff(
+                                &description,
+                                MAX_TAB_TITLE_LEN,
+                            ))
+                            .color(LabelColor::Muted),
+                        ),
                     )
                 })),
         )

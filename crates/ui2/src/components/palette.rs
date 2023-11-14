@@ -1,4 +1,4 @@
-use crate::{h_stack, prelude::*, v_stack, Keybinding, Label, LabelColor};
+use crate::{h_stack, prelude::*, v_stack, KeyBinding, Label, LabelColor};
 use gpui::prelude::*;
 
 #[derive(Component)]
@@ -108,7 +108,7 @@ impl Palette {
 pub struct PaletteItem {
     pub label: SharedString,
     pub sublabel: Option<SharedString>,
-    pub keybinding: Option<Keybinding>,
+    pub keybinding: Option<KeyBinding>,
 }
 
 impl PaletteItem {
@@ -132,7 +132,7 @@ impl PaletteItem {
 
     pub fn keybinding<K>(mut self, keybinding: K) -> Self
     where
-        K: Into<Option<Keybinding>>,
+        K: Into<Option<KeyBinding>>,
     {
         self.keybinding = keybinding.into();
         self
@@ -161,7 +161,7 @@ pub use stories::*;
 mod stories {
     use gpui::{Div, Render};
 
-    use crate::{ModifierKeys, Story};
+    use crate::{binding, Story};
 
     use super::*;
 
@@ -181,46 +181,24 @@ mod stories {
                         Palette::new("palette-2")
                             .placeholder("Execute a command...")
                             .items(vec![
-                                PaletteItem::new("theme selector: toggle").keybinding(
-                                    Keybinding::new_chord(
-                                        ("k".to_string(), ModifierKeys::new().command(true)),
-                                        ("t".to_string(), ModifierKeys::new().command(true)),
-                                    ),
-                                ),
-                                PaletteItem::new("assistant: inline assist").keybinding(
-                                    Keybinding::new(
-                                        "enter".to_string(),
-                                        ModifierKeys::new().command(true),
-                                    ),
-                                ),
-                                PaletteItem::new("assistant: quote selection").keybinding(
-                                    Keybinding::new(
-                                        ">".to_string(),
-                                        ModifierKeys::new().command(true),
-                                    ),
-                                ),
-                                PaletteItem::new("assistant: toggle focus").keybinding(
-                                    Keybinding::new(
-                                        "?".to_string(),
-                                        ModifierKeys::new().command(true),
-                                    ),
-                                ),
+                                PaletteItem::new("theme selector: toggle")
+                                    .keybinding(KeyBinding::new(binding("cmd-k cmd-t"))),
+                                PaletteItem::new("assistant: inline assist")
+                                    .keybinding(KeyBinding::new(binding("cmd-enter"))),
+                                PaletteItem::new("assistant: quote selection")
+                                    .keybinding(KeyBinding::new(binding("cmd-<"))),
+                                PaletteItem::new("assistant: toggle focus")
+                                    .keybinding(KeyBinding::new(binding("cmd-?"))),
                                 PaletteItem::new("auto update: check"),
                                 PaletteItem::new("auto update: view release notes"),
-                                PaletteItem::new("branches: open recent").keybinding(
-                                    Keybinding::new(
-                                        "b".to_string(),
-                                        ModifierKeys::new().command(true).alt(true),
-                                    ),
-                                ),
+                                PaletteItem::new("branches: open recent")
+                                    .keybinding(KeyBinding::new(binding("cmd-alt-b"))),
                                 PaletteItem::new("chat panel: toggle focus"),
                                 PaletteItem::new("cli: install"),
                                 PaletteItem::new("client: sign in"),
                                 PaletteItem::new("client: sign out"),
-                                PaletteItem::new("editor: cancel").keybinding(Keybinding::new(
-                                    "escape".to_string(),
-                                    ModifierKeys::new(),
-                                )),
+                                PaletteItem::new("editor: cancel")
+                                    .keybinding(KeyBinding::new(binding("escape"))),
                             ]),
                     )
             }

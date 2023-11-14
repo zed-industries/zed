@@ -2023,24 +2023,24 @@ impl Editor {
         dispatch_context
     }
 
-    //     pub fn new_file(
-    //         workspace: &mut Workspace,
-    //         _: &workspace::NewFile,
-    //         cx: &mut ViewContext<Workspace>,
-    //     ) {
-    //         let project = workspace.project().clone();
-    //         if project.read(cx).is_remote() {
-    //             cx.propagate();
-    //         } else if let Some(buffer) = project
-    //             .update(cx, |project, cx| project.create_buffer("", None, cx))
-    //             .log_err()
-    //         {
-    //             workspace.add_item(
-    //                 Box::new(cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
-    //                 cx,
-    //             );
-    //         }
-    //     }
+    pub fn new_file(
+        workspace: &mut Workspace,
+        _: &workspace::NewFile,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let project = workspace.project().clone();
+        if project.read(cx).is_remote() {
+            cx.propagate();
+        } else if let Some(buffer) = project
+            .update(cx, |project, cx| project.create_buffer("", None, cx))
+            .log_err()
+        {
+            workspace.add_item(
+                Box::new(cx.build_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
+                cx,
+            );
+        }
+    }
 
     //     pub fn new_file_in_direction(
     //         workspace: &mut Workspace,
@@ -2124,17 +2124,17 @@ impl Editor {
     //         )
     //     }
 
-    //     pub fn mode(&self) -> EditorMode {
-    //         self.mode
-    //     }
+    pub fn mode(&self) -> EditorMode {
+        self.mode
+    }
 
-    //     pub fn collaboration_hub(&self) -> Option<&dyn CollaborationHub> {
-    //         self.collaboration_hub.as_deref()
-    //     }
+    pub fn collaboration_hub(&self) -> Option<&dyn CollaborationHub> {
+        self.collaboration_hub.as_deref()
+    }
 
-    //     pub fn set_collaboration_hub(&mut self, hub: Box<dyn CollaborationHub>) {
-    //         self.collaboration_hub = Some(hub);
-    //     }
+    pub fn set_collaboration_hub(&mut self, hub: Box<dyn CollaborationHub>) {
+        self.collaboration_hub = Some(hub);
+    }
 
     pub fn set_placeholder_text(
         &mut self,
@@ -9383,7 +9383,7 @@ impl Render for Editor {
                     color: cx.theme().colors().text,
                     font_family: "Zed Sans".into(), // todo!()
                     font_features: FontFeatures::default(),
-                    font_size: rems(1.0).into(),
+                    font_size: rems(0.875).into(),
                     font_weight: FontWeight::NORMAL,
                     font_style: FontStyle::Normal,
                     line_height: relative(1.3).into(), // TODO relative(settings.buffer_line_height.value()),
@@ -10056,76 +10056,76 @@ pub fn diagnostic_style(
     }
 }
 
-// pub fn combine_syntax_and_fuzzy_match_highlights(
-//     text: &str,
-//     default_style: HighlightStyle,
-//     syntax_ranges: impl Iterator<Item = (Range<usize>, HighlightStyle)>,
-//     match_indices: &[usize],
-// ) -> Vec<(Range<usize>, HighlightStyle)> {
-//     let mut result = Vec::new();
-//     let mut match_indices = match_indices.iter().copied().peekable();
+pub fn combine_syntax_and_fuzzy_match_highlights(
+    text: &str,
+    default_style: HighlightStyle,
+    syntax_ranges: impl Iterator<Item = (Range<usize>, HighlightStyle)>,
+    match_indices: &[usize],
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut result = Vec::new();
+    let mut match_indices = match_indices.iter().copied().peekable();
 
-//     for (range, mut syntax_highlight) in syntax_ranges.chain([(usize::MAX..0, Default::default())])
-//     {
-//         syntax_highlight.weight = None;
+    for (range, mut syntax_highlight) in syntax_ranges.chain([(usize::MAX..0, Default::default())])
+    {
+        syntax_highlight.font_weight = None;
 
-//         // Add highlights for any fuzzy match characters before the next
-//         // syntax highlight range.
-//         while let Some(&match_index) = match_indices.peek() {
-//             if match_index >= range.start {
-//                 break;
-//             }
-//             match_indices.next();
-//             let end_index = char_ix_after(match_index, text);
-//             let mut match_style = default_style;
-//             match_style.weight = Some(FontWeight::BOLD);
-//             result.push((match_index..end_index, match_style));
-//         }
+        // Add highlights for any fuzzy match characters before the next
+        // syntax highlight range.
+        while let Some(&match_index) = match_indices.peek() {
+            if match_index >= range.start {
+                break;
+            }
+            match_indices.next();
+            let end_index = char_ix_after(match_index, text);
+            let mut match_style = default_style;
+            match_style.font_weight = Some(FontWeight::BOLD);
+            result.push((match_index..end_index, match_style));
+        }
 
-//         if range.start == usize::MAX {
-//             break;
-//         }
+        if range.start == usize::MAX {
+            break;
+        }
 
-//         // Add highlights for any fuzzy match characters within the
-//         // syntax highlight range.
-//         let mut offset = range.start;
-//         while let Some(&match_index) = match_indices.peek() {
-//             if match_index >= range.end {
-//                 break;
-//             }
+        // Add highlights for any fuzzy match characters within the
+        // syntax highlight range.
+        let mut offset = range.start;
+        while let Some(&match_index) = match_indices.peek() {
+            if match_index >= range.end {
+                break;
+            }
 
-//             match_indices.next();
-//             if match_index > offset {
-//                 result.push((offset..match_index, syntax_highlight));
-//             }
+            match_indices.next();
+            if match_index > offset {
+                result.push((offset..match_index, syntax_highlight));
+            }
 
-//             let mut end_index = char_ix_after(match_index, text);
-//             while let Some(&next_match_index) = match_indices.peek() {
-//                 if next_match_index == end_index && next_match_index < range.end {
-//                     end_index = char_ix_after(next_match_index, text);
-//                     match_indices.next();
-//                 } else {
-//                     break;
-//                 }
-//             }
+            let mut end_index = char_ix_after(match_index, text);
+            while let Some(&next_match_index) = match_indices.peek() {
+                if next_match_index == end_index && next_match_index < range.end {
+                    end_index = char_ix_after(next_match_index, text);
+                    match_indices.next();
+                } else {
+                    break;
+                }
+            }
 
-//             let mut match_style = syntax_highlight;
-//             match_style.weight = Some(FontWeight::BOLD);
-//             result.push((match_index..end_index, match_style));
-//             offset = end_index;
-//         }
+            let mut match_style = syntax_highlight;
+            match_style.font_weight = Some(FontWeight::BOLD);
+            result.push((match_index..end_index, match_style));
+            offset = end_index;
+        }
 
-//         if offset < range.end {
-//             result.push((offset..range.end, syntax_highlight));
-//         }
-//     }
+        if offset < range.end {
+            result.push((offset..range.end, syntax_highlight));
+        }
+    }
 
-//     fn char_ix_after(ix: usize, text: &str) -> usize {
-//         ix + text[ix..].chars().next().unwrap().len_utf8()
-//     }
+    fn char_ix_after(ix: usize, text: &str) -> usize {
+        ix + text[ix..].chars().next().unwrap().len_utf8()
+    }
 
-//     result
-// }
+    result
+}
 
 // pub fn styled_runs_for_code_label<'a>(
 //     label: &'a CodeLabel,

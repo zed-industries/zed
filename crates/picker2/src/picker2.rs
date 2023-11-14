@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    div, uniform_list, Component, Div, ParentComponent, Render, Styled, Task,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WindowContext,
+    div, prelude::*, uniform_list, Component, Div, MouseButton, Render, Task,
+    UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
 use ui::{prelude::*, v_stack, Divider, Label, LabelColor};
@@ -10,7 +10,8 @@ pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
     scroll_handle: UniformListScrollHandle,
     editor: View<Editor>,
-    pending_update_matches: Option<Task<Option<()>>>,
+    pending_update_matches: Option<Task<()>>,
+    confirm_on_update: Option<bool>,
 }
 
 pub trait PickerDelegate: Sized + 'static {
@@ -42,12 +43,15 @@ impl<D: PickerDelegate> Picker<D> {
             editor
         });
         cx.subscribe(&editor, Self::on_input_editor_event).detach();
-        Self {
+        let mut this = Self {
             delegate,
+            editor,
             scroll_handle: UniformListScrollHandle::new(),
             pending_update_matches: None,
-            editor,
-        }
+            confirm_on_update: None,
+        };
+        this.update_matches("".to_string(), cx);
+        this
     }
 
     pub fn focus(&self, cx: &mut WindowContext) {
@@ -99,11 +103,26 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        self.delegate.confirm(false, cx);
+        if self.pending_update_matches.is_some() {
+            self.confirm_on_update = Some(false)
+        } else {
+            self.delegate.confirm(false, cx);
+        }
     }
 
     fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
-        self.delegate.confirm(true, cx);
+        if self.pending_update_matches.is_some() {
+            self.confirm_on_update = Some(true)
+        } else {
+            self.delegate.confirm(true, cx);
+        }
+    }
+
+    fn handle_click(&mut self, ix: usize, secondary: bool, cx: &mut ViewContext<Self>) {
+        cx.stop_propagation();
+        cx.prevent_default();
+        self.delegate.set_selected_index(ix, cx);
+        self.delegate.confirm(secondary, cx);
     }
 
     fn on_input_editor_event(
@@ -126,7 +145,7 @@ impl<D: PickerDelegate> Picker<D> {
             this.update(&mut cx, |this, cx| {
                 this.matches_updated(cx);
             })
-            .ok()
+            .ok();
         }));
     }
 
@@ -134,6 +153,9 @@ impl<D: PickerDelegate> Picker<D> {
         let index = self.delegate.selected_index();
         self.scroll_handle.scroll_to_item(index);
         self.pending_update_matches = None;
+        if let Some(secondary) = self.confirm_on_update.take() {
+            self.delegate.confirm(secondary, cx);
+        }
         cx.notify();
     }
 }
@@ -171,7 +193,22 @@ impl<D: PickerDelegate> Render for Picker<D> {
                                     let selected_ix = this.delegate.selected_index();
                                     visible_range
                                         .map(|ix| {
-                                            this.delegate.render_match(ix, ix == selected_ix, cx)
+                                            div()
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    move |this: &mut Self, event, cx| {
+                                                        this.handle_click(
+                                                            ix,
+                                                            event.modifiers.command,
+                                                            cx,
+                                                        )
+                                                    },
+                                                )
+                                                .child(this.delegate.render_match(
+                                                    ix,
+                                                    ix == selected_ix,
+                                                    cx,
+                                                ))
                                         })
                                         .collect()
                                 }
@@ -184,10 +221,11 @@ impl<D: PickerDelegate> Render for Picker<D> {
             })
             .when(self.delegate.match_count() == 0, |el| {
                 el.child(
-                    v_stack()
-                        .p_1()
-                        .grow()
-                        .child(Label::new("No matches").color(LabelColor::Muted)),
+                    v_stack().p_1().grow().child(
+                        div()
+                            .px_1()
+                            .child(Label::new("No matches").color(LabelColor::Muted)),
+                    ),
                 )
             })
     }

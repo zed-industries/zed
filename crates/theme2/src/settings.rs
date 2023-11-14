@@ -1,3 +1,4 @@
+use crate::one_themes::one_dark;
 use crate::{Theme, ThemeRegistry};
 use anyhow::Result;
 use gpui::{px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels};
@@ -129,7 +130,7 @@ impl settings::Settings for ThemeSettings {
             buffer_line_height: defaults.buffer_line_height.unwrap(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap())
-                .or(themes.get("Zed Pro Moonlight"))
+                .or(themes.get(&one_dark().name))
                 .unwrap(),
         };
 

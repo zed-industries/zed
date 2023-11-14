@@ -101,6 +101,20 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
         self
     }
 
+    fn on_any_mouse_down(
+        mut self,
+        handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + 'static,
+    ) -> Self {
+        self.interactivity().mouse_down_listeners.push(Box::new(
+            move |view, event, bounds, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                    handler(view, event, cx)
+                }
+            },
+        ));
+        self
+    }
+
     fn on_mouse_up(
         mut self,
         button: MouseButton,
@@ -112,6 +126,20 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
                     && event.button == button
                     && bounds.contains_point(&event.position)
                 {
+                    handler(view, event, cx)
+                }
+            },
+        ));
+        self
+    }
+
+    fn on_any_mouse_up(
+        mut self,
+        handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + 'static,
+    ) -> Self {
+        self.interactivity().mouse_up_listeners.push(Box::new(
+            move |view, event, bounds, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     handler(view, event, cx)
                 }
             },

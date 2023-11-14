@@ -577,18 +577,18 @@ mod tests {
         let client2 = Peer::new(0);
 
         let (client1_to_server_conn, server_to_client_1_conn, _kill) =
-            Connection::in_memory(cx.executor().clone());
+            Connection::in_memory(cx.executor());
         let (client1_conn_id, io_task1, client1_incoming) =
-            client1.add_test_connection(client1_to_server_conn, cx.executor().clone());
+            client1.add_test_connection(client1_to_server_conn, cx.executor());
         let (_, io_task2, server_incoming1) =
-            server.add_test_connection(server_to_client_1_conn, cx.executor().clone());
+            server.add_test_connection(server_to_client_1_conn, cx.executor());
 
         let (client2_to_server_conn, server_to_client_2_conn, _kill) =
-            Connection::in_memory(cx.executor().clone());
+            Connection::in_memory(cx.executor());
         let (client2_conn_id, io_task3, client2_incoming) =
-            client2.add_test_connection(client2_to_server_conn, cx.executor().clone());
+            client2.add_test_connection(client2_to_server_conn, cx.executor());
         let (_, io_task4, server_incoming2) =
-            server.add_test_connection(server_to_client_2_conn, cx.executor().clone());
+            server.add_test_connection(server_to_client_2_conn, cx.executor());
 
         executor.spawn(io_task1).detach();
         executor.spawn(io_task2).detach();
@@ -763,16 +763,16 @@ mod tests {
 
     #[gpui::test(iterations = 50)]
     async fn test_dropping_request_before_completion(cx: &mut TestAppContext) {
-        let executor = cx.executor().clone();
+        let executor = cx.executor();
         let server = Peer::new(0);
         let client = Peer::new(0);
 
         let (client_to_server_conn, server_to_client_conn, _kill) =
-            Connection::in_memory(cx.executor().clone());
+            Connection::in_memory(cx.executor());
         let (client_to_server_conn_id, io_task1, mut client_incoming) =
-            client.add_test_connection(client_to_server_conn, cx.executor().clone());
+            client.add_test_connection(client_to_server_conn, cx.executor());
         let (server_to_client_conn_id, io_task2, mut server_incoming) =
-            server.add_test_connection(server_to_client_conn, cx.executor().clone());
+            server.add_test_connection(server_to_client_conn, cx.executor());
 
         executor.spawn(io_task1).detach();
         executor.spawn(io_task2).detach();

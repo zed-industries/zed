@@ -1012,6 +1012,29 @@ impl Context for AppContext {
         let entity = self.entities.read(handle);
         read(entity, self)
     }
+
+    fn read_window<T, R>(
+        &self,
+        window: &WindowHandle<T>,
+        read: impl FnOnce(View<T>, &AppContext) -> R,
+    ) -> Result<R>
+    where
+        T: 'static,
+    {
+        let window = self
+            .windows
+            .get(window.id)
+            .ok_or_else(|| anyhow!("window not found"))?
+            .as_ref()
+            .unwrap();
+
+        let root_view = window.root_view.clone().unwrap();
+        let view = root_view
+            .downcast::<T>()
+            .map_err(|_| anyhow!("root view's type has changed"))?;
+
+        Ok(read(view, self))
+    }
 }
 
 /// These effects are processed at the end of each application update cycle.

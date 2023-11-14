@@ -351,28 +351,29 @@ impl Copilot {
         }
     }
 
-    // #[cfg(any(test, feature = "test-support"))]
-    // pub fn fake(cx: &mut gpui::TestAppContext) -> (ModelHandle<Self>, lsp::FakeLanguageServer) {
-    //     use node_runtime::FakeNodeRuntime;
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake(cx: &mut gpui::TestAppContext) -> (Model<Self>, lsp::FakeLanguageServer) {
+        use node_runtime::FakeNodeRuntime;
 
-    //     let (server, fake_server) =
-    //         LanguageServer::fake("copilot".into(), Default::default(), cx.to_async());
-    //     let http = util::http::FakeHttpClient::create(|_| async { unreachable!() });
-    //     let node_runtime = FakeNodeRuntime::new();
-    //     let this = cx.add_model(|_| Self {
-    //         server_id: LanguageServerId(0),
-    //         http: http.clone(),
-    //         node_runtime,
-    //         server: CopilotServer::Running(RunningCopilotServer {
-    //             name: LanguageServerName(Arc::from("copilot")),
-    //             lsp: Arc::new(server),
-    //             sign_in_status: SignInStatus::Authorized,
-    //             registered_buffers: Default::default(),
-    //         }),
-    //         buffers: Default::default(),
-    //     });
-    //     (this, fake_server)
-    // }
+        let (server, fake_server) =
+            LanguageServer::fake("copilot".into(), Default::default(), cx.to_async());
+        let http = util::http::FakeHttpClient::create(|_| async { unreachable!() });
+        let node_runtime = FakeNodeRuntime::new();
+        let this = cx.build_model(|cx| Self {
+            server_id: LanguageServerId(0),
+            http: http.clone(),
+            node_runtime,
+            server: CopilotServer::Running(RunningCopilotServer {
+                name: LanguageServerName(Arc::from("copilot")),
+                lsp: Arc::new(server),
+                sign_in_status: SignInStatus::Authorized,
+                registered_buffers: Default::default(),
+            }),
+            _subscription: cx.on_app_quit(Self::shutdown_language_server),
+            buffers: Default::default(),
+        });
+        (this, fake_server)
+    }
 
     fn start_language_server(
         new_server_id: LanguageServerId,

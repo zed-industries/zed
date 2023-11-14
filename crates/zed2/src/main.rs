@@ -9,6 +9,7 @@ use backtrace::Backtrace;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::UserStore;
 use db::kvp::KEY_VALUE_STORE;
+use editor::Editor;
 use fs::RealFs;
 use futures::StreamExt;
 use gpui::{Action, App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
@@ -56,10 +57,7 @@ use zed2::{
 mod open_listener;
 
 fn main() {
-    //TODO!(figure out what the linker issues are here)
-    // https://github.com/rust-lang/rust/issues/47384
-    // https://github.com/mmastrac/rust-ctor/issues/280
-    menu::unused();
+    menu::init();
     let http = http::client();
     init_paths();
     init_logger();
@@ -357,8 +355,7 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
         } else {
             cx.update(|cx| {
                 workspace::open_new(app_state, cx, |workspace, cx| {
-                    // todo!(editor)
-                    // Editor::new_file(workspace, &Default::default(), cx)
+                    Editor::new_file(workspace, &Default::default(), cx)
                 })
                 .detach();
             })?;
