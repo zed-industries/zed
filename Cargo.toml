@@ -154,13 +154,13 @@ tempdir = { version = "0.3.7" }
 thiserror = { version = "1.0.29" }
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
 toml = { version = "0.5" }
+tiktoken-rs = "0.5.7"
 tree-sitter = "0.20"
 unindent = { version = "0.1.7" }
 pretty_assertions = "1.3.0"
 git2 = { version = "0.15", default-features = false}
 uuid = { version = "1.1.2", features = ["v4"] }
 
-tiktoken-rs = { git = "https://github.com/zurawiki/tiktoken-rs", rev="6fd80d41d5c31e256cd760b52cd0257586033eb2" }
 tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "7331995b19b8f8aba2d5e26deb51d2195c18bc94" }
 tree-sitter-c = "0.20.1"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev="f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
