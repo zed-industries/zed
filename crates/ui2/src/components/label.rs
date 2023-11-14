@@ -3,6 +3,13 @@ use gpui::{relative, Hsla, Text, TextRun, WindowContext};
 use crate::prelude::*;
 use crate::styled_ext::StyledExt;
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+pub enum LabelSize {
+    #[default]
+    Default,
+    Small,
+}
+
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum LabelColor {
     #[default]
@@ -56,6 +63,7 @@ pub enum LineHeightStyle {
 #[derive(Component)]
 pub struct Label {
     label: SharedString,
+    size: LabelSize,
     line_height_style: LineHeightStyle,
     color: LabelColor,
     strikethrough: bool,
@@ -65,10 +73,16 @@ impl Label {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
+            size: LabelSize::Default,
             line_height_style: LineHeightStyle::default(),
             color: LabelColor::Default,
             strikethrough: false,
         }
+    }
+
+    pub fn size(mut self, size: LabelSize) -> Self {
+        self.size = size;
+        self
     }
 
     pub fn color(mut self, color: LabelColor) -> Self {
@@ -98,7 +112,10 @@ impl Label {
                         .bg(LabelColor::Hidden.hsla(cx)),
                 )
             })
-            .text_ui()
+            .map(|this| match self.size {
+                LabelSize::Default => this.text_ui(),
+                LabelSize::Small => this.text_ui_sm(),
+            })
             .when(self.line_height_style == LineHeightStyle::UILabel, |this| {
                 this.line_height(relative(1.))
             })
@@ -110,6 +127,7 @@ impl Label {
 #[derive(Component)]
 pub struct HighlightedLabel {
     label: SharedString,
+    size: LabelSize,
     color: LabelColor,
     highlight_indices: Vec<usize>,
     strikethrough: bool,
@@ -121,10 +139,16 @@ impl HighlightedLabel {
     pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
         Self {
             label: label.into(),
+            size: LabelSize::Default,
             color: LabelColor::Default,
             highlight_indices,
             strikethrough: false,
         }
+    }
+
+    pub fn size(mut self, size: LabelSize) -> Self {
+        self.size = size;
+        self
     }
 
     pub fn color(mut self, color: LabelColor) -> Self {
@@ -185,6 +209,10 @@ impl HighlightedLabel {
                         .h_px()
                         .bg(LabelColor::Hidden.hsla(cx)),
                 )
+            })
+            .map(|this| match self.size {
+                LabelSize::Default => this.text_ui(),
+                LabelSize::Small => this.text_ui_sm(),
             })
             .child(Text::styled(self.label, runs))
     }

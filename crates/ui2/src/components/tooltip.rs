@@ -1,8 +1,8 @@
 use gpui::{Div, Render};
 use theme2::ActiveTheme;
 
-use crate::prelude::*;
 use crate::{h_stack, v_stack, KeyBinding, Label, LabelColor, StyledExt};
+use crate::{prelude::*, LabelSize};
 
 pub struct TextTooltip {
     title: SharedString,
@@ -49,7 +49,11 @@ impl Render for TextTooltip {
                     }),
             )
             .when_some(self.meta.clone(), |this, meta| {
-                this.child(Label::new(meta).color(LabelColor::Muted))
+                this.child(
+                    Label::new(meta)
+                        .size(LabelSize::Small)
+                        .color(LabelColor::Muted),
+                )
             })
     }
 }
