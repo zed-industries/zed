@@ -431,6 +431,18 @@ impl AppContext {
         self.platform.activate(ignoring_other_apps);
     }
 
+    pub fn hide(&self) {
+        self.platform.hide();
+    }
+
+    pub fn hide_other_apps(&self) {
+        self.platform.hide_other_apps();
+    }
+
+    pub fn unhide_other_apps(&self) {
+        self.platform.unhide_other_apps();
+    }
+
     /// Returns the list of currently active displays.
     pub fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.platform.displays()

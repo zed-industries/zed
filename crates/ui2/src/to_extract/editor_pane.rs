@@ -5,7 +5,7 @@ use gpui::{Div, Render, View, VisualContext};
 use crate::prelude::*;
 use crate::{
     hello_world_rust_editor_with_status_example, v_stack, Breadcrumb, Buffer, BufferSearch, Icon,
-    IconButton, IconColor, Symbol, Tab, TabBar, Toolbar,
+    IconButton, Symbol, Tab, TabBar, TextColor, Toolbar,
 };
 
 #[derive(Clone)]
@@ -60,12 +60,12 @@ impl Render for EditorPane {
                 Toolbar::new()
                     .left_item(Breadcrumb::new(self.path.clone(), self.symbols.clone()))
                     .right_items(vec![
-                        IconButton::new("toggle_inlay_hints", Icon::InlayHint),
+                        IconButton::<Self>::new("toggle_inlay_hints", Icon::InlayHint),
                         IconButton::<Self>::new("buffer_search", Icon::MagnifyingGlass)
                             .when(self.is_buffer_search_open, |this| {
-                                this.color(IconColor::Accent)
+                                this.color(TextColor::Accent)
                             })
-                            .on_click(|editor, cx| {
+                            .on_click(|editor: &mut Self, cx| {
                                 editor.toggle_buffer_search(cx);
                             }),
                         IconButton::new("inline_assist", Icon::MagicWand),

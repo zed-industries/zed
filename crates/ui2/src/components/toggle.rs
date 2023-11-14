@@ -1,6 +1,6 @@
 use gpui::{div, Component, ParentComponent};
 
-use crate::{Icon, IconColor, IconElement, IconSize};
+use crate::{Icon, IconElement, IconSize, TextColor};
 
 /// Whether the entry is toggleable, and if so, whether it is currently toggled.
 ///
@@ -49,12 +49,12 @@ pub fn disclosure_control<V: 'static>(toggle: Toggle) -> impl Component<V> {
         (false, _) => div(),
         (_, true) => div().child(
             IconElement::new(Icon::ChevronDown)
-                .color(IconColor::Muted)
+                .color(TextColor::Muted)
                 .size(IconSize::Small),
         ),
         (_, false) => div().child(
             IconElement::new(Icon::ChevronRight)
-                .color(IconColor::Muted)
+                .color(TextColor::Muted)
                 .size(IconSize::Small),
         ),
     }

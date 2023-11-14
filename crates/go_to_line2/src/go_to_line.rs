@@ -5,7 +5,7 @@ use gpui::{
 };
 use text::{Bias, Point};
 use theme::ActiveTheme;
-use ui::{h_stack, v_stack, Label, LabelColor, StyledExt};
+use ui::{h_stack, v_stack, Label, StyledExt, TextColor};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{Modal, ModalEvent, Workspace};
 
@@ -176,7 +176,7 @@ impl Render for GoToLine {
                             .justify_between()
                             .px_2()
                             .py_1()
-                            .child(Label::new(self.current_text.clone()).color(LabelColor::Muted)),
+                            .child(Label::new(self.current_text.clone()).color(TextColor::Muted)),
                     ),
             )
     }
