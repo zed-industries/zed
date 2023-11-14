@@ -22,7 +22,10 @@ use futures::{
 };
 use fuzzy::CharBag;
 use git::{DOT_GIT, GITIGNORE};
-use gpui::{executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
+use gpui::{
+    executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Subscription, Task,
+};
+use itertools::Itertools;
 use language::{
     proto::{
         deserialize_fingerprint, deserialize_version, serialize_fingerprint, serialize_line_ending,
@@ -37,6 +40,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
+use settings::SettingsStore;
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
@@ -74,7 +78,8 @@ pub struct LocalWorktree {
     scan_requests_tx: channel::Sender<ScanRequest>,
     path_prefixes_to_scan_tx: channel::Sender<Arc<Path>>,
     is_scanning: (watch::Sender<bool>, watch::Receiver<bool>),
-    _background_scanner_task: Task<()>,
+    _settings_subscription: Subscription,
+    _background_scanner_tasks: Vec<Task<()>>,
     share: Option<ShareState>,
     diagnostics: HashMap<
         Arc<Path>,
@@ -304,30 +309,55 @@ impl Worktree {
             .await
             .context("failed to stat worktree path")?;
 
+        let closure_fs = Arc::clone(&fs);
+        let closure_next_entry_id = Arc::clone(&next_entry_id);
+        let closure_abs_path = abs_path.to_path_buf();
         Ok(cx.add_model(move |cx: &mut ModelContext<Worktree>| {
+            let settings_subscription = cx.observe_global::<SettingsStore, _>(move |this, cx| {
+                if let Self::Local(this) = this {
+                    let new_scan_exclude_files =
+                        scan_exclude_files(settings::get::<ProjectSettings>(cx));
+                    if new_scan_exclude_files != this.snapshot.scan_exclude_files {
+                        this.snapshot.scan_exclude_files = new_scan_exclude_files;
+                        log::info!(
+                            "Re-scanning due to new scan exclude files: {:?}",
+                            this.snapshot
+                                .scan_exclude_files
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                        );
+
+                        let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
+                        let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) =
+                            channel::unbounded();
+                        this.scan_requests_tx = scan_requests_tx;
+                        this.path_prefixes_to_scan_tx = path_prefixes_to_scan_tx;
+                        this._background_scanner_tasks = start_background_scan_tasks(
+                            &closure_abs_path,
+                            this.snapshot(),
+                            scan_requests_rx,
+                            path_prefixes_to_scan_rx,
+                            Arc::clone(&closure_next_entry_id),
+                            Arc::clone(&closure_fs),
+                            cx,
+                        );
+                        this.is_scanning = watch::channel_with(true);
+                        // TODO kb change more state? will this even work now?
+                    }
+                }
+            });
+
             let root_name = abs_path
                 .file_name()
                 .map_or(String::new(), |f| f.to_string_lossy().to_string());
-            let project_settings = settings::get::<ProjectSettings>(cx);
-            let scan_exclude_files = project_settings.scan_exclude_files.iter()
-            .filter_map(|pattern| {
-                PathMatcher::new(pattern)
-                    .map(Some)
-                    .unwrap_or_else(|e| {
-                        log::error!(
-                            "Skipping pattern {pattern} in `scan_exclude_files` project settings due to parsing error: {e:#}"
-                        );
-                        None
-                    })
-            })
-            .collect::<Vec<_>>();
             let mut snapshot = LocalSnapshot {
-                scan_exclude_files,
+                scan_exclude_files: scan_exclude_files(settings::get::<ProjectSettings>(cx)),
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot {
                     id: WorktreeId::from_usize(cx.model_id()),
-                    abs_path: abs_path.clone(),
+                    abs_path: abs_path.to_path_buf().into(),
                     root_name: root_name.clone(),
                     root_char_bag: root_name.chars().map(|c| c.to_ascii_lowercase()).collect(),
                     entries_by_path: Default::default(),
@@ -352,60 +382,23 @@ impl Worktree {
 
             let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
             let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
-            let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
-
-            cx.spawn_weak(|this, mut cx| async move {
-                while let Some((state, this)) = scan_states_rx.next().await.zip(this.upgrade(&cx)) {
-                    this.update(&mut cx, |this, cx| {
-                        let this = this.as_local_mut().unwrap();
-                        match state {
-                            ScanState::Started => {
-                                *this.is_scanning.0.borrow_mut() = true;
-                            }
-                            ScanState::Updated {
-                                snapshot,
-                                changes,
-                                barrier,
-                                scanning,
-                            } => {
-                                *this.is_scanning.0.borrow_mut() = scanning;
-                                this.set_snapshot(snapshot, changes, cx);
-                                drop(barrier);
-                            }
-                        }
-                        cx.notify();
-                    });
-                }
-            })
-            .detach();
-
-            let background_scanner_task = cx.background().spawn({
-                let fs = fs.clone();
-                let snapshot = snapshot.clone();
-                let background = cx.background().clone();
-                async move {
-                    let events = fs.watch(&abs_path, Duration::from_millis(100)).await;
-                    BackgroundScanner::new(
-                        snapshot,
-                        next_entry_id,
-                        fs,
-                        scan_states_tx,
-                        background,
-                        scan_requests_rx,
-                        path_prefixes_to_scan_rx,
-                    )
-                    .run(events)
-                    .await;
-                }
-            });
-
+            let task_snapshot = snapshot.clone();
             Worktree::Local(LocalWorktree {
                 snapshot,
                 is_scanning: watch::channel_with(true),
                 share: None,
                 scan_requests_tx,
                 path_prefixes_to_scan_tx,
-                _background_scanner_task: background_scanner_task,
+                _settings_subscription: settings_subscription,
+                _background_scanner_tasks: start_background_scan_tasks(
+                    &abs_path,
+                    task_snapshot,
+                    scan_requests_rx,
+                    path_prefixes_to_scan_rx,
+                    Arc::clone(&next_entry_id),
+                    Arc::clone(&fs),
+                    cx,
+                ),
                 diagnostics: Default::default(),
                 diagnostic_summaries: Default::default(),
                 client,
@@ -600,6 +593,76 @@ impl Worktree {
         let entry = self.root_entry()?;
         Some(File::for_entry(entry.clone(), cx.handle()))
     }
+}
+
+fn start_background_scan_tasks(
+    abs_path: &Path,
+    snapshot: LocalSnapshot,
+    scan_requests_rx: channel::Receiver<ScanRequest>,
+    path_prefixes_to_scan_rx: channel::Receiver<Arc<Path>>,
+    next_entry_id: Arc<AtomicUsize>,
+    fs: Arc<dyn Fs>,
+    cx: &mut ModelContext<'_, Worktree>,
+) -> Vec<Task<()>> {
+    let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
+    let background_scanner = cx.background().spawn({
+        let abs_path = abs_path.to_path_buf();
+        let background = cx.background().clone();
+        async move {
+            let events = fs.watch(&abs_path, Duration::from_millis(100)).await;
+            BackgroundScanner::new(
+                snapshot,
+                next_entry_id,
+                fs,
+                scan_states_tx,
+                background,
+                scan_requests_rx,
+                path_prefixes_to_scan_rx,
+            )
+            .run(events)
+            .await;
+        }
+    });
+    let scan_state_updater = cx.spawn_weak(|this, mut cx| async move {
+        while let Some((state, this)) = scan_states_rx.next().await.zip(this.upgrade(&cx)) {
+            this.update(&mut cx, |this, cx| {
+                let this = this.as_local_mut().unwrap();
+                match state {
+                    ScanState::Started => {
+                        *this.is_scanning.0.borrow_mut() = true;
+                    }
+                    ScanState::Updated {
+                        snapshot,
+                        changes,
+                        barrier,
+                        scanning,
+                    } => {
+                        *this.is_scanning.0.borrow_mut() = scanning;
+                        this.set_snapshot(snapshot, changes, cx);
+                        drop(barrier);
+                    }
+                }
+                cx.notify();
+            });
+        }
+    });
+    vec![background_scanner, scan_state_updater]
+}
+
+fn scan_exclude_files(project_settings: &ProjectSettings) -> Vec<PathMatcher> {
+    project_settings.scan_exclude_files.iter()
+    .sorted()
+    .filter_map(|pattern| {
+        PathMatcher::new(pattern)
+            .map(Some)
+            .unwrap_or_else(|e| {
+                log::error!(
+                    "Skipping pattern {pattern} in `scan_exclude_files` project settings due to parsing error: {e:#}"
+                );
+                None
+            })
+    })
+    .collect()
 }
 
 impl LocalWorktree {

@@ -11,7 +11,6 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub git: GitSettings,
     // TODO kb better names and docs and tests
-    // TODO kb how to react on their changes?
     #[serde(default)]
     pub scan_exclude_files: Vec<String>,
 }

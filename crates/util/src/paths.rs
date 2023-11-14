@@ -202,6 +202,14 @@ impl std::fmt::Display for PathMatcher {
     }
 }
 
+impl PartialEq for PathMatcher {
+    fn eq(&self, other: &Self) -> bool {
+        self.maybe_path.eq(&other.maybe_path)
+    }
+}
+
+impl Eq for PathMatcher {}
+
 impl PathMatcher {
     pub fn new(maybe_glob: &str) -> Result<Self, globset::Error> {
         Ok(PathMatcher {
