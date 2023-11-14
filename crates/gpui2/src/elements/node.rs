@@ -1,6 +1,6 @@
 use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
-    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, FocusHandle, KeyContext,
+    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, KeyContext,
     KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled,
     Task, View, ViewContext, Visibility,
@@ -550,8 +550,8 @@ impl<V: 'static> InteractiveComponent<V> for Node<V> {
 impl<V: 'static> Element<V> for Node<V> {
     type ElementState = NodeState;
 
-    fn id(&self) -> Option<crate::ElementId> {
-        None
+    fn id(&self) -> Option<ElementId> {
+        self.interactivity.element_id.clone()
     }
 
     fn initialize(
@@ -560,13 +560,12 @@ impl<V: 'static> Element<V> for Node<V> {
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
-        let interactive_state =
-            self.interactivity
-                .initialize(element_state.map(|s| s.interactive_state), cx, |cx| {
-                    for child in &mut self.children {
-                        child.initialize(view_state, cx);
-                    }
-                });
+        let interactive_state = self
+            .interactivity
+            .initialize(element_state.map(|s| s.interactive_state), cx);
+        for child in &mut self.children {
+            child.initialize(view_state, cx);
+        }
 
         NodeState {
             interactive_state,
@@ -656,13 +655,8 @@ pub struct NodeState {
     interactive_state: InteractiveElementState,
 }
 
-impl AsMut<InteractiveElementState> for InteractiveElementState {
-    fn as_mut(&mut self) -> &mut InteractiveElementState {
-        self
-    }
-}
-
 pub struct Interactivity<V> {
+    element_id: Option<ElementId>,
     key_context: KeyContext,
     tracked_focus_handle: Option<FocusHandle>,
     focusable: bool,
@@ -700,9 +694,9 @@ where
         &mut self,
         element_state: Option<InteractiveElementState>,
         cx: &mut ViewContext<V>,
-        f: impl FnOnce(&mut ViewContext<V>),
     ) -> InteractiveElementState {
         let mut element_state = element_state.unwrap_or_default();
+
         // Ensure we store a focus handle in our element state if we're focusable.
         // If there's an explicit focus handle we're tracking, use that. Otherwise
         // create a new handle and store it in the element state, which lives for as
@@ -724,11 +718,13 @@ where
         f: impl FnOnce(Style, &mut ViewContext<V>) -> LayoutId,
     ) -> LayoutId {
         let style = self.compute_style(None, element_state, cx);
-        cx.with_key_dispatch(
-            self.key_context.clone(),
-            self.tracked_focus_handle.clone(),
-            |_, cx| f(style, cx),
-        )
+        cx.with_element_id(self.element_id.clone(), |cx| {
+            cx.with_key_dispatch(
+                self.key_context.clone(),
+                self.tracked_focus_handle.clone(),
+                |_, cx| f(style, cx),
+            )
+        })
     }
 
     fn paint(
@@ -1008,31 +1004,31 @@ where
             GroupBounds::push(group, bounds, cx);
         }
 
-        todo!();
-        // cx.with_element_id(self.i, f);
-        cx.with_key_dispatch(
-            self.key_context.clone(),
-            self.tracked_focus_handle.clone(),
-            |_, cx| {
-                for listener in self.key_down_listeners.drain(..) {
-                    cx.on_key_event(move |state, event: &KeyDownEvent, phase, cx| {
-                        listener(state, event, phase, cx);
-                    })
-                }
+        cx.with_element_id(self.element_id.clone(), |cx| {
+            cx.with_key_dispatch(
+                self.key_context.clone(),
+                self.tracked_focus_handle.clone(),
+                |_, cx| {
+                    for listener in self.key_down_listeners.drain(..) {
+                        cx.on_key_event(move |state, event: &KeyDownEvent, phase, cx| {
+                            listener(state, event, phase, cx);
+                        })
+                    }
 
-                for listener in self.key_up_listeners.drain(..) {
-                    cx.on_key_event(move |state, event: &KeyUpEvent, phase, cx| {
-                        listener(state, event, phase, cx);
-                    })
-                }
+                    for listener in self.key_up_listeners.drain(..) {
+                        cx.on_key_event(move |state, event: &KeyUpEvent, phase, cx| {
+                            listener(state, event, phase, cx);
+                        })
+                    }
 
-                for (action_type, listener) in self.action_listeners.drain(..) {
-                    cx.on_action(action_type, listener)
-                }
+                    for (action_type, listener) in self.action_listeners.drain(..) {
+                        cx.on_action(action_type, listener)
+                    }
 
-                f(style, self.scroll_offset, cx)
-            },
-        );
+                    f(style, self.scroll_offset, cx)
+                },
+            );
+        });
 
         if let Some(group) = self.group.as_ref() {
             GroupBounds::pop(group, cx);
@@ -1116,6 +1112,7 @@ where
 impl<V: 'static> Default for Interactivity<V> {
     fn default() -> Self {
         Self {
+            element_id: None,
             key_context: KeyContext::default(),
             tracked_focus_handle: None,
             scroll_offset: Point::default(),
@@ -1243,7 +1240,7 @@ where
 {
     type ElementState = E::ElementState;
 
-    fn id(&self) -> Option<crate::ElementId> {
+    fn id(&self) -> Option<ElementId> {
         self.element.id()
     }
 
@@ -1313,7 +1310,7 @@ where
 {
     type ElementState = E::ElementState;
 
-    fn id(&self) -> Option<crate::ElementId> {
+    fn id(&self) -> Option<ElementId> {
         self.element.id()
     }
 
