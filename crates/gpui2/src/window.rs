@@ -1067,7 +1067,7 @@ impl<'a> WindowContext<'a> {
         if let Some(active_drag) = self.app.active_drag.take() {
             self.with_z_index(1, |cx| {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
-                cx.with_element_offset(Some(offset), |cx| {
+                cx.with_element_offset(offset, |cx| {
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                     active_drag.view.draw(available_space, cx);
@@ -1076,7 +1076,7 @@ impl<'a> WindowContext<'a> {
             });
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
             self.with_z_index(1, |cx| {
-                cx.with_element_offset(Some(active_tooltip.cursor_offset), |cx| {
+                cx.with_element_offset(active_tooltip.cursor_offset, |cx| {
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                     active_tooltip.view.draw(available_space, cx);
@@ -1553,43 +1553,26 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     /// with the current mask.
     fn with_content_mask<R>(
         &mut self,
-        mask: ContentMask<Pixels>,
+        mask: Option<ContentMask<Pixels>>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let mask = mask.intersect(&self.content_mask());
-        self.window_mut()
-            .current_frame
-            .content_mask_stack
-            .push(mask);
-        let result = f(self);
-        self.window_mut().current_frame.content_mask_stack.pop();
-        result
+        if let Some(mask) = mask {
+            let mask = mask.intersect(&self.content_mask());
+            self.window_mut()
+                .current_frame
+                .content_mask_stack
+                .push(mask);
+            let result = f(self);
+            self.window_mut().current_frame.content_mask_stack.pop();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// Update the global element offset based on the given offset. This is used to implement
     /// scrolling and position drag handles.
     fn with_element_offset<R>(
-        &mut self,
-        offset: Option<Point<Pixels>>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        let Some(offset) = offset else {
-            return f(self);
-        };
-
-        let offset = self.element_offset() + offset;
-        self.window_mut()
-            .current_frame
-            .element_offset_stack
-            .push(offset);
-        let result = f(self);
-        self.window_mut().current_frame.element_offset_stack.pop();
-        result
-    }
-
-    /// Update the global element offset based on the given offset. This is used to implement
-    /// scrolling and position drag handles.
-    fn with_element_offset2<R>(
         &mut self,
         offset: Point<Pixels>,
         f: impl FnOnce(&mut Self) -> R,

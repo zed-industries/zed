@@ -252,7 +252,7 @@ where
         cx: &mut ViewContext<V>,
     ) -> LayoutId {
         let style = self.compute_style(Bounds::default(), element_state, cx);
-        style.with_text_style(cx, |cx| {
+        style.apply_text_style(cx, |cx| {
             self.with_element_id(cx, |this, _global_id, cx| {
                 let layout_ids = this
                     .children
@@ -318,10 +318,10 @@ where
                     );
                 });
                 cx.with_z_index(1, |cx| {
-                    style.with_text_style(cx, |cx| {
+                    style.apply_text_style(cx, |cx| {
                         style.apply_overflow(bounds, cx, |cx| {
                             let scroll_offset = element_state.interactive.scroll_offset();
-                            cx.with_element_offset(scroll_offset, |cx| {
+                            cx.with_element_offset(scroll_offset.unwrap_or_default(), |cx| {
                                 for child in &mut this.children {
                                     child.paint(view_state, cx);
                                 }

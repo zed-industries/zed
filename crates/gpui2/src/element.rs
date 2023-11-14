@@ -255,7 +255,7 @@ where
         // Ignore the element offset when drawing this element, as the origin is already specified
         // in absolute terms.
         origin -= cx.element_offset();
-        cx.with_element_offset(Some(origin), |cx| self.paint(view_state, cx))
+        cx.with_element_offset(origin, |cx| self.paint(view_state, cx))
     }
 }
 

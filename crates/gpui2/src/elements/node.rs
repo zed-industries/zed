@@ -1,10 +1,12 @@
 use crate::{
-    point, Action, AnyDrag, AnyElement, AnyView, AppContext, BorrowWindow, Bounds, ClickEvent,
-    DispatchPhase, Element, FocusHandle, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render,
-    ScrollWheelEvent, SharedString, Style, StyleRefinement, Styled, View, ViewContext, Visibility,
+    point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
+    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, FocusHandle, KeyContext,
+    KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled,
+    Task, View, ViewContext, Visibility,
 };
 use collections::HashMap;
+use parking_lot::Mutex;
 use refineable::Refineable;
 use smallvec::SmallVec;
 use std::{
@@ -12,14 +14,20 @@ use std::{
     marker::PhantomData,
     mem,
     sync::Arc,
+    time::Duration,
 };
+use taffy::style::Overflow;
+
+const DRAG_THRESHOLD: f64 = 2.;
+const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
+const TOOLTIP_OFFSET: Point<Pixels> = Point::new(px(10.0), px(8.0));
 
 pub struct GroupStyle {
     pub group: SharedString,
     pub style: StyleRefinement,
 }
 
-pub trait InteractiveComponent<V: 'static> {
+pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
     fn interactivity(&mut self) -> &mut Interactivity<V>;
 
     fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
@@ -274,7 +282,7 @@ pub trait InteractiveComponent<V: 'static> {
     }
 }
 
-pub trait StatefulInteractiveComponent<V: 'static>: InteractiveComponent<V> {
+pub trait StatefulInteractiveComponent<V: 'static, E: Element<V>>: InteractiveComponent<V> {
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
@@ -541,6 +549,13 @@ impl<V: 'static> InteractiveComponent<V> for Node<V> {
 
 pub struct NodeState {
     child_layout_ids: SmallVec<[LayoutId; 4]>,
+    interactive_state: InteractiveElementState,
+}
+
+impl AsMut<InteractiveElementState> for InteractiveElementState {
+    fn as_mut(&mut self) -> &mut InteractiveElementState {
+        self
+    }
 }
 
 impl<V: 'static> Element<V> for Node<V> {
@@ -553,7 +568,7 @@ impl<V: 'static> Element<V> for Node<V> {
     fn initialize(
         &mut self,
         view_state: &mut V,
-        _: Option<Self::ElementState>,
+        previous_element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
         for child in &mut self.children {
@@ -561,6 +576,9 @@ impl<V: 'static> Element<V> for Node<V> {
         }
         NodeState {
             child_layout_ids: SmallVec::new(),
+            interactive_state: previous_element_state
+                .map(|s| s.interactive_state)
+                .unwrap_or_default(),
         }
     }
 
@@ -570,15 +588,20 @@ impl<V: 'static> Element<V> for Node<V> {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) -> crate::LayoutId {
-        let style = self.interactivity().compute_style(None, cx);
-        style.with_text_style(cx, |cx| {
-            element_state.child_layout_ids = self
-                .children
-                .iter_mut()
-                .map(|child| child.layout(view_state, cx))
-                .collect::<SmallVec<_>>();
-            cx.request_layout(&style, element_state.child_layout_ids.iter().copied())
-        })
+        let mut interactivity = mem::take(&mut self.interactivity);
+        let layout_id =
+            interactivity.layout(&mut element_state.interactive_state, cx, |style, cx| {
+                cx.with_text_style(style.text_style().cloned(), |cx| {
+                    element_state.child_layout_ids = self
+                        .children
+                        .iter_mut()
+                        .map(|child| child.layout(view_state, cx))
+                        .collect::<SmallVec<_>>();
+                    cx.request_layout(&style, element_state.child_layout_ids.iter().copied())
+                })
+            });
+        self.interactivity = interactivity;
+        layout_id
     }
 
     fn paint(
@@ -588,27 +611,10 @@ impl<V: 'static> Element<V> for Node<V> {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) {
-        let style = self.interactivity.compute_style(Some(bounds), cx);
-        if style.visibility == Visibility::Hidden {
-            return;
-        }
-
-        if let Some(mouse_cursor) = style.mouse_cursor {
-            let hovered = bounds.contains_point(&cx.mouse_position());
-            if hovered {
-                cx.set_cursor_style(mouse_cursor);
-            }
-        }
-
-        if let Some(group) = self.interactivity.group.clone() {
-            GroupBounds::push(group, bounds, cx);
-        }
-
-        let z_index = style.z_index.unwrap_or(0);
+        let mut interactivity = mem::take(&mut self.interactivity);
 
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
-
         let content_size = if element_state.child_layout_ids.is_empty() {
             bounds.size
         } else {
@@ -620,35 +626,41 @@ impl<V: 'static> Element<V> for Node<V> {
             (child_max - child_min).into()
         };
 
-        let mut interactivity = mem::take(&mut self.interactivity);
-        interactivity.paint(bounds, cx, |cx| {
-            cx.with_z_index(z_index, |cx| {
-                cx.with_z_index(0, |cx| {
-                    style.paint(bounds, cx);
-                });
-                cx.with_z_index(1, |cx| {
-                    style.with_text_style(cx, |cx| {
-                        style.apply_overflow(bounds, cx, |cx| {
-                            let scroll_offset = self.interactivity.scroll_offset;
-                            cx.with_element_offset2(scroll_offset, |cx| {
-                                for child in &mut self.children {
-                                    child.paint(view_state, cx);
-                                }
-                            });
+        interactivity.paint(
+            bounds,
+            content_size,
+            &mut element_state.interactive_state,
+            cx,
+            |style, scroll_offset, cx| {
+                if style.visibility == Visibility::Hidden {
+                    return;
+                }
+
+                let z_index = style.z_index.unwrap_or(0);
+
+                cx.with_z_index(z_index, |cx| {
+                    cx.with_z_index(0, |cx| {
+                        style.paint(bounds, cx);
+                    });
+                    cx.with_z_index(1, |cx| {
+                        cx.with_text_style(style.text_style().cloned(), |cx| {
+                            cx.with_content_mask(style.overflow_mask(bounds), |cx| {
+                                cx.with_element_offset(scroll_offset, |cx| {
+                                    for child in &mut self.children {
+                                        child.paint(view_state, cx);
+                                    }
+                                })
+                            })
                         })
                     })
-                });
-            });
-        });
+                })
+            },
+        );
         self.interactivity = interactivity;
-
-        if let Some(group) = self.interactivity.group.as_ref() {
-            GroupBounds::pop(group, cx);
-        }
     }
 }
 
-pub enum FocusState {
+pub enum FocusStatus {
     /// The current element is not focused, and does not contain or descend from the focused element.
     None,
     /// The current element is focused.
@@ -660,56 +672,87 @@ pub enum FocusState {
 }
 
 pub struct Interactivity<V> {
-    pub active: bool,
-    pub group_active: bool,
-    pub hovered: bool,
-    pub group_hovered: bool,
-    pub focus: FocusState,
-    pub key_context: KeyContext,
-    pub focus_handle: Option<FocusHandle>,
-    pub scroll_offset: Point<Pixels>,
-    pub base_style: StyleRefinement,
-    pub focus_style: StyleRefinement,
-    pub focus_in_style: StyleRefinement,
-    pub in_focus_style: StyleRefinement,
-    pub hover_style: StyleRefinement,
-    pub group_hover_style: Option<GroupStyle>,
-    pub active_style: StyleRefinement,
-    pub group_active_style: Option<GroupStyle>,
-    pub drag_over_styles: SmallVec<[(TypeId, StyleRefinement); 2]>,
-    pub group_drag_over_styles: SmallVec<[(TypeId, GroupStyle); 2]>,
-    pub group: Option<SharedString>,
-    pub dispatch_context: KeyContext,
-    pub mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
-    pub mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
-    pub mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
-    pub scroll_wheel_listeners: SmallVec<[ScrollWheelListener<V>; 2]>,
-    pub key_down_listeners: SmallVec<[KeyDownListener<V>; 2]>,
-    pub key_up_listeners: SmallVec<[KeyUpListener<V>; 2]>,
-    pub action_listeners: SmallVec<[(TypeId, ActionListener<V>); 8]>,
-    pub drop_listeners: SmallVec<[(TypeId, Box<DropListener<V>>); 2]>,
-    pub click_listeners: SmallVec<[ClickListener<V>; 2]>,
-    pub drag_listener: Option<DragListener<V>>,
-    pub hover_listener: Option<HoverListener<V>>,
-    pub tooltip_builder: Option<TooltipBuilder<V>>,
+    active: Option<MouseDownEvent>,
+    group_active: bool,
+    hovered: bool,
+    group_hovered: bool,
+    focus_status: FocusStatus,
+    key_context: KeyContext,
+    focus_handle: Option<FocusHandle>,
+    scroll_offset: Point<Pixels>,
+    base_style: StyleRefinement,
+    focus_style: StyleRefinement,
+    focus_in_style: StyleRefinement,
+    in_focus_style: StyleRefinement,
+    hover_style: StyleRefinement,
+    group_hover_style: Option<GroupStyle>,
+    active_style: StyleRefinement,
+    group_active_style: Option<GroupStyle>,
+    drag_over_styles: SmallVec<[(TypeId, StyleRefinement); 2]>,
+    group_drag_over_styles: SmallVec<[(TypeId, GroupStyle); 2]>,
+    group: Option<SharedString>,
+    dispatch_context: KeyContext,
+    mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
+    mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
+    mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
+    scroll_wheel_listeners: SmallVec<[ScrollWheelListener<V>; 2]>,
+    key_down_listeners: SmallVec<[KeyDownListener<V>; 2]>,
+    key_up_listeners: SmallVec<[KeyUpListener<V>; 2]>,
+    action_listeners: SmallVec<[(TypeId, ActionListener<V>); 8]>,
+    drop_listeners: SmallVec<[(TypeId, Box<DropListener<V>>); 2]>,
+    click_listeners: SmallVec<[ClickListener<V>; 2]>,
+    drag_listener: Option<DragListener<V>>,
+    hover_listener: Option<HoverListener<V>>,
+    tooltip_builder: Option<TooltipBuilder<V>>,
 }
 
-impl<V: 'static> Interactivity<V> {
+#[derive(Default)]
+pub struct InteractiveElementState {
+    clicked_state: Arc<Mutex<ElementClickedState>>,
+    hover_state: Arc<Mutex<bool>>,
+    pending_mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
+    scroll_offset: Option<Arc<Mutex<Point<Pixels>>>>,
+    active_tooltip: Arc<Mutex<Option<ActiveTooltip>>>,
+}
+
+struct ActiveTooltip {
+    #[allow(unused)] // used to drop the task
+    waiting: Option<Task<()>>,
+    tooltip: Option<AnyTooltip>,
+}
+
+/// Whether or not the element or a group that contains it is clicked by the mouse.
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
+struct ElementClickedState {
+    pub group: bool,
+    pub element: bool,
+}
+
+impl ElementClickedState {
+    fn is_clicked(&self) -> bool {
+        self.group || self.element
+    }
+}
+
+impl<V> Interactivity<V>
+where
+    V: 'static,
+{
     fn compute_style(&self, bounds: Option<Bounds<Pixels>>, cx: &mut ViewContext<V>) -> Style {
         let mut style = Style::default();
         style.refine(&self.base_style);
 
-        match self.focus {
-            FocusState::None => {}
-            FocusState::Focus => {
+        match self.focus_status {
+            FocusStatus::None => {}
+            FocusStatus::Focus => {
                 style.refine(&self.focus_style);
                 style.refine(&self.focus_in_style);
                 style.refine(&self.in_focus_style);
             }
-            FocusState::FocusIn => {
+            FocusStatus::FocusIn => {
                 style.refine(&self.focus_in_style);
             }
-            FocusState::InFocus => {
+            FocusStatus::InFocus => {
                 style.refine(&self.in_focus_style);
             }
         }
@@ -756,19 +799,66 @@ impl<V: 'static> Interactivity<V> {
             }
         }
 
-        if self.active {
+        if self.active.is_some() {
             style.refine(&self.active_style)
         }
 
         style
     }
 
+    fn layout(
+        &mut self,
+        element_state: &mut InteractiveElementState,
+        cx: &mut ViewContext<V>,
+        f: impl FnOnce(Style, &mut ViewContext<V>) -> LayoutId,
+    ) -> LayoutId {
+        let mut style = Style::default();
+        style.refine(&self.base_style);
+
+        if let Some(focus_handle) = self.focus_handle.as_ref() {
+            if focus_handle.contains_focused(cx) {
+                style.refine(&self.focus_in_style);
+            }
+
+            if focus_handle.within_focused(cx) {
+                style.refine(&self.in_focus_style);
+            }
+
+            if focus_handle.is_focused(cx) {
+                style.refine(&self.focus_style);
+            }
+        }
+
+        let clicked_state = element_state.clicked_state.lock();
+        if clicked_state.group {
+            if let Some(group_style) = self.group_active_style.as_ref() {
+                style.refine(&group_style.style);
+            }
+        }
+        if clicked_state.element {
+            style.refine(&self.active_style);
+        }
+
+        f(style, cx)
+    }
+
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
+        content_size: Size<Pixels>,
+        element_state: &mut InteractiveElementState,
         cx: &mut ViewContext<V>,
-        f: impl FnOnce(&mut ViewContext<V>),
+        f: impl FnOnce(Style, Point<Pixels>, &mut ViewContext<V>),
     ) {
+        let style = self.compute_style(Some(bounds), cx);
+
+        if let Some(mouse_cursor) = style.mouse_cursor {
+            let hovered = bounds.contains_point(&cx.mouse_position());
+            if hovered {
+                cx.set_cursor_style(mouse_cursor);
+            }
+        }
+
         for listener in self.mouse_down_listeners.drain(..) {
             cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
@@ -845,22 +935,212 @@ impl<V: 'static> Interactivity<V> {
             });
         }
 
+        let mut element_state: &mut InteractiveElementState = element_state.as_mut();
+
+        let click_listeners = mem::take(&mut self.click_listeners);
+        let drag_listener = mem::take(&mut self.drag_listener);
+
+        if !click_listeners.is_empty() || drag_listener.is_some() {
+            let pending_mouse_down = element_state.pending_mouse_down.clone();
+            let mouse_down = pending_mouse_down.lock().clone();
+            if let Some(mouse_down) = mouse_down {
+                if let Some(drag_listener) = drag_listener {
+                    let active_state = element_state.clicked_state.clone();
+
+                    cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
+                        if cx.active_drag.is_some() {
+                            if phase == DispatchPhase::Capture {
+                                cx.notify();
+                            }
+                        } else if phase == DispatchPhase::Bubble
+                            && bounds.contains_point(&event.position)
+                            && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
+                        {
+                            *active_state.lock() = ElementClickedState::default();
+                            let cursor_offset = event.position - bounds.origin;
+                            let drag = drag_listener(view_state, cursor_offset, cx);
+                            cx.active_drag = Some(drag);
+                            cx.notify();
+                            cx.stop_propagation();
+                        }
+                    });
+                }
+
+                cx.on_mouse_event(move |view_state, event: &MouseUpEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                        let mouse_click = ClickEvent {
+                            down: mouse_down.clone(),
+                            up: event.clone(),
+                        };
+                        for listener in &click_listeners {
+                            listener(view_state, &mouse_click, cx);
+                        }
+                    }
+                    *pending_mouse_down.lock() = None;
+                });
+            } else {
+                cx.on_mouse_event(move |_state, event: &MouseDownEvent, phase, _cx| {
+                    if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                        *pending_mouse_down.lock() = Some(event.clone());
+                    }
+                });
+            }
+        }
+
+        if let Some(hover_listener) = self.hover_listener.take() {
+            let was_hovered = element_state.hover_state.clone();
+            let has_mouse_down = element_state.pending_mouse_down.clone();
+
+            cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+                let is_hovered =
+                    bounds.contains_point(&event.position) && has_mouse_down.lock().is_none();
+                let mut was_hovered = was_hovered.lock();
+
+                if is_hovered != was_hovered.clone() {
+                    *was_hovered = is_hovered;
+                    drop(was_hovered);
+
+                    hover_listener(view_state, is_hovered, cx);
+                }
+            });
+        }
+
+        if let Some(tooltip_builder) = self.tooltip_builder.take() {
+            let active_tooltip = element_state.active_tooltip.clone();
+            let pending_mouse_down = element_state.pending_mouse_down.clone();
+
+            cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                let is_hovered =
+                    bounds.contains_point(&event.position) && pending_mouse_down.lock().is_none();
+                if !is_hovered {
+                    active_tooltip.lock().take();
+                    return;
+                }
+
+                if active_tooltip.lock().is_none() {
+                    let task = cx.spawn({
+                        let active_tooltip = active_tooltip.clone();
+                        let tooltip_builder = tooltip_builder.clone();
+
+                        move |view, mut cx| async move {
+                            cx.background_executor().timer(TOOLTIP_DELAY).await;
+                            view.update(&mut cx, move |view_state, cx| {
+                                active_tooltip.lock().replace(ActiveTooltip {
+                                    waiting: None,
+                                    tooltip: Some(AnyTooltip {
+                                        view: tooltip_builder(view_state, cx),
+                                        cursor_offset: cx.mouse_position() + TOOLTIP_OFFSET,
+                                    }),
+                                });
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                    });
+                    active_tooltip.lock().replace(ActiveTooltip {
+                        waiting: Some(task),
+                        tooltip: None,
+                    });
+                }
+            });
+
+            if let Some(active_tooltip) = element_state.active_tooltip.lock().as_ref() {
+                if active_tooltip.tooltip.is_some() {
+                    cx.active_tooltip = active_tooltip.tooltip.clone()
+                }
+            }
+        }
+
+        let active_state = element_state.clicked_state.clone();
+        if !active_state.lock().is_clicked() {
+            cx.on_mouse_event(move |_, _: &MouseUpEvent, phase, cx| {
+                if phase == DispatchPhase::Capture {
+                    *active_state.lock() = ElementClickedState::default();
+                    cx.notify();
+                }
+            });
+        } else {
+            let active_group_bounds = self
+                .group_active_style
+                .as_ref()
+                .and_then(|group_active| GroupBounds::get(&group_active.group, cx));
+            cx.on_mouse_event(move |_view, down: &MouseDownEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble {
+                    let group = active_group_bounds
+                        .map_or(false, |bounds| bounds.contains_point(&down.position));
+                    let element = bounds.contains_point(&down.position);
+                    if group || element {
+                        *active_state.lock() = ElementClickedState { group, element };
+                        cx.notify();
+                    }
+                }
+            });
+        }
+
+        let overflow = style.overflow;
+        if overflow.x == Overflow::Scroll || overflow.y == Overflow::Scroll {
+            let scroll_offset = element_state
+                .scroll_offset
+                .get_or_insert_with(Arc::default)
+                .clone();
+            let line_height = cx.line_height();
+            let scroll_max = (content_size - bounds.size).max(&Size::default());
+
+            cx.on_mouse_event(move |_, event: &ScrollWheelEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                    let mut scroll_offset = scroll_offset.lock();
+                    let old_scroll_offset = *scroll_offset;
+                    let delta = event.delta.pixel_delta(line_height);
+
+                    if overflow.x == Overflow::Scroll {
+                        scroll_offset.x =
+                            (scroll_offset.x + delta.x).clamp(-scroll_max.width, px(0.));
+                    }
+
+                    if overflow.y == Overflow::Scroll {
+                        scroll_offset.y =
+                            (scroll_offset.y + delta.y).clamp(-scroll_max.height, px(0.));
+                    }
+
+                    if *scroll_offset != old_scroll_offset {
+                        cx.notify();
+                        cx.stop_propagation();
+                    }
+                }
+            });
+        }
+
+        if let Some(group) = self.group.clone() {
+            GroupBounds::push(group, bounds, cx);
+        }
+
         cx.with_key_dispatch(
             self.key_context.clone(),
             self.focus_handle.clone(),
-            |_, cx| f(cx),
+            |_, cx| f(style, self.scroll_offset, cx),
         );
+
+        if let Some(group) = self.group.as_ref() {
+            GroupBounds::pop(group, cx);
+        }
     }
 }
 
 impl<V: 'static> Default for Interactivity<V> {
     fn default() -> Self {
         Self {
-            active: false,
+            active: None,
             group_active: false,
             hovered: false,
             group_hovered: false,
-            focus: FocusState::None,
+            focus_status: FocusStatus::None,
             key_context: KeyContext::default(),
             focus_handle: None,
             scroll_offset: Point::default(),
@@ -937,15 +1217,59 @@ impl<V, E> FocusableComponent<V> for Focusable<V, E> {
     }
 }
 
-impl<V: 'static, E: InteractiveComponent<V>> InteractiveComponent<V> for Focusable<V, E> {
+impl<V, E> InteractiveComponent<V> for Focusable<V, E>
+where
+    V: 'static,
+    E: InteractiveComponent<V>,
+{
     fn interactivity(&mut self) -> &mut Interactivity<V> {
         self.element.interactivity()
     }
 }
 
-impl<V: 'static, E: StatefulInteractiveComponent<V>> StatefulInteractiveComponent<V>
+impl<V: 'static, E: StatefulInteractiveComponent<V, E>> StatefulInteractiveComponent<V, E>
     for Focusable<V, E>
 {
+}
+
+impl<V, E> Element<V> for Focusable<V, E>
+where
+    V: 'static,
+    E: Element<V>,
+{
+    type ElementState = E::ElementState;
+
+    fn id(&self) -> Option<crate::ElementId> {
+        todo!()
+    }
+
+    fn initialize(
+        &mut self,
+        view_state: &mut V,
+        element_state: Option<Self::ElementState>,
+        cx: &mut ViewContext<V>,
+    ) -> Self::ElementState {
+        todo!()
+    }
+
+    fn layout(
+        &mut self,
+        view_state: &mut V,
+        element_state: &mut Self::ElementState,
+        cx: &mut ViewContext<V>,
+    ) -> LayoutId {
+        todo!()
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        view_state: &mut V,
+        element_state: &mut Self::ElementState,
+        cx: &mut ViewContext<V>,
+    ) {
+        todo!()
+    }
 }
 
 pub struct Stateful<V, E> {
@@ -954,9 +1278,19 @@ pub struct Stateful<V, E> {
     element: E,
 }
 
-impl<V: 'static, E: InteractiveComponent<V>> StatefulInteractiveComponent<V> for Stateful<V, E> {}
+impl<V, E> StatefulInteractiveComponent<V, E> for Stateful<V, E>
+where
+    V: 'static,
+    E: Element<V>,
+    Self: InteractiveComponent<V>,
+{
+}
 
-impl<V: 'static, E: InteractiveComponent<V>> InteractiveComponent<V> for Stateful<V, E> {
+impl<V, E> InteractiveComponent<V> for Stateful<V, E>
+where
+    V: 'static,
+    E: InteractiveComponent<V>,
+{
     fn interactivity(&mut self) -> &mut Interactivity<V> {
         self.element.interactivity()
     }
@@ -965,5 +1299,45 @@ impl<V: 'static, E: InteractiveComponent<V>> InteractiveComponent<V> for Statefu
 impl<V, E: FocusableComponent<V>> FocusableComponent<V> for Stateful<V, E> {
     fn focusability(&mut self) -> &mut Focusability<V> {
         self.element.focusability()
+    }
+}
+
+impl<V, E> Element<V> for Stateful<V, E>
+where
+    V: 'static,
+    E: Element<V>,
+{
+    type ElementState = InteractiveElementState;
+
+    fn id(&self) -> Option<crate::ElementId> {
+        todo!()
+    }
+
+    fn initialize(
+        &mut self,
+        view_state: &mut V,
+        element_state: Option<Self::ElementState>,
+        cx: &mut ViewContext<V>,
+    ) -> Self::ElementState {
+        todo!()
+    }
+
+    fn layout(
+        &mut self,
+        view_state: &mut V,
+        element_state: &mut Self::ElementState,
+        cx: &mut ViewContext<V>,
+    ) -> LayoutId {
+        todo!()
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        view_state: &mut V,
+        element_state: &mut Self::ElementState,
+        cx: &mut ViewContext<V>,
+    ) {
+        todo!()
     }
 }

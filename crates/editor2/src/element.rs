@@ -616,7 +616,7 @@ impl EditorElement {
         let line_end_overshoot = 0.15 * layout.position_map.line_height;
         let whitespace_setting = editor.buffer.read(cx).settings_at(0, cx).show_whitespaces;
 
-        cx.with_content_mask(ContentMask { bounds }, |cx| {
+        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             // todo!("cursor region")
             // cx.scene().push_cursor_region(CursorRegion {
             //     bounds,
@@ -2659,7 +2659,7 @@ impl Element<Editor> for EditorElement {
 
         // We call with_z_index to establish a new stacking context.
         cx.with_z_index(0, |cx| {
-            cx.with_content_mask(ContentMask { bounds }, |cx| {
+            cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
                 self.paint_mouse_listeners(
                     bounds,
                     gutter_bounds,
