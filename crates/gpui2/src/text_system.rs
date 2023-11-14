@@ -368,6 +368,7 @@ impl Display for FontStyle {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextRun {
+    // number of utf8 bytes
     pub len: usize,
     pub font: Font,
     pub color: Hsla,
