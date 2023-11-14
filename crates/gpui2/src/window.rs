@@ -422,8 +422,11 @@ impl<'a> WindowContext<'a> {
     }
 
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
+        dbg!("BEFORE FOCUS");
         if let Some(focus_handle) = self.focused() {
+            dbg!("BEFORE DEFER", focus_handle.id);
             self.defer(move |cx| {
+                dbg!("AFTER DEFER");
                 if let Some(node_id) = cx
                     .window
                     .current_frame

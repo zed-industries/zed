@@ -1,8 +1,8 @@
 use crate::{
-    div, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, BackgroundExecutor,
-    Context, Div, EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent, Keystroke, Model,
-    ModelContext, Render, Result, Task, TestDispatcher, TestPlatform, View, ViewContext,
-    VisualContext, WindowContext, WindowHandle, WindowOptions,
+    div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
+    BackgroundExecutor, Context, Div, EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent,
+    Keystroke, Model, ModelContext, Render, Result, Task, TestDispatcher, TestPlatform, View,
+    ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -81,6 +81,7 @@ impl TestAppContext {
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
         let http_client = util::http::FakeHttpClient::with_404_response();
+
         Self {
             app: AppContext::new(platform.clone(), asset_source, http_client),
             background_executor,
@@ -211,6 +212,15 @@ impl TestAppContext {
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
         }
+    }
+
+    pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
+    where
+        A: Action,
+    {
+        window
+            .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
+            .unwrap()
     }
 
     pub fn dispatch_keystroke(
@@ -389,6 +399,13 @@ pub struct VisualTestContext<'a> {
 impl<'a> VisualTestContext<'a> {
     pub fn from_window(window: AnyWindowHandle, cx: &'a mut TestAppContext) -> Self {
         Self { cx, window }
+    }
+
+    pub fn dispatch_action<A>(&mut self, action: A)
+    where
+        A: Action,
+    {
+        self.cx.dispatch_action(self.window, action)
     }
 }
 

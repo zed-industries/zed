@@ -190,7 +190,7 @@ fn main() {
         // recent_projects::init(cx);
 
         go_to_line::init(cx);
-        // file_finder::init(cx);
+        file_finder::init(cx);
         // outline::init(cx);
         // project_symbols::init(cx);
         project_panel::init(Assets, cx);
