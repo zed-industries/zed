@@ -96,7 +96,7 @@ impl TestAppContext {
     }
 
     pub fn quit(&self) {
-        self.app.borrow_mut().quit();
+        self.app.borrow_mut().shutdown();
     }
 
     pub fn refresh(&mut self) -> Result<()> {
