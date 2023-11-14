@@ -129,7 +129,7 @@ impl Icon {
 
 #[derive(Component)]
 pub struct IconElement {
-    icon: Icon,
+    path: SharedString,
     color: TextColor,
     size: IconSize,
 }
@@ -137,7 +137,15 @@ pub struct IconElement {
 impl IconElement {
     pub fn new(icon: Icon) -> Self {
         Self {
-            icon,
+            path: icon.path().into(),
+            color: TextColor::default(),
+            size: IconSize::default(),
+        }
+    }
+
+    pub fn from_path(path: impl Into<SharedString>) -> Self {
+        Self {
+            path: path.into(),
             color: TextColor::default(),
             size: IconSize::default(),
         }
@@ -162,7 +170,7 @@ impl IconElement {
         svg()
             .size(svg_size)
             .flex_none()
-            .path(self.icon.path())
+            .path(self.path)
             .text_color(self.color.color(cx))
     }
 }
