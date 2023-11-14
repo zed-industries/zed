@@ -603,8 +603,6 @@ impl<V: 'static> Element<V> for Node<V> {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) {
-        let mut interactivity = mem::take(&mut self.interactivity);
-
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
         let content_size = if element_state.child_layout_ids.is_empty() {
@@ -618,6 +616,7 @@ impl<V: 'static> Element<V> for Node<V> {
             (child_max - child_min).into()
         };
 
+        let mut interactivity = mem::take(&mut self.interactivity);
         interactivity.paint(
             bounds,
             content_size,
@@ -664,8 +663,6 @@ impl AsMut<InteractiveElementState> for InteractiveElementState {
 }
 
 pub struct Interactivity<V> {
-    hovered: bool,
-    group_hovered: bool,
     key_context: KeyContext,
     tracked_focus_handle: Option<FocusHandle>,
     focusable: bool,
@@ -1117,8 +1114,6 @@ where
 impl<V: 'static> Default for Interactivity<V> {
     fn default() -> Self {
         Self {
-            hovered: false,
-            group_hovered: false,
             key_context: KeyContext::default(),
             tracked_focus_handle: None,
             scroll_offset: Point::default(),
@@ -1256,7 +1251,7 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
-        todo!()
+        self.element.initialize(view_state, element_state, cx)
     }
 
     fn layout(
@@ -1265,7 +1260,7 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) -> LayoutId {
-        todo!()
+        self.element.layout(view_state, element_state, cx)
     }
 
     fn paint(
@@ -1275,7 +1270,7 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) {
-        todo!()
+        self.element.paint(bounds, view_state, element_state, cx);
     }
 }
 
@@ -1314,10 +1309,10 @@ where
     V: 'static,
     E: Element<V>,
 {
-    type ElementState = InteractiveElementState;
+    type ElementState = E::ElementState;
 
     fn id(&self) -> Option<crate::ElementId> {
-        todo!()
+        self.element.id()
     }
 
     fn initialize(
@@ -1326,7 +1321,7 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
-        todo!()
+        self.element.initialize(view_state, element_state, cx)
     }
 
     fn layout(
@@ -1335,7 +1330,7 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) -> LayoutId {
-        todo!()
+        self.element.layout(view_state, element_state, cx)
     }
 
     fn paint(
@@ -1345,6 +1340,6 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) {
-        todo!()
+        self.element.paint(bounds, view_state, element_state, cx)
     }
 }
