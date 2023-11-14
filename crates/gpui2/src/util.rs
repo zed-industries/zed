@@ -1,16 +1,26 @@
+#[cfg(any(test, feature = "test-support"))]
+use std::time::Duration;
+
+#[cfg(any(test, feature = "test-support"))]
+use futures::Future;
+
+#[cfg(any(test, feature = "test-support"))]
+use smol::future::FutureExt;
+
 pub use util::*;
 
-// pub async fn timeout<F, T>(timeout: Duration, f: F) -> Result<T, ()>
-// where
-//     F: Future<Output = T>,
-// {
-//     let timer = async {
-//         smol::Timer::after(timeout).await;
-//         Err(())
-//     };
-//     let future = async move { Ok(f.await) };
-//     timer.race(future).await
-// }
+#[cfg(any(test, feature = "test-support"))]
+pub async fn timeout<F, T>(timeout: Duration, f: F) -> Result<T, ()>
+where
+    F: Future<Output = T>,
+{
+    let timer = async {
+        smol::Timer::after(timeout).await;
+        Err(())
+    };
+    let future = async move { Ok(f.await) };
+    timer.race(future).await
+}
 
 #[cfg(any(test, feature = "test-support"))]
 pub struct CwdBacktrace<'a>(pub &'a backtrace::Backtrace);

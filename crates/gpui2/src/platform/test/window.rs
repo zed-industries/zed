@@ -8,7 +8,8 @@ use parking_lot::Mutex;
 
 use crate::{
     px, AtlasKey, AtlasTextureId, AtlasTile, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformWindow, Point, Scene, Size, TileId, WindowAppearance, WindowBounds, WindowOptions,
+    PlatformInputHandler, PlatformWindow, Point, Scene, Size, TileId, WindowAppearance,
+    WindowBounds, WindowOptions,
 };
 
 #[derive(Default)]
@@ -23,6 +24,7 @@ pub struct TestWindow {
     bounds: WindowBounds,
     current_scene: Mutex<Option<Scene>>,
     display: Rc<dyn PlatformDisplay>,
+    input_handler: Option<Box<dyn PlatformInputHandler>>,
 
     handlers: Mutex<Handlers>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -33,7 +35,7 @@ impl TestWindow {
             bounds: options.bounds,
             current_scene: Default::default(),
             display,
-
+            input_handler: None,
             sprite_atlas: Arc::new(TestAtlas::new()),
             handlers: Default::default(),
         }
@@ -77,8 +79,8 @@ impl PlatformWindow for TestWindow {
         todo!()
     }
 
-    fn set_input_handler(&mut self, _input_handler: Box<dyn crate::PlatformInputHandler>) {
-        todo!()
+    fn set_input_handler(&mut self, input_handler: Box<dyn crate::PlatformInputHandler>) {
+        self.input_handler = Some(input_handler);
     }
 
     fn prompt(

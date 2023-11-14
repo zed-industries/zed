@@ -1683,21 +1683,24 @@ impl EditorElement {
             ShowScrollbar::Never => false,
         };
 
-        let fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Hsla)> = fold_ranges
-            .into_iter()
-            .map(|(id, fold)| {
-                todo!("folds!")
-                // let color = self
-                //     .style
-                //     .folds
-                //     .ellipses
-                //     .background
-                //     .style_for(&mut cx.mouse_state::<FoldMarkers>(id as usize))
-                //     .color;
+        let fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Hsla)> = Vec::new();
+        // todo!()
 
-                // (id, fold, color)
-            })
-            .collect();
+        // fold_ranges
+        // .into_iter()
+        // .map(|(id, fold)| {
+        //     // todo!("folds!")
+        //     // let color = self
+        //     //     .style
+        //     //     .folds
+        //     //     .ellipses
+        //     //     .background
+        //     //     .style_for(&mut cx.mouse_state::<FoldMarkers>(id as usize))
+        //     //     .color;
+
+        //     // (id, fold, color)
+        // })
+        // .collect();
 
         let head_for_relative = newest_selection_head.unwrap_or_else(|| {
             let newest = editor.selections.newest::<Point>(cx);

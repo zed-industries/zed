@@ -167,7 +167,7 @@ impl TryFrom<&'_ str> for Rgba {
     }
 }
 
-#[derive(Default, Copy, Clone, Debug, PartialEq)]
+#[derive(Default, Copy, Clone, Debug)]
 #[repr(C)]
 pub struct Hsla {
     pub h: f32,
@@ -176,9 +176,62 @@ pub struct Hsla {
     pub a: f32,
 }
 
+impl PartialEq for Hsla {
+    fn eq(&self, other: &Self) -> bool {
+        self.h
+            .total_cmp(&other.h)
+            .then(self.s.total_cmp(&other.s))
+            .then(self.l.total_cmp(&other.l).then(self.a.total_cmp(&other.a)))
+            .is_eq()
+    }
+}
+
+impl PartialOrd for Hsla {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        // SAFETY: The total ordering relies on this always being Some()
+        Some(
+            self.h
+                .total_cmp(&other.h)
+                .then(self.s.total_cmp(&other.s))
+                .then(self.l.total_cmp(&other.l).then(self.a.total_cmp(&other.a))),
+        )
+    }
+}
+
+impl Ord for Hsla {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // SAFETY: The partial comparison is a total comparison
+        unsafe { self.partial_cmp(other).unwrap_unchecked() }
+    }
+}
+
 impl Hsla {
     pub fn to_rgb(self) -> Rgba {
         self.into()
+    }
+
+    pub fn red() -> Self {
+        red()
+    }
+
+    pub fn green() -> Self {
+        green()
+    }
+
+    pub fn blue() -> Self {
+        blue()
+    }
+
+    pub fn black() -> Self {
+        black()
+    }
+
+    pub fn white() -> Self {
+        white()
+    }
+
+    pub fn transparent_black() -> Self {
+        transparent_black()
     }
 }
 

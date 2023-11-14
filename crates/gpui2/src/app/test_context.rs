@@ -1,12 +1,12 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, BackgroundExecutor, Context,
-    EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent, Keystroke, Model, ModelContext,
-    Render, Result, Task, TestDispatcher, TestPlatform, ViewContext, VisualContext, WindowContext,
-    WindowHandle, WindowOptions,
+    div, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, BackgroundExecutor,
+    Context, Div, EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent, Keystroke, Model,
+    ModelContext, Render, Result, Task, TestDispatcher, TestPlatform, View, ViewContext,
+    VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
-use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
+use std::{future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 #[derive(Clone)]
 pub struct TestAppContext {
@@ -58,6 +58,18 @@ impl Context for TestAppContext {
         let app = self.app.borrow();
         app.read_model(handle, read)
     }
+
+    fn read_window<T, R>(
+        &self,
+        window: &WindowHandle<T>,
+        read: impl FnOnce(View<T>, &AppContext) -> R,
+    ) -> Result<R>
+    where
+        T: 'static,
+    {
+        let app = self.app.borrow();
+        app.read_window(window, read)
+    }
 }
 
 impl TestAppContext {
@@ -93,8 +105,8 @@ impl TestAppContext {
         Ok(())
     }
 
-    pub fn executor(&self) -> &BackgroundExecutor {
-        &self.background_executor
+    pub fn executor(&self) -> BackgroundExecutor {
+        self.background_executor.clone()
     }
 
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
@@ -118,6 +130,26 @@ impl TestAppContext {
     {
         let mut cx = self.app.borrow_mut();
         cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window))
+    }
+
+    pub fn add_empty_window(&mut self) -> AnyWindowHandle {
+        let mut cx = self.app.borrow_mut();
+        cx.open_window(WindowOptions::default(), |cx| {
+            cx.build_view(|_| EmptyView {})
+        })
+        .any_handle
+    }
+
+    pub fn add_window_view<F, V>(&mut self, build_window: F) -> (View<V>, VisualTestContext)
+    where
+        F: FnOnce(&mut ViewContext<V>) -> V,
+        V: Render,
+    {
+        let mut cx = self.app.borrow_mut();
+        let window = cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window));
+        drop(cx);
+        let view = window.root_view(self).unwrap();
+        (view, VisualTestContext::from_window(*window.deref(), self))
     }
 
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
@@ -144,6 +176,11 @@ impl TestAppContext {
     ) -> Option<R> {
         let lock = self.app.borrow();
         Some(read(lock.try_global()?, &lock))
+    }
+
+    pub fn set_global<G: 'static>(&mut self, global: G) {
+        let mut lock = self.app.borrow_mut();
+        lock.set_global(global);
     }
 
     pub fn update_global<G: 'static, R>(
@@ -257,5 +294,193 @@ impl<T: Send> Model<T> {
         rx.try_next()
             .expect("no event received")
             .expect("model was dropped")
+    }
+}
+
+impl<V> View<V> {
+    pub fn condition<Evt>(
+        &self,
+        cx: &TestAppContext,
+        mut predicate: impl FnMut(&V, &AppContext) -> bool,
+    ) -> impl Future<Output = ()>
+    where
+        Evt: 'static,
+        V: EventEmitter<Evt>,
+    {
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (tx, mut rx) = postage::mpsc::channel(1024);
+        let timeout_duration = Duration::from_millis(100); //todo!() cx.condition_duration();
+
+        let mut cx = cx.app.borrow_mut();
+        let subscriptions = (
+            cx.observe(self, {
+                let mut tx = tx.clone();
+                move |_, _| {
+                    tx.blocking_send(()).ok();
+                }
+            }),
+            cx.subscribe(self, {
+                let mut tx = tx.clone();
+                move |_, _: &Evt, _| {
+                    tx.blocking_send(()).ok();
+                }
+            }),
+        );
+
+        let cx = cx.this.upgrade().unwrap();
+        let handle = self.downgrade();
+
+        async move {
+            crate::util::timeout(timeout_duration, async move {
+                loop {
+                    {
+                        let cx = cx.borrow();
+                        let cx = &*cx;
+                        if predicate(
+                            handle
+                                .upgrade()
+                                .expect("view dropped with pending condition")
+                                .read(cx),
+                            cx,
+                        ) {
+                            break;
+                        }
+                    }
+
+                    // todo!(start_waiting)
+                    // cx.borrow().foreground_executor().start_waiting();
+                    rx.recv()
+                        .await
+                        .expect("view dropped with pending condition");
+                    // cx.borrow().foreground_executor().finish_waiting();
+                }
+            })
+            .await
+            .expect("condition timed out");
+            drop(subscriptions);
+        }
+    }
+}
+
+use derive_more::{Deref, DerefMut};
+#[derive(Deref, DerefMut)]
+pub struct VisualTestContext<'a> {
+    #[deref]
+    #[deref_mut]
+    cx: &'a mut TestAppContext,
+    window: AnyWindowHandle,
+}
+
+impl<'a> VisualTestContext<'a> {
+    pub fn from_window(window: AnyWindowHandle, cx: &'a mut TestAppContext) -> Self {
+        Self { cx, window }
+    }
+}
+
+impl<'a> Context for VisualTestContext<'a> {
+    type Result<T> = <TestAppContext as Context>::Result<T>;
+
+    fn build_model<T: 'static>(
+        &mut self,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>> {
+        self.cx.build_model(build_model)
+    }
+
+    fn update_model<T, R>(
+        &mut self,
+        handle: &Model<T>,
+        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        self.cx.update_model(handle, update)
+    }
+
+    fn read_model<T, R>(
+        &self,
+        handle: &Model<T>,
+        read: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        self.cx.read_model(handle, read)
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+    {
+        self.cx.update_window(window, f)
+    }
+
+    fn read_window<T, R>(
+        &self,
+        window: &WindowHandle<T>,
+        read: impl FnOnce(View<T>, &AppContext) -> R,
+    ) -> Result<R>
+    where
+        T: 'static,
+    {
+        self.cx.read_window(window, read)
+    }
+}
+
+impl<'a> VisualContext for VisualTestContext<'a> {
+    fn build_view<V>(
+        &mut self,
+        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+    ) -> Self::Result<View<V>>
+    where
+        V: 'static + Render,
+    {
+        self.window
+            .update(self.cx, |_, cx| cx.build_view(build_view))
+            .unwrap()
+    }
+
+    fn update_view<V: 'static, R>(
+        &mut self,
+        view: &View<V>,
+        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
+    ) -> Self::Result<R> {
+        self.window
+            .update(self.cx, |_, cx| cx.update_view(view, update))
+            .unwrap()
+    }
+
+    fn replace_root_view<V>(
+        &mut self,
+        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+    ) -> Self::Result<View<V>>
+    where
+        V: Render,
+    {
+        self.window
+            .update(self.cx, |_, cx| cx.replace_root_view(build_view))
+            .unwrap()
+    }
+}
+
+impl AnyWindowHandle {
+    pub fn build_view<V: Render + 'static>(
+        &self,
+        cx: &mut TestAppContext,
+        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+    ) -> View<V> {
+        self.update(cx, |_, cx| cx.build_view(build_view)).unwrap()
+    }
+}
+
+pub struct EmptyView {}
+
+impl Render for EmptyView {
+    type Element = Div<Self>;
+
+    fn render(&mut self, _cx: &mut crate::ViewContext<Self>) -> Self::Element {
+        div()
     }
 }
