@@ -3,6 +3,7 @@ use gpui::{
     div, AnyView, Component, Div, Entity, EntityId, EventEmitter, ParentElement, Render, Styled,
     View, ViewContext, WindowContext,
 };
+use theme2::ActiveTheme;
 use ui::{h_stack, v_stack, Button, Icon, IconButton, Label, LabelColor, StyledExt};
 
 pub enum ToolbarItemEvent {
@@ -81,6 +82,8 @@ impl Render for Toolbar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         //dbg!(&self.items.len());
         v_stack()
+            .border_b()
+            .border_color(cx.theme().colors().border)
             .child(
                 h_stack()
                     .justify_between()

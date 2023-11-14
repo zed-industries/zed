@@ -117,7 +117,7 @@ impl Render for BufferSearchBar {
         //     }
         //     (None, None) => String::new(),
         // };
-        let new_placeholder_text = Arc::from("Fix this up!");
+        let new_placeholder_text = Arc::from("Search for..");
         self.query_editor.update(cx, |editor, cx| {
             editor.set_placeholder_text(new_placeholder_text, cx);
         });
@@ -172,18 +172,22 @@ impl Render for BufferSearchBar {
                 cx,
             )
         };
-        div()
-            .border()
-            .border_color(blue())
-            .flex()
-            .justify_between()
+        let should_show_replace_input = self.replace_enabled && supported_options.replacement;
+        let replace_all = should_show_replace_input.then(|| {
+            super::replace_action::<Self>(ReplaceAll, "Replace all", ui::Icon::ReplaceAll)
+        });
+        let replace_next = should_show_replace_input
+            .then(|| super::replace_action::<Self>(ReplaceNext, "Replace next", ui::Icon::Replace));
+        h_stack()
+            .w_full()
+            .p_1()
             .child(
                 div()
                     .flex()
+                    .flex_1()
                     .border_1()
                     .border_color(red())
                     .rounded_md()
-                    .w_96()
                     .items_center()
                     .child(IconElement::new(Icon::MagnifyingGlass))
                     .child(self.query_editor.clone())
@@ -198,21 +202,35 @@ impl Render for BufferSearchBar {
                             .then(|| search_option_button(SearchOptions::WHOLE_WORD)),
                     ),
             )
-            .child(ButtonGroup::new(vec![
-                search_button_for_mode(SearchMode::Text, Some(Side::Left), cx),
-                search_button_for_mode(SearchMode::Regex, Some(Side::Right), cx),
-            ]))
-            .when(supported_options.replacement, |this| {
-                this.child(super::toggle_replace_button(self.replace_enabled))
-            })
-            .when(self.replace_enabled, |this| {
-                this.child(div().w_80().child(self.replacement_editor.clone()))
-            })
-            .children(match_count)
-            .child(nav_button_for_direction("<", Direction::Prev, cx))
-            .child(nav_button_for_direction(">", Direction::Next, cx))
-            .flex()
-            .justify_between()
+            .child(
+                h_stack()
+                    .flex_none()
+                    .child(ButtonGroup::new(vec![
+                        search_button_for_mode(SearchMode::Text, Some(Side::Left), cx),
+                        search_button_for_mode(SearchMode::Regex, Some(Side::Right), cx),
+                    ]))
+                    .when(supported_options.replacement, |this| {
+                        this.child(super::toggle_replace_button(self.replace_enabled))
+                    }),
+            )
+            .child(
+                h_stack()
+                    .gap_0p5()
+                    .flex_1()
+                    .when(self.replace_enabled, |this| {
+                        this.child(self.replacement_editor.clone())
+                            .children(replace_next)
+                            .children(replace_all)
+                    }),
+            )
+            .child(
+                h_stack()
+                    .gap_0p5()
+                    .flex_none()
+                    .children(match_count)
+                    .child(nav_button_for_direction("<", Direction::Prev, cx))
+                    .child(nav_button_for_direction(">", Direction::Next, cx)),
+            )
 
         // let query_column = Flex::row()
         //     .with_child(

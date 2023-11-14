@@ -109,8 +109,10 @@ fn toggle_replace_button<V: 'static>(active: bool) -> impl Component<V> {
 fn replace_action<V: 'static>(
     action: impl Action + 'static + Send + Sync,
     name: &'static str,
+    icon: ui::Icon,
 ) -> impl Component<V> {
-    ui::IconButton::new(0, ui::Icon::Replace).on_click(move |_: &mut V, cx| {
+    // todo: add tooltip
+    ui::IconButton::new(0, icon).on_click(move |_: &mut V, cx| {
         cx.dispatch_action(action.boxed_clone());
     })
 }
