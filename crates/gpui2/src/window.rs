@@ -1365,6 +1365,14 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.activate();
     }
 
+    pub fn minimize_window(&self) {
+        self.window.platform_window.minimize();
+    }
+
+    pub fn toggle_full_screen(&self) {
+        self.window.platform_window.toggle_full_screen();
+    }
+
     pub fn prompt(
         &self,
         level: PromptLevel,

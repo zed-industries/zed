@@ -4198,6 +4198,7 @@ dependencies = [
  "anyhow",
  "gpui2",
  "log",
+ "serde",
  "smol",
  "util",
 ]
@@ -11402,7 +11403,7 @@ dependencies = [
  "ignore",
  "image",
  "indexmap 1.9.3",
- "install_cli",
+ "install_cli2",
  "isahc",
  "journal2",
  "language2",
