@@ -1,11 +1,11 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 use gpui::{
-    div, Action, AnyElement, Component, CursorStyle, Element, MouseButton, MouseDownEvent, Svg,
-    View, ViewContext,
+    div, Action, AnyElement, Component, CursorStyle, Element, MouseButton, MouseDownEvent,
+    ParentElement as _, StatelessInteractive, Styled, Svg, View, ViewContext,
 };
 use theme::ActiveTheme;
-use ui::Label;
+use ui::{Button, Label};
 use workspace::searchable::Direction;
 
 use crate::{
@@ -17,19 +17,16 @@ pub(super) fn render_nav_button<V: 'static>(
     icon: &'static str,
     direction: Direction,
     active: bool,
-    on_click: impl Fn(MouseDownEvent, &mut V, &mut ViewContext<V>) + 'static,
+    on_click: impl Fn(&mut V, &mut ViewContext<V>) + 'static + Send + Sync,
     cx: &mut ViewContext<V>,
 ) -> impl Component<V> {
-    let action: Box<dyn Action>;
     let tooltip;
 
     match direction {
         Direction::Prev => {
-            action = Box::new(SelectPrevMatch);
             tooltip = "Select Previous Match";
         }
         Direction::Next => {
-            action = Box::new(SelectNextMatch);
             tooltip = "Select Next Match";
         }
     };
@@ -40,7 +37,7 @@ pub(super) fn render_nav_button<V: 'static>(
     //     CursorStyle::default()
     // };
     // enum NavButton {}
-    div()
+    Button::new(icon).on_click(Arc::new(on_click))
     // MouseEventHandler::new::<NavButton, _>(direction as usize, cx, |state, cx| {
     //     let theme = cx.theme();
     //     let style = theme
@@ -86,12 +83,23 @@ pub(crate) fn render_search_mode_button<V: 'static>(
     mode: SearchMode,
     side: Option<Side>,
     is_active: bool,
-    //on_click: impl Fn(MouseClick, &mut V, &mut ViewContext<V>) + 'static,
+    on_click: impl Fn(&mut V, &mut ViewContext<V>) + 'static,
     cx: &mut ViewContext<V>,
 ) -> impl Component<V> {
     //let tooltip_style = cx.theme().tooltip.clone();
     enum SearchModeButton {}
+
     div()
+        .border_2()
+        .rounded_md()
+        .when(side == Some(Side::Left), |this| {
+            this.border_r_0().rounded_tr_none().rounded_br_none()
+        })
+        .when(side == Some(Side::Right), |this| {
+            this.border_l_0().rounded_bl_none().rounded_tl_none()
+        })
+        .on_key_down(move |v, _, _, cx| on_click(v, cx))
+        .child(Label::new(mode.label()))
     // MouseEventHandler::new::<SearchModeButton, _>(mode.region_id(), cx, |state, cx| {
     //     let theme = cx.theme();
     //     let style = theme

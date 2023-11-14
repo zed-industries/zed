@@ -910,7 +910,6 @@ impl SearchableItem for Editor {
     }
 
     fn update_matches(&mut self, matches: Vec<Range<Anchor>>, cx: &mut ViewContext<Self>) {
-        dbg!(&matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
             |theme| theme.title_bar_background, // todo: update theme

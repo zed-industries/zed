@@ -1,7 +1,7 @@
 use crate::ItemHandle;
 use gpui::{
-    div, AnyView, Div, Entity, EntityId, EventEmitter, ParentElement, Render, View, ViewContext,
-    WindowContext,
+    div, AnyView, Div, Entity, EntityId, EventEmitter, ParentElement, Render, Styled, View,
+    ViewContext, WindowContext,
 };
 
 pub enum ToolbarItemEvent {

@@ -100,6 +100,7 @@ fn toggle_replace_button<V: 'static>(active: bool) -> impl Component<V> {
     ui::IconButton::new(0, ui::Icon::Replace)
         .on_click(|_: &mut V, cx| {
             cx.dispatch_action(Box::new(ToggleReplace));
+            cx.notify();
         })
         .variant(ui::ButtonVariant::Ghost)
         .when(active, |button| button.variant(ButtonVariant::Filled))
