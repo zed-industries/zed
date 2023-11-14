@@ -1,7 +1,8 @@
-use crate::prelude::*;
 use crate::{
-    static_project_panel_project_items, static_project_panel_single_items, Input, List, ListHeader,
+    prelude::*, static_project_panel_project_items, static_project_panel_single_items, Input, List,
+    ListHeader,
 };
+use gpui::prelude::*;
 
 #[derive(Component)]
 pub struct ProjectPanel {
@@ -54,12 +55,12 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{Panel, Story};
-    use gpui::{Div, Render};
+    use gpui::{Node, Render};
 
     pub struct ProjectPanelStory;
 
     impl Render for ProjectPanelStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

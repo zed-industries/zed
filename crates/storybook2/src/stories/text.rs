@@ -1,4 +1,4 @@
-use gpui::{div, white, Div, ParentElement, Render, Styled, View, VisualContext, WindowContext};
+use gpui::{div, white, Node, ParentComponent, Render, Styled, View, VisualContext, WindowContext};
 
 pub struct TextStory;
 
@@ -9,7 +9,7 @@ impl TextStory {
 }
 
 impl Render for TextStory {
-    type Element = Div<Self>;
+    type Element = Node<Self>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         div().size_full().bg(white()).child(concat!(

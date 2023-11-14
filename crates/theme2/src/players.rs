@@ -40,12 +40,12 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{ActiveTheme, Story};
-    use gpui::{div, img, px, Div, ParentElement, Render, Styled, ViewContext};
+    use gpui::{div, img, px, Node, ParentComponent, Render, Styled, ViewContext};
 
     pub struct PlayerStory;
 
     impl Render for PlayerStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx).child(

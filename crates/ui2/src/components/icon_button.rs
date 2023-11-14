@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
-use gpui::{rems, MouseButton};
-
 use crate::{h_stack, prelude::*};
 use crate::{ClickHandler, Icon, IconColor, IconElement};
+use gpui::{prelude::*, rems, MouseButton};
+use std::sync::Arc;
 
 struct IconButtonHandlers<V: 'static> {
     click: Option<ClickHandler<V>>,

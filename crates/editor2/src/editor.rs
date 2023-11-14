@@ -39,12 +39,12 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, point, px, relative, rems, size, uniform_list, AnyElement, AppContext,
-    AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
+    action, actions, div, point, prelude::*, px, relative, rems, size, uniform_list, AnyElement,
+    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
     EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla,
-    InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render,
-    StatelessInteractive, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels, Render, Styled,
+    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};

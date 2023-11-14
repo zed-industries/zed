@@ -1,7 +1,8 @@
-use crate::{prelude::*, Toggle};
 use crate::{
-    static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon, List, ListHeader,
+    prelude::*, static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon,
+    List, ListHeader, Toggle,
 };
+use gpui::prelude::*;
 
 #[derive(Component)]
 pub struct CollabPanel {
@@ -92,12 +93,12 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui::{Div, Render};
+    use gpui::{Node, Render};
 
     pub struct CollabPanelStory;
 
     impl Render for CollabPanelStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

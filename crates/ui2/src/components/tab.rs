@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::{Icon, IconColor, IconElement, Label, LabelColor};
-use gpui::{red, Div, ElementId, Render, View, VisualContext};
+use gpui::{prelude::*, red, ElementId, Node, Render, View};
 
 #[derive(Component, Clone)]
 pub struct Tab {
@@ -21,7 +21,7 @@ struct TabDragState {
 }
 
 impl Render for TabDragState {
-    type Element = Div<Self>;
+    type Element = Node<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div().w_8().h_4().bg(red())
@@ -178,7 +178,7 @@ mod stories {
     pub struct TabStory;
 
     impl Render for TabStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let git_statuses = GitStatus::iter();

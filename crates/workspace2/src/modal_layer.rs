@@ -1,6 +1,6 @@
 use gpui::{
-    div, px, AnyView, Div, EventEmitter, FocusHandle, ParentElement, Render, StatelessInteractive,
-    Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
+    div, prelude::*, px, AnyView, EventEmitter, FocusHandle, InteractiveComponent, Node,
+    ParentComponent, Render, Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
 };
 use ui::v_stack;
 
@@ -76,7 +76,7 @@ impl ModalLayer {
 }
 
 impl Render for ModalLayer {
-    type Element = Div<Self>;
+    type Element = Node<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let Some(active_modal) = &self.active_modal else {

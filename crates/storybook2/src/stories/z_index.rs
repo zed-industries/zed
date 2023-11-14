@@ -1,4 +1,4 @@
-use gpui::{px, rgb, Div, Hsla, Render};
+use gpui::{px, rgb, Hsla, Node, Render};
 use ui::prelude::*;
 
 use crate::story::Story;
@@ -8,7 +8,7 @@ use crate::story::Story;
 pub struct ZIndexStory;
 
 impl Render for ZIndexStory {
-    type Element = Div<Self>;
+    type Element = Node<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         Story::container(cx)
@@ -77,7 +77,7 @@ trait Styles: Styled + Sized {
     }
 }
 
-impl<V: 'static> Styles for Div<V> {}
+impl<V: 'static> Styles for Node<V> {}
 
 #[derive(Component)]
 struct ZIndexExample {

@@ -165,7 +165,7 @@ impl Workspace {
 
 pub mod simple_message_notification {
     use super::{Notification, NotificationEvent};
-    use gpui::{AnyElement, AppContext, Div, EventEmitter, Render, TextStyle, ViewContext};
+    use gpui::{AnyElement, AppContext, EventEmitter, Node, Render, TextStyle, ViewContext};
     use serde::Deserialize;
     use std::{borrow::Cow, sync::Arc};
 
@@ -252,7 +252,7 @@ pub mod simple_message_notification {
     }
 
     impl Render for MessageNotification {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             todo!()

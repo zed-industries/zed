@@ -1,10 +1,9 @@
-use crate::utils::naive_format_distance_from_now;
 use crate::{
-    h_stack, prelude::*, static_new_notification_items_2, v_stack, Avatar, ButtonOrIconButton,
-    Icon, IconElement, Label, LabelColor, LineHeightStyle, ListHeaderMeta, ListSeparator,
-    PublicPlayer, UnreadIndicator,
+    h_stack, prelude::*, static_new_notification_items_2, utils::naive_format_distance_from_now,
+    v_stack, Avatar, ButtonOrIconButton, ClickHandler, Icon, IconElement, Label, LabelColor,
+    LineHeightStyle, ListHeader, ListHeaderMeta, ListSeparator, PublicPlayer, UnreadIndicator,
 };
-use crate::{ClickHandler, ListHeader};
+use gpui::prelude::*;
 
 #[derive(Component)]
 pub struct NotificationsPanel {
@@ -353,12 +352,12 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{Panel, Story};
-    use gpui::{Div, Render};
+    use gpui::{Node, Render};
 
     pub struct NotificationsPanelStory;
 
     impl Render for NotificationsPanelStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

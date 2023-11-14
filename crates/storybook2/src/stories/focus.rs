@@ -1,6 +1,5 @@
 use gpui::{
-    actions, div, Div, FocusHandle, Focusable, FocusableKeyDispatch, KeyBinding, ParentElement,
-    Render, StatefulInteractivity, StatelessInteractive, Styled, View, VisualContext,
+    actions, div, prelude::*, FocusHandle, Focusable, KeyBinding, Node, Render, Stateful, View,
     WindowContext,
 };
 use theme2::ActiveTheme;
@@ -28,7 +27,7 @@ impl FocusStory {
 }
 
 impl Render for FocusStory {
-    type Element = Div<Self, StatefulInteractivity<Self>, FocusableKeyDispatch<Self>>;
+    type Element = Focusable<Self, Stateful<Self, Node<Self>>>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let theme = cx.theme();
@@ -42,7 +41,7 @@ impl Render for FocusStory {
         div()
             .id("parent")
             .focusable()
-            .context("parent")
+            .key_context("parent")
             .on_action(|_, action: &ActionA, cx| {
                 println!("Action A dispatched on parent");
             })
@@ -62,7 +61,7 @@ impl Render for FocusStory {
             .child(
                 div()
                     .track_focus(&self.child_1_focus)
-                    .context("child-1")
+                    .key_context("child-1")
                     .on_action(|_, action: &ActionB, cx| {
                         println!("Action B dispatched on child 1 during");
                     })
@@ -82,7 +81,7 @@ impl Render for FocusStory {
             .child(
                 div()
                     .track_focus(&self.child_2_focus)
-                    .context("child-2")
+                    .key_context("child-2")
                     .on_action(|_, action: &ActionC, cx| {
                         println!("Action C dispatched on child 2");
                     })

@@ -1,4 +1,4 @@
-use gpui::{AbsoluteLength, AnyElement};
+use gpui::{prelude::*, AbsoluteLength, AnyElement};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -113,7 +113,7 @@ impl<V: 'static> Panel<V> {
     }
 }
 
-impl<V: 'static> ParentElement<V> for Panel<V> {
+impl<V: 'static> ParentComponent<V> for Panel<V> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
@@ -126,12 +126,12 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{Label, Story};
-    use gpui::{Div, Render};
+    use gpui::{InteractiveComponent, Node, Render};
 
     pub struct PanelStory;
 
     impl Render for PanelStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

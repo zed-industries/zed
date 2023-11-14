@@ -1,5 +1,3 @@
-// mod dragged_item_receiver;
-
 use crate::{
     item::{Item, ItemHandle, ItemSettings, WeakItemHandle},
     toolbar::Toolbar,
@@ -9,9 +7,9 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, register_action, AppContext, AsyncWindowContext, Component, Div, EntityId,
-    EventEmitter, FocusHandle, Model, PromptLevel, Render, Task, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    actions, prelude::*, register_action, AppContext, AsyncWindowContext, Component, EntityId,
+    EventEmitter, FocusHandle, Model, Node, PromptLevel, Render, Task, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -1903,7 +1901,7 @@ impl Pane {
 // }
 
 impl Render for Pane {
-    type Element = Div<Self>;
+    type Element = Node<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack()
@@ -2928,7 +2926,7 @@ struct DraggedTab {
 }
 
 impl Render for DraggedTab {
-    type Element = Div<Self>;
+    type Element = Node<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div().w_8().h_4().bg(gpui::red())

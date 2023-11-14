@@ -1,6 +1,5 @@
-use crate::prelude::*;
-use crate::Label;
-use crate::LabelColor;
+use crate::{prelude::*, Label, LabelColor};
+use gpui::prelude::*;
 
 #[derive(Default, PartialEq)]
 pub enum InputVariant {
@@ -111,12 +110,12 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui::{Div, Render};
+    use gpui::{Node, Render};
 
     pub struct InputStory;
 
     impl Render for InputStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

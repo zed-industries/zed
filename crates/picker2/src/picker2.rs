@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    div, uniform_list, Component, Div, ParentElement, Render, StatelessInteractive, Styled, Task,
+    div, uniform_list, Component, Node, ParentComponent, Render, Styled, Task,
     UniformListScrollHandle, View, ViewContext, VisualContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
@@ -139,11 +139,11 @@ impl<D: PickerDelegate> Picker<D> {
 }
 
 impl<D: PickerDelegate> Render for Picker<D> {
-    type Element = Div<Self>;
+    type Element = Node<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
-            .context("picker")
+            .key_context("picker")
             .size_full()
             .elevation_2(cx)
             .on_action(Self::select_next)

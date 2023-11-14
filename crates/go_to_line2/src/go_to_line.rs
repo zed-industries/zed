@@ -1,7 +1,7 @@
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, AppContext, Div, EventEmitter, ParentElement, Render, SharedString,
-    StatelessInteractive, Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
+    actions, div, prelude::*, AppContext, EventEmitter, Node, ParentComponent, Render,
+    SharedString, Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
 };
 use text::{Bias, Point};
 use theme::ActiveTheme;
@@ -145,11 +145,11 @@ impl GoToLine {
 }
 
 impl Render for GoToLine {
-    type Element = Div<Self>;
+    type Element = Node<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         modal(cx)
-            .context("GoToLine")
+            .key_context("GoToLine")
             .on_action(Self::cancel)
             .on_action(Self::confirm)
             .w_96()

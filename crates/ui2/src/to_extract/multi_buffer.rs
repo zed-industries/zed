@@ -40,12 +40,12 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{hello_world_rust_buffer_example, Story};
-    use gpui::{Div, Render};
+    use gpui::{Node, Render};
 
     pub struct MultiBufferStory;
 
     impl Render for MultiBufferStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

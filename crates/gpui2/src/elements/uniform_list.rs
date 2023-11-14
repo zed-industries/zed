@@ -1,24 +1,23 @@
 use crate::{
     point, px, size, AnyElement, AvailableSpace, BorrowWindow, Bounds, Component, Element,
-    ElementId, ElementInteractivity, InteractiveElementState, LayoutId, Pixels, Point, Size,
-    StatefulInteractive, StatefulInteractivity, StatelessInteractive, StatelessInteractivity,
-    StyleRefinement, Styled, ViewContext,
+    ElementId, InteractiveComponent, InteractiveElementState, Interactivity, LayoutId, Pixels,
+    Point, Size, StyleRefinement, Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
-use std::{cmp, ops::Range, sync::Arc};
+use std::{cmp, mem, ops::Range, sync::Arc};
 use taffy::style::Overflow;
 
 /// uniform_list provides lazy rendering for a set of items that are of uniform height.
 /// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
 /// uniform_list will only render the visibile subset of items.
-pub fn uniform_list<Id, V, C>(
-    id: Id,
+pub fn uniform_list<I, V, C>(
+    id: I,
     item_count: usize,
     f: impl 'static + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> SmallVec<[C; 64]>,
 ) -> UniformList<V>
 where
-    Id: Into<ElementId>,
+    I: Into<ElementId>,
     V: 'static,
     C: Component<V>,
 {
@@ -37,7 +36,10 @@ where
                 .map(|component| component.render())
                 .collect()
         }),
-        interactivity: StatefulInteractivity::new(id, StatelessInteractivity::default()),
+        interactivity: Interactivity {
+            element_id: Some(id.into()),
+            ..Default::default()
+        },
         scroll_handle: None,
     }
 }
@@ -54,7 +56,7 @@ pub struct UniformList<V: 'static> {
             &'a mut ViewContext<V>,
         ) -> SmallVec<[AnyElement<V>; 64]>,
     >,
-    interactivity: StatefulInteractivity<V>,
+    interactivity: Interactivity<V>,
     scroll_handle: Option<UniformListScrollHandle>,
 }
 
@@ -103,7 +105,7 @@ pub struct UniformListState {
 impl<V: 'static> Element<V> for UniformList<V> {
     type ElementState = UniformListState;
 
-    fn id(&self) -> Option<crate::ElementId> {
+    fn element_id(&self) -> Option<crate::ElementId> {
         Some(self.id.clone())
     }
 
@@ -113,13 +115,18 @@ impl<V: 'static> Element<V> for UniformList<V> {
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
-        element_state.unwrap_or_else(|| {
+        if let Some(mut element_state) = element_state {
+            element_state.interactive = self
+                .interactivity
+                .initialize(Some(element_state.interactive), cx);
+            element_state
+        } else {
             let item_size = self.measure_item(view_state, None, cx);
             UniformListState {
-                interactive: InteractiveElementState::default(),
+                interactive: self.interactivity.initialize(None, cx),
                 item_size,
             }
-        })
+        }
     }
 
     fn layout(
@@ -132,35 +139,44 @@ impl<V: 'static> Element<V> for UniformList<V> {
         let item_size = element_state.item_size;
         let rem_size = cx.rem_size();
 
-        cx.request_measured_layout(
-            self.computed_style(),
-            rem_size,
-            move |known_dimensions: Size<Option<Pixels>>, available_space: Size<AvailableSpace>| {
-                let desired_height = item_size.height * max_items;
-                let width = known_dimensions
-                    .width
-                    .unwrap_or(match available_space.width {
-                        AvailableSpace::Definite(x) => x,
-                        AvailableSpace::MinContent | AvailableSpace::MaxContent => item_size.width,
-                    });
-                let height = match available_space.height {
-                    AvailableSpace::Definite(x) => desired_height.min(x),
-                    AvailableSpace::MinContent | AvailableSpace::MaxContent => desired_height,
-                };
-                size(width, height)
-            },
-        )
+        self.interactivity
+            .layout(&mut element_state.interactive, cx, |style, cx| {
+                cx.request_measured_layout(
+                    style,
+                    rem_size,
+                    move |known_dimensions: Size<Option<Pixels>>,
+                          available_space: Size<AvailableSpace>| {
+                        let desired_height = item_size.height * max_items;
+                        let width = known_dimensions
+                            .width
+                            .unwrap_or(match available_space.width {
+                                AvailableSpace::Definite(x) => x,
+                                AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                    item_size.width
+                                }
+                            });
+                        let height = match available_space.height {
+                            AvailableSpace::Definite(x) => desired_height.min(x),
+                            AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                desired_height
+                            }
+                        };
+                        size(width, height)
+                    },
+                )
+            })
     }
 
     fn paint(
         &mut self,
-        bounds: crate::Bounds<crate::Pixels>,
+        bounds: Bounds<crate::Pixels>,
         view_state: &mut V,
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) {
-        let style = self.computed_style();
-
+        let style =
+            self.interactivity
+                .compute_style(Some(bounds), &mut element_state.interactive, cx);
         let border = style.border_widths.to_pixels(cx.rem_size());
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
 
@@ -170,74 +186,75 @@ impl<V: 'static> Element<V> for UniformList<V> {
                 - point(border.right + padding.right, border.bottom + padding.bottom),
         );
 
-        cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
-            style.paint(bounds, cx);
+        let item_size = element_state.item_size;
+        let content_size = Size {
+            width: padded_bounds.size.width,
+            height: item_size.height * self.item_count,
+        };
 
-            let content_size;
-            if self.item_count > 0 {
-                let item_height = self
-                    .measure_item(view_state, Some(padded_bounds.size.width), cx)
-                    .height;
-                if let Some(scroll_handle) = self.scroll_handle.clone() {
-                    scroll_handle.0.lock().replace(ScrollHandleState {
-                        item_height,
-                        list_height: padded_bounds.size.height,
-                        scroll_offset: element_state.interactive.track_scroll_offset(),
-                    });
-                }
-                let visible_item_count = if item_height > px(0.) {
-                    (padded_bounds.size.height / item_height).ceil() as usize + 1
-                } else {
-                    0
-                };
-                let scroll_offset = element_state
-                    .interactive
-                    .scroll_offset()
-                    .map_or((0.0).into(), |offset| offset.y);
-                let first_visible_element_ix = (-scroll_offset / item_height).floor() as usize;
-                let visible_range = first_visible_element_ix
-                    ..cmp::min(
-                        first_visible_element_ix + visible_item_count,
-                        self.item_count,
-                    );
+        let mut interactivity = mem::take(&mut self.interactivity);
+        let shared_scroll_offset = element_state.interactive.scroll_offset.clone().unwrap();
 
-                let mut items = (self.render_items)(view_state, visible_range.clone(), cx);
+        interactivity.paint(
+            bounds,
+            content_size,
+            &mut element_state.interactive,
+            cx,
+            |style, scroll_offset, cx| {
+                let border = style.border_widths.to_pixels(cx.rem_size());
+                let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
 
-                content_size = Size {
-                    width: padded_bounds.size.width,
-                    height: item_height * self.item_count,
-                };
-
-                cx.with_z_index(1, |cx| {
-                    for (item, ix) in items.iter_mut().zip(visible_range) {
-                        let item_origin =
-                            padded_bounds.origin + point(px(0.), item_height * ix + scroll_offset);
-                        let available_space = size(
-                            AvailableSpace::Definite(padded_bounds.size.width),
-                            AvailableSpace::Definite(item_height),
-                        );
-                        item.draw(item_origin, available_space, view_state, cx);
-                    }
-                });
-            } else {
-                content_size = Size {
-                    width: bounds.size.width,
-                    height: px(0.),
-                };
-            }
-
-            let overflow = point(style.overflow.x, Overflow::Scroll);
-
-            cx.with_z_index(0, |cx| {
-                self.interactivity.handle_events(
-                    bounds,
-                    content_size,
-                    overflow,
-                    &mut element_state.interactive,
-                    cx,
+                let padded_bounds = Bounds::from_corners(
+                    bounds.origin + point(border.left + padding.left, border.top + padding.top),
+                    bounds.lower_right()
+                        - point(border.right + padding.right, border.bottom + padding.bottom),
                 );
-            });
-        })
+
+                cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
+                    style.paint(bounds, cx);
+
+                    if self.item_count > 0 {
+                        let item_height = self
+                            .measure_item(view_state, Some(padded_bounds.size.width), cx)
+                            .height;
+                        if let Some(scroll_handle) = self.scroll_handle.clone() {
+                            scroll_handle.0.lock().replace(ScrollHandleState {
+                                item_height,
+                                list_height: padded_bounds.size.height,
+                                scroll_offset: shared_scroll_offset,
+                            });
+                        }
+                        let visible_item_count = if item_height > px(0.) {
+                            (padded_bounds.size.height / item_height).ceil() as usize + 1
+                        } else {
+                            0
+                        };
+
+                        let first_visible_element_ix =
+                            (-scroll_offset.y / item_height).floor() as usize;
+                        let visible_range = first_visible_element_ix
+                            ..cmp::min(
+                                first_visible_element_ix + visible_item_count,
+                                self.item_count,
+                            );
+
+                        let mut items = (self.render_items)(view_state, visible_range.clone(), cx);
+                        cx.with_z_index(1, |cx| {
+                            for (item, ix) in items.iter_mut().zip(visible_range) {
+                                let item_origin = padded_bounds.origin
+                                    + point(px(0.), item_height * ix + scroll_offset.y);
+                                let available_space = size(
+                                    AvailableSpace::Definite(padded_bounds.size.width),
+                                    AvailableSpace::Definite(item_height),
+                                );
+                                item.draw(item_origin, available_space, view_state, cx);
+                            }
+                        });
+                    }
+                })
+            },
+        );
+        self.interactivity = interactivity;
     }
 }
 
@@ -275,14 +292,8 @@ impl<V> UniformList<V> {
     }
 }
 
-impl<V: 'static> StatelessInteractive<V> for UniformList<V> {
-    fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<V> {
-        self.interactivity.as_stateless_mut()
-    }
-}
-
-impl<V: 'static> StatefulInteractive<V> for UniformList<V> {
-    fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<V> {
+impl<V> InteractiveComponent<V> for UniformList<V> {
+    fn interactivity(&mut self) -> &mut crate::Interactivity<V> {
         &mut self.interactivity
     }
 }

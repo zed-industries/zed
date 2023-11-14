@@ -1,7 +1,6 @@
-use gpui::AnyElement;
-use smallvec::SmallVec;
-
 use crate::prelude::*;
+use gpui::{prelude::*, AnyElement};
+use smallvec::SmallVec;
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ToastOrigin {
@@ -59,7 +58,7 @@ impl<V: 'static> Toast<V> {
     }
 }
 
-impl<V: 'static> ParentElement<V> for Toast<V> {
+impl<V: 'static> ParentComponent<V> for Toast<V> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
@@ -70,7 +69,7 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui::{Div, Render};
+    use gpui::{Node, Render};
 
     use crate::{Label, Story};
 
@@ -79,7 +78,7 @@ mod stories {
     pub struct ToastStory;
 
     impl Render for ToastStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

@@ -1,9 +1,9 @@
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, Action, AppContext, Component, Div, EventEmitter, FocusHandle, Keystroke,
-    ParentElement, Render, StatelessInteractive, Styled, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    actions, div, prelude::*, Action, AppContext, Component, EventEmitter, FocusHandle, Keystroke,
+    Node, ParentComponent, Render, Styled, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use picker::{Picker, PickerDelegate};
 use std::{
@@ -77,7 +77,7 @@ impl Modal for CommandPalette {
 }
 
 impl Render for CommandPalette {
-    type Element = Div<Self>;
+    type Element = Node<Self>;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack().w_96().child(self.picker.clone())
@@ -148,7 +148,7 @@ impl CommandPaletteDelegate {
 }
 
 impl PickerDelegate for CommandPaletteDelegate {
-    type ListItem = Div<Picker<Self>>;
+    type ListItem = Node<Picker<Self>>;
 
     fn placeholder_text(&self) -> Arc<str> {
         "Execute a command...".into()

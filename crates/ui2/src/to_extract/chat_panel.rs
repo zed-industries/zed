@@ -1,7 +1,6 @@
+use crate::{prelude::*, Icon, IconButton, Input, Label, LabelColor};
 use chrono::NaiveDateTime;
-
-use crate::prelude::*;
-use crate::{Icon, IconButton, Input, Label, LabelColor};
+use gpui::prelude::*;
 
 #[derive(Component)]
 pub struct ChatPanel {
@@ -108,7 +107,7 @@ pub use stories::*;
 #[cfg(feature = "stories")]
 mod stories {
     use chrono::DateTime;
-    use gpui::{Div, Render};
+    use gpui::{Node, Render};
 
     use crate::{Panel, Story};
 
@@ -117,7 +116,7 @@ mod stories {
     pub struct ChatPanelStory;
 
     impl Render for ChatPanelStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

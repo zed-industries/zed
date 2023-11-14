@@ -55,16 +55,6 @@ where
     I: ElementInteractivity<V>,
     F: KeyDispatch<V>,
 {
-    pub fn group(mut self, group: impl Into<SharedString>) -> Self {
-        self.group = Some(group.into());
-        self
-    }
-
-    pub fn z_index(mut self, z_index: u32) -> Self {
-        self.base_style.z_index = Some(z_index);
-        self
-    }
-
     pub fn context<C>(mut self, context: C) -> Self
     where
         Self: Sized,
@@ -74,22 +64,6 @@ where
         if let Some(context) = context.try_into().log_err() {
             *self.key_dispatch.key_context_mut() = context;
         }
-        self
-    }
-
-    pub fn overflow_hidden(mut self) -> Self {
-        self.base_style.overflow.x = Some(Overflow::Hidden);
-        self.base_style.overflow.y = Some(Overflow::Hidden);
-        self
-    }
-
-    pub fn overflow_hidden_x(mut self) -> Self {
-        self.base_style.overflow.x = Some(Overflow::Hidden);
-        self
-    }
-
-    pub fn overflow_hidden_y(mut self) -> Self {
-        self.base_style.overflow.y = Some(Overflow::Hidden);
         self
     }
 
@@ -134,22 +108,6 @@ impl<V: 'static> Div<V, StatefulInteractivity<V>, NonFocusableKeyDispatch> {
             group: self.group,
             base_style: self.base_style,
         }
-    }
-
-    pub fn overflow_scroll(mut self) -> Self {
-        self.base_style.overflow.x = Some(Overflow::Scroll);
-        self.base_style.overflow.y = Some(Overflow::Scroll);
-        self
-    }
-
-    pub fn overflow_x_scroll(mut self) -> Self {
-        self.base_style.overflow.x = Some(Overflow::Scroll);
-        self
-    }
-
-    pub fn overflow_y_scroll(mut self) -> Self {
-        self.base_style.overflow.y = Some(Overflow::Scroll);
-        self
     }
 }
 

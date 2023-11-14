@@ -1,5 +1,5 @@
-use crate::prelude::*;
-use crate::{Icon, IconButton, Tab};
+use crate::{prelude::*, Icon, IconButton, Tab};
+use gpui::prelude::*;
 
 #[derive(Component)]
 pub struct TabBar {
@@ -100,12 +100,12 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui::{Div, Render};
+    use gpui::{Node, Render};
 
     pub struct TabBarStory;
 
     impl Render for TabBarStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

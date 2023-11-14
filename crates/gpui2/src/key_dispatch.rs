@@ -1,7 +1,7 @@
 use crate::{
-    build_action_from_type, Action, Bounds, DispatchPhase, Element, FocusEvent, FocusHandle,
-    FocusId, KeyContext, KeyMatch, Keymap, Keystroke, KeystrokeMatcher, MouseDownEvent, Pixels,
-    Style, StyleRefinement, ViewContext, WindowContext,
+    build_action_from_type, Action, Bounds, DispatchPhase, FocusEvent, FocusHandle, FocusId,
+    KeyContext, KeyMatch, Keymap, Keystroke, KeystrokeMatcher, MouseDownEvent, Pixels, Style,
+    StyleRefinement, ViewContext, WindowContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -340,117 +340,5 @@ impl<V: 'static> KeyDispatch<V> for NonFocusableKeyDispatch {
 
     fn key_context_mut(&mut self) -> &mut KeyContext {
         &mut self.key_context
-    }
-}
-
-pub trait Focusable<V: 'static>: Element<V> {
-    fn focus_listeners(&mut self) -> &mut FocusListeners<V>;
-    fn set_focus_style(&mut self, style: StyleRefinement);
-    fn set_focus_in_style(&mut self, style: StyleRefinement);
-    fn set_in_focus_style(&mut self, style: StyleRefinement);
-
-    fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.set_focus_style(f(StyleRefinement::default()));
-        self
-    }
-
-    fn focus_in(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.set_focus_in_style(f(StyleRefinement::default()));
-        self
-    }
-
-    fn in_focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.set_in_focus_style(f(StyleRefinement::default()));
-        self
-    }
-
-    fn on_focus(
-        mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        self.focus_listeners()
-            .push(Box::new(move |view, focus_handle, event, cx| {
-                if event.focused.as_ref() == Some(focus_handle) {
-                    listener(view, event, cx)
-                }
-            }));
-        self
-    }
-
-    fn on_blur(
-        mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        self.focus_listeners()
-            .push(Box::new(move |view, focus_handle, event, cx| {
-                if event.blurred.as_ref() == Some(focus_handle) {
-                    listener(view, event, cx)
-                }
-            }));
-        self
-    }
-
-    fn on_focus_in(
-        mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        self.focus_listeners()
-            .push(Box::new(move |view, focus_handle, event, cx| {
-                let descendant_blurred = event
-                    .blurred
-                    .as_ref()
-                    .map_or(false, |blurred| focus_handle.contains(blurred, cx));
-                let descendant_focused = event
-                    .focused
-                    .as_ref()
-                    .map_or(false, |focused| focus_handle.contains(focused, cx));
-
-                if !descendant_blurred && descendant_focused {
-                    listener(view, event, cx)
-                }
-            }));
-        self
-    }
-
-    fn on_focus_out(
-        mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        self.focus_listeners()
-            .push(Box::new(move |view, focus_handle, event, cx| {
-                let descendant_blurred = event
-                    .blurred
-                    .as_ref()
-                    .map_or(false, |blurred| focus_handle.contains(blurred, cx));
-                let descendant_focused = event
-                    .focused
-                    .as_ref()
-                    .map_or(false, |focused| focus_handle.contains(focused, cx));
-                if descendant_blurred && !descendant_focused {
-                    listener(view, event, cx)
-                }
-            }));
-        self
     }
 }

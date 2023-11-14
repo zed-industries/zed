@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use gpui::{Div, Render, View, VisualContext};
+use gpui::{Node, Render, View, VisualContext};
 
 use crate::prelude::*;
 use crate::settings::user_settings;
@@ -86,9 +86,9 @@ impl TitleBar {
 }
 
 impl Render for TitleBar {
-    type Element = Div<Self>;
+    type Element = Node<Self>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Node<Self> {
         let settings = user_settings(cx);
 
         // let has_focus = cx.window_is_active();
@@ -202,9 +202,9 @@ mod stories {
     }
 
     impl Render for TitleBarStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Node<Self> {
             Story::container(cx)
                 .child(Story::title_for::<_, TitleBar>(cx))
                 .child(Story::label(cx, "Default"))

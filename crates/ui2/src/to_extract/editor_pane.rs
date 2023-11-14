@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui::{Div, Render, View, VisualContext};
+use gpui::{Node, Render, View, VisualContext};
 
 use crate::prelude::*;
 use crate::{
@@ -48,9 +48,9 @@ impl EditorPane {
 }
 
 impl Render for EditorPane {
-    type Element = Div<Self>;
+    type Element = Node<Self>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Node<Self> {
         v_stack()
             .w_full()
             .h_full()

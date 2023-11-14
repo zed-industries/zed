@@ -206,7 +206,7 @@ impl<V: Render> From<View<V>> for AnyView {
 impl<ParentViewState: 'static> Element<ParentViewState> for AnyView {
     type ElementState = Box<dyn Any>;
 
-    fn id(&self) -> Option<ElementId> {
+    fn element_id(&self) -> Option<ElementId> {
         Some(self.model.entity_id.into())
     }
 

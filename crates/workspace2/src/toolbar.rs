@@ -1,6 +1,6 @@
 use crate::ItemHandle;
 use gpui::{
-    AnyView, Div, Entity, EntityId, EventEmitter, Render, View, ViewContext, WindowContext,
+    AnyView, Entity, EntityId, EventEmitter, Node, Render, View, ViewContext, WindowContext,
 };
 
 pub enum ToolbarItemEvent {
@@ -52,7 +52,7 @@ pub struct Toolbar {
 }
 
 impl Render for Toolbar {
-    type Element = Div<Self>;
+    type Element = Node<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         todo!()

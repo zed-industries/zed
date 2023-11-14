@@ -1,9 +1,9 @@
 use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
-    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusEvent, FocusHandle,
-    KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, View, ViewContext, Visibility,
+    BorrowWindow, Bounds, ClickEvent, Component, DispatchPhase, Element, ElementId, FocusEvent,
+    FocusHandle, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentComponent, Pixels, Point, Render, ScrollWheelEvent,
+    SharedString, Size, Style, StyleRefinement, Styled, Task, View, ViewContext, Visibility,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -32,6 +32,11 @@ pub struct GroupStyle {
 pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
     fn interactivity(&mut self) -> &mut Interactivity<V>;
 
+    fn group(mut self, group: impl Into<SharedString>) -> Self {
+        self.interactivity().group = Some(group.into());
+        self
+    }
+
     fn id(mut self, id: impl Into<ElementId>) -> Stateful<V, Self> {
         self.interactivity().element_id = Some(id.into());
 
@@ -41,9 +46,9 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
         }
     }
 
-    fn track_focus(mut self, focus_handle: FocusHandle) -> Focusable<V, Self> {
+    fn track_focus(mut self, focus_handle: &FocusHandle) -> Focusable<V, Self> {
         self.interactivity().focusable = true;
-        self.interactivity().tracked_focus_handle = Some(focus_handle);
+        self.interactivity().tracked_focus_handle = Some(focus_handle.clone());
         Focusable {
             element: self,
             view_type: PhantomData,
@@ -269,8 +274,27 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
 }
 
 pub trait StatefulInteractiveComponent<V: 'static, E: Element<V>>: InteractiveComponent<V> {
-    fn focusable(mut self) -> Self {
+    fn focusable(mut self) -> Focusable<V, Self> {
         self.interactivity().focusable = true;
+        Focusable {
+            element: self,
+            view_type: PhantomData,
+        }
+    }
+
+    fn overflow_scroll(mut self) -> Self {
+        self.interactivity().base_style.overflow.x = Some(Overflow::Scroll);
+        self.interactivity().base_style.overflow.y = Some(Overflow::Scroll);
+        self
+    }
+
+    fn overflow_x_scroll(mut self) -> Self {
+        self.interactivity().base_style.overflow.x = Some(Overflow::Scroll);
+        self
+    }
+
+    fn overflow_y_scroll(mut self) -> Self {
+        self.interactivity().base_style.overflow.y = Some(Overflow::Scroll);
         self
     }
 
@@ -514,16 +538,16 @@ pub type KeyUpListener<V> =
 pub type ActionListener<V> =
     Box<dyn Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + 'static>;
 
-pub fn node<V: 'static>() -> Node<V> {
+pub fn div<V: 'static>() -> Node<V> {
     Node {
         interactivity: Interactivity::default(),
-        children: Vec::default(),
+        children: SmallVec::default(),
     }
 }
 
 pub struct Node<V> {
     interactivity: Interactivity<V>,
-    children: Vec<AnyElement<V>>,
+    children: SmallVec<[AnyElement<V>; 2]>,
 }
 
 impl<V> Styled for Node<V> {
@@ -538,10 +562,16 @@ impl<V: 'static> InteractiveComponent<V> for Node<V> {
     }
 }
 
+impl<V: 'static> ParentComponent<V> for Node<V> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+        &mut self.children
+    }
+}
+
 impl<V: 'static> Element<V> for Node<V> {
     type ElementState = NodeState;
 
-    fn id(&self) -> Option<ElementId> {
+    fn element_id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
     }
 
@@ -641,48 +671,54 @@ impl<V: 'static> Element<V> for Node<V> {
     }
 }
 
+impl<V: 'static> Component<V> for Node<V> {
+    fn render(self) -> AnyElement<V> {
+        AnyElement::new(self)
+    }
+}
+
 pub struct NodeState {
     child_layout_ids: SmallVec<[LayoutId; 4]>,
     interactive_state: InteractiveElementState,
 }
 
 pub struct Interactivity<V> {
-    element_id: Option<ElementId>,
-    key_context: KeyContext,
-    focusable: bool,
-    tracked_focus_handle: Option<FocusHandle>,
-    focus_listeners: FocusListeners<V>,
-    scroll_offset: Point<Pixels>,
-    group: Option<SharedString>,
-    base_style: StyleRefinement,
-    focus_style: StyleRefinement,
-    focus_in_style: StyleRefinement,
-    in_focus_style: StyleRefinement,
-    hover_style: StyleRefinement,
-    group_hover_style: Option<GroupStyle>,
-    active_style: StyleRefinement,
-    group_active_style: Option<GroupStyle>,
-    drag_over_styles: SmallVec<[(TypeId, StyleRefinement); 2]>,
-    group_drag_over_styles: SmallVec<[(TypeId, GroupStyle); 2]>,
-    mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
-    mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
-    mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
-    scroll_wheel_listeners: SmallVec<[ScrollWheelListener<V>; 2]>,
-    key_down_listeners: SmallVec<[KeyDownListener<V>; 2]>,
-    key_up_listeners: SmallVec<[KeyUpListener<V>; 2]>,
-    action_listeners: SmallVec<[(TypeId, ActionListener<V>); 8]>,
-    drop_listeners: SmallVec<[(TypeId, Box<DropListener<V>>); 2]>,
-    click_listeners: SmallVec<[ClickListener<V>; 2]>,
-    drag_listener: Option<DragListener<V>>,
-    hover_listener: Option<HoverListener<V>>,
-    tooltip_builder: Option<TooltipBuilder<V>>,
+    pub element_id: Option<ElementId>,
+    pub key_context: KeyContext,
+    pub focusable: bool,
+    pub tracked_focus_handle: Option<FocusHandle>,
+    pub focus_listeners: FocusListeners<V>,
+    // pub scroll_offset: Point<Pixels>,
+    pub group: Option<SharedString>,
+    pub base_style: StyleRefinement,
+    pub focus_style: StyleRefinement,
+    pub focus_in_style: StyleRefinement,
+    pub in_focus_style: StyleRefinement,
+    pub hover_style: StyleRefinement,
+    pub group_hover_style: Option<GroupStyle>,
+    pub active_style: StyleRefinement,
+    pub group_active_style: Option<GroupStyle>,
+    pub drag_over_styles: SmallVec<[(TypeId, StyleRefinement); 2]>,
+    pub group_drag_over_styles: SmallVec<[(TypeId, GroupStyle); 2]>,
+    pub mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
+    pub mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
+    pub mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
+    pub scroll_wheel_listeners: SmallVec<[ScrollWheelListener<V>; 2]>,
+    pub key_down_listeners: SmallVec<[KeyDownListener<V>; 2]>,
+    pub key_up_listeners: SmallVec<[KeyUpListener<V>; 2]>,
+    pub action_listeners: SmallVec<[(TypeId, ActionListener<V>); 8]>,
+    pub drop_listeners: SmallVec<[(TypeId, Box<DropListener<V>>); 2]>,
+    pub click_listeners: SmallVec<[ClickListener<V>; 2]>,
+    pub drag_listener: Option<DragListener<V>>,
+    pub hover_listener: Option<HoverListener<V>>,
+    pub tooltip_builder: Option<TooltipBuilder<V>>,
 }
 
 impl<V> Interactivity<V>
 where
     V: 'static,
 {
-    fn initialize(
+    pub fn initialize(
         &mut self,
         element_state: Option<InteractiveElementState>,
         cx: &mut ViewContext<V>,
@@ -703,7 +739,7 @@ where
         element_state
     }
 
-    fn layout(
+    pub fn layout(
         &mut self,
         element_state: &mut InteractiveElementState,
         cx: &mut ViewContext<V>,
@@ -719,7 +755,7 @@ where
         })
     }
 
-    fn paint(
+    pub fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
@@ -996,6 +1032,11 @@ where
             GroupBounds::push(group, bounds, cx);
         }
 
+        let scroll_offset = element_state
+            .scroll_offset
+            .as_ref()
+            .map(|scroll_offset| *scroll_offset.lock());
+
         cx.with_element_id(self.element_id.clone(), |cx| {
             cx.with_key_dispatch(
                 self.key_context.clone(),
@@ -1026,7 +1067,7 @@ where
                         }
                     }
 
-                    f(style, self.scroll_offset, cx)
+                    f(style, scroll_offset.unwrap_or_default(), cx)
                 },
             );
         });
@@ -1036,7 +1077,7 @@ where
         }
     }
 
-    fn compute_style(
+    pub fn compute_style(
         &self,
         bounds: Option<Bounds<Pixels>>,
         element_state: &mut InteractiveElementState,
@@ -1118,7 +1159,7 @@ impl<V: 'static> Default for Interactivity<V> {
             focusable: false,
             tracked_focus_handle: None,
             focus_listeners: SmallVec::default(),
-            scroll_offset: Point::default(),
+            // scroll_offset: Point::default(),
             group: None,
             base_style: StyleRefinement::default(),
             focus_style: StyleRefinement::default(),
@@ -1148,15 +1189,15 @@ impl<V: 'static> Default for Interactivity<V> {
 
 #[derive(Default)]
 pub struct InteractiveElementState {
-    focus_handle: Option<FocusHandle>,
-    clicked_state: Arc<Mutex<ElementClickedState>>,
-    hover_state: Arc<Mutex<bool>>,
-    pending_mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
-    scroll_offset: Option<Arc<Mutex<Point<Pixels>>>>,
-    active_tooltip: Arc<Mutex<Option<ActiveTooltip>>>,
+    pub focus_handle: Option<FocusHandle>,
+    pub clicked_state: Arc<Mutex<ElementClickedState>>,
+    pub hover_state: Arc<Mutex<bool>>,
+    pub pending_mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
+    pub scroll_offset: Option<Arc<Mutex<Point<Pixels>>>>,
+    pub active_tooltip: Arc<Mutex<Option<ActiveTooltip>>>,
 }
 
-struct ActiveTooltip {
+pub struct ActiveTooltip {
     #[allow(unused)] // used to drop the task
     waiting: Option<Task<()>>,
     tooltip: Option<AnyTooltip>,
@@ -1164,7 +1205,7 @@ struct ActiveTooltip {
 
 /// Whether or not the element or a group that contains it is clicked by the mouse.
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
-struct ElementClickedState {
+pub struct ElementClickedState {
     pub group: bool,
     pub element: bool,
 }
@@ -1222,6 +1263,16 @@ impl<V: 'static, E: StatefulInteractiveComponent<V, E>> StatefulInteractiveCompo
 {
 }
 
+impl<V, E> Styled for Focusable<V, E>
+where
+    V: 'static,
+    E: Styled,
+{
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.element.style()
+    }
+}
+
 impl<V, E> Element<V> for Focusable<V, E>
 where
     V: 'static,
@@ -1229,8 +1280,8 @@ where
 {
     type ElementState = E::ElementState;
 
-    fn id(&self) -> Option<ElementId> {
-        self.element.id()
+    fn element_id(&self) -> Option<ElementId> {
+        self.element.element_id()
     }
 
     fn initialize(
@@ -1262,9 +1313,39 @@ where
     }
 }
 
+impl<V, E> Component<V> for Focusable<V, E>
+where
+    V: 'static,
+    E: 'static + Element<V>,
+{
+    fn render(self) -> AnyElement<V> {
+        AnyElement::new(self)
+    }
+}
+
+impl<V, E> ParentComponent<V> for Focusable<V, E>
+where
+    V: 'static,
+    E: ParentComponent<V>,
+{
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+        self.element.children_mut()
+    }
+}
+
 pub struct Stateful<V, E> {
     element: E,
     view_type: PhantomData<V>,
+}
+
+impl<V, E> Styled for Stateful<V, E>
+where
+    V: 'static,
+    E: Styled,
+{
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.element.style()
+    }
 }
 
 impl<V, E> StatefulInteractiveComponent<V, E> for Stateful<V, E>
@@ -1294,8 +1375,8 @@ where
 {
     type ElementState = E::ElementState;
 
-    fn id(&self) -> Option<ElementId> {
-        self.element.id()
+    fn element_id(&self) -> Option<ElementId> {
+        self.element.element_id()
     }
 
     fn initialize(
@@ -1324,5 +1405,25 @@ where
         cx: &mut ViewContext<V>,
     ) {
         self.element.paint(bounds, view_state, element_state, cx)
+    }
+}
+
+impl<V, E> Component<V> for Stateful<V, E>
+where
+    V: 'static,
+    E: 'static + Element<V>,
+{
+    fn render(self) -> AnyElement<V> {
+        AnyElement::new(self)
+    }
+}
+
+impl<V, E> ParentComponent<V> for Stateful<V, E>
+where
+    V: 'static,
+    E: ParentComponent<V>,
+{
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+        self.element.children_mut()
     }
 }

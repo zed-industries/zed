@@ -9,7 +9,7 @@ use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
     div, point, AnyElement, AppContext, AsyncAppContext, Entity, EntityId, EventEmitter,
-    FocusHandle, Model, ParentElement, Pixels, SharedString, Styled, Subscription, Task, View,
+    FocusHandle, Model, ParentComponent, Pixels, SharedString, Styled, Subscription, Task, View,
     ViewContext, VisualContext, WeakView,
 };
 use language::{

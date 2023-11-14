@@ -1,11 +1,11 @@
-use gpui::{div, Component, Div, ParentElement, Styled, ViewContext};
+use gpui::{div, Component, Node, ParentComponent, Styled, ViewContext};
 
 use crate::ActiveTheme;
 
 pub struct Story {}
 
 impl Story {
-    pub fn container<V: 'static>(cx: &mut ViewContext<V>) -> Div<V> {
+    pub fn container<V: 'static>(cx: &mut ViewContext<V>) -> Node<V> {
         div()
             .size_full()
             .flex()

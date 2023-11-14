@@ -235,12 +235,12 @@ mod stories {
         empty_buffer_example, hello_world_rust_buffer_example,
         hello_world_rust_buffer_with_status_example, Story,
     };
-    use gpui::{rems, Div, Render};
+    use gpui::{rems, Node, Render};
 
     pub struct BufferStory;
 
     impl Render for BufferStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

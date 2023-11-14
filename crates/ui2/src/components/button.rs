@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{div, DefiniteLength, Hsla, MouseButton, WindowContext};
+use gpui::{div, DefiniteLength, Hsla, MouseButton, StatefulInteractiveComponent, WindowContext};
 
 use crate::{
     h_stack, prelude::*, Icon, IconButton, IconColor, IconElement, Label, LabelColor,
@@ -236,13 +236,13 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{h_stack, v_stack, LabelColor, Story};
-    use gpui::{rems, Div, Render};
+    use gpui::{rems, Node, Render};
     use strum::IntoEnumIterator;
 
     pub struct ButtonStory;
 
     impl Render for ButtonStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let states = InteractionState::iter();

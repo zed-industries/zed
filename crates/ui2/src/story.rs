@@ -1,11 +1,11 @@
-use gpui::Div;
+use gpui::Node;
 
 use crate::prelude::*;
 
 pub struct Story {}
 
 impl Story {
-    pub fn container<V: 'static>(cx: &mut ViewContext<V>) -> Div<V> {
+    pub fn container<V: 'static>(cx: &mut ViewContext<V>) -> Node<V> {
         div()
             .size_full()
             .flex()

@@ -1,4 +1,4 @@
-use gpui::{Div, Render, View, VisualContext};
+use gpui::{Node, Render, View, VisualContext};
 
 use crate::prelude::*;
 use crate::{h_stack, Icon, IconButton, IconColor, Input};
@@ -27,9 +27,9 @@ impl BufferSearch {
 }
 
 impl Render for BufferSearch {
-    type Element = Div<Self>;
+    type Element = Node<Self>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Node<Self> {
         h_stack()
             .bg(cx.theme().colors().toolbar_background)
             .p_2()

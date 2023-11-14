@@ -1,9 +1,5 @@
+use gpui::{div, prelude::*, Component, ElementId, Styled, ViewContext};
 use std::sync::Arc;
-
-use gpui::{
-    div, Component, ElementId, ParentElement, StatefulInteractive, StatelessInteractive, Styled,
-    ViewContext,
-};
 use theme2::ActiveTheme;
 
 use crate::{Icon, IconColor, IconElement, Selection};
@@ -175,12 +171,12 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{h_stack, Story};
-    use gpui::{Div, Render};
+    use gpui::{Node, Render};
 
     pub struct CheckboxStory;
 
     impl Render for CheckboxStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

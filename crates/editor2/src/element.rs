@@ -2442,7 +2442,7 @@ enum Invisible {
 impl Element<Editor> for EditorElement {
     type ElementState = ();
 
-    fn id(&self) -> Option<gpui::ElementId> {
+    fn element_id(&self) -> Option<gpui::ElementId> {
         None
     }
 

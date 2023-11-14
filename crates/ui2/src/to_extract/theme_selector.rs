@@ -39,7 +39,7 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use gpui::{Div, Render};
+    use gpui::{Node, Render};
 
     use crate::Story;
 
@@ -48,7 +48,7 @@ mod stories {
     pub struct ThemeSelectorStory;
 
     impl Render for ThemeSelectorStory {
-        type Element = Div<Self>;
+        type Element = Node<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
