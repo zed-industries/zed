@@ -1,9 +1,6 @@
+use crate::{h_stack, prelude::*, ClickHandler, Icon, IconElement, TextColor, TextTooltip};
+use gpui::{MouseButton, VisualContext};
 use std::sync::Arc;
-
-use gpui::MouseButton;
-
-use crate::{h_stack, prelude::*};
-use crate::{ClickHandler, Icon, IconColor, IconElement};
 
 struct IconButtonHandlers<V: 'static> {
     click: Option<ClickHandler<V>>,
@@ -19,9 +16,10 @@ impl<V: 'static> Default for IconButtonHandlers<V> {
 pub struct IconButton<V: 'static> {
     id: ElementId,
     icon: Icon,
-    color: IconColor,
+    color: TextColor,
     variant: ButtonVariant,
     state: InteractionState,
+    tooltip: Option<SharedString>,
     handlers: IconButtonHandlers<V>,
 }
 
@@ -30,9 +28,10 @@ impl<V: 'static> IconButton<V> {
         Self {
             id: id.into(),
             icon,
-            color: IconColor::default(),
+            color: TextColor::default(),
             variant: ButtonVariant::default(),
             state: InteractionState::default(),
+            tooltip: None,
             handlers: IconButtonHandlers::default(),
         }
     }
@@ -42,7 +41,7 @@ impl<V: 'static> IconButton<V> {
         self
     }
 
-    pub fn color(mut self, color: IconColor) -> Self {
+    pub fn color(mut self, color: TextColor) -> Self {
         self.color = color;
         self
     }
@@ -57,6 +56,11 @@ impl<V: 'static> IconButton<V> {
         self
     }
 
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
+    }
+
     pub fn on_click(
         mut self,
         handler: impl 'static + Fn(&mut V, &mut ViewContext<V>) + Send + Sync,
@@ -67,7 +71,7 @@ impl<V: 'static> IconButton<V> {
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let icon_color = match (self.state, self.color) {
-            (InteractionState::Disabled, _) => IconColor::Disabled,
+            (InteractionState::Disabled, _) => TextColor::Disabled,
             _ => self.color,
         };
 
@@ -99,6 +103,11 @@ impl<V: 'static> IconButton<V> {
                 cx.stop_propagation();
                 click_handler(state, cx);
             });
+        }
+
+        if let Some(tooltip) = self.tooltip.clone() {
+            button =
+                button.tooltip(move |_, cx| cx.build_view(|cx| TextTooltip::new(tooltip.clone())));
         }
 
         button

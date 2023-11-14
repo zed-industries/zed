@@ -6,8 +6,8 @@ pub use gpui::{
 };
 
 pub use crate::elevation::*;
-pub use crate::ButtonVariant;
 pub use crate::StyledExt;
+pub use crate::{ButtonVariant, TextColor};
 pub use theme2::ActiveTheme;
 
 use gpui::Hsla;

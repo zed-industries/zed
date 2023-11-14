@@ -1,77 +1,13 @@
-use gpui::{rems, svg, Hsla};
+use gpui::{rems, svg};
 use strum::EnumIter;
 
-use crate::{prelude::*, LabelColor};
+use crate::prelude::*;
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
     Small,
     #[default]
     Medium,
-}
-
-#[derive(Default, PartialEq, Copy, Clone)]
-pub enum IconColor {
-    #[default]
-    Default,
-    Accent,
-    Created,
-    Deleted,
-    Disabled,
-    Error,
-    Hidden,
-    Info,
-    Modified,
-    Muted,
-    Placeholder,
-    Player(u32),
-    Selected,
-    Success,
-    Warning,
-}
-
-impl IconColor {
-    pub fn color(self, cx: &WindowContext) -> Hsla {
-        match self {
-            IconColor::Default => cx.theme().colors().icon,
-            IconColor::Muted => cx.theme().colors().icon_muted,
-            IconColor::Disabled => cx.theme().colors().icon_disabled,
-            IconColor::Placeholder => cx.theme().colors().icon_placeholder,
-            IconColor::Accent => cx.theme().colors().icon_accent,
-            IconColor::Error => cx.theme().status().error,
-            IconColor::Warning => cx.theme().status().warning,
-            IconColor::Success => cx.theme().status().success,
-            IconColor::Info => cx.theme().status().info,
-            IconColor::Selected => cx.theme().colors().icon_accent,
-            IconColor::Player(i) => cx.theme().styles.player.0[i.clone() as usize].cursor,
-            IconColor::Created => cx.theme().status().created,
-            IconColor::Modified => cx.theme().status().modified,
-            IconColor::Deleted => cx.theme().status().deleted,
-            IconColor::Hidden => cx.theme().status().hidden,
-        }
-    }
-}
-
-impl From<LabelColor> for IconColor {
-    fn from(label: LabelColor) -> Self {
-        match label {
-            LabelColor::Default => IconColor::Default,
-            LabelColor::Muted => IconColor::Muted,
-            LabelColor::Disabled => IconColor::Disabled,
-            LabelColor::Placeholder => IconColor::Placeholder,
-            LabelColor::Accent => IconColor::Accent,
-            LabelColor::Error => IconColor::Error,
-            LabelColor::Warning => IconColor::Warning,
-            LabelColor::Success => IconColor::Success,
-            LabelColor::Info => IconColor::Info,
-            LabelColor::Selected => IconColor::Selected,
-            LabelColor::Player(i) => IconColor::Player(i),
-            LabelColor::Created => IconColor::Created,
-            LabelColor::Modified => IconColor::Modified,
-            LabelColor::Deleted => IconColor::Deleted,
-            LabelColor::Hidden => IconColor::Hidden,
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Copy, Clone, EnumIter)]
@@ -194,7 +130,7 @@ impl Icon {
 #[derive(Component)]
 pub struct IconElement {
     icon: Icon,
-    color: IconColor,
+    color: TextColor,
     size: IconSize,
 }
 
@@ -202,12 +138,12 @@ impl IconElement {
     pub fn new(icon: Icon) -> Self {
         Self {
             icon,
-            color: IconColor::default(),
+            color: TextColor::default(),
             size: IconSize::default(),
         }
     }
 
-    pub fn color(mut self, color: IconColor) -> Self {
+    pub fn color(mut self, color: TextColor) -> Self {
         self.color = color;
         self
     }

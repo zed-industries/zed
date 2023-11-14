@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{Anchor, Editor, ExcerptId, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{AnyElement, ViewContext};
+use gpui::{AnyElement, Pixels, ViewContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
 use parking_lot::Mutex;
 use std::{
@@ -82,12 +82,11 @@ pub enum BlockStyle {
 
 pub struct BlockContext<'a, 'b> {
     pub view_context: &'b mut ViewContext<'a, Editor>,
-    pub anchor_x: f32,
-    pub scroll_x: f32,
-    pub gutter_width: f32,
-    pub gutter_padding: f32,
-    pub em_width: f32,
-    pub line_height: f32,
+    pub anchor_x: Pixels,
+    pub gutter_width: Pixels,
+    pub gutter_padding: Pixels,
+    pub em_width: Pixels,
+    pub line_height: Pixels,
     pub block_id: usize,
 }
 

@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{h_stack, v_stack, KeyBinding, Label, LabelColor};
+use crate::{h_stack, v_stack, KeyBinding, Label, TextColor};
 
 #[derive(Component)]
 pub struct Palette {
@@ -54,7 +54,7 @@ impl Palette {
                 v_stack()
                     .gap_px()
                     .child(v_stack().py_0p5().px_1().child(div().px_2().py_0p5().child(
-                        Label::new(self.input_placeholder.clone()).color(LabelColor::Placeholder),
+                        Label::new(self.input_placeholder.clone()).color(TextColor::Placeholder),
                     )))
                     .child(
                         div()
@@ -75,7 +75,7 @@ impl Palette {
                                     Some(
                                         h_stack().justify_between().px_2().py_1().child(
                                             Label::new(self.empty_string.clone())
-                                                .color(LabelColor::Muted),
+                                                .color(TextColor::Muted),
                                         ),
                                     )
                                 } else {
@@ -108,7 +108,7 @@ impl Palette {
 pub struct PaletteItem {
     pub label: SharedString,
     pub sublabel: Option<SharedString>,
-    pub keybinding: Option<KeyBinding>,
+    pub key_binding: Option<KeyBinding>,
 }
 
 impl PaletteItem {
@@ -116,7 +116,7 @@ impl PaletteItem {
         Self {
             label: label.into(),
             sublabel: None,
-            keybinding: None,
+            key_binding: None,
         }
     }
 
@@ -130,11 +130,8 @@ impl PaletteItem {
         self
     }
 
-    pub fn keybinding<K>(mut self, keybinding: K) -> Self
-    where
-        K: Into<Option<KeyBinding>>,
-    {
-        self.keybinding = keybinding.into();
+    pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
+        self.key_binding = key_binding.into();
         self
     }
 
@@ -149,7 +146,7 @@ impl PaletteItem {
                     .child(Label::new(self.label.clone()))
                     .children(self.sublabel.clone().map(|sublabel| Label::new(sublabel))),
             )
-            .children(self.keybinding)
+            .children(self.key_binding)
     }
 }
 
@@ -182,23 +179,23 @@ mod stories {
                             .placeholder("Execute a command...")
                             .items(vec![
                                 PaletteItem::new("theme selector: toggle")
-                                    .keybinding(KeyBinding::new(binding("cmd-k cmd-t"))),
+                                    .key_binding(KeyBinding::new(binding("cmd-k cmd-t"))),
                                 PaletteItem::new("assistant: inline assist")
-                                    .keybinding(KeyBinding::new(binding("cmd-enter"))),
+                                    .key_binding(KeyBinding::new(binding("cmd-enter"))),
                                 PaletteItem::new("assistant: quote selection")
-                                    .keybinding(KeyBinding::new(binding("cmd-<"))),
+                                    .key_binding(KeyBinding::new(binding("cmd-<"))),
                                 PaletteItem::new("assistant: toggle focus")
-                                    .keybinding(KeyBinding::new(binding("cmd-?"))),
+                                    .key_binding(KeyBinding::new(binding("cmd-?"))),
                                 PaletteItem::new("auto update: check"),
                                 PaletteItem::new("auto update: view release notes"),
                                 PaletteItem::new("branches: open recent")
-                                    .keybinding(KeyBinding::new(binding("cmd-alt-b"))),
+                                    .key_binding(KeyBinding::new(binding("cmd-alt-b"))),
                                 PaletteItem::new("chat panel: toggle focus"),
                                 PaletteItem::new("cli: install"),
                                 PaletteItem::new("client: sign in"),
                                 PaletteItem::new("client: sign out"),
                                 PaletteItem::new("editor: cancel")
-                                    .keybinding(KeyBinding::new(binding("escape"))),
+                                    .key_binding(KeyBinding::new(binding("escape"))),
                             ]),
                     )
             }

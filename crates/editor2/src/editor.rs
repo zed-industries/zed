@@ -22,7 +22,7 @@ mod editor_tests;
 pub mod test;
 use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
 use client::{ClickhouseEvent, Client, Collaborator, ParticipantIndex, TelemetrySettings};
 use clock::ReplicaId;
@@ -43,8 +43,8 @@ use gpui::{
     AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
     EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla,
     InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render,
-    StatelessInteractive, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    StatefulInteractive, StatelessInteractive, Styled, Subscription, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -69,7 +69,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
-use project::{FormatTrigger, Location, Project, ProjectTransaction};
+use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
 use scroll::{
@@ -97,7 +97,7 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::{IconButton, StyledExt};
+use ui::{v_stack, HighlightedLabel, IconButton, StyledExt, TextTooltip};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::ItemEvent, searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace,
@@ -7588,53 +7588,47 @@ impl Editor {
         })
     }
 
-    //     pub fn find_all_references(
-    //         workspace: &mut Workspace,
-    //         _: &FindAllReferences,
-    //         cx: &mut ViewContext<Workspace>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         let active_item = workspace.active_item(cx)?;
-    //         let editor_handle = active_item.act_as::<Self>(cx)?;
+    pub fn find_all_references(
+        &mut self,
+        _: &FindAllReferences,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let buffer = self.buffer.read(cx);
+        let head = self.selections.newest::<usize>(cx).head();
+        let (buffer, head) = buffer.text_anchor_for_position(head, cx)?;
+        let replica_id = self.replica_id(cx);
 
-    //         let editor = editor_handle.read(cx);
-    //         let buffer = editor.buffer.read(cx);
-    //         let head = editor.selections.newest::<usize>(cx).head();
-    //         let (buffer, head) = buffer.text_anchor_for_position(head, cx)?;
-    //         let replica_id = editor.replica_id(cx);
+        let workspace = self.workspace()?;
+        let project = workspace.read(cx).project().clone();
+        let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
+        Some(cx.spawn(|_, mut cx| async move {
+            let locations = references.await?;
+            if locations.is_empty() {
+                return Ok(());
+            }
 
-    //         let project = workspace.project().clone();
-    //         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-    //         Some(cx.spawn_labeled(
-    //             "Finding All References...",
-    //             |workspace, mut cx| async move {
-    //                 let locations = references.await?;
-    //                 if locations.is_empty() {
-    //                     return Ok(());
-    //                 }
+            workspace.update(&mut cx, |workspace, cx| {
+                let title = locations
+                    .first()
+                    .as_ref()
+                    .map(|location| {
+                        let buffer = location.buffer.read(cx);
+                        format!(
+                            "References to `{}`",
+                            buffer
+                                .text_for_range(location.range.clone())
+                                .collect::<String>()
+                        )
+                    })
+                    .unwrap();
+                Self::open_locations_in_multibuffer(
+                    workspace, locations, replica_id, title, false, cx,
+                );
+            })?;
 
-    //                 workspace.update(&mut cx, |workspace, cx| {
-    //                     let title = locations
-    //                         .first()
-    //                         .as_ref()
-    //                         .map(|location| {
-    //                             let buffer = location.buffer.read(cx);
-    //                             format!(
-    //                                 "References to `{}`",
-    //                                 buffer
-    //                                     .text_for_range(location.range.clone())
-    //                                     .collect::<String>()
-    //                             )
-    //                         })
-    //                         .unwrap();
-    //                     Self::open_locations_in_multibuffer(
-    //                         workspace, locations, replica_id, title, false, cx,
-    //                     );
-    //                 })?;
-
-    //                 Ok(())
-    //             },
-    //         ))
-    //     }
+            Ok(())
+        }))
+    }
 
     /// Opens a multibuffer with the given project locations in it
     pub fn open_locations_in_multibuffer(
@@ -7685,7 +7679,7 @@ impl Editor {
         editor.update(cx, |editor, cx| {
             editor.highlight_background::<Self>(
                 ranges_to_highlight,
-                |theme| todo!("theme.editor.highlighted_line_background"),
+                |theme| theme.editor_highlighted_line_background,
                 cx,
             );
         });
@@ -8869,46 +8863,50 @@ impl Editor {
     //         });
     //     }
 
-    //     fn jump(
-    //         workspace: &mut Workspace,
-    //         path: ProjectPath,
-    //         position: Point,
-    //         anchor: language::Anchor,
-    //         cx: &mut ViewContext<Workspace>,
-    //     ) {
-    //         let editor = workspace.open_path(path, None, true, cx);
-    //         cx.spawn(|_, mut cx| async move {
-    //             let editor = editor
-    //                 .await?
-    //                 .downcast::<Editor>()
-    //                 .ok_or_else(|| anyhow!("opened item was not an editor"))?
-    //                 .downgrade();
-    //             editor.update(&mut cx, |editor, cx| {
-    //                 let buffer = editor
-    //                     .buffer()
-    //                     .read(cx)
-    //                     .as_singleton()
-    //                     .ok_or_else(|| anyhow!("cannot jump in a multi-buffer"))?;
-    //                 let buffer = buffer.read(cx);
-    //                 let cursor = if buffer.can_resolve(&anchor) {
-    //                     language::ToPoint::to_point(&anchor, buffer)
-    //                 } else {
-    //                     buffer.clip_point(position, Bias::Left)
-    //                 };
+    fn jump(
+        &mut self,
+        path: ProjectPath,
+        position: Point,
+        anchor: language::Anchor,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let workspace = self.workspace();
+        cx.spawn(|_, mut cx| async move {
+            let workspace = workspace.ok_or_else(|| anyhow!("cannot jump without workspace"))?;
+            let editor = workspace.update(&mut cx, |workspace, cx| {
+                workspace.open_path(path, None, true, cx)
+            })?;
+            let editor = editor
+                .await?
+                .downcast::<Editor>()
+                .ok_or_else(|| anyhow!("opened item was not an editor"))?
+                .downgrade();
+            editor.update(&mut cx, |editor, cx| {
+                let buffer = editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .ok_or_else(|| anyhow!("cannot jump in a multi-buffer"))?;
+                let buffer = buffer.read(cx);
+                let cursor = if buffer.can_resolve(&anchor) {
+                    language::ToPoint::to_point(&anchor, buffer)
+                } else {
+                    buffer.clip_point(position, Bias::Left)
+                };
 
-    //                 let nav_history = editor.nav_history.take();
-    //                 editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
-    //                     s.select_ranges([cursor..cursor]);
-    //                 });
-    //                 editor.nav_history = nav_history;
+                let nav_history = editor.nav_history.take();
+                editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                    s.select_ranges([cursor..cursor]);
+                });
+                editor.nav_history = nav_history;
 
-    //                 anyhow::Ok(())
-    //             })??;
+                anyhow::Ok(())
+            })??;
 
-    //             anyhow::Ok(())
-    //         })
-    //         .detach_and_log_err(cx);
-    //     }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
 
     fn marked_text_ranges(&self, cx: &AppContext) -> Option<Vec<Range<OffsetUtf16>>> {
         let snapshot = self.buffer.read(cx).read(cx);
@@ -9973,43 +9971,22 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
     }
     let message = diagnostic.message;
     Arc::new(move |cx: &mut BlockContext| {
-        todo!()
-        // let message = message.clone();
-        // let settings = ThemeSettings::get_global(cx);
-        // let tooltip_style = settings.theme.tooltip.clone();
-        // let theme = &settings.theme.editor;
-        // let style = diagnostic_style(diagnostic.severity, is_valid, theme);
-        // let font_size = (style.text_scale_factor * settings.buffer_font_size(cx)).round();
-        // let anchor_x = cx.anchor_x;
-        // enum BlockContextToolip {}
-        // MouseEventHandler::new::<BlockContext, _>(cx.block_id, cx, |_, _| {
-        //     Flex::column()
-        //         .with_children(highlighted_lines.iter().map(|(line, highlights)| {
-        //             Label::new(
-        //                 line.clone(),
-        //                 style.message.clone().with_font_size(font_size),
-        //             )
-        //             .with_highlights(highlights.clone())
-        //             .contained()
-        //             .with_margin_left(anchor_x)
-        //         }))
-        //         .aligned()
-        //         .left()
-        //         .into_any()
-        // })
-        // .with_cursor_style(CursorStyle::PointingHand)
-        // .on_click(MouseButton::Left, move |_, _, cx| {
-        //     cx.write_to_clipboard(ClipboardItem::new(message.clone()));
-        // })
-        // // We really need to rethink this ID system...
-        // .with_tooltip::<BlockContextToolip>(
-        //     cx.block_id,
-        //     "Copy diagnostic message",
-        //     None,
-        //     tooltip_style,
-        //     cx,
-        // )
-        // .into_any()
+        let message = message.clone();
+        v_stack()
+            .id(cx.block_id)
+            .size_full()
+            .bg(gpui::red())
+            .children(highlighted_lines.iter().map(|(line, highlights)| {
+                div()
+                    .child(HighlightedLabel::new(line.clone(), highlights.clone()))
+                    .ml(cx.anchor_x)
+            }))
+            .cursor_pointer()
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new(message.clone()));
+            })
+            .tooltip(|_, cx| cx.build_view(|cx| TextTooltip::new("Copy diagnostic message")))
+            .render()
     })
 }
 

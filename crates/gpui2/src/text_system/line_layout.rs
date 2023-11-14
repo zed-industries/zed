@@ -54,9 +54,9 @@ impl LineLayout {
     pub fn closest_index_for_x(&self, x: Pixels) -> usize {
         let mut prev_index = 0;
         let mut prev_x = px(0.);
+
         for run in self.runs.iter() {
             for glyph in run.glyphs.iter() {
-                glyph.index;
                 if glyph.position.x >= x {
                     if glyph.position.x - x < x - prev_x {
                         return glyph.index;
@@ -68,7 +68,8 @@ impl LineLayout {
                 prev_x = glyph.position.x;
             }
         }
-        prev_index + 1
+
+        self.len
     }
 
     pub fn x_for_index(&self, index: usize) -> Pixels {

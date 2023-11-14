@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::prelude::*;
-use crate::{Button, Icon, IconButton, IconColor, ToolDivider, Workspace};
+use crate::{Button, Icon, IconButton, TextColor, ToolDivider, Workspace};
 
 #[derive(Default, PartialEq)]
 pub enum Tool {
@@ -110,7 +110,7 @@ impl StatusBar {
             .child(
                 IconButton::<Workspace>::new("project_panel", Icon::FileTree)
                     .when(workspace.is_project_panel_open(), |this| {
-                        this.color(IconColor::Accent)
+                        this.color(TextColor::Accent)
                     })
                     .on_click(|workspace, cx| {
                         workspace.toggle_project_panel(cx);
@@ -119,7 +119,7 @@ impl StatusBar {
             .child(
                 IconButton::<Workspace>::new("collab_panel", Icon::Hash)
                     .when(workspace.is_collab_panel_open(), |this| {
-                        this.color(IconColor::Accent)
+                        this.color(TextColor::Accent)
                     })
                     .on_click(|workspace, cx| {
                         workspace.toggle_collab_panel();
@@ -174,7 +174,7 @@ impl StatusBar {
                     .child(
                         IconButton::<Workspace>::new("terminal", Icon::Terminal)
                             .when(workspace.is_terminal_open(), |this| {
-                                this.color(IconColor::Accent)
+                                this.color(TextColor::Accent)
                             })
                             .on_click(|workspace, cx| {
                                 workspace.toggle_terminal(cx);
@@ -183,7 +183,7 @@ impl StatusBar {
                     .child(
                         IconButton::<Workspace>::new("chat_panel", Icon::MessageBubbles)
                             .when(workspace.is_chat_panel_open(), |this| {
-                                this.color(IconColor::Accent)
+                                this.color(TextColor::Accent)
                             })
                             .on_click(|workspace, cx| {
                                 workspace.toggle_chat_panel(cx);
@@ -192,7 +192,7 @@ impl StatusBar {
                     .child(
                         IconButton::<Workspace>::new("assistant_panel", Icon::Ai)
                             .when(workspace.is_assistant_panel_open(), |this| {
-                                this.color(IconColor::Accent)
+                                this.color(TextColor::Accent)
                             })
                             .on_click(|workspace, cx| {
                                 workspace.toggle_assistant_panel(cx);
