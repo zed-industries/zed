@@ -2,7 +2,7 @@ use super::{
     wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
     Highlights,
 };
-use crate::{Anchor, Editor, ExcerptId, ExcerptRange, ToPoint as _};
+use crate::{Anchor, Editor, EditorStyle, ExcerptId, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, Pixels, ViewContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
@@ -88,6 +88,7 @@ pub struct BlockContext<'a, 'b> {
     pub em_width: Pixels,
     pub line_height: Pixels,
     pub block_id: usize,
+    pub editor_style: &'b EditorStyle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

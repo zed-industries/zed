@@ -7796,9 +7796,35 @@ impl Editor {
                             position: range.start.clone(),
                             height: 1,
                             render: Arc::new({
-                                let editor = rename_editor.clone();
+                                let rename_editor = rename_editor.clone();
                                 move |cx: &mut BlockContext| {
-                                    div().pl(cx.anchor_x).child(editor.clone()).render()
+                                    let text_style = if let Some(highlight_style) = old_highlight_id
+                                        .and_then(|h| h.style(&cx.editor_style.syntax))
+                                    {
+                                        cx.editor_style
+                                            .text
+                                            .clone()
+                                            .highlight(highlight_style)
+                                            .unwrap_or_else(|_| cx.editor_style.text.clone())
+                                    } else {
+                                        cx.editor_style.text.clone()
+                                    };
+                                    div().pl(cx.anchor_x).child(with_view(
+                                        &rename_editor,
+                                        |_, _| {
+                                            EditorElement::new(EditorStyle {
+                                                background: cx.theme().system().transparent,
+                                                local_player: cx.editor_style.local_player,
+                                                text: text_style,
+                                                scrollbar_width: cx.editor_style.scrollbar_width,
+                                                syntax: cx.editor_style.syntax.clone(),
+                                                diagnostic_style: cx
+                                                    .editor_style
+                                                    .diagnostic_style
+                                                    .clone(),
+                                            })
+                                        },
+                                    ))
                                 }
                             }),
                             disposition: BlockDisposition::Below,

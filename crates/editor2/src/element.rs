@@ -2010,6 +2010,7 @@ impl EditorElement {
                         gutter_width,
                         em_width,
                         block_id,
+                        editor_style: &self.style,
                     })
                 }
                 TransformBlock::ExcerptHeader {
@@ -2655,6 +2656,12 @@ impl Element<Editor> for EditorElement {
                 cx.handle_input(&editor.focus_handle, input_handler);
             });
         });
+    }
+}
+
+impl Component<Editor> for EditorElement {
+    fn render(self) -> AnyElement<Editor> {
+        AnyElement::new(self)
     }
 }
 
