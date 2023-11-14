@@ -146,6 +146,11 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    pub fn refresh(&mut self, cx: &mut ViewContext<Self>) {
+        let query = self.editor.read(cx).text(cx);
+        self.update_matches(query, cx);
+    }
+
     pub fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) {
         let update = self.delegate.update_matches(query, cx);
         self.matches_updated(cx);

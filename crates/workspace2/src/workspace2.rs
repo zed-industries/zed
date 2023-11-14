@@ -1961,50 +1961,50 @@ impl Workspace {
         })
     }
 
-    //     pub fn open_abs_path(
-    //         &mut self,
-    //         abs_path: PathBuf,
-    //         visible: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-    //         cx.spawn(|workspace, mut cx| async move {
-    //             let open_paths_task_result = workspace
-    //                 .update(&mut cx, |workspace, cx| {
-    //                     workspace.open_paths(vec![abs_path.clone()], visible, cx)
-    //                 })
-    //                 .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
-    //                 .await;
-    //             anyhow::ensure!(
-    //                 open_paths_task_result.len() == 1,
-    //                 "open abs path {abs_path:?} task returned incorrect number of results"
-    //             );
-    //             match open_paths_task_result
-    //                 .into_iter()
-    //                 .next()
-    //                 .expect("ensured single task result")
-    //             {
-    //                 Some(open_result) => {
-    //                     open_result.with_context(|| format!("open abs path {abs_path:?} task join"))
-    //                 }
-    //                 None => anyhow::bail!("open abs path {abs_path:?} task returned None"),
-    //             }
-    //         })
-    //     }
+    pub fn open_abs_path(
+        &mut self,
+        abs_path: PathBuf,
+        visible: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        cx.spawn(|workspace, mut cx| async move {
+            let open_paths_task_result = workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.open_paths(vec![abs_path.clone()], visible, cx)
+                })
+                .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
+                .await;
+            anyhow::ensure!(
+                open_paths_task_result.len() == 1,
+                "open abs path {abs_path:?} task returned incorrect number of results"
+            );
+            match open_paths_task_result
+                .into_iter()
+                .next()
+                .expect("ensured single task result")
+            {
+                Some(open_result) => {
+                    open_result.with_context(|| format!("open abs path {abs_path:?} task join"))
+                }
+                None => anyhow::bail!("open abs path {abs_path:?} task returned None"),
+            }
+        })
+    }
 
-    //     pub fn split_abs_path(
-    //         &mut self,
-    //         abs_path: PathBuf,
-    //         visible: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-    //         let project_path_task =
-    //             Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
-    //         cx.spawn(|this, mut cx| async move {
-    //             let (_, path) = project_path_task.await?;
-    //             this.update(&mut cx, |this, cx| this.split_path(path, cx))?
-    //                 .await
-    //         })
-    //     }
+    pub fn split_abs_path(
+        &mut self,
+        abs_path: PathBuf,
+        visible: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        let project_path_task =
+            Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
+        cx.spawn(|this, mut cx| async move {
+            let (_, path) = project_path_task.await?;
+            this.update(&mut cx, |this, cx| this.split_path(path, cx))?
+                .await
+        })
+    }
 
     pub fn open_path(
         &mut self,
@@ -2031,37 +2031,37 @@ impl Workspace {
         })
     }
 
-    //     pub fn split_path(
-    //         &mut self,
-    //         path: impl Into<ProjectPath>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
-    //         let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
-    //             self.panes
-    //                 .first()
-    //                 .expect("There must be an active pane")
-    //                 .downgrade()
-    //         });
+    pub fn split_path(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+        let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
+            self.panes
+                .first()
+                .expect("There must be an active pane")
+                .downgrade()
+        });
 
-    //         if let Member::Pane(center_pane) = &self.center.root {
-    //             if center_pane.read(cx).items_len() == 0 {
-    //                 return self.open_path(path, Some(pane), true, cx);
-    //             }
-    //         }
+        if let Member::Pane(center_pane) = &self.center.root {
+            if center_pane.read(cx).items_len() == 0 {
+                return self.open_path(path, Some(pane), true, cx);
+            }
+        }
 
-    //         let task = self.load_path(path.into(), cx);
-    //         cx.spawn(|this, mut cx| async move {
-    //             let (project_entry_id, build_item) = task.await?;
-    //             this.update(&mut cx, move |this, cx| -> Option<_> {
-    //                 let pane = pane.upgrade(cx)?;
-    //                 let new_pane = this.split_pane(pane, SplitDirection::Right, cx);
-    //                 new_pane.update(cx, |new_pane, cx| {
-    //                     Some(new_pane.open_item(project_entry_id, true, cx, build_item))
-    //                 })
-    //             })
-    //             .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
-    //         })
-    //     }
+        let task = self.load_path(path.into(), cx);
+        cx.spawn(|this, mut cx| async move {
+            let (project_entry_id, build_item) = task.await?;
+            this.update(&mut cx, move |this, cx| -> Option<_> {
+                let pane = pane.upgrade()?;
+                let new_pane = this.split_pane(pane, SplitDirection::Right, cx);
+                new_pane.update(cx, |new_pane, cx| {
+                    Some(new_pane.open_item(project_entry_id, true, cx, build_item))
+                })
+            })
+            .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
+        })
+    }
 
     pub(crate) fn load_path(
         &mut self,
